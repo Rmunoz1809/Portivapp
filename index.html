@@ -1,4 +1,4 @@
-xx​​<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es" class="app-locked">
 <head>
 <meta charset="UTF-8">
@@ -5223,7 +5223,7 @@ async function renderSettings(){
       const { data } = await sb.auth.getUser();
       const u = data && data.user;
       email = (u && u.email) || '';
-      username = (u && u.user_metadata && (u.user_metadata.username || u.user_metadata.display_name)) || '';
+      username = (u && u.user_metadata && (u.user_metadata.username || u.user_metadata.display_name || u.user_metadata.full_name || u.user_metadata.name)) || '';
     }
   } catch(e){}
   if (!email) { const ae = document.getElementById('acctEmail'); email = (ae && ae.textContent && ae.textContent !== '—') ? ae.textContent.replace(/^@/,'') : ''; }
@@ -23441,9 +23441,12 @@ if (document.readyState === 'loading') {
     if (lbl) lbl.textContent = 'Conectando con Apple…';
     setMsg('Redirigiendo a Apple…', false);
     try {
+      var _origin = window.location.origin || '';
+      var _isLocal = /^(https?:)?\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(_origin) || window.location.protocol === 'file:';
+      var _redirectTo = _isLocal ? 'https://portivapp.com/' : (_origin + window.location.pathname);
       var r = await sb.auth.signInWithOAuth({
         provider: 'apple',
-        options: { redirectTo: window.location.origin + window.location.pathname }
+        options: { redirectTo: _redirectTo }
       });
       if (r && r.error) throw r.error;
       // Éxito: el navegador se va a apple.com. No restauramos el botón (se sale de la página).
@@ -23569,7 +23572,7 @@ if (document.readyState === 'loading') {
     // Limpia restos de OTRA cuenta en este navegador (no toca la nube; se restaura abajo desde su fila).
     _wlClearLocal(); _newsClearLocal();
     try {
-      var uname = (s.user && s.user.user_metadata && s.user.user_metadata.username) || '';
+      var uname = (s.user && s.user.user_metadata && (s.user.user_metadata.username || s.user.user_metadata.full_name || s.user.user_metadata.name)) || '';
       var a = document.getElementById('navAvatar'); if (a) a.textContent = (uname || em || '?').slice(0,2).toUpperCase();
       var ae = document.getElementById('acctEmail'); if (ae) ae.textContent = uname ? ('@' + uname) : (em || '—');
     } catch(e){}
