@@ -13213,7 +13213,12 @@ async function _yhFetch(url, timeoutMs){
   // por eso se lanzan en paralelo y con timeout corto, y el local va primero.
   const localFirst = (typeof _localProxyLive !== 'undefined' && _localProxyLive)
     ? ['http://localhost:8765/yh?url=' + encodeURIComponent(url)] : [];
+  // PRIMARIO: yh-proxy (Edge Function propia en Supabase). Passthrough server-side a Yahoo,
+  // sin CORS y con User-Agent de navegador → fiable y rápido (~0.4s). Los proxies públicos
+  // de abajo quedan SOLO como red de seguridad (hoy están todos muertos: 403 / cuelgues).
+  const YH_PROXY = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/yh-proxy?url=' + encodeURIComponent(url);
   const pub = [
+    YH_PROXY,
     'https://corsproxy.io/?url=' + encodeURIComponent(url),
     'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
     'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(url),
