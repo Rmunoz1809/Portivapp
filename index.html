@@ -2664,6 +2664,7 @@
   }
   .m-tb-brand { display: flex; align-items: center; gap: 10px; }
   .m-tb-fulllogo { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .m-tb-name { font-size: 18px; font-weight: 800; color: #0b1c30; letter-spacing: -0.3px; font-family: 'Manrope', sans-serif; }
   .m-tb-icons { display: flex; align-items: center; gap: 6px; }
   .m-tb-btn {
     background: none; border: none; color: #44474D; padding: 6px;
@@ -2778,6 +2779,23 @@
   /* "✓ 2 FUENTES" ocupa mucho en 2-col → ocultar */
   .sn-card-source span[title*="Confirmada"] { display: none !important; }
 
+  /* ── Tabla "Retorno esperado anual por activo": 5 columnas caben sin corte,
+       números alineados y uniformes (tabular-nums, columnas de igual ancho) ── */
+  .pa-ret-table { width: 100% !important; table-layout: fixed !important; }
+  .pa-ret-table th, .pa-ret-table td {
+    padding: 8px 3px !important; font-size: 11px !important;
+    font-variant-numeric: tabular-nums !important; white-space: nowrap !important;
+    overflow: hidden !important; text-overflow: ellipsis !important;
+  }
+  .pa-ret-table th {
+    font-size: 8.5px !important; letter-spacing: .2px !important;
+    white-space: normal !important; line-height: 1.2 !important; vertical-align: bottom !important;
+  }
+  /* Activo un poco más angosto; el resto reparte parejo el espacio numérico */
+  .pa-ret-table col.c-act, .pa-ret-table th:first-child, .pa-ret-table td:first-child { width: 20% !important; }
+  .pa-ret-table th:first-child, .pa-ret-table td:first-child { padding-left: 14px !important; }
+  .pa-ret-table th:last-child,  .pa-ret-table td:last-child  { padding-right: 14px !important; }
+
   /* ── Esta Semana / Próxima Semana: análisis corto en móvil ── */
   /* Fuera el contexto largo; se muestra el resumen corto (1ª oración), no la versión larga */
   .wo-ctx { display: none !important; }
@@ -2828,10 +2846,15 @@
   /* Quita la card "Asset Distribution" (donut) por completo en móvil */
   #assetDistCard { display: none !important; }
 
-  /* ── AI Analyst: input bien colocado (arriba del bottom-nav) ── */
+  /* ── Portiv IA: chat a pantalla completa ── */
   #tab-aianalyst { padding: 0 !important; }
   .ai-chat-page { height: calc(100dvh - 146px) !important; min-height: 0 !important; background: #F8F9FF !important; }
   .ai-chat-inputarea { padding: 12px 14px 14px !important; }
+  /* En el chat: ocultar la topbar de marca y que el perfil de la IA quede hasta arriba,
+     ocupando toda la pantalla (solo resta el bottom-nav). */
+  body.chat-active .m-topbar { display: none !important; }
+  body.chat-active .ai-chat-page { height: calc(100dvh - 62px) !important; }
+  body.chat-active .ai-chat-header { position: sticky; top: 0; z-index: 20; padding-top: max(18px, env(safe-area-inset-top)) !important; }
 
   /* ── Watchlist: cards compactas, todo cabe sin desbordar ── */
   #tab-watchlist { padding: 6px 14px 86px !important; }
@@ -2985,17 +3008,16 @@
 <div class="m-topbar">
   <div class="m-tb-brand">
     <div class="m-tb-fulllogo">
-      <svg viewBox="0 0 200 200" width="52" height="52" style="display:block" role="img" aria-label="Portiv — Wealth Tracker">
+      <svg viewBox="0 0 200 200" width="36" height="36" style="display:block" role="img" aria-label="Portiv">
         <circle cx="100" cy="100" r="100" fill="#0b1c30"/>
-        <g fill="#fff" transform="translate(18.4,-10.2) scale(3.2)">
+        <g fill="#fff" transform="translate(18.4,32.8) scale(3.2)">
           <rect x="11" y="28" width="5" height="9" rx="1.5"/><rect x="19" y="23" width="5" height="14" rx="1.5"/><rect x="27" y="26" width="5" height="11" rx="1.5"/><rect x="35" y="19" width="5" height="18" rx="1.5"/>
           <polyline points="12,22 20,17 27,20 37,12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
           <circle cx="37.5" cy="11.5" r="2.6" fill="#fff"/>
         </g>
-        <text x="100" y="152" text-anchor="middle" font-family="Manrope,sans-serif" font-size="34" font-weight="800" fill="#fff">Portiv</text>
-        <text x="100" y="174" text-anchor="middle" font-family="Manrope,sans-serif" font-size="14" font-weight="600" fill="#8a96a3">Wealth Tracker</text>
       </svg>
     </div>
+    <div class="m-tb-name">Portiv</div>
   </div>
   <div class="m-tb-icons">
     <button class="m-tb-btn" onclick="openSearchOverlay()" aria-label="Buscar">
@@ -3997,7 +4019,7 @@
   .ai-chat-send:active { transform:scale(.92); }
   .ai-chat-send:disabled { opacity:.45; cursor:default; }
   .ai-chat-send svg { transform:translateX(1px); }
-  .ai-token-badge { margin-top:8px; text-align:right; font-size:10px; color:#9aa6b8; font-family:'Manrope',sans-serif; }
+  .ai-token-badge { display:none !important; }
   .chat-chip:hover { border-color:var(--blue); color:var(--blue); background:var(--blue-bg); transform:translateY(-1px); }
 
   /* ── NOTICIAS DE HOY ── */
@@ -7794,7 +7816,7 @@ function renderDeepPortfolioAnalysis(T) {
         Retorno esperado anual por activo
         <span style="font-weight:500;color:var(--text3)"> · coincide con el análisis individual de cada acción</span>
       </div>
-      <table style="width:100%;border-collapse:collapse">
+      <table class="pa-ret-table" style="width:100%;border-collapse:collapse">
         <thead>
           <tr style="border-bottom:1px solid var(--border)">
             <th style="${_th};text-align:left">Activo</th>
@@ -11769,6 +11791,7 @@ function portfolioTickerHash(){
 if (typeof window !== 'undefined') window.portfolioTickerHash = portfolioTickerHash;
 
 function showTab(name) {
+  document.body.classList.toggle('chat-active', name==='aianalyst');
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['portfolio','noticias','watchlist','analizar','aianalyst','settings'][i]===name));
   document.querySelectorAll('.nav-link[data-nav]').forEach(a=>a.classList.toggle('is-active', a.dataset.nav===name));
   // Links inferiores del sidebar (Settings) también reflejan el estado activo
@@ -14731,7 +14754,7 @@ async function _fetchResearch(ticker) {
 
     const newsObj = { news: [] };   // Noticias eliminadas del análisis (sección quitada)
     _currentResearchInfo = info;
-    // ── CARGA COMPLETA ANTES DE ABRIR ───────────────────────────────────────────────
+    // ── CARGA COMPLETA ANTES DE ABRIR ──────────────────────────────────────────────
     // Ahora que yh-proxy trae el histórico REAL en ~0.4s, esperamos el 1M REAL ANTES de
     // revelar la acción → la gráfica sale correcta desde el primer frame, sin el "flash"
     // de la curva estimada. Cap de 3.5s: si Yahoo tardara, caemos a la reconstrucción para
@@ -23988,7 +24011,7 @@ if (document.readyState === 'loading') {
   </button>
   <button class="bottom-tab" onclick="showTab('aianalyst');_btActive(this)" id="bt-aianalyst">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-    AI Analyst
+    Portiv IA
   </button>
   <button class="bottom-tab" onclick="showTab('settings');_btActive(this)" id="bt-settings">
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
