@@ -2609,6 +2609,7 @@
   /* Solo el ticker en móvil (sin nombre largo) para que quepan todas las columnas + el menú ⋮ */
   .holdings-card .sym-sub { display: none !important; }
   .holdings-card #posRows td:first-child { max-width: 84px; }
+  .holdings-card #posRows .pos-total-row td:first-child .td-inner { overflow: hidden; text-overflow: ellipsis; }
   .holdings-card .pos-avatar { width: 28px !important; height: 28px !important; font-size: 10px !important; }
   .holdings-card .ptable-wrap td, .holdings-card .ptable-wrap th { white-space: nowrap !important; }
   .holdings-card .ptable-wrap th, .holdings-card .ptable-wrap td { padding-left: 4px !important; padding-right: 4px !important; }
@@ -2740,30 +2741,42 @@
   .sn-feat-body { padding: 20px 20px !important; gap: 8px !important; }
   .sn-feat-title { font-size: 20px !important; line-height: 1.25 !important; }
   .sn-feat-desc { display: none !important; }
+  /* ── Noticias: grid de 2 columnas compacto (tipo app) ── */
   .sn-news-grid {
-    display: grid !important; grid-template-columns: 1fr !important;
-    gap: 12px !important; overflow: visible !important; margin: 0 !important; padding: 0 !important;
+    display: grid !important; grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important; overflow: visible !important; margin: 0 !important; padding: 0 !important;
+    align-items: stretch !important;
   }
   .sn-card {
-    flex: none !important; min-width: 0 !important;
-    padding: 14px 15px !important; gap: 9px !important; border-radius: 14px !important;
+    flex: none !important; min-width: 0 !important; height: 100% !important;
+    padding: 11px 11px 11px !important; gap: 7px !important; border-radius: 13px !important;
     box-shadow: 0 1px 4px rgba(11,28,48,.05) !important; border: 1px solid #E5EEFF !important;
   }
   .sn-card:hover { transform: none !important; box-shadow: 0 1px 4px rgba(11,28,48,.05) !important; }
-  .sn-card-top { gap: 8px !important; }
-  .sn-card-ticker {
-    font-size: 10.5px !important; padding: 4px 9px !important;
-    max-width: 62% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
-  }
-  .sn-card-time { font-size: 11px !important; flex-shrink: 0 !important; }
-  .sn-card-source { gap: 7px !important; }
-  .sn-card-source-name { font-size: 12px !important; }
+  .sn-card-top { gap: 6px !important; }
+  .sn-card-time { font-size: 9.5px !important; flex-shrink: 0 !important; letter-spacing: .02em !important; }
+  .sn-card-source { gap: 6px !important; min-width: 0 !important; }
+  .sn-card-source-dot { width: 17px !important; height: 17px !important; font-size: 8px !important; }
+  .sn-card-source-name { font-size: 10.5px !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important; min-width: 0 !important; }
   .sn-card-headline {
-    font-size: 14.5px !important; line-height: 1.4 !important;
-    display: -webkit-box !important; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-    overflow: hidden !important;
+    font-size: 12.5px !important; line-height: 1.32 !important; font-weight: 700 !important;
+    display: -webkit-box !important; -webkit-line-clamp: 4; -webkit-box-orient: vertical;
+    overflow: hidden !important; margin-top: 1px !important;
   }
-  .sn-card-sentiment { font-size: 10.5px !important; padding: 5px 10px !important; gap: 5px !important; }
+  .sn-card-div { margin: 2px 0 !important; margin-top: auto !important; }
+  .sn-card-sentiment {
+    font-size: 8.5px !important; padding: 4px 7px !important; gap: 3px !important;
+    letter-spacing: .02em !important; white-space: nowrap !important; max-width: 100% !important;
+    overflow: hidden !important; text-overflow: ellipsis !important;
+  }
+  .sn-sent-word { display: none !important; }
+  /* ticker chip (si existe) full width en celda angosta */
+  .sn-card-ticker {
+    font-size: 9px !important; padding: 3px 7px !important;
+    max-width: 100% !important; white-space: nowrap !important; overflow: hidden !important; text-overflow: ellipsis !important;
+  }
+  /* "✓ 2 FUENTES" ocupa mucho en 2-col → ocultar */
+  .sn-card-source span[title*="Confirmada"] { display: none !important; }
 
   /* ── Esta Semana / Próxima Semana: análisis corto en móvil ── */
   /* Fuera el contexto largo; se muestra el resumen corto (1ª oración), no la versión larga */
@@ -3121,7 +3134,7 @@
       <div class="stitch-card" id="quickActionsCard">
         <div class="stitch-card-title">Movimientos</div>
         <div class="qa-btn-col">
-          <button class="stitch-viewall-btn qa-full" onclick="openAddStock()">＋ Add Asset</button>
+          <button class="stitch-viewall-btn qa-full" onclick="openAddStock()">＋ Agregar activo</button>
           <button class="sb-cash-btn qa-full" onclick="openCashModal('deposit')">
             <span class="material-symbols-outlined" style="font-size:16px">add</span> Agregar fondos
           </button>
@@ -8231,8 +8244,8 @@ function renderTable(T) {
   let html = '';
 
   const GROUPS = [
-    { key:'stock', label:'Equities' },
-    { key:'etf',   label:'ETFs &amp; Closed End Funds' },
+    { key:'stock', label:'Acciones' },
+    { key:'etf',   label:'ETFs y fondos cerrados' },
   ];
 
   GROUPS.forEach(g => {
@@ -8259,9 +8272,9 @@ function renderTable(T) {
 
   // Grupo Cash & Money Market
   const cashTotal = (T.cash || 0) + (T.mm || 0);
-  html += `<tr class="pos-group"><td colspan="13"><div class="pos-group-inner"><span class="pos-group-caret">&#9656;</span>Cash &amp; Money Market</div></td></tr>`;
+  html += `<tr class="pos-group"><td colspan="13"><div class="pos-group-inner"><span class="pos-group-caret">&#9656;</span>Efectivo y Money Market</div></td></tr>`;
   html += `<tr class="pos-total-row">
-    <td><div class="td-inner" style="text-align:left"><strong>Total Cash &amp; MM</strong></div></td>
+    <td><div class="td-inner" style="text-align:left"><strong>Total efectivo y MM</strong></div></td>
     <td></td><td></td><td></td><td></td>
     <td><div class="td-inner" style="font-weight:700">${usd(cashTotal)}</div></td>
     <td><div class="td-inner">$0.00</div></td>
@@ -8286,7 +8299,7 @@ function renderTable(T) {
   const dc = dayAbs >= 0 ? 'pos' : 'neg';
   const gc = T.gl  >= 0 ? 'pos' : 'neg';
   $('posFoot').innerHTML = `<tr>
-    <td style="text-align:left">Positions Total</td>
+    <td style="text-align:left">Total posiciones</td>
     <td></td><td></td><td></td>
     <td class="${dc}" style="font-variant-numeric:tabular-nums">${pctSigned(dayPct)}</td>
     <td style="font-variant-numeric:tabular-nums">${usd(totMkt)}</td>
@@ -11149,7 +11162,7 @@ function _snCard(n, idx) {
     <div class="sn-card-headline">${n.h || n.headline || ''}</div>
     <div class="sn-card-div"></div>
     <span class="sn-card-sentiment ${sentiment}">
-      ${n.s==='pos'?'↑':n.s==='neg'?'↓':'·'} Sentimiento ${n.s==='pos'?'alcista':n.s==='neg'?'bajista':'neutral'}
+      ${n.s==='pos'?'↑':n.s==='neg'?'↓':'·'} <span class="sn-sent-word">Sentimiento </span>${n.s==='pos'?'alcista':n.s==='neg'?'bajista':'neutral'}
     </span>
   </div>`;
 }
@@ -14613,35 +14626,53 @@ async function _fetchResearch(ticker) {
 
     const newsObj = { news: [] };   // Noticias eliminadas del análisis (sección quitada)
     _currentResearchInfo = info;
-    // RENDER INMEDIATO (<2s): pinta YA con la reconstrucción anclada a precio + retornos REALES
-    // (endpoints reales de Finnhub /metric) en vez de esperar el histórico. Los proxies CORS de
-    // Yahoo hoy cuelgan 13-19s → esperarlos (await _histPromise) congelaba TODA la página. El
-    // histórico real, si llega, reemplaza la curva en segundo plano (más abajo).
-    const _estChart = Object.assign(_buildChartFromReturns(info, '1mo'), { _synthetic: true });
-    researchChartCache['1mo'] = _estChart;
-    _renderResearch(ticker, info, _estChart, newsObj?.news || [], overview);
+    // ── CARGA COMPLETA ANTES DE ABRIR ───────────────────────────────────────────────
+    // Ahora que yh-proxy trae el histórico REAL en ~0.4s, esperamos el 1M REAL ANTES de
+    // revelar la acción → la gráfica sale correcta desde el primer frame, sin el "flash"
+    // de la curva estimada. Cap de 3.5s: si Yahoo tardara, caemos a la reconstrucción para
+    // no colgar la vista (el real se cambia luego en segundo plano).
+    $('researchLoadingTxt').textContent = 'Cargando gráfica...';
+    let _initChart = null, _initReal = false;
+    try {
+      const _h = await Promise.race([_histPromise, new Promise(r => setTimeout(() => r(null), 3500))]);
+      const _hcl = (_h && _h.closes) ? _h.closes.filter(c => c != null) : [];
+      if (_hcl.length >= 2) { _initChart = _h; _initReal = true; _chartLSset(ticker, '1mo', _h); }
+    } catch(e){}
+    if (!_initChart) _initChart = Object.assign(_buildChartFromReturns(info, '1mo'), { _synthetic: true });
+    researchChartCache['1mo'] = _initChart;
+    // Precalienta el RESTO de períodos (1D/1W/3M/6M/1A/YTD/5A) ANTES de abrir, para que
+    // cambiar de fecha sea instantáneo y con data real. Cap de 3s → no penaliza la espera si
+    // algún período tarda; los que no lleguen se cargan al pulsarlos.
+    $('researchLoadingTxt').textContent = 'Cargando todas las gráficas...';
+    try { await Promise.race([_prefetchAllResearchPeriods(ticker, info), new Promise(r => setTimeout(r, 3000))]); } catch(e){}
+    // Revelar la acción ya con las gráficas listas.
+    _renderResearch(ticker, info, researchChartCache['1mo'] || _initChart, newsObj?.news || [], overview);
     // Precio en vivo del header (Finnhub /quote): corrige un precio de snapshot viejo.
     _refreshResearchPrice(ticker);
-    // Upgrade en segundo plano: si el histórico REAL llega, cambia la curva y persiste el snapshot.
-    _histPromise.then(histData => {
-      const _histOk = histData?.closes?.filter(c=>c!=null).length >= 2;
-      if (!_histOk || currentResearchTicker !== ticker || _activeResearchRange !== '1mo') return;
-      researchChartCache['1mo'] = histData;
-      _chartLSset(ticker, '1mo', histData);   // persiste → reabrir 1M en <1s
-      const cl = histData.closes.filter(c=>c!=null);
-      _drawResearchChart(histData, cl[cl.length-1] >= cl[0]);
-      _applyChartPeriodChange(histData, '1mo');
-      _researchSnapSet(ticker, {
-        info, overview, chartData: histData, news: [],
+    if (_initReal) {
+      // Ya hay data real → persistir snapshot para reabrir instantáneo.
+      try { _researchSnapSet(ticker, {
+        info, overview, chartData: _initChart, news: [],
         eps: (typeof EPS !== 'undefined' ? EPS._cache[ticker] : null) || null,
         eKey: _eKey, priceTs: Date.now(),
-      });
-    }).catch(()=>{});
-
-    // PREFETCH: en segundo plano, carga TODOS los demás períodos y los cachea (memoria + LS).
-    // Así al cambiar de fecha (1D/1W/3M/6M/1A/YTD/5A) la gráfica ya está lista al instante,
-    // y si el 1M inicial quedó estimado, la data real lo reemplaza en cuanto llega.
-    try { _prefetchAllResearchPeriods(ticker, info); } catch(e){}
+      }); } catch(e){}
+    } else {
+      // El 1M salió estimado (timeout) → sigue intentando el real en segundo plano y lo cambia.
+      _histPromise.then(histData => {
+        const _histOk = histData?.closes?.filter(c=>c!=null).length >= 2;
+        if (!_histOk || currentResearchTicker !== ticker || _activeResearchRange !== '1mo') return;
+        researchChartCache['1mo'] = histData;
+        _chartLSset(ticker, '1mo', histData);
+        const cl = histData.closes.filter(c=>c!=null);
+        _drawResearchChart(histData, cl[cl.length-1] >= cl[0]);
+        _applyChartPeriodChange(histData, '1mo');
+        _researchSnapSet(ticker, {
+          info, overview, chartData: histData, news: [],
+          eps: (typeof EPS !== 'undefined' ? EPS._cache[ticker] : null) || null,
+          eKey: _eKey, priceTs: Date.now(),
+        });
+      }).catch(()=>{});
+    }
 
   } catch(e) {
     console.error('[Research error]', e);
