@@ -3676,7 +3676,7 @@
     <div class="ra-grid">
       <div class="ra-card ra-chart-card">
         <div class="ra-card-head">
-          <div class="ra-card-title">Precio Histórico <span id="r-chart-estimated" style="display:none;font-size:11px;font-weight:600;color:var(--text3);text-transform:none;letter-spacing:0">(estimado — cargando datos reales…)</span></div>
+          <div class="ra-card-title">Precio Histórico <span id="r-chart-estimated" style="display:none;font-size:11px;font-weight:600;color:var(--text3);text-transform:none;letter-spacing:0">(estimación)</span></div>
           <div class="ra-pills" id="r-period-pills">
             <button class="ppill" onclick="setResearchPeriod('1d',this)">1D</button>
             <button class="ppill" onclick="setResearchPeriod('5d',this)">1W</button>
@@ -5975,7 +5975,7 @@ async function _aiFetchVision(opts) {
     try {
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _AI_SB_ANON }, body: opts && opts.body });
       if (r.ok) return r;
-      _sbErr = r;
+      _sbErr = r;   // guarda el error real del proxy (p.ej. secreto sin configurar) por si no hay más fallbacks
     } catch(e) {}
   }
   try {
@@ -13313,7 +13313,16 @@ async function apiCall(params, timeoutMs = 15000) {
   if (action === 'quote') {
     const syms = (tickers || '').split(',').map(s => s.trim()).filter(Boolean);
     const results = await Promise.all(syms.map(async sym => {
-      // Yahoo primero → mismos números que ves en Yahoo Finance
+      // Finnhub /quote (vía proxy propio) PRIMERO: rápido y fiable (c/d/dp = precio/cambio/%día).
+      // Los proxies CORS públicos de Yahoo hoy están caídos/bloqueados (403 / cuelgues de 13-19s),
+      // así que Yahoo pasa a RESPALDO — antes iba primero y colgaba/vaciaba toda la cotización
+      // (era la causa de los % en blanco y del "—" en el watchlist).
+      try {
+        const d = await fhFetch(`/quote?symbol=${sym}`, timeoutMs);
+        if (d && typeof d.c === 'number' && d.c > 0) {
+          return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0 };
+        }
+      } catch(e) { /* respaldo Yahoo */ }
       try {
         const y = await _yhChart(sym, '1d', '1d', timeoutMs);
         const m = y && y.meta;
@@ -13324,14 +13333,9 @@ async function apiCall(params, timeoutMs = 15000) {
           const pct = (prev != null && prev > 0) ? chg / prev * 100 : 0;
           return { symbol: sym, regularMarketPrice: m.regularMarketPrice, regularMarketChange: chg, regularMarketChangePercent: pct };
         }
-      } catch(e) { /* fallback Finnhub */ }
-      try {
-        const d = await fhFetch(`/quote?symbol=${sym}`, timeoutMs);
-        return { symbol: sym, regularMarketPrice: d.c || 0, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0 };
-      } catch(e) {
-        reportQuiet('Datos · cotización de '+sym+' (Yahoo+Finnhub fallaron)', e);
-        return { symbol: sym, regularMarketPrice: 0, regularMarketChange: 0, regularMarketChangePercent: 0 };
-      }
+      } catch(e) {}
+      reportQuiet('Datos · cotización de '+sym+' (Finnhub+Yahoo fallaron)', new Error('sin datos'));
+      return { symbol: sym, regularMarketPrice: 0, regularMarketChange: 0, regularMarketChangePercent: 0 };
     }));
     return { quoteResponse: { result: results } };
   }
@@ -14550,8 +14554,9 @@ async function _fetchResearch(ticker) {
       researchChartCache = {};
       researchChartCache['1mo'] = _snap.chartData;
       _renderResearch(ticker, _snap.info, _snap.chartData, _snap.news || [], _snap.overview);
-      // Precio fresco al abrir si el cacheado tiene >30 min (solo el precio, no el resto).
-      if (Date.now() - (_snap.priceTs || _snap.ts || 0) > 30 * 60 * 1000) _refreshResearchPrice(ticker);
+      // Precio en vivo SIEMPRE al abrir (1 quote Finnhub barata) → evita mostrar el precio viejo
+      // del snapshot (era la causa de ver $517 en Análisis mientras el real ya era $546).
+      _refreshResearchPrice(ticker);
       // FIX GRÁFICA: si el snapshot trae la curva ESTIMADA (sintética) o sin cierres reales
       // (se guardó cuando los proxies fallaban), NO nos quedamos pegados con ella: bajamos el
       // histórico REAL, redibujamos, persistimos y actualizamos el snapshot. Antes esto dejaba
@@ -14601,30 +14606,32 @@ async function _fetchResearch(ticker) {
     }
     if (!info || !info.longName) throw new Error(`Ticker "${ticker}" no encontrado. Verifica el símbolo.`);
 
-    // Gráfico: ya en vuelo desde el inicio (ver _histPromise arriba) → solo esperamos aquí.
-    $('researchLoadingTxt').textContent = 'Cargando gráfico...';
-    const histData = await _histPromise;
     const newsObj = { news: [] };   // Noticias eliminadas del análisis (sección quitada)
-
     _currentResearchInfo = info;
-    const _histOk = histData?.closes?.filter(c=>c!=null).length >= 2;
-    const chartData = _histOk ? histData : Object.assign(_buildChartFromReturns(info, '1mo'), { _synthetic: true });
-    researchChartCache['1mo'] = chartData;
-    if (_histOk) _chartLSset(ticker, '1mo', chartData);   // persiste → reabrir 1M en <1s
-    _renderResearch(ticker, info, chartData, newsObj?.news || [], overview);
-    // FIX: guarda snapshot SOLO si el histórico es real. Si tocó usar el estimado sintético
-    // (proxy caído en ese instante), NO lo persistimos 24h — así la próxima vez que el usuario
-    // entre a esta acción se reintenta la data real, en vez de quedar pegado con la curva
-    // genérica todo el día. Antes: cualquier fallo puntual "envenenaba" el gráfico 24h.
-    if (_histOk) {
+    // RENDER INMEDIATO (<2s): pinta YA con la reconstrucción anclada a precio + retornos REALES
+    // (endpoints reales de Finnhub /metric) en vez de esperar el histórico. Los proxies CORS de
+    // Yahoo hoy cuelgan 13-19s → esperarlos (await _histPromise) congelaba TODA la página. El
+    // histórico real, si llega, reemplaza la curva en segundo plano (más abajo).
+    const _estChart = Object.assign(_buildChartFromReturns(info, '1mo'), { _synthetic: true });
+    researchChartCache['1mo'] = _estChart;
+    _renderResearch(ticker, info, _estChart, newsObj?.news || [], overview);
+    // Precio en vivo del header (Finnhub /quote): corrige un precio de snapshot viejo.
+    _refreshResearchPrice(ticker);
+    // Upgrade en segundo plano: si el histórico REAL llega, cambia la curva y persiste el snapshot.
+    _histPromise.then(histData => {
+      const _histOk = histData?.closes?.filter(c=>c!=null).length >= 2;
+      if (!_histOk || currentResearchTicker !== ticker || _activeResearchRange !== '1mo') return;
+      researchChartCache['1mo'] = histData;
+      _chartLSset(ticker, '1mo', histData);   // persiste → reabrir 1M en <1s
+      const cl = histData.closes.filter(c=>c!=null);
+      _drawResearchChart(histData, cl[cl.length-1] >= cl[0]);
+      _applyChartPeriodChange(histData, '1mo');
       _researchSnapSet(ticker, {
-        info, overview, chartData,
-        news: [],
+        info, overview, chartData: histData, news: [],
         eps: (typeof EPS !== 'undefined' ? EPS._cache[ticker] : null) || null,
-        eKey: _eKey,
-        priceTs: Date.now(),
+        eKey: _eKey, priceTs: Date.now(),
       });
-    }
+    }).catch(()=>{});
 
     // PREFETCH: en segundo plano, carga TODOS los demás períodos y los cachea (memoria + LS).
     // Así al cambiar de fecha (1D/1W/3M/6M/1A/YTD/5A) la gráfica ya está lista al instante,
@@ -23462,6 +23469,9 @@ if (document.readyState === 'loading') {
     if (lbl) lbl.textContent = 'Conectando con Apple…';
     setMsg('Redirigiendo a Apple…', false);
     try {
+      // redirectTo: en producción usa el origin real; si estás en localhost/127/file://
+      // (donde el servidor puede estar apagado al volver de Apple → ERR_CONNECTION_REFUSED)
+      // cae al dominio de producción para no aterrizar en una URL muerta.
       var _origin = window.location.origin || '';
       var _isLocal = /^(https?:)?\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(_origin) || window.location.protocol === 'file:';
       var _redirectTo = _isLocal ? 'https://portivapp.com/' : (_origin + window.location.pathname);
