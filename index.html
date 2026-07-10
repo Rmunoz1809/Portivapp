@@ -12062,6 +12062,20 @@ const PORTIV_CHART = {
     brokerPts.forEach(p=>{if(!fromISO||p.date>=fromISO)byDate[p.date]={date:p.date,value:p.value,label:p.label};});
     localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+    // ── LÍNEA REAL: si ya bajamos el histórico real por posición, reconstruimos la serie
+    //    del portafolio (Σ qty×cierre real + efectivo) para ESTA ventana → reemplaza la recta
+    //    de 2 puntos por una curva diaria real. change/changePct se recalculan abajo (y el %
+    //    del broker, si existe, sigue mandando). Si aún no está listo, se carga en 2º plano.
+    if (typeof PORTIV_HIST !== 'undefined') {
+      try {
+        const _rs = PORTIV_HIST.series(fromISO || null);
+        if (_rs && _rs.values && _rs.values.length >= 3) {
+          merged = _rs.dates.map((d,i)=>({date:d, value:_rs.values[i], label:fmtDate(d)}));
+        } else if (!PORTIV_HIST.ready()) {
+          PORTIV_HIST.ensureAsync();
+        }
+      } catch(e){}
+    }
     if(!merged.length)return null;
     // Asegurar que el último punto = total en vivo actual
     if(typeof calcTotals==='function'){
@@ -12140,6 +12154,86 @@ const PORTIV_CHART = {
   },
 };
 window.PORTIV_CHART = PORTIV_CHART;
+
+// ══════════════════════════════════════════════════════════
+//  PORTIV_HIST — Reconstrucción REAL del valor del portafolio
+//  ─────────────────────────────────────────────────────────
+//  Antes las ventanas cortas (1W/2W/1M) degeneraban a una recta de 2 puntos: las anclas
+//  del broker (PERF_MASTER) caen fuera de esas ventanas y no había otro histórico. Ahora,
+//  con yh-proxy vivo, bajamos el cierre diario REAL de cada posición y reconstruimos el
+//  valor del portafolio día a día: valor(d) = Σ qty×cierre_real(d) + efectivo. El efectivo
+//  se deriva como (total_en_vivo − Σ qty×último_cierre) → el último punto queda ≈ total real
+//  (y setPeriodData lo re-ancla exacto). Carga en 2º plano y redibuja al terminar.
+const PORTIV_HIST = {
+  data: {},            // ticker → { 'YYYY-MM-DD': close }
+  _ready: false, _loading: false, _at: 0,
+  ready(){ return this._ready; },
+  _tickers(){
+    try { return [...new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : [])
+      .filter(h => h && h.ticker && (+h.qty > 0))
+      .map(h => h.ticker.toUpperCase()))]; } catch(e){ return []; }
+  },
+  async ensureAsync(){
+    if (this._loading) return;
+    if (this._ready && (Date.now() - this._at) < 600000) return;   // refresco máx 1×/10min
+    const tks = this._tickers();
+    if (!tks.length) return;
+    this._loading = true;
+    try {
+      const q = tks.slice();
+      const one = async (tk) => {
+        try {
+          if (typeof _yhChart !== 'function') return;
+          const y = await _yhChart(tk, '2y', '1d', 7000);   // 2 años cubre 1W..1Y
+          if (y && Array.isArray(y.timestamps) && y.timestamps.length && Array.isArray(y.closes)) {
+            const m = {};
+            for (let i = 0; i < y.timestamps.length; i++) {
+              const c = y.closes[i]; if (c == null) continue;
+              m[new Date(y.timestamps[i] * 1000).toISOString().slice(0, 10)] = c;
+            }
+            if (Object.keys(m).length) this.data[tk] = m;
+          }
+        } catch(e){}
+      };
+      const CONC = 3;
+      const workers = Array.from({ length: Math.min(CONC, q.length) }, async () => {
+        while (q.length) { await one(q.shift()); }
+      });
+      await Promise.all(workers);
+      this._ready = this._tickers().every(t => this.data[t]);   // listo solo si TODAS las posiciones tienen data
+      this._at = Date.now();
+    } catch(e){}
+    this._loading = false;
+    // Redibuja el período activo ya con la línea real.
+    try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
+  },
+  // Serie sincrónica (usa lo ya cacheado). fromISO = inicio de ventana (null = ALL).
+  series(fromISO){
+    try {
+      const tks = this._tickers();
+      if (!tks.length) return null;
+      for (const t of tks) { if (!this.data[t]) return null; }        // faltan posiciones → no reconstruir aún
+      const qty = {};
+      (HOLDINGS || []).forEach(h => { if (h && h.ticker && +h.qty > 0) {
+        const t = h.ticker.toUpperCase(); qty[t] = (qty[t] || 0) + (+h.qty); } });
+      // Intersección de fechas (todas las posiciones cotizan ese día).
+      let dates = Object.keys(this.data[tks[0]]);
+      for (let i = 1; i < tks.length; i++) { const s = this.data[tks[i]]; dates = dates.filter(d => d in s); }
+      dates = dates.filter(d => !fromISO || d >= fromISO).sort();
+      if (dates.length < 3) return null;
+      const lastD = dates[dates.length - 1];
+      let posLast = 0; tks.forEach(t => posLast += (qty[t] || 0) * (this.data[t][lastD] || 0));
+      let liveTotal = 0; try { liveTotal = (typeof calcTotals === 'function') ? +calcTotals().total.toFixed(2) : 0; } catch(e){}
+      const cash = (liveTotal > 0) ? (liveTotal - posLast) : 0;       // efectivo/MM implícito, constante
+      const values = dates.map(d => {
+        let v = 0; tks.forEach(t => v += (qty[t] || 0) * (this.data[t][d] || 0));
+        return +(v + cash).toFixed(2);
+      });
+      return { dates, values, labels: dates.slice() };
+    } catch(e){ return null; }
+  }
+};
+window.PORTIV_HIST = PORTIV_HIST;
 
 // ══════════════════════════════════════════════════════════
 //  HISTORIAL DIARIO AUTOMÁTICO (legacy — sigue activo para compatibilidad)
