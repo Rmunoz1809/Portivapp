@@ -5715,6 +5715,12 @@ const _IS_LOCAL_PROXY = (location.hostname === 'localhost' || location.hostname 
 // netlify/functions/anthropic, funciona sin CORS). Si no existe (404) o falla, se cae
 // automáticamente a la llamada directa al navegador → Anthropic (abajo).
 const _AI_FN_URL = '/.netlify/functions/anthropic';
+// Proxy de IA server-side para PRODUCCIÓN (GitHub Pages es estático → no corre la función
+// Netlify → daba 405). Edge Function de Supabase con la key guardada como secreto
+// ANTHROPIC_API_KEY (Edge Functions → Secrets). Mismo host/anon que finnhub-proxy.
+const _AI_SB_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/anthropic-proxy';
+const _AI_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
+function _aiSbOn(){ try { return /^https?:$/.test(location.protocol) && !_IS_LOCAL_PROXY; } catch(e){ return false; } }
 let _localProxyLive = _IS_LOCAL_PROXY; // true = serve.py disponible (actualizado async al cargar)
 
 // ── FORZAR FACTURACIÓN A TU API KEY (a pedido explícito) ─────────────────────────
@@ -5931,13 +5937,22 @@ async function _aiFetch(localPath, opts, essential) {
   if (!essential && !_FORCE_API_KEY_BILLING) {
     return new Response(JSON.stringify({ error: { message: 'paid-skip: feature no esencial en path de pago (usa fallback determinista)' } }), { status: 503, headers: { 'content-type': 'application/json' } });
   }
+  // PRODUCCIÓN: proxy Supabase (key server-side) antes que Netlify (que en GitHub Pages da 405).
+  let _sbErr;
+  if (_aiSbOn()) {
+    try {
+      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _AI_SB_ANON }, body: opts && opts.body });
+      if (r.ok) return r;
+      _sbErr = r;
+    } catch(e) {}
+  }
   try {
     const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
     if (r.ok) return r;   // hay función serverless desplegada
     // La función respondió con ERROR (502 timeout, 400, etc.). Si NO hay key local para
     // reintentar directo, devolvemos ESE error real — no el genérico "necesitas API key"
     // (en un sitio desplegado el path directo nunca tendría key y ocultaría la causa real).
-    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return r;
+    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return _sbErr || r;
   } catch(e) { /* función inalcanzable → directo */ }
   return _anthropicDirect(opts && opts.body);   // navegador → Anthropic (key del visitante)
 }
@@ -5954,11 +5969,20 @@ async function _aiFetchVision(opts) {
       if (r.ok) return r;
     } catch(e) {}
   }
+  // PRODUCCIÓN: proxy Supabase (key server-side). Preferido en cualquier deploy remoto.
+  let _sbErr;
+  if (_aiSbOn()) {
+    try {
+      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _AI_SB_ANON }, body: opts && opts.body });
+      if (r.ok) return r;
+      _sbErr = r;
+    } catch(e) {}
+  }
   try {
     const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
     if (r.ok) return r;
-    // Función respondió con error y no hay key local de respaldo → devuelve el error real.
-    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return r;
+    // Función respondió con error y no hay key local de respaldo → devuelve el error real (Supabase si lo hubo).
+    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return _sbErr || r;
   } catch(e) { /* función inalcanzable → directo */ }
   return _anthropicDirect(opts && opts.body);
 }
