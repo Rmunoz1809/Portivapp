@@ -23684,6 +23684,39 @@ if (document.readyState === 'loading') {
   var _origSave = window.savePortfolio;
   window.savePortfolio = function(){ if (typeof _origSave === 'function') _origSave.apply(this, arguments); cloudPush(); };
 
+  // ── Auto-regenerar "Portiv Intelligence" cuando el portafolio CAMBIA ───────────
+  // Cualquier compra/venta/edición pasa por savePortfolio(). Al cambiar las posiciones
+  // cambian beta, exposición y concentración → el texto del análisis debe rehacerse
+  // (antes quedaba stale: las tarjetas mostraban beta 1.20 y el texto seguía en 1.26).
+  // Sigue el MISMO sistema: gate por portfolioHash + PV_AI.generate (Haiku, ~$0.008).
+  // Debounced (agrupa ráfagas como un rebalanceo de varias posiciones en 1 sola
+  // regeneración) y con hash-guard que ADEMÁS evita el bucle PV_AI.save→savePortfolio
+  // (tras generar, el cache ya trae el hash actual → no se vuelve a disparar).
+  (function(){
+    var _t = null, _lastHash = null;
+    function _pvRegenOnChange(){
+      try {
+        if (typeof PV_AI === 'undefined' || PV_AI._busy) return;                 // ya generando
+        if (typeof getInvestorProfile !== 'function' || !getInvestorProfile()) return; // sin perfil no hay análisis
+        if (typeof HOLDINGS === 'undefined' || !HOLDINGS.length) return;         // portafolio vacío → nada que analizar
+        if (typeof portfolioHash !== 'function') return;
+        var h = portfolioHash();
+        var cached = PV_AI.load();
+        if (cached && cached.portfolioHash === h) return;   // el análisis ya corresponde a este portafolio
+        if (h === _lastHash) return;                        // ya disparado para este estado
+        _lastHash = h;
+        PV_AI._autoKey = null;                              // reactiva la auto-generación de render()
+        PV_AI.generate(true);                               // regenera en background (+ re-render si la pestaña está visible)
+      } catch(e){}
+    }
+    var _prevSave = window.savePortfolio;
+    window.savePortfolio = function(){
+      var r = (typeof _prevSave === 'function') ? _prevSave.apply(this, arguments) : undefined;
+      clearTimeout(_t); _t = setTimeout(_pvRegenOnChange, 1300);   // debounce ráfagas de cambios
+      return r;
+    };
+  })();
+
   function showLogin(){
     session = null;
     window._pvAuthReady = false;
