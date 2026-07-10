@@ -12055,6 +12055,15 @@ const PORTIV_CHART = {
     const masterLabels=(typeof PERF_MASTER!=='undefined'?PERF_MASTER.labels:[]) || [];
     // Puntos del broker
     const brokerPts=masterDates.map((d,i)=>({date:d,value:masterVals[i],label:masterLabels[i]}));
+    // ── CLAMP A LA FOTO ── Si la gráfica proviene de una foto/transcripción del broker
+    //    (_CHART_IMPORTED), NUNCA se extiende la ventana más allá de lo que la foto realmente
+    //    cubre. Un período más largo que el historial de la foto (p.ej. 1Y/YTD/ALL cuando la
+    //    foto solo llega a 3M) reutiliza la MISMA data del período más largo disponible en vez
+    //    de inventar valores/retornos que el broker no mostró. "usa los números de la gráfica".
+    if(_CHART_IMPORTED && masterDates.length){
+      const _mStart=masterDates[0];   // PERF_MASTER siempre viene ordenado ascendente
+      if(fromISO && _mStart && fromISO < _mStart) fromISO=_mStart;
+    }
     // Puntos del historial local (generados por esta app)
     const localPts=this.loadDaily(fromISO||undefined);
     // Fusionar: el historial local prevalece (datos en vivo más recientes)
@@ -12066,7 +12075,9 @@ const PORTIV_CHART = {
     //    del portafolio (Σ qty×cierre real + efectivo) para ESTA ventana → reemplaza la recta
     //    de 2 puntos por una curva diaria real. change/changePct se recalculan abajo (y el %
     //    del broker, si existe, sigue mandando). Si aún no está listo, se carga en 2º plano.
-    if (typeof PORTIV_HIST !== 'undefined') {
+    // Solo reconstruye desde precios reales (Yahoo) cuando NO hay una serie del broker/foto
+    // gobernando. Con foto importada, la foto es la única fuente → no se inventa nada extra.
+    if (!_CHART_IMPORTED && typeof PORTIV_HIST !== 'undefined') {
       try {
         const _rs = PORTIV_HIST.series(fromISO || null);
         if (_rs && _rs.values && _rs.values.length >= 3) {
