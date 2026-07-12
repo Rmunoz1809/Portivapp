@@ -23920,8 +23920,11 @@ document.addEventListener('DOMContentLoaded', function(){
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
       <button class="pq-skip-btn" id="pqSkip">Ver mi análisis →</button>`;
-    // Continúa a la conexión del broker (SnapTrade).
-    document.getElementById('pqFinish').onclick = ()=>{ try{ window.snapConnect(); }catch(e){} };
+    // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
+    document.getElementById('pqFinish').onclick = ()=>{
+      try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
+      try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
+    };
     const sk = document.getElementById('pqSkip');
     if (sk) sk.onclick = ()=>{
       _closeQuiz();
@@ -24029,7 +24032,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Connect: open the SnapTrade portal ──
   function snapConnect(){
     _setBusy(true);
-    return stCall('snaptrade-connect', {}).then(function(j){
+    return stCall('snaptrade-connect', { redirect: (location.origin + location.pathname) }).then(function(j){
       if(j && j.redirectURI){ try{ localStorage.setItem('pv_snap_pending','1'); }catch(e){} window.location.href = j.redirectURI; }
       else throw new Error('No se recibió el portal de conexión.');
     }).catch(function(e){ toast(e.message||'No se pudo iniciar la conexión.'); _setBusy(false); });
