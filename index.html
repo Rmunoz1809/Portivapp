@@ -11966,14 +11966,33 @@ const PORTIV_CHART = {
     // 1W/2W usan días; YTD empieza el 1 de enero (igual que el ancla YTD).
     const daysMap={'1W':7,'2W':14};
     const monthsMap={'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
+    // ── ANCLA DE VENTANA ── Los cortes 1W/2W/1M/3M se miden desde la ÚLTIMA fecha CON DATOS,
+    //    NO desde el reloj de hoy. Si el historial termina antes de hoy (hueco entre el último
+    //    dato disponible y la fecha actual), anclar a "hoy" deja VACÍA toda ventana más corta
+    //    que ese hueco → colapsan a la serie completa y 1W=2W=1M se ven idénticas a 3M/ALL.
+    //    Anclando al último dato real, cada ventana recorta un tramo DISTINTO del historial.
+    let _wLast=null;
+    try{
+      const _cands=[];
+      if(typeof PERF_MASTER!=='undefined'&&PERF_MASTER.dates&&PERF_MASTER.dates.length)
+        _cands.push(PERF_MASTER.dates[PERF_MASTER.dates.length-1]);
+      const _ld=this.loadDaily();
+      if(_ld&&_ld.length&&_ld[_ld.length-1]&&_ld[_ld.length-1].date) _cands.push(_ld[_ld.length-1].date);
+      if(!_CHART_IMPORTED && typeof PORTIV_HIST!=='undefined' && PORTIV_HIST.ready && PORTIV_HIST.ready()){
+        const _rs=PORTIV_HIST.series(null);
+        if(_rs&&_rs.dates&&_rs.dates.length) _cands.push(_rs.dates[_rs.dates.length-1]);
+      }
+      _cands.sort(); _wLast=_cands.length?_cands[_cands.length-1]:null;
+    }catch(_e){ _wLast=null; }
+    const _wAnchor=()=> _wLast ? new Date(_wLast+'T00:00:00') : new Date();
     let fromISO=null;
     if(period==='YTD'){
       fromISO=`${todayParts.y}-01-01`;
     } else if(monthsMap[period]){
-      const cut=new Date(); cut.setMonth(cut.getMonth()-monthsMap[period]);
+      const cut=_wAnchor(); cut.setMonth(cut.getMonth()-monthsMap[period]);
       fromISO=cut.toISOString().slice(0,10);
     } else if(daysMap[period]){
-      const cut=new Date(); cut.setDate(cut.getDate()-daysMap[period]);
+      const cut=_wAnchor(); cut.setDate(cut.getDate()-daysMap[period]);
       fromISO=cut.toISOString().slice(0,10);
     }
     // ALL: sin límite de tiempo
@@ -12007,7 +12026,13 @@ const PORTIV_CHART = {
       const _all={};
       brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value,label:p.label};});
       this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
-      merged=Object.values(_all).sort((a,b)=>a.date.localeCompare(b.date));
+      const _allArr=Object.values(_all).sort((a,b)=>a.date.localeCompare(b.date));
+      // NO colapsar a TODA la serie (eso hacía que 1W/2W/1M se vieran idénticas a 3M/ALL).
+      // Tomar solo la COLA proporcional al período → aunque los datos sean escasos, cada
+      // ventana muestra un tramo de longitud DISTINTA en vez de la serie completa.
+      const _tailN={'1D':2,'1W':6,'2W':11,'1M':23,'3M':64,'6M':128,'1Y':256,'2Y':512,'3Y':768};
+      const _n=_tailN[period]||_allArr.length;
+      merged=_allArr.slice(-Math.max(2,Math.min(_n,_allArr.length)));
     }
     // ── LÍNEA REAL: si ya bajamos el histórico real por posición, reconstruimos la serie
     //    del portafolio (Σ qty×cierre real + efectivo) para ESTA ventana → reemplaza la recta
