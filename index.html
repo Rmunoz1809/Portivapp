@@ -2342,7 +2342,7 @@
     .holdings-head { padding: 14px 14px 10px; }
     .holdings-title { font-size: 16px; }
     .news-thumb { width: 60px; height: 44px; }
-    .perf-chart-wrap { height: 200px; }
+    .perf-chart-wrap { height: 300px; }
   }
   /* ── SEARCH OVERLAY ── */
   .search-overlay {
@@ -12094,6 +12094,16 @@ const PORTIV_CHART = {
     brokerPts.forEach(p=>{if(!fromISO||p.date>=fromISO)byDate[p.date]={date:p.date,value:p.value,label:p.label};});
     localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+    // ── FALLBACK ANTI-COLAPSO ── Si la ventana pedida (1W/2W/1M) no contiene ≥2 puntos
+    //    reales (hueco de datos entre el histórico del broker y hoy), la serie se queda
+    //    con 1 solo punto y Chart.js no dibuja la línea. Reconstruimos con TODO el
+    //    historial disponible (misma curva que ALL) para mostrar siempre una línea limpia.
+    if(fromISO && merged.length<2){
+      const _all={};
+      brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value,label:p.label};});
+      this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
+      merged=Object.values(_all).sort((a,b)=>a.date.localeCompare(b.date));
+    }
     // ── LÍNEA REAL: si ya bajamos el histórico real por posición, reconstruimos la serie
     //    del portafolio (Σ qty×cierre real + efectivo) para ESTA ventana → reemplaza la recta
     //    de 2 puntos por una curva diaria real. change/changePct se recalculan abajo (y el %
@@ -12920,6 +12930,9 @@ const portivCrosshair = {
   }
 };
 
+// En celular (≤700px, mismo breakpoint que el CSS) la gráfica se muestra LIMPIA:
+// sin números del eje Y ni fechas del eje X, y sin cuadrícula → la línea ocupa todo.
+function _PERF_MOB(){ return (window.innerWidth || document.documentElement.clientWidth || 999) <= 700; }
 function initPerfChart() {
   // Arrancar YA con la serie "normal" (diaria real, suave) — la MISMA que genera
   // setPeriod('1M') después. Evita el flash de la versión intradía "robusta" (jagged).
@@ -12975,6 +12988,12 @@ function initPerfChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: _PERF_MOB() ? { top: 6, bottom: 2, left: 0, right: 0 } : 0 },
+      // Mantiene la gráfica limpia en celular al redimensionar/rotar: oculta ejes y cuadrícula.
+      onResize: (chart, size) => { try { const m = _PERF_MOB(); const s = chart.options.scales;
+        s.x.ticks.display = !m; s.y.display = !m; s.y.ticks.display = !m; s.y.grid.display = !m;
+        chart.options.layout = { padding: m ? { top: 6, bottom: 2, left: 0, right: 0 } : 0 };
+      } catch(e){} },
       // Sin puntos estáticos sobre la línea en ningún período (incl. 1D "hoy").
       // El dot de hover sigue activo vía pointHoverRadius del dataset.
       elements: { point: { radius: 0, hitRadius: 8 } },
@@ -13012,6 +13031,7 @@ function initPerfChart() {
           grid: { display: false },
           border: { display: false },
           ticks: {
+            display: !_PERF_MOB(),
             color: '#8A92A3', font: { size: 11 }, maxTicksLimit: 7,
             // Mostrar solo etiquetas de día (no las intradía con "HH:MM")
             callback: function(value, index, ticks) {
@@ -13022,9 +13042,11 @@ function initPerfChart() {
         },
         y: {
           position: 'right',
-          grid: { color: document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6', drawBorder: false },
+          display: !_PERF_MOB(),
+          grid: { display: !_PERF_MOB(), color: document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6', drawBorder: false },
           border: { display: false, dash: [3,3] },
           ticks: {
+            display: !_PERF_MOB(),
             color: '#8A92A3', font: { size: 11 },
             callback: v => v >= 1000 ? `$${(v/1000).toFixed(1)}K` : `$${v}`
           }
