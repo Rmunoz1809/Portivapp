@@ -11812,10 +11812,16 @@ function _buildPerfData(master) {
   const idxDaysBack = days => {
     if (!n) return 0;
     if (portfolioAgeDays <= days * 2) return 0;           // portafolio joven → rango completo
-    const cutoff = new Date(lastDate); cutoff.setDate(cutoff.getDate() - days); cutoff.setHours(0, 0, 0, 0);
+    const cutoff = new Date(lastDate); cutoff.setDate(cutoff.getDate() - days); cutoff.setHours(23, 59, 59, 999);
     if (new Date(dates[0]) >= cutoff) return 0;
-    for (let i = 0; i < n; i++) { if (new Date(dates[i]) >= cutoff) return i; }
-    return Math.max(0, n - 1);
+    // Ancla = ÚLTIMO cierre en-o-ANTES de (hoy − N días), igual que los brokers: si ese día
+    // exacto no operó (fin de semana/feriado), se usa el cierre previo. Antes tomaba el PRIMER
+    // punto DESPUÉS del corte → en fin de semana saltaba al lunes (a veces un pico local) e
+    // inflaba el % del período (1M salía −2.12% anclando al pico del 15-jun en vez de −1.30%
+    // real anclando al cierre del 12-jun, como Schwab: 13-jun cae sábado).
+    let idx = 0;
+    for (let i = 0; i < n; i++) { if (new Date(dates[i]) <= cutoff) idx = i; else break; }
+    return idx;
   };
   const mk = startIdx => {
     const L = labels.slice(startIdx);
@@ -24446,12 +24452,9 @@ document.addEventListener('DOMContentLoaded', function(){
     // perf tools next to the chart period buttons
     var pbtns=document.getElementById('periodBtns');
     if(pbtns && !document.getElementById('snapPerfToggle')){
-      var tools=document.createElement('div'); tools.className='snap-perf-tools';
-      tools.innerHTML='<div class="snap-toggle" id="snapPerfToggle">'
-        +'<button data-mode="value" class="on">Valor</button><button data-mode="performance">Rendimiento</button></div>'
-        +'<button id="snapRefreshBtn" style="display:none" onclick="snapRefresh()">↻ Actualizar</button>';
-      pbtns.parentNode.insertBefore(tools, pbtns);
-      tools.querySelectorAll('#snapPerfToggle button').forEach(function(btn){ btn.addEventListener('click',function(){ _setPerfMode(btn.getAttribute('data-mode')); }); });
+      // Toggle Valor/Rendimiento + boton Actualizar retirados de la grafica a pedido:
+      // solo se muestra el Valor. _perfMode queda fijo en 'value' (default). Los helpers
+      // (_setPerfMode/_setRefreshBtn/_perfNote) siguen guardando con if(!el) return.
       var card=pbtns.closest('.card')||pbtns.parentNode;
       if(card && !document.getElementById('snapPerfNote')){ var note=document.createElement('div'); note.id='snapPerfNote'; card.appendChild(note); }
     }
