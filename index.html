@@ -12092,7 +12092,27 @@ const PORTIV_CHART = {
         if(PORTIV_HIST.ready && PORTIV_HIST.ready()){
           const _rs=PORTIV_HIST.series(_fromWin||null);
           if(_rs && _rs.values && _rs.values.length>=3){
-            merged=_rs.dates.map((d,i)=>({date:d,value:_rs.values[i],label:fmtDate(d)}));
+            if(_windowNeedsEarlier && _masterStart && merged.length){
+              // ── BACKFILL ESCALADO (SnapTrade manda) ── SnapTrade es la verdad desde su primer
+              //    día (_masterStart)→hoy. El tramo PREVIO (que SnapTrade no tiene) se rellena con la
+              //    reconstrucción real (Σ qty×cierre Yahoo) ESCALADA para empatar el valor REAL del
+              //    broker en el borde → nivel correcto y curva continua. La reconstrucción sola tiene
+              //    otra base (daba 12-jun=$9,998 en vez de ~$10,255): escalar por SnapTrade[borde]/
+              //    recon[borde] la lleva al nivel del broker conservando la FORMA real de Yahoo.
+              const _recByDate={}; _rs.dates.forEach((d,i)=>{ _recByDate[d]=_rs.values[i]; });
+              let _recBoundary=_recByDate[_masterStart];
+              if(_recBoundary==null){ const _ge=_rs.dates.filter(d=>d>=_masterStart); if(_ge.length) _recBoundary=_recByDate[_ge[0]]; }
+              const _snapBoundary=(merged[0] && merged[0].value>0) ? merged[0].value : null;
+              const _scale=(_recBoundary>0 && _snapBoundary>0) ? (_snapBoundary/_recBoundary) : 1;
+              const _fill=[];
+              for(let i=0;i<_rs.dates.length;i++){
+                if(_rs.dates[i] < _masterStart) _fill.push({date:_rs.dates[i], value:+(_rs.values[i]*_scale).toFixed(2), label:fmtDate(_rs.dates[i])});
+              }
+              if(_fill.length) merged=_fill.concat(merged);
+            } else {
+              // Sin SnapTrade (o hueco general hasta hoy): reconstrucción completa (ancla a total vivo).
+              merged=_rs.dates.map((d,i)=>({date:d,value:_rs.values[i],label:fmtDate(d)}));
+            }
           }
         } else if(PORTIV_HIST.ensureAsync){ PORTIV_HIST.ensureAsync(); }
       }catch(e){}
