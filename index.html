@@ -12278,6 +12278,9 @@ const PORTIV_HIST = {
     this._loading = false;
     // Redibuja el período activo ya con la línea real.
     try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
+    // Reconstrucción lista → revela la gráfica ya asentada (anti-flash: sin broker esperamos a
+    // este momento, no al boot, para no mostrar el seed y luego saltar al valor real).
+    try { if (window._pvRevealChart) window._pvRevealChart(); } catch(e){}
   },
   // Serie sincrónica (usa lo ya cacheado). fromISO = inicio de ventana (null = ALL).
   series(fromISO){
@@ -12648,7 +12651,7 @@ function _redrawActiveChart() {
 // por el boot cuando NO hay broker conectado, y por un timeout de respaldo (nunca se queda pegada).
 let _pvChartRevealed = false;
 function _pvRevealChart() {
-  if (_pvChartRevealed) return; _pvChartRevealed = true;
+  if (_pvChartRevealed) return; _pvChartRevealed = true; try { window._pvChartRevealed = true; } catch(e){}
   try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); else if (typeof perfChart !== 'undefined' && perfChart) perfChart.update('none'); } catch(e){}
   try { const w = document.querySelector('.perf-chart-wrap'); if (w) w.classList.remove('pv-chart-loading'); } catch(e){}
 }
@@ -13239,6 +13242,9 @@ function _renderHeaderBadge(period, ds){
   const pv = document.getElementById('perf-period-val');
   if (!pv) return;
   if (period === '1D' || !ds || typeof ds.changePct !== 'number'){ _renderHeaderDayBadge(); return; }
+  // Anti-flash: hasta que la gráfica se asiente (reconstrucción/broker listos) NO pintar el %
+  // del período — evita mostrar el valor del seed (p.ej. −6.95%) y luego saltar al real. Queda "—".
+  if (!window._pvChartRevealed){ pv.textContent = '—'; pv.className = 'stitch-badge'; return; }
   const chg = (typeof ds.change === 'number') ? ds.change : 0;
   const pct = ds.changePct;
   pv.textContent = `${chg>=0?'+':'-'}${Math.abs(chg).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} (${pct>=0?'+':''}${pct.toFixed(2)}%)`;
@@ -13294,8 +13300,11 @@ function _updatePerfTotals(activeP, ds) {
   const al = el('perf-active-label'); if (al) al.textContent = ap;
   const yt = el('perf-ytd');
   if (yt && ds && typeof ds.changePct === 'number') {
-    yt.textContent = `${ds.changePct >= 0 ? '+' : ''}${ds.changePct.toFixed(2)}%`;
-    yt.className = 'perf-metric-val ' + (ds.changePct >= 0 ? 'pos' : 'neg');
+    if (!window._pvChartRevealed && ap !== '1D') { yt.textContent = '—'; yt.className = 'perf-metric-val'; }
+    else {
+      yt.textContent = `${ds.changePct >= 0 ? '+' : ''}${ds.changePct.toFixed(2)}%`;
+      yt.className = 'perf-metric-val ' + (ds.changePct >= 0 ? 'pos' : 'neg');
+    }
   }
 }
 
@@ -24519,7 +24528,15 @@ document.addEventListener('DOMContentLoaded', function(){
         if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
         // Sin broker conectado → la gráfica local YA es la definitiva: revélala (con broker,
         // snapHistory la revela tras aplicar el historial real). Idempotente.
-        if(!(j && j.connected)){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} }
+        if(!(j && j.connected)){
+          // Sin broker: si la reconstrucción (Yahoo) va a correr, espera a que termine para revelar
+          // (ensureAsync revela al asentarse) → sin flash seed→real. Si no hay nada que reconstruir,
+          // el seed YA es definitivo: revela ahora. El respaldo de 5s cubre cualquier caso.
+          try{
+            var _needRec = (typeof PORTIV_HIST!=='undefined' && PORTIV_HIST._tickers && PORTIV_HIST._tickers().length && !(PORTIV_HIST.ready && PORTIV_HIST.ready()));
+            if(!_needRec && window._pvRevealChart) window._pvRevealChart();
+          }catch(e){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(_e){} }
+        }
       }).catch(function(){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} }); }
     go();
   }
