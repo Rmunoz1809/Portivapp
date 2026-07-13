@@ -24371,7 +24371,11 @@ document.addEventListener('DOMContentLoaded', function(){
       // Conexión caída/expirada/no encontrada (p.ej. 410) → banner limpio "reconecta",
       // nunca un toast crudo con el volcado de headers. En refresh manual (no silencioso),
       // aviso corto y limpio.
-      if(/broken/i.test(_m) || /\b410\b|status code 4|not found|does not exist|expired|unauthor|revok/i.test(_m)) _render('broken');
+      // Solo 'broken' ante señales REALES de conexión revocada (410/revoked/unauthorized).
+      // Antes cualquier 4xx ("status code 4") marcaba 'broken' → un usuario recién registrado
+      // SIN broker (holdings vacío → error) veía un falso "se interrumpió". El edge ahora
+      // devuelve connected:false (needsConnection) para ese caso → cae en 'disconnected'.
+      if(/broken/i.test(_m) || /\b410\b|revok|unauthor/i.test(_m)) _render('broken');
       else if(!(opts&&opts.silent)) toast('No se pudieron actualizar tus posiciones. Intenta de nuevo.');
       return null;
     }).finally(function(){ _busy=false; _setRefreshBtn(false); });
