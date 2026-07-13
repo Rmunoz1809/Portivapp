@@ -23599,22 +23599,10 @@ if (document.readyState === 'loading') {
           return;
         }
         localStorage.setItem(LS_KEY, cloudRaw);
-      } else if (isOwner) {
-        // Propietario sin nube → sembrar su portafolio REAL (hardcodeado en el archivo).
-        var ownLocal = null; try { ownLocal = JSON.parse(localRaw || 'null'); } catch(e){}
-        if ((ownLocal && ownLocal.empty) && !sessionStorage.getItem(APPLIED)) {
-          localStorage.removeItem(LS_KEY);
-          sessionStorage.setItem(APPLIED, '1');
-          location.reload();
-          return;
-        }
-        try { if (typeof window.savePortfolio === 'function') window.savePortfolio(); } catch(e){}
-        var ownObj = JSON.parse(localStorage.getItem(LS_KEY) || 'null') || {};
-        ownObj.__wl  = _wlGather();
-        ownObj.__app = _appBundleGather();
-        await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: ownObj, updated_at: new Date().toISOString() });
       } else {
-        // Usuario NUEVO (no propietario) sin nube → empieza VACÍO (jamás siembra datos del owner).
+        // Cuenta SIN nube — usuario nuevo O el owner tras "vaciar mi cuenta": empieza VACÍA.
+        // El owner ya NO re-siembra el snapshot hardcodeado (26-jun) → borrar/recrear la cuenta
+        // no revive el portafolio viejo. Datos reales entran solo al conectar broker o importar.
         var emptyRaw = JSON.stringify(EMPTY_STATE);
         if (localRaw !== emptyRaw && !sessionStorage.getItem(APPLIED)) {
           localStorage.setItem(LS_KEY, emptyRaw);
