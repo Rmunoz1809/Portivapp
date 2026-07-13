@@ -6009,18 +6009,32 @@ const CHART_COLORS = [
 // Transaction log
 let TX_LOG = [];
 
-// Override manual del cambio (%) por período: { '1M':2.5, '3M':8, '6M':..., '1Y':..., '3Y':... }
-// Si un período tiene override, la gráfica y el encabezado usan ese % en vez de calcularlo
-// desde la serie. Editable desde el editor de portafolio (pestaña Personalizar).
-// Cambios por período REALES de Schwab (capturas 06/26/2026): 1-Month −8.09%, 3-Month −2.55%.
-// 6M/1Y/3Y/ALL heredan el 3M (el override más largo dado por el broker).
-let PERIOD_CHANGE_OVERRIDE = { '1M': -8.09, '3M': -2.55 };
+// Override manual del cambio (%) por período: { '1M':2.5, '3M':8, ... }. SOLO lo fija el flujo
+// de foto/CSV (la IA lee el % de la captura del broker). Arranca VACÍO: sin ese seed, los %s de
+// cada período se CALCULAN del historial real. Con SnapTrade conectado se descarta SIEMPRE
+// (SnapTrade = fuente de verdad → ver _clearPeriodOverrides).
+// (Antes venía hardcodeado {1M:-8.09,3M:-2.55} de una prueba del 26/06/2026 que nunca se limpió
+//  al integrar SnapTrade, causando %s de período viejos y desactualizados.)
+let PERIOD_CHANGE_OVERRIDE = {};
 const _PERIOD_MONTHS = {'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
 function _periodMonthsOf(p){ return _PERIOD_MONTHS[p] || 0; }
 function _periodOverridePct(p){
   const v = PERIOD_CHANGE_OVERRIDE ? PERIOD_CHANGE_OVERRIDE[p] : null;
   return (typeof v === 'number' && isFinite(v)) ? v : null;
 }
+// Descarta TODOS los overrides de % de período (semilla vieja o lectura de foto/CSV). Se llama
+// cuando SnapTrade es la fuente de verdad: con broker conectado, los %s (1M/3M/6M/1Y/YTD/ALL)
+// se derivan SIEMPRE del historial real de SnapTrade — nunca de un override manual/hardcodeado.
+// `persist` guarda el estado limpio para que un reload no reintroduzca el valor viejo.
+function _clearPeriodOverrides(persist){
+  try {
+    const had = PERIOD_CHANGE_OVERRIDE && Object.keys(PERIOD_CHANGE_OVERRIDE).length > 0;
+    PERIOD_CHANGE_OVERRIDE = {};
+    if (persist && had && typeof savePortfolio === 'function') savePortfolio();
+    return had;
+  } catch(e){ return false; }
+}
+window._clearPeriodOverrides = _clearPeriodOverrides;
 // Meses de un período (ALL = infinito) para comparar duraciones.
 function _periodSpanMonths(p){ return p === 'ALL' ? 1e9 : (_periodMonthsOf(p) || 0); }
 // Override de MAYOR duración que dio el broker → {months, pct}, o null.
@@ -6157,7 +6171,14 @@ function savePortfolio() {
     if (typeof s.capital === 'number' && isFinite(s.capital) && s.capital > 0) INITIAL_CAPITAL = s.capital;
     if (typeof s.totalOverride === 'number' && isFinite(s.totalOverride) && s.totalOverride > 0) TOTAL_OVERRIDE = s.totalOverride;
     if (typeof s.dayRef === 'number' && isFinite(s.dayRef)) { _OVERRIDE_DAY_REF = s.dayRef; window._PF_HAS_DAYREF = true; }
-    if (s.periodOverride && typeof s.periodOverride === 'object') PERIOD_CHANGE_OVERRIDE = s.periodOverride;
+    if (s.periodOverride && typeof s.periodOverride === 'object') {
+      // Migración de un solo uso: descarta el seed viejo hardcodeado {1M:-8.09,3M:-2.55}
+      // (prueba del 26/06/2026 que nunca se limpió al integrar SnapTrade). Cualquier otro
+      // override (foto/CSV real) sí se restaura tal cual.
+      const _po = s.periodOverride;
+      const _isStaleSeed = _po['1M'] === -8.09 && _po['3M'] === -2.55 && Object.keys(_po).length === 2;
+      PERIOD_CHANGE_OVERRIDE = _isStaleSeed ? {} : _po;
+    }
     // Serie de la gráfica importada: se guarda aquí y se aplica en init() (PERF_MASTER aún no existe).
     if (s.perfMaster && Array.isArray(s.perfMaster.values) && s.perfMaster.values.length >= 2) window._SAVED_PERF_MASTER = s.perfMaster;
     if (s.perfYScale && typeof s.perfYScale.min === 'number' && typeof s.perfYScale.max === 'number') window._SAVED_PERF_YSCALE = s.perfYScale;
@@ -24314,6 +24335,9 @@ document.addEventListener('DOMContentLoaded', function(){
       return j;
     }).then(function(j){
       if(j && j.connected && !j.broken) _render('connected', { fromCache: j.fromCache });
+      // Broker conectado por SnapTrade → SnapTrade gana: descarta cualquier override de % de
+      // período (semilla vieja o foto) para que 1M/3M/6M/1Y/YTD se calculen del historial real.
+      if(j && j.connected){ try{ if(window._clearPeriodOverrides) window._clearPeriodOverrides(true); }catch(e){} }
       if(j && j.connected) snapHistory();
       return j;
     }).catch(function(e){
@@ -24334,6 +24358,9 @@ document.addEventListener('DOMContentLoaded', function(){
     return stCall('snaptrade-history', {}).then(function(j){
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
+        // Serie REAL de SnapTrade → borra overrides antes de aplicarla: el % de cada período
+        // se deriva de estos puntos reales, jamás del valor hardcodeado viejo.
+        try{ if(window._clearPeriodOverrides) window._clearPeriodOverrides(true); }catch(e){}
         try{ _applyValueChart(pts);
           if(typeof setPeriod==='function'){ var b=document.querySelector('#periodBtns [data-period="ALL"]'); setPeriod('ALL', b||undefined); }
         }catch(e){}
