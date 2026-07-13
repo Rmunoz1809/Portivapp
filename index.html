@@ -11806,9 +11806,9 @@ let _CHART_IMPORTED = true;
 //  · Persiste entre sesiones con localStorage versionado
 // ══════════════════════════════════════════════════════════
 const PORTIV_CHART = {
-  INTRADAY_KEY: 'portiv_intraday_v2',
+  INTRADAY_KEY: 'portiv_intraday_v3',   // v3: buckets de 5 min (v2 era por hora)
   DAILY_KEY:    'portiv_daily_v2',
-  MAX_INTRADAY: 48,    // máx puntos 1D (2 días de cobertura ante recargas tardías)
+  MAX_INTRADAY: 200,   // máx puntos 1D — buckets de 5 min: ~78/día, cubre 2 días de sesión
   MAX_DAILY:    760,   // máx puntos históricos (~3 años)
   TZ: 'America/New_York',
 
@@ -11844,18 +11844,20 @@ const PORTIV_CHART = {
     const now=new Date();
     const p=this._nyParts(now);
     const today=this._todayET();
-    const hourKey=String(p.h).padStart(2,'0');
-    // Label canónico por bucket: apertura (hora 9) → "09:30", resto → "HH:00"
-    const canonLabel=p.h===9?'09:30':`${hourKey}:00`;
-    const point={ts:now.getTime(),date:today,hour:hourKey,time:canonLabel,value:+value.toFixed(2)};
+    // Bucket de 5 min: HH:MM redondeado hacia abajo al múltiplo de 5 (09:30, 09:35, 09:40…).
+    // Grabar cada ~30s solo actualiza el bucket vigente; cada 5 min nace uno nuevo → curva
+    // intradía real (hasta ~78 puntos 09:30→16:00) en vez de la línea plana de los buckets/hora.
+    const bMin=Math.floor(p.mi/5)*5;
+    const bucket=`${String(p.h).padStart(2,'0')}:${String(bMin).padStart(2,'0')}`;
+    const point={ts:now.getTime(),date:today,bkt:bucket,time:bucket,value:+value.toFixed(2)};
     let isNew=false;
     try{
       let arr=JSON.parse(localStorage.getItem(this.INTRADAY_KEY)||'[]');
       if(!Array.isArray(arr))arr=[];
-      const dup=arr.findIndex(x=>x.date===today&&(x.hour===hourKey||(!x.hour&&x.time&&x.time.slice(0,2)===hourKey)));
+      const dup=arr.findIndex(x=>x.date===today&&(x.bkt===bucket||x.time===bucket));
       if(dup>=0){
-        // Actualiza valor y ts pero CONSERVA el label canónico original del bucket
-        arr[dup].value=point.value;arr[dup].ts=point.ts;arr[dup].hour=hourKey;
+        // Mismo bucket de 5 min → refresca valor/ts (último precio del intervalo).
+        arr[dup].value=point.value;arr[dup].ts=point.ts;arr[dup].bkt=bucket;arr[dup].time=bucket;
       } else {
         arr.push(point);
         isNew=true;
@@ -11931,12 +11933,15 @@ const PORTIV_CHART = {
       // Cargar puntos reales del día y anteponer el ancla de apertura.
       const pts=this.loadIntraday();
       const series=[];
-      // Ancla "09:30": solo si no existe ya un punto en el bucket de la hora 9.
-      const hasOpen=pts.some(p=>(p.hour==='09')||(p.time&&p.time.slice(0,2)==='09'));
+      // Ancla "09:30": solo si aún no existe el bucket exacto de apertura.
+      const hasOpen=pts.some(p=>p.time==='09:30');
       if(openVal>0&&!hasOpen){
         series.push({time:'09:30',date:today,value:openVal});
       }
       pts.forEach(p=>series.push({time:p.time,date:p.date,value:p.value}));
+      // Orden cronológico por HH:MM (labels 0-padded → localeCompare = tiempo real). Evita
+      // zigzag si el ancla sintética 09:30 se mezcla con buckets pre-market (08:xx) o tardíos.
+      series.sort((a,b)=>a.time.localeCompare(b.time));
       // Garantizar el punto en vivo actual al final.
       if(cur>0){
         const lastPt=series[series.length-1];
@@ -22829,8 +22834,8 @@ function init() {
       });
     }
 
-    // ── Snapshot horario garantizado + gráfica viva ──────────────────────────────
-    //    Asegura un punto de portfolio cada ~5min durante market hours (bucket por hora
+    // ── Snapshot cada 5 min garantizado + gráfica viva ───────────────────────────
+    //    Asegura un punto de portfolio cada 5min durante market hours (bucket de 5 min
     //    para 1D) y refresca la gráfica del período activo, aunque los precios no cambien.
     setInterval(() => {
       try {
