@@ -12243,9 +12243,13 @@ const PORTIV_HIST = {
   },
   async ensureAsync(){
     if (this._loading) return;
-    if (this._ready && (Date.now() - this._at) < 600000) return;   // refresco máx 1×/10min
     const tks = this._tickers();
     if (!tks.length) return;
+    // Refetch si cambió el SET de posiciones (reconexión de broker / import): si falta CUALQUIER
+    // ticker actual en caché, recarga AUNQUE el cooldown de 10min no haya expirado — así la
+    // reconstrucción refleja las posiciones REALES nuevas de inmediato, no las viejas del seed.
+    const _haveAll = tks.every(t => this.data[t]);
+    if (_haveAll && this._ready && (Date.now() - this._at) < 600000) return;   // ya tenemos TODOS → cooldown 10min
     this._loading = true;
     try {
       const q = tks.slice();
