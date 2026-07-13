@@ -11919,7 +11919,12 @@ const PORTIV_CHART = {
       let openVal=0;
       if(pc&&pc.value>0){
         openVal=pc.value;
-      } else if(typeof _dayChangeNow==='function'&&cur>0){
+      } else if(typeof _calcRealDayChange==='function'){
+        // Fuente ÚNICA del cierre anterior del portafolio → ancla de apertura fiel
+        // (mismo valor que el badge del día) → el signo del 1D SIEMPRE coincide con "Hoy".
+        try{ const _rd=_calcRealDayChange(); if(_rd&&_rd.prevClose>0) openVal=+(+_rd.prevClose).toFixed(2); }catch(e){}
+      }
+      if(!(openVal>0)&&typeof _dayChangeNow==='function'&&cur>0){
         const dc=_dayChangeNow();
         if(isFinite(dc))openVal=+(cur-dc).toFixed(2);
       }
@@ -13058,8 +13063,42 @@ function setPeriodData(period, ds) {
       ? function(value) { return this.getLabelForValue(value); }
       : function(value) { const l = this.getLabelForValue(value); return /\d{2}:\d{2}/.test(l) ? '' : l; };
   } catch(e) {}
-  // Auto-escala por timeframe: limpia cualquier min/max fijado previamente.
-  try { if (perfChart.options && perfChart.options.scales && perfChart.options.scales.y) { perfChart.options.scales.y.min = undefined; perfChart.options.scales.y.max = undefined; } } catch(e){}
+  // ── Escala del eje Y por timeframe ─────────────────────────────────────────
+  //  1D: ventana AJUSTADA al rango intradía (con piso mínimo) → el movimiento del
+  //      día se ve claro y profesional, nunca una recta plana en escala de $500.
+  //  Resto: auto min/max + el paso del broker ($500), escala consistente entre períodos.
+  try {
+    const _y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+    if (_y) {
+      if (period === '1D') {
+        const _vv = (ds.values || []).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
+        if (_vv.length) {
+          let _lo = Math.min(..._vv), _hi = Math.max(..._vv);
+          const _floor = Math.max(_hi * 0.003, 1);      // ventana mínima si el día casi no se movió
+          let _range = _hi - _lo;
+          if (_range < _floor) { const _mid = (_hi + _lo) / 2; _lo = _mid - _floor / 2; _hi = _mid + _floor / 2; _range = _hi - _lo; }
+          const _pad = _range * 0.28;
+          _y.min = Math.max(0, +(_lo - _pad).toFixed(2));
+          _y.max = +(_hi + _pad).toFixed(2);
+          // Paso "bonito" → ~4 líneas de cuadrícula dentro del rango intradía.
+          const _rawStep = (_y.max - _y.min) / 4 || 1;
+          const _mag = Math.pow(10, Math.floor(Math.log10(_rawStep)));
+          const _norm = _rawStep / _mag;
+          const _nice = _norm >= 5 ? 5 : _norm >= 2 ? 2 : 1;
+          if (_y.ticks) {
+            _y.ticks.stepSize = _nice * _mag;
+            _y.ticks.callback = v => '$' + Math.round(v).toLocaleString('en-US');
+          }
+        }
+      } else {
+        _y.min = undefined; _y.max = undefined;
+        if (_y.ticks) {
+          _y.ticks.stepSize = (typeof PERF_YSCALE !== 'undefined' && PERF_YSCALE && PERF_YSCALE.step > 0) ? PERF_YSCALE.step : 500;
+          _y.ticks.callback = v => v >= 1000 ? '$' + (v / 1000).toFixed(1) + 'K' : '$' + v;
+        }
+      }
+    }
+  } catch(e){}
   perfChart.update('periodChange');
   if (typeof _updateSummaryCardFor === 'function') _updateSummaryCardFor(period, ds.change, ds.changePct);
   const lbl = { '1D':'Hoy','1W':'1 Semana','1M':'1 Mes','3M':'3 Meses','6M':'6 Meses','1Y':'1 Año','YTD':'YTD','ALL':'Histórico' }[period] || period;
