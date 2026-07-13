@@ -12072,13 +12072,22 @@ const PORTIV_CHART = {
       ? Math.round((new Date(today+'T00:00:00') - new Date(_lastReal+'T00:00:00'))/86400000)
       : 99999;
     const _coversNow = merged.length>=3 && _daysToNow<=4;
+    // ── ¿La ventana pedida empieza ANTES del primer dato del broker? ── SnapTrade solo trae
+    //    historial desde la fecha de CONEXIÓN (p.ej. 15-jun), pero 1M/3M necesitan anclar a
+    //    ~1 mes/3 meses atrás. En ese caso la serie del broker NO cubre el borde izquierdo de la
+    //    ventana → hay que reconstruir con datos reales (Σ qty×cierre Yahoo) para obtener el ancla
+    //    correcta del período (como el broker). Sin esto, 1M anclaba al 15-jun (pico) y daba
+    //    −2.12% en vez del −1.30% real de Schwab (ancla 12-jun). Solo aplica a datos de SnapTrade
+    //    (window._PERF_FROM_SNAP) — el flujo de FOTO conserva su clamp "usa los números de la foto".
+    const _masterStart = masterDates.length ? masterDates[0] : null;
+    const _windowNeedsEarlier = !!(window._PERF_FROM_SNAP && _fromWin && _masterStart && _fromWin < _masterStart);
     // ── RECONSTRUCCIÓN REAL (garantía anti-fechas-viejas) ── Σ qty×cierre real (Yahoo) + efectivo
     //    → serie diaria continua que SIEMPRE llega al último día de mercado. Rellena el hueco hasta
     //    hoy con datos REALES, así el eje muestra el período pedido con fechas correctas para
     //    CUALQUIER usuario con posiciones. Si aún no está en caché, se carga en 2º plano y refresca
     //    la gráfica al terminar (ensureAsync → PORTIV_CHART.refresh). Usa la ventana REAL (_fromWin),
     //    no la recortada por el clamp de la foto.
-    if(!_coversNow && typeof PORTIV_HIST!=='undefined'){
+    if((!_coversNow || _windowNeedsEarlier) && typeof PORTIV_HIST!=='undefined'){
       try{
         if(PORTIV_HIST.ready && PORTIV_HIST.ready()){
           const _rs=PORTIV_HIST.series(_fromWin||null);
@@ -12258,7 +12267,16 @@ const PORTIV_HIST = {
       // Intersección de fechas (todas las posiciones cotizan ese día).
       let dates = Object.keys(this.data[tks[0]]);
       for (let i = 1; i < tks.length; i++) { const s = this.data[tks[i]]; dates = dates.filter(d => d in s); }
-      dates = dates.filter(d => !fromISO || d >= fromISO).sort();
+      dates.sort();
+      if (fromISO) {
+        const _inWin = dates.filter(d => d >= fromISO);
+        // Ancla del borde izquierdo = ÚLTIMO cierre EN-O-ANTES de fromISO (carry-forward, como los
+        // brokers: si (hoy−N) cae en fin de semana/feriado, se usa el cierre previo). Sin esto la
+        // ventana saltaba al primer día hábil DESPUÉS del corte (a veces un pico local) → % inflado.
+        const _before = dates.filter(d => d < fromISO);
+        if (_before.length) _inWin.unshift(_before[_before.length - 1]);
+        dates = _inWin;
+      }
       if (dates.length < 3) return null;
       const lastD = dates[dates.length - 1];
       let posLast = 0; tks.forEach(t => posLast += (qty[t] || 0) * (this.data[t][lastD] || 0));
@@ -24367,6 +24385,10 @@ document.addEventListener('DOMContentLoaded', function(){
         // Serie REAL de SnapTrade → borra overrides antes de aplicarla: el % de cada período
         // se deriva de estos puntos reales, jamás del valor hardcodeado viejo.
         try{ if(window._clearPeriodOverrides) window._clearPeriodOverrides(true); }catch(e){}
+        // Marca la fuente como SnapTrade: su historial arranca en la fecha de conexión, así que
+        // para ventanas más largas (1M/3M…) generate() reconstruye el tramo previo con datos reales
+        // (Yahoo) y ancla el % como el broker. El flujo de FOTO no pone este flag (conserva su clamp).
+        try{ window._PERF_FROM_SNAP = true; }catch(e){}
         try{ _applyValueChart(pts);
           if(typeof setPeriod==='function'){ var b=document.querySelector('#periodBtns [data-period="ALL"]'); setPeriod('ALL', b||undefined); }
         }catch(e){}
