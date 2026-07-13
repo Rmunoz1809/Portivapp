@@ -5961,10 +5961,10 @@ window._aiQualityModel = _aiQualityModel;
 // ═══════════════════════════════════════════════════
 //  DATA
 // ═══════════════════════════════════════════════════
-let CASH = 1.12;
+let CASH = 0;
 let MONEY_MARKET = 0;             // Saldo en money market (editable desde AI Portfolio)
-let INITIAL_CAPITAL = 10138.49;   // Capital invertido / base de inception — total cost basis Schwab 26-Jun-2026
-let TOTAL_OVERRIDE    = 9841.99;  // Valor real del broker (ancla) — Schwab Total Value 26-Jun-2026
+let INITIAL_CAPITAL = 0;          // Vacío por defecto (multi-usuario): los valores reales entran de la nube/broker/import; nunca se hornea el portafolio del owner.
+let TOTAL_OVERRIDE    = null;     // Vacío por defecto — sin ancla horneada; la cuenta arranca en $0 hasta que hay datos reales.
 let _OVERRIDE_DAY_REF = 0;        // Cambio del día en el momento de anclar — para que el total se mueva con el mercado
 
 // Snapshot Schwab — 26 Jun 2026 04:02 PM ET (Positions Details).
@@ -5974,20 +5974,7 @@ let _OVERRIDE_DAY_REF = 0;        // Cambio del día en el momento de anclar —
 // ── Verdad de Schwab (capturas 06/26/2026, Positions Details). qty + costBasis son los
 //    anclas estables; price/dayChgPct son valores de arranque que el fetch en vivo refresca.
 //    Σ(qty·price) = $9,840.87 (mkt) · +cash $1.12 = $9,841.99 (total). cost $10,138.49.
-let HOLDINGS = [
-  { ticker:'MU',    name:'Micron Technology',      type:'stock', qty:0.4615,  price:1132.33, dayChgPct:-6.69,  costBasis:499.99  },
-  { ticker:'SNDK',  name:'SanDisk Corp.',           type:'stock', qty:0.1354,  price:2090.69, dayChgPct:-10.46, costBasis:271.84  },
-  { ticker:'TSM',   name:'Taiwan Semiconductor',    type:'stock', qty:2.289,   price:432.35,  dayChgPct:-0.61,  costBasis:999.97  },
-  { ticker:'AAPL',  name:'Apple Inc.',              type:'stock', qty:1.702,   price:283.78,  dayChgPct:3.14,   costBasis:500.00  },
-  { ticker:'AMZN',  name:'Amazon.com Inc.',         type:'stock', qty:1.9379,  price:232.69,  dayChgPct:2.5,    costBasis:478.19  },
-  { ticker:'MSFT',  name:'Microsoft Corp.',         type:'stock', qty:1.2652,  price:372.97,  dayChgPct:5.71,   costBasis:500.75  },
-  { ticker:'META',  name:'Meta Platforms',          type:'stock', qty:1.7,     price:550.25,  dayChgPct:1.36,   costBasis:999.97  },
-  { ticker:'APP',   name:'AppLovin Corp.',          type:'stock', qty:0.9682,  price:477.08,  dayChgPct:6.99,   costBasis:499.95  },
-  { ticker:'NVDA',  name:'NVIDIA Corp.',            type:'stock', qty:4.7613,  price:192.53,  dayChgPct:-1.64,  costBasis:999.98  },
-  { ticker:'GOOGL', name:'Alphabet Inc.',           type:'stock', qty:2.1672,  price:337.39,  dayChgPct:-1.84,  costBasis:799.98  },
-  { ticker:'AVGO',  name:'Broadcom Inc.',           type:'stock', qty:0.9971,  price:365.04,  dayChgPct:-3.67,  costBasis:400.00  },
-  { ticker:'VOO',   name:'Vanguard S&P 500 ETF',   type:'etf',   qty:4.8128,  price:671.21,  dayChgPct:-0.66,  costBasis:3187.87 },
-];
+let HOLDINGS = [];   // Vacío por defecto (multi-usuario): las posiciones reales entran de la nube/broker/import. Nunca se hornea el portafolio del owner.
 
 // Colores por ticker, en el MISMO orden que HOLDINGS:
 // MU, SNDK, TSM, AAPL, AMZN, MSFT, META, APP, NVDA, GOOGL, AVGO, VOO
@@ -11790,13 +11777,7 @@ const INCEPTION = new Date('2026-04-24');
 // ── SERIE MAESTRA DIARIA — réplica de la gráfica del broker (24 Abr → 1 Jun) ──
 // Es la fuente única de verdad. 1W/2W/1M/ALL se derivan cortando esta serie.
 // El analizador de portafolio (AI) puede reemplazarla leyendo una foto de la gráfica.
-let PERF_MASTER = {
-  labels: ['24 Abr','25 Abr','26 Abr','27 Abr','28 Abr','29 Abr','30 Abr','1 May','2 May','3 May','4 May','5 May','6 May','7 May','8 May','9 May','10 May','11 May','12 May','13 May','14 May','15 May','16 May','17 May','18 May','19 May','20 May','21 May','22 May','23 May','24 May','25 May','26 May','27 May','28 May','29 May','30 May','31 May','1 Jun','2 Jun','3 Jun','4 Jun','5 Jun','6 Jun'],
-  dates:  ['2026-04-24','2026-04-25','2026-04-26','2026-04-27','2026-04-28','2026-04-29','2026-04-30','2026-05-01','2026-05-02','2026-05-03','2026-05-04','2026-05-05','2026-05-06','2026-05-07','2026-05-08','2026-05-09','2026-05-10','2026-05-11','2026-05-12','2026-05-13','2026-05-14','2026-05-15','2026-05-16','2026-05-17','2026-05-18','2026-05-19','2026-05-20','2026-05-21','2026-05-22','2026-05-23','2026-05-24','2026-05-25','2026-05-26','2026-05-27','2026-05-28','2026-05-29','2026-05-30','2026-05-31','2026-06-01','2026-06-02','2026-06-03','2026-06-04','2026-06-05','2026-06-06'],
-  // Valores Schwab hasta Jun 1, extendidos con movimiento real Jun 2–6.
-  // El último punto (Jun 6) se sobrescribe en vivo con el total real del portafolio.
-  values: [10100,10103,10118,10135,10150,10125,10098,10126,10130,10138,10182,10370,10560,10595,10610,10600,10600,10615,10635,10685,10720,10690,10650,10590,10545,10515,10520,10550,10580,10600,10605,10615,10625,10800,10955,10985,11000,10980,10917.01,10940,10968,10985,11046.33,11046.33],
-};
+let PERF_MASTER = { labels: [], dates: [], values: [] };   // Vacío por defecto — la serie real se reconstruye de posiciones/broker/import; sin seed horneado del owner. Cuenta vacía → gráfica vacía.
 
 // Construye el objeto PERF_DATA (1W/2W/1M/ALL) cortando la serie maestra por fecha.
 function _buildPerfData(master) {
@@ -22845,10 +22826,9 @@ function init() {
     // Ancla al valor real del broker SOLO si no se cargó un estado guardado
     // (cuenta propietaria sin datos en la nube todavía). Las cuentas con estado
     // guardado — incluidas las vacías — conservan sus propios valores.
-    if (!window._PF_FROM_SAVE) {
-      TOTAL_OVERRIDE    = 10493.47;   // Schwab Total Value (Σ posiciones + cash)
-      INITIAL_CAPITAL   = 10100;       // base de inception (capital depositado)
-    }
+    // (Antes aquí se horneaba el ancla del owner —TOTAL_OVERRIDE/INITIAL_CAPITAL— cuando no había
+    // estado guardado. ELIMINADO: multi-usuario arranca VACÍO; los valores reales entran de la
+    // nube/broker/import. Sin esto, cada cuenta nueva mostraba el total del owner ($10,493 / +1.16%).)
     // Cuenta vacía (no propietaria): sin historial en la gráfica de rendimiento.
     if (window._PF_EMPTY) {
       PERF_MASTER = { labels: [], dates: [], values: [] };
