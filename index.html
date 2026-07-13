@@ -23298,7 +23298,27 @@ if (document.readyState === 'loading') {
   }
   window._purgeAccountLocal = _purgeAccountLocal;
 
+  // Borra TODO rastro local (como si la cuenta nunca hubiera existido). Se llama cuando el
+  // servidor ya NO reconoce la sesión (cuenta eliminada en Supabase). Conserva solo las
+  // preferencias de dispositivo (idioma/tema) y las API keys locales — no son datos de cuenta.
+  function _pvNukeLocalAll(){
+    try {
+      var KEEP = { portiv_lang:1, portiv_theme:1, anthropic_key:1, fh_api_key:1 };
+      Object.keys(localStorage).forEach(function(k){
+        if (KEEP[k]) return;
+        if (/^(portiv_|pv_|news_|weekly_outlook_|outlook_|week_top_|wl_|portfolio_|shared_news_|fh_)/.test(k))
+          { try{ localStorage.removeItem(k); }catch(e){} }
+      });
+      Object.keys(sessionStorage).forEach(function(k){
+        if (/^(_applied_|_cloudApplied|pv_)/.test(k) || k==='pv_force_quiz')
+          { try{ sessionStorage.removeItem(k); }catch(e){} }
+      });
+    } catch(e){}
+  }
+  window._pvNukeLocalAll = _pvNukeLocalAll;
+
   async function cloudLoadAndGate(s){
+    if (window._pvKilled) return;   // cuenta eliminada → no cargar nada (se reinicia limpio)
     session = s;
     try { window.__pvUserId = (s.user && s.user.id) || 'local'; } catch(e){}
     // Sesión autenticada lista → SharedNews ya puede ESCRIBIR en la nube (RLS exige auth).
@@ -23458,7 +23478,31 @@ if (document.readyState === 'loading') {
     showOverlay();
   }
 
-  sb.auth.getSession().then(function(r){ r.data.session ? cloudLoadAndGate(r.data.session) : showLogin(); });
+  // Arranque: valida la sesión CONTRA EL SERVIDOR. Si la cuenta fue eliminada en Supabase,
+  // el JWT local sigue "válido" hasta expirar, pero getUser() devuelve un error de auth (403
+  // "User ... does not exist") → se borra TODO rastro local (como si nunca hubiera existido) y se
+  // cierra la sesión. Un fallo de RED (getUser lanza / sin señal de borrado) NO borra nada.
+  sb.auth.getSession().then(function(r){
+    var s = r.data.session;
+    if (!s) { showLogin(); return; }
+    sb.auth.getUser().then(function(u){
+      var err = u && u.error;
+      if (err) {
+        var code = err.status || 0;
+        var msg  = (err.message || '').toLowerCase();
+        var deleted = code === 403 || /not exist|not found|sub claim|user_not_found|deleted/i.test(msg);
+        if (deleted) {
+          window._pvKilled = true;                          // corta cualquier carga en curso
+          try { _pvNukeLocalAll(); } catch(e){}
+          sb.auth.signOut().catch(function(){}).then(function(){
+            try { location.reload(); } catch(e){ showLogin(); }   // recarga → arranca limpio, sin sesión
+          });
+          return;
+        }
+      }
+      cloudLoadAndGate(s);                                   // sesión válida (o error transitorio)
+    }).catch(function(){ cloudLoadAndGate(s); });            // fallo de red → no borrar
+  });
   sb.auth.onAuthStateChange(function(_e, s){ if (s && !session) cloudLoadAndGate(s); else if (!s) showLogin(); });
 
   window._authSignup = async function(){
@@ -24212,8 +24256,9 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // ── Inject portfolio-tab banner + perf tools once ──
   function _injectPortfolioUI(){
-    var tab=document.getElementById('tab-portfolio'); if(tab && !document.getElementById('snapBanner')){
-      var b=document.createElement('div'); b.id='snapBanner'; tab.insertBefore(b, tab.firstChild); }
+    // Banner "Conecta tu broker" retirado por completo: no detectaba una conexión ya
+    // existente y molestaba. La conexión del broker vive en Ajustes (#snapConnectCard).
+    try{ var _oldBnr=document.getElementById('snapBanner'); if(_oldBnr) _oldBnr.remove(); }catch(e){}
     // perf tools next to the chart period buttons
     var pbtns=document.getElementById('periodBtns');
     if(pbtns && !document.getElementById('snapPerfToggle')){
