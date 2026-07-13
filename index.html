@@ -432,6 +432,19 @@
   .period-btn:hover { color: var(--text2); }
   .period-btn.active { border-color: var(--border2); color: var(--text); background: var(--surface2); }
   .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 300px; }
+  /* Anti-flash: la gráfica arranca oculta (skeleton) y se revela UNA vez, cuando los
+     datos finales (posiciones + historial del broker) ya se asentaron. Evita el destello
+     de la serie preliminar (máster hardcodeado + historial local) antes de la real. */
+  /* Skeleton opaco montado SOBRE el canvas (z-index): lo cubre mientras se cargan los
+     datos y se desvanece al revelar. El canvas NUNCA cambia de opacidad → jamás se queda
+     invisible. Oculto por defecto; visible solo con .pv-chart-loading. */
+  .pv-chart-skel { position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 2;
+    opacity: 0; visibility: hidden; transition: opacity .3s ease;
+    background: #f6f8fc; background-image: linear-gradient(90deg,#eef1f6 25%,#f7f9fd 50%,#eef1f6 75%);
+    background-size: 200% 100%; animation: pvChartSkel 1.4s ease infinite; }
+  .perf-chart-wrap.pv-chart-loading .pv-chart-skel { opacity: 1; visibility: visible; }
+  @keyframes pvChartSkel { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  body.dark-theme .pv-chart-skel { background:#0f1724; background-image: linear-gradient(90deg,#141d2e 25%,#1a2740 50%,#141d2e 75%); background-size:200% 100%; }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -2406,6 +2419,10 @@
 .research-btn { border-radius: 12px !important; }
 /* Transiciones un poco más lentas */
 .period-btn, .ppill, .wl-add-btn, .add-stock-btn, .research-btn, .trade-btn, .tbtn { transition: all .28s cubic-bezier(.2,.7,.2,1) !important; }
+/* FIX pill activo (iOS/WKWebView): en los selectores de periodo/pills transicionar SOLO
+   color y borde — NUNCA background. Con `transition: all` el fondo del botón activo no se
+   repintaba al cambiar de timeframe y el pill oscuro se "quedaba" en el default (1M). */
+.period-btn, .ppill { transition: color .2s ease, border-color .2s ease !important; }
 
 /* ═══════════════ STITCH DESIGN — Desktop sidebar + Mobile bottom nav ═══════════════ */
 :root {
@@ -3062,8 +3079,9 @@
             </div>
           </div>
         </div>
-        <div class="perf-chart-wrap">
+        <div class="perf-chart-wrap pv-chart-loading">
           <canvas id="perfChart"></canvas>
+          <div class="pv-chart-skel" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -12553,6 +12571,21 @@ function _redrawActiveChart() {
   const btn = document.querySelector('.period-btn.active') || document.querySelector('[data-period="1M"]');
   if (btn) setPeriod(btn.dataset.period || '1M', btn);
 }
+
+// ── Anti-flash de la gráfica ────────────────────────────────────────────────
+// La gráfica arranca oculta (skeleton, clase .pv-chart-loading en el markup). Se
+// revela UNA sola vez, cuando los datos finales ya se asentaron: repinta con la serie
+// definitiva y quita el skeleton. Idempotente. Llamado por snapHistory (broker real),
+// por el boot cuando NO hay broker conectado, y por un timeout de respaldo (nunca se queda pegada).
+let _pvChartRevealed = false;
+function _pvRevealChart() {
+  if (_pvChartRevealed) return; _pvChartRevealed = true;
+  try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); else if (typeof perfChart !== 'undefined' && perfChart) perfChart.update('none'); } catch(e){}
+  try { const w = document.querySelector('.perf-chart-wrap'); if (w) w.classList.remove('pv-chart-loading'); } catch(e){}
+}
+window._pvRevealChart = _pvRevealChart;
+// Respaldo: si el pipeline de datos tarda o falla, revela igual tras 5s (jamás se queda en skeleton).
+try { setTimeout(function(){ try { _pvRevealChart(); } catch(e){} }, 5000); } catch(e){}
 
 // ── Expansión intradía: convierte 1 valor diario en N puntos con micro-volatilidad ──
 // Mantiene los valores diarios reales como anclas (cada N pasos), inserta puntos
@@ -24284,7 +24317,13 @@ document.addEventListener('DOMContentLoaded', function(){
       if(j && j.connected) snapHistory();
       return j;
     }).catch(function(e){
-      if(/broken/i.test(e.message||'')) _render('broken'); else toast(e.message||'No se pudieron cargar tus posiciones.');
+      var _m=(e&&e.message)||'';
+      console.warn('[snaptrade] refresh:', _m);
+      // Conexión caída/expirada/no encontrada (p.ej. 410) → banner limpio "reconecta",
+      // nunca un toast crudo con el volcado de headers. En refresh manual (no silencioso),
+      // aviso corto y limpio.
+      if(/broken/i.test(_m) || /\b410\b|status code 4|not found|does not exist|expired|unauthor|revok/i.test(_m)) _render('broken');
+      else if(!(opts&&opts.silent)) toast('No se pudieron actualizar tus posiciones. Intenta de nuevo.');
       return null;
     }).finally(function(){ _busy=false; _setRefreshBtn(false); });
   }
@@ -24302,7 +24341,8 @@ document.addEventListener('DOMContentLoaded', function(){
       }else{
         _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
       }
-    }).catch(function(){ _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); });
+    }).catch(function(){ _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); })
+      .finally(function(){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} });
   }
 
   // ── Value / Performance header toggle (chart stays the premium value chart) ──
@@ -24399,7 +24439,12 @@ document.addEventListener('DOMContentLoaded', function(){
     var returned = pending || /snaptrade|success|brokerage/i.test(url);
     try{ localStorage.removeItem('pv_snap_pending'); }catch(e){}
     function go(){ if(!window.sbClient){ return setTimeout(go, 400); }
-      snapRefresh().then(function(j){ if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} } }); }
+      snapRefresh({silent:true}).then(function(j){
+        if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
+        // Sin broker conectado → la gráfica local YA es la definitiva: revélala (con broker,
+        // snapHistory la revela tras aplicar el historial real). Idempotente.
+        if(!(j && j.connected)){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} }
+      }).catch(function(){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} }); }
     go();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _boot); else _boot();
