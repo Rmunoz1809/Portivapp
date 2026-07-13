@@ -11966,25 +11966,15 @@ const PORTIV_CHART = {
     // 1W/2W usan días; YTD empieza el 1 de enero (igual que el ancla YTD).
     const daysMap={'1W':7,'2W':14};
     const monthsMap={'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
-    // ── ANCLA DE VENTANA ── Los cortes 1W/2W/1M/3M se miden desde la ÚLTIMA fecha CON DATOS,
-    //    NO desde el reloj de hoy. Si el historial termina antes de hoy (hueco entre el último
-    //    dato disponible y la fecha actual), anclar a "hoy" deja VACÍA toda ventana más corta
-    //    que ese hueco → colapsan a la serie completa y 1W=2W=1M se ven idénticas a 3M/ALL.
-    //    Anclando al último dato real, cada ventana recorta un tramo DISTINTO del historial.
-    let _wLast=null;
-    try{
-      const _cands=[];
-      if(typeof PERF_MASTER!=='undefined'&&PERF_MASTER.dates&&PERF_MASTER.dates.length)
-        _cands.push(PERF_MASTER.dates[PERF_MASTER.dates.length-1]);
-      const _ld=this.loadDaily();
-      if(_ld&&_ld.length&&_ld[_ld.length-1]&&_ld[_ld.length-1].date) _cands.push(_ld[_ld.length-1].date);
-      if(!_CHART_IMPORTED && typeof PORTIV_HIST!=='undefined' && PORTIV_HIST.ready && PORTIV_HIST.ready()){
-        const _rs=PORTIV_HIST.series(null);
-        if(_rs&&_rs.dates&&_rs.dates.length) _cands.push(_rs.dates[_rs.dates.length-1]);
-      }
-      _cands.sort(); _wLast=_cands.length?_cands[_cands.length-1]:null;
-    }catch(_e){ _wLast=null; }
-    const _wAnchor=()=> _wLast ? new Date(_wLast+'T00:00:00') : new Date();
+    // ── ANCLA DE VENTANA ── El borde DERECHO de TODA ventana es SIEMPRE hoy (el último punto de
+    //    la serie = total EN VIVO, que se fuerza más abajo). Por lo tanto el borde IZQUIERDO =
+    //    hoy − período, y las FECHAS del eje corresponden EXACTAMENTE al período pedido (1W = los
+    //    últimos 7 días, etc.). Anclar al ÚLTIMO DATO histórico —cuando el historial termina antes
+    //    de hoy— etiquetaba mal el eje: una "1W" cuyo último dato real era el 9-jun mostraba
+    //    "2-jun" aunque el punto en vivo llega al 12-jul. El hueco entre el último dato y hoy se
+    //    rellena con datos REALES (reconstrucción PORTIV_HIST) o, si no está lista, por
+    //    interpolación de la serie real — nunca reutilizando fechas viejas fuera de la ventana.
+    const _wAnchor=()=> new Date(today+'T00:00:00');
     let fromISO=null;
     if(period==='YTD'){
       fromISO=`${todayParts.y}-01-01`;
@@ -11995,6 +11985,7 @@ const PORTIV_CHART = {
       const cut=_wAnchor(); cut.setDate(cut.getDate()-daysMap[period]);
       fromISO=cut.toISOString().slice(0,10);
     }
+    const _fromWin=fromISO;   // ventana REAL pedida (sin el clamp de la foto) → reconstrucción real
     // ALL: sin límite de tiempo
     // Combinar PERF_MASTER (base histórica del broker) con el historial diario de localStorage
     const masterDates=(typeof PERF_MASTER!=='undefined'?PERF_MASTER.dates:[]) || [];
@@ -12018,37 +12009,56 @@ const PORTIV_CHART = {
     brokerPts.forEach(p=>{if(!fromISO||p.date>=fromISO)byDate[p.date]={date:p.date,value:p.value,label:p.label};});
     localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
-    // ── FALLBACK ANTI-COLAPSO ── Si la ventana pedida (1W/2W/1M) no contiene ≥2 puntos
-    //    reales (hueco de datos entre el histórico del broker y hoy), la serie se queda
-    //    con 1 solo punto y Chart.js no dibuja la línea. Reconstruimos con TODO el
-    //    historial disponible (misma curva que ALL) para mostrar siempre una línea limpia.
-    if(fromISO && merged.length<2){
-      const _all={};
-      brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value,label:p.label};});
-      this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
-      const _allArr=Object.values(_all).sort((a,b)=>a.date.localeCompare(b.date));
-      // NO colapsar a TODA la serie (eso hacía que 1W/2W/1M se vieran idénticas a 3M/ALL).
-      // Tomar solo la COLA proporcional al período → aunque los datos sean escasos, cada
-      // ventana muestra un tramo de longitud DISTINTA en vez de la serie completa.
-      const _tailN={'1D':2,'1W':6,'2W':11,'1M':23,'3M':64,'6M':128,'1Y':256,'2Y':512,'3Y':768};
-      const _n=_tailN[period]||_allArr.length;
-      merged=_allArr.slice(-Math.max(2,Math.min(_n,_allArr.length)));
+    // ── ¿LA SERIE GUARDADA YA LLEGA A HOY? ── Si cubre la ventana con ≥3 puntos y su último dato
+    //    está a ≤4 días de hoy, es la fuente más fiel → se usa tal cual. Si termina ANTES (hueco),
+    //    sus fechas NO corresponden al período pedido → hay que rellenar con datos reales.
+    const _lastReal = merged.length ? merged[merged.length-1].date : null;
+    const _daysToNow = _lastReal
+      ? Math.round((new Date(today+'T00:00:00') - new Date(_lastReal+'T00:00:00'))/86400000)
+      : 99999;
+    const _coversNow = merged.length>=3 && _daysToNow<=4;
+    // ── RECONSTRUCCIÓN REAL (garantía anti-fechas-viejas) ── Σ qty×cierre real (Yahoo) + efectivo
+    //    → serie diaria continua que SIEMPRE llega al último día de mercado. Rellena el hueco hasta
+    //    hoy con datos REALES, así el eje muestra el período pedido con fechas correctas para
+    //    CUALQUIER usuario con posiciones. Si aún no está en caché, se carga en 2º plano y refresca
+    //    la gráfica al terminar (ensureAsync → PORTIV_CHART.refresh). Usa la ventana REAL (_fromWin),
+    //    no la recortada por el clamp de la foto.
+    if(!_coversNow && typeof PORTIV_HIST!=='undefined'){
+      try{
+        if(PORTIV_HIST.ready && PORTIV_HIST.ready()){
+          const _rs=PORTIV_HIST.series(_fromWin||null);
+          if(_rs && _rs.values && _rs.values.length>=3){
+            merged=_rs.dates.map((d,i)=>({date:d,value:_rs.values[i],label:fmtDate(d)}));
+          }
+        } else if(PORTIV_HIST.ensureAsync){ PORTIV_HIST.ensureAsync(); }
+      }catch(e){}
     }
-    // ── LÍNEA REAL: si ya bajamos el histórico real por posición, reconstruimos la serie
-    //    del portafolio (Σ qty×cierre real + efectivo) para ESTA ventana → reemplaza la recta
-    //    de 2 puntos por una curva diaria real. change/changePct se recalculan abajo (y el %
-    //    del broker, si existe, sigue mandando). Si aún no está listo, se carga en 2º plano.
-    // Solo reconstruye desde precios reales (Yahoo) cuando NO hay una serie del broker/foto
-    // gobernando. Con foto importada, la foto es la única fuente → no se inventa nada extra.
-    if (!_CHART_IMPORTED && typeof PORTIV_HIST !== 'undefined') {
-      try {
-        const _rs = PORTIV_HIST.series(fromISO || null);
-        if (_rs && _rs.values && _rs.values.length >= 3) {
-          merged = _rs.dates.map((d,i)=>({date:d, value:_rs.values[i], label:fmtDate(d)}));
-        } else if (!PORTIV_HIST.ready()) {
-          PORTIV_HIST.ensureAsync();
-        }
-      } catch(e){}
+    // ── RED DE SEGURIDAD ── Si aún así la ventana no tiene ≥2 puntos (reconstrucción no lista y
+    //    hueco de datos), NO se reutilizan fechas viejas fuera de ventana. Se arma la ventana con
+    //    fechas CORRECTAS [_fromWin → hoy] interpolando el valor en _fromWin desde la serie real.
+    if(_fromWin && merged.length<2){
+      const _all={};
+      brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
+      this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
+      const _allArr=Object.values(_all).sort((a,b)=>a.date.localeCompare(b.date));
+      if(_allArr.length){
+        const _valAt=(iso)=>{
+          let before=null, after=null;
+          for(const p of _allArr){ if(p.date<=iso) before=p; if(p.date>=iso && !after) after=p; }
+          if(before && after && before.date!==after.date){
+            const t0=new Date(before.date+'T00:00:00').getTime();
+            const t1=new Date(after.date+'T00:00:00').getTime();
+            const ti=new Date(iso+'T00:00:00').getTime();
+            const f=(ti-t0)/(t1-t0);
+            return +(before.value+(after.value-before.value)*f).toFixed(2);
+          }
+          return (before||after||_allArr[_allArr.length-1]).value;
+        };
+        let _liveNow=_allArr[_allArr.length-1].value;
+        try{ if(typeof calcTotals==='function'){ const _t=+calcTotals().total.toFixed(2); if(_t>0)_liveNow=_t; } }catch(e){}
+        merged=[{date:_fromWin,value:_valAt(_fromWin),label:fmtDate(_fromWin)},
+                {date:today,value:_liveNow,label:fmtDate(today)}];
+      }
     }
     if(!merged.length)return null;
     // Asegurar que el último punto = total en vivo actual
