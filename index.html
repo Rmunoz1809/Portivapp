@@ -4613,8 +4613,8 @@
     <div class="prof-identity">
       <div class="prof-avatar" id="profAvatar">A</div>
       <div class="prof-identity-info">
-        <div class="prof-name" id="profDisplayName">Andrés Morales</div>
-        <div class="prof-email" id="profEmailDisplay">andres.morales@portiv.io</div>
+        <div class="prof-name" id="profDisplayName">Tu perfil</div>
+        <div class="prof-email" id="profEmailDisplay"></div>
         <div class="prof-plan-badge">
           <span class="material-symbols-outlined" style="font-size:13px">hub</span>
           PRO MEMBER
@@ -5191,6 +5191,31 @@ async function saveAccountSettings(){
 }
 
 
+window._deriveProfileName = function(user){
+  try {
+    var md = (user && user.user_metadata) || {};
+    var full = (md.full_name || [md.given_name, md.family_name].filter(Boolean).join(' ') || md.name || md.display_name || '').trim();
+    var handle = (md.username || md.preferred_username || '').trim();
+    if (!full) {
+      var lp = (((user && user.email) || '').split('@')[0] || '').replace(/[._+\-]+/g, ' ').replace(/\d+/g, '').trim();
+      if (lp) full = lp.split(/\s+/).filter(Boolean).map(function(w){ return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
+    }
+    var username = (handle || (full ? full.replace(/\s+/g, '') : '')).replace(/^@+/, '');
+    return { fullName: full, username: username };
+  } catch(e){ return { fullName: '', username: '' }; }
+};
+window._seedProfileFromAuth = function(user){
+  try {
+    var K = 'portiv_profile_v1', pr = {};
+    try { pr = JSON.parse(localStorage.getItem(K) || '{}') || {}; } catch(e){}
+    var d = window._deriveProfileName(user);
+    var changed = false;
+    if ((!pr.fullName || !String(pr.fullName).trim()) && d.fullName) { pr.fullName = d.fullName; changed = true; }
+    if ((!pr.username || !String(pr.username).trim()) && d.username) { pr.username = d.username; changed = true; }
+    if (changed) { try { localStorage.setItem(K, JSON.stringify(pr)); } catch(e){} }
+    return pr;
+  } catch(e){ return {}; }
+};
 async function renderSettings(){
   const isDark = document.body.classList.contains('dark-theme');
   document.querySelectorAll('#setThemeToggle .set-theme-opt').forEach(b =>
@@ -5202,20 +5227,17 @@ async function renderSettings(){
 
   // ── Cuenta: email + username REALES de la sesión (Supabase). El username se fijó al
   //    crear la cuenta (user_metadata.username) → aquí se muestra y precarga el campo.
-  let email = '', username = '', metaFull = '';
+  let email = '', _seed = {};
   try {
     const sb = window.sbClient;
     if (sb && sb.auth) {
       const { data } = await sb.auth.getUser();
       const u = data && data.user;
       email = (u && u.email) || '';
-      const md = (u && u.user_metadata) || {};
-      username = (md.username || md.display_name || md.full_name || md.name) || '';
-      // Apple entrega el nombre en full_name (o given+family) en el PRIMER login.
-      metaFull = (md.full_name || [md.given_name, md.family_name].filter(Boolean).join(' ') || md.name) || '';
+      // Auto-perfil (fuente única): deriva y PERSISTE nombre/usuario desde la sesión.
+      try { _seed = (typeof window._seedProfileFromAuth === 'function') ? (window._seedProfileFromAuth(u) || {}) : {}; } catch(e){}
     }
   } catch(e){}
-  metaFull = String(metaFull).trim();
   if (!email) { const ae = document.getElementById('acctEmail'); email = (ae && ae.textContent && ae.textContent !== '—') ? ae.textContent.replace(/^@/,'') : ''; }
 
   const emailEl = document.getElementById('setCurrentEmail');
@@ -5226,22 +5248,14 @@ async function renderSettings(){
   // Identidad (tarjeta "Configuración General")
   const ed = document.getElementById('profEmailDisplay'); if (ed && email) ed.textContent = email;
 
-  // Nombre completo: si el login (Apple) entregó nombre y el campo está vacío, precárgalo tal cual.
+  // Nombre completo + usuario: del perfil auto-derivado/persistido (_seed) si el campo está vacío.
   const fnEl = document.getElementById('profFullName');
-  if (fnEl && !fnEl.value.trim() && metaFull) {
-    fnEl.value = metaFull;
-    const nd0 = document.getElementById('profDisplayName'); if (nd0) nd0.textContent = metaFull;
+  if (fnEl && !fnEl.value.trim() && _seed.fullName) {
+    fnEl.value = _seed.fullName;
+    const nd0 = document.getElementById('profDisplayName'); if (nd0) nd0.textContent = _seed.fullName;
   }
-  // Nombre de usuario: respeta lo guardado localmente; si no, usa el NOMBRE PEGADO (sin espacios)
-  // del login con Apple ("Andrés Morales" -> "AndrésMorales"); si tampoco, el username de registro.
   const uEl = document.getElementById('profUsername');
-  if (uEl && !uEl.value.trim()) {
-    let savedU = '';
-    try { savedU = (JSON.parse(localStorage.getItem('portiv_profile_v1')||'{}').username || '').trim(); } catch(e){}
-    if (savedU) uEl.value = savedU;
-    else if (metaFull) uEl.value = metaFull.replace(/\s+/g,'');
-    else if (username) uEl.value = String(username).replace(/^@/,'');
-  }
+  if (uEl && !uEl.value.trim() && _seed.username) uEl.value = _seed.username;
   try { if (typeof profUpdateAvatar === 'function') profUpdateAvatar(); } catch(e){}
 }
 
@@ -23452,7 +23466,7 @@ if (document.readyState === 'loading') {
   var _APP_SYNC_EXACT  = ['nm_ai_cache_v1', 'pv_profile_local', 'portiv_mover_why_v1',
     // BROKER REAL: el historial diario acumulado de la gráfica + prev-close viajan con la
     // cuenta → los "dibujos" de la gráfica y los % se conservan entre dispositivos y sesiones.
-    'portiv_daily_v2', 'portiv_daily_history_v1', 'portiv_prev_close_v1', 'stock_ai_analysis_v1'];
+    'portiv_daily_v2', 'portiv_daily_history_v1', 'portiv_prev_close_v1', 'stock_ai_analysis_v1', 'portiv_profile_v1'];
   var _APP_SYNC_PREFIX = ['pv_profile_', 'weekly_outlook_', 'week_top_'];
   function _appKeyShouldSync(k){
     if (!k) return false;
@@ -23601,6 +23615,7 @@ if (document.readyState === 'loading') {
       sessionStorage.setItem(APPLIED, '1');
     } catch(e){ console.warn('[cloud] load', e); }
     // Actualiza el email del perfil con el de la sesión real
+    try { if (typeof window._seedProfileFromAuth === 'function') window._seedProfileFromAuth(s.user); } catch(e){}
     try { if (typeof profLoad === 'function') profLoad(em); } catch(e){}
     revealApp();   // pase terminal → revelar la app ya gateada
     // Ahora que HAY sesión autenticada, dispara SharedNews: leerá la nube y, solo si está
