@@ -24313,28 +24313,61 @@ document.addEventListener('DOMContentLoaded', function(){
   window.snapConnect = snapConnect;
 
   // ── Map a SnapTrade holdings payload → the `data` shape aiPortImportData expects ──
+  // Robusto entre brokers: total autoritativo (total_value), símbolo anidado
+  // (position.symbol.symbol.symbol), opciones (option_positions), precio derivado si falta,
+  // y merge del mismo ticker entre cuentas (brokerage + IRA → 1 posición sumada).
   function _n(v){ if(v&&typeof v==='object'&&v.amount!=null) v=v.amount; var n=Number(v); return isFinite(n)?n:0; }
+  function _snapMapPos(p, isOption){
+    var so, ticker;
+    if(isOption){
+      var os = (p.symbol && (p.symbol.option_symbol || p.symbol.symbol || p.symbol)) || {};
+      ticker = String(os.ticker || os.raw_symbol || os.symbol || (os.underlying_symbol && os.underlying_symbol.symbol) || '').toUpperCase();
+      so = os;
+    } else {
+      so = (p.symbol && (p.symbol.symbol || p.symbol)) || {};
+      ticker = String(so.symbol || so.raw_symbol || so.ticker || '').toUpperCase();
+    }
+    if(!ticker) return null;
+    var shares = _n(p.units!=null?p.units:p.fractional_units);
+    var price  = _n(p.price);
+    var avg    = _n(p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
+    var mv     = (price&&shares)?price*shares:_n(p.market_value);
+    if(!price && shares && mv) price = mv/shares;   // deriva el precio si el broker no lo mandó
+    var isEtf  = /etf|fund/i.test(JSON.stringify(so.type||so.type_description||''));
+    // La app agrupa solo stock/etf; las opciones entran como posición (stock) para que el
+    // total SIEMPRE reconcilie con la suma de posiciones (no se pierde ningún holding).
+    return { ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
+             market_value:mv, day_change_pct:0, type: isEtf?'etf':'stock' };
+  }
   function snapMapHoldings(holdings){
     var accounts = Array.isArray(holdings)?holdings:((holdings&&holdings.accounts)||[]);
-    var cash=0, total=0, positions=[];
+    var cash=0, total=0, raw=[];
     accounts.forEach(function(acc){
       var bals = acc.balances || acc.balance || [];
       if(Array.isArray(bals)) bals.forEach(function(b){ cash += _n(b.cash!=null?b.cash:b.amount); });
-      var at = acc.account && acc.account.balance && acc.account.balance.total;
+      // Total autoritativo del broker: total_value / totalValue (objeto {amount} → _n extrae),
+      // con account.balance.total como respaldo.
+      var at = (acc.total_value!=null?acc.total_value
+               :(acc.totalValue!=null?acc.totalValue
+               :(acc.account && acc.account.balance && acc.account.balance.total)));
       if(at!=null) total += _n(at);
-      (acc.positions||[]).forEach(function(p){
-        var so = (p.symbol && (p.symbol.symbol || p.symbol)) || {};
-        var ticker = String(so.symbol || so.raw_symbol || so.ticker || '').toUpperCase();
-        if(!ticker) return;
-        var shares = _n(p.units!=null?p.units:p.fractional_units);
-        var price  = _n(p.price);
-        var avg    = _n(p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
-        var mv     = (price&&shares)?price*shares:_n(p.market_value);
-        var isEtf  = /etf|fund/i.test(JSON.stringify(so.type||so.type_description||''));
-        positions.push({ ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-                         market_value:mv, day_change_pct:0, type: isEtf?'etf':'stock' });
-      });
+      (acc.positions||[]).forEach(function(p){ var m=_snapMapPos(p,false); if(m) raw.push(m); });
+      (acc.option_positions||[]).forEach(function(p){ var m=_snapMapPos(p,true); if(m) raw.push(m); });
     });
+    // Merge del mismo ticker entre cuentas → suma acciones + valor, promedio ponderado de costo.
+    var by={};
+    raw.forEach(function(p){
+      var e=by[p.ticker];
+      if(!e){ by[p.ticker]=Object.assign({},p); }
+      else {
+        var ts=e.shares+p.shares;
+        e.avg_cost = ts ? ((e.avg_cost*e.shares)+(p.avg_cost*p.shares))/ts : e.avg_cost;
+        e.shares = ts; e.market_value = (e.market_value||0)+(p.market_value||0);
+        e.current_price = e.shares ? e.market_value/e.shares : e.current_price;
+        if(p.type==='etf') e.type='etf';
+      }
+    });
+    var positions = Object.keys(by).map(function(k){ return by[k]; });
     if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
     return { cash_balance:cash, portfolio_value:total, positions:positions };
   }
