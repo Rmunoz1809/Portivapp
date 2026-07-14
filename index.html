@@ -6019,6 +6019,17 @@ async function _aiFetchVision(opts) {
       if (r.ok) return r;
     } catch(e) {}
   }
+  // PRODUCCIÓN (GitHub Pages es estático → la función Netlify no existe → POST daba 405):
+  // la visión va al proxy Supabase (anthropic-proxy), igual que el fetch de IA principal.
+  // Adjunta el token del usuario logueado (o la anon key) para pasar el gate de la función.
+  if (typeof _aiSbOn === 'function' && _aiSbOn()) {
+    try {
+      let _uTok = _AI_SB_ANON;
+      try { const _sbc = window.sbClient; if (_sbc) { const _gs = await _sbc.auth.getSession(); const _s = _gs && _gs.data && _gs.data.session; if (_s && _s.access_token) _uTok = _s.access_token; } } catch(e){}
+      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
+      if (r.ok) return r;
+    } catch(e) {}
+  }
   try {
     const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
     if (r.ok) return r;
