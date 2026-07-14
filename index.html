@@ -432,19 +432,6 @@
   .period-btn:hover { color: var(--text2); }
   .period-btn.active { border-color: var(--border2); color: var(--text); background: var(--surface2); }
   .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 300px; }
-  /* Anti-flash: la gráfica arranca oculta (skeleton) y se revela UNA vez, cuando los
-     datos finales (posiciones + historial del broker) ya se asentaron. Evita el destello
-     de la serie preliminar (máster hardcodeado + historial local) antes de la real. */
-  /* Skeleton opaco montado SOBRE el canvas (z-index): lo cubre mientras se cargan los
-     datos y se desvanece al revelar. El canvas NUNCA cambia de opacidad → jamás se queda
-     invisible. Oculto por defecto; visible solo con .pv-chart-loading. */
-  .pv-chart-skel { position: absolute; inset: 0; border-radius: 12px; pointer-events: none; z-index: 2;
-    opacity: 0; visibility: hidden; transition: opacity .3s ease;
-    background: #f6f8fc; background-image: linear-gradient(90deg,#eef1f6 25%,#f7f9fd 50%,#eef1f6 75%);
-    background-size: 200% 100%; animation: pvChartSkel 1.4s ease infinite; }
-  .perf-chart-wrap.pv-chart-loading .pv-chart-skel { opacity: 1; visibility: visible; }
-  @keyframes pvChartSkel { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
-  body.dark-theme .pv-chart-skel { background:#0f1724; background-image: linear-gradient(90deg,#141d2e 25%,#1a2740 50%,#141d2e 75%); background-size:200% 100%; }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -3079,9 +3066,8 @@
             </div>
           </div>
         </div>
-        <div class="perf-chart-wrap pv-chart-loading">
+        <div class="perf-chart-wrap">
           <canvas id="perfChart"></canvas>
-          <div class="pv-chart-skel" aria-hidden="true"></div>
         </div>
       </div>
 
@@ -3901,6 +3887,13 @@
   #tab-settings #aiPosRows input, #tab-settings #aiPosRows select { width:100%; box-sizing:border-box; padding:6px 8px; font-size:12px;
     color:var(--text); background:var(--surface2); border:1px solid var(--border); border-radius: 0; }
   #tab-settings #aiPosRows td { padding:4px; }
+  .prof-ai-drop { border:2px dashed var(--border2); border-radius:12px; padding:28px 20px; text-align:center; cursor:pointer; transition:all .15s; background:var(--surface2); }
+  .prof-ai-drop:hover, .prof-ai-drop.drag { border-color:var(--blue); background:#f0f5ff; }
+  .prof-ai-drop-icon { font-size:32px; margin-bottom:8px; }
+  .prof-ai-drop-label { font-size:13px; font-weight:600; color:var(--text2); }
+  .prof-ai-drop-sub { font-size:11px; color:var(--text3); margin-top:3px; }
+  .prof-ai-ready { display:none; flex-direction:column; align-items:center; gap:10px; }
+  .prof-ai-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
   #tab-settings #aiDrop.drag { border-color:var(--blue); background:var(--surface); }
   #tab-settings .ai-del { cursor:pointer; border:none; background:transparent; color:var(--red,#ba1a1a); font-size:16px; font-weight:700; padding:2px 6px; }
   #tab-settings .ai-editor-toggle { display:flex; align-items:center; justify-content:space-between; cursor:pointer; user-select:none; }
@@ -4653,8 +4646,42 @@
 
   <div id="snapConnectCard" class="snap-card"></div>
 
-  <!-- ── 4. EDITOR DEL PORTAFOLIO (rediseñado) ── (ocultado a pedido) -->
-  <div class="prof-card" style="order:5;display:none">
+  <!-- ── 3. ANALIZAR IMÁGENES (OCR de screenshot del broker) — restaurado ── -->
+  <div class="prof-card" style="order:3">
+    <div class="prof-card-title">Sincronizar desde Screenshot del Broker</div>
+    <div style="font-size:15px;font-weight:700;color:var(--st-primary);font-family:'Manrope',sans-serif;margin-bottom:6px;">Importar datos desde imagen</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px;line-height:1.5;">Sube capturas de pantalla de tu broker. La IA extrae automáticamente posiciones, precios, costo base y cambios del día.</div>
+
+    <div id="aiDrop" class="prof-ai-drop"
+      ondragover="event.preventDefault();this.classList.add('drag')"
+      ondragleave="this.classList.remove('drag')"
+      ondrop="aiPortDrop(event)"
+      onclick="document.getElementById('aiFile').click()">
+      <div id="aiDropLabel">
+        <div class="prof-ai-drop-label" style="margin-bottom:4px">Arrastra screenshots aquí o haz clic para subir</div>
+        <div class="prof-ai-drop-sub">Puedes subir varios archivos · JPG, PNG, WEBP</div>
+      </div>
+      <div id="aiFileReady" class="prof-ai-ready">
+        <span id="aiFileName" style="font-size:12px;color:var(--text2);font-weight:600"></span>
+        <div class="prof-ai-actions">
+          <button class="pe-add-btn" style="background:var(--surface2);color:var(--text2);font-size:12px"
+            onclick="document.getElementById('aiFile').click();event.stopPropagation()">＋ Agregar otro</button>
+          <button id="aiExtractBtn" class="pe-apply-btn" style="font-size:12px"
+            onclick="aiPortExtract();event.stopPropagation()">
+            <span class="material-symbols-outlined" style="font-size:15px">auto_awesome</span>
+            Aplicar al portafolio
+          </button>
+          <button class="pe-del-btn" title="Quitar todos"
+            onclick="aiPortClearFiles();event.stopPropagation()" style="font-size:20px">×</button>
+        </div>
+      </div>
+      <input id="aiFile" type="file" accept="image/*" multiple style="display:none" onchange="aiPortFileSelected(this)" />
+    </div>
+  </div>
+
+  <!-- ── 4. EDITOR DEL PORTAFOLIO (rediseñado) ── visible: el analizador de fotos lo usa
+       como paso de revisión (aiPortImportData llena la tabla → revisar → aiPortApply). -->
+  <div class="prof-card" style="order:5">
     <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" onclick="aiEditorToggle()">
       <div>
         <div class="prof-card-title" style="margin-bottom:2px">Editor del Portafolio</div>
@@ -4959,7 +4986,7 @@ async function _trCloudFlush(){
     const { data } = await sb.from('shared_analysis').select('data').eq('ticker', _TR_CLOUD_KEY).maybeSingle();
     const remote = (data && data.data && typeof data.data === 'object') ? data.data : {};
     const merged = Object.assign({}, remote, toSend);
-    await sb.from('shared_analysis').upsert({ ticker: _TR_CLOUD_KEY, data: merged, updated_at: new Date().toISOString() });
+    await _sharedWrite('set','i18n', _TR_CLOUD_KEY, merged);
     // Refresca el caché local con la fusión completa (incluye lo que subieron otros).
     _trCacheSet(Object.assign({}, _trCacheGet(), merged));
   } catch(e){}
@@ -5804,6 +5831,10 @@ const _ANTHROPIC_MODEL_MAP = {
 const AI_MODELS = {
   reasoning:  'claude-haiku-4-5',
   structured: 'claude-haiku-4-5',
+  // Visión = Sonnet 4.6: Haiku cometía errores de lectura en tablas densas (tickers/precios).
+  // Sonnet extrae con más precisión. Fallback automático a Haiku en _visionCall si Sonnet
+  // falla o se pasa de tiempo (502). Así: calidad de Sonnet por defecto, Haiku como red de seguridad.
+  vision:     'claude-sonnet-4-6',
 };
 async function _anthropicDirect(rawBody) {
   const key = (typeof _ensureApiKey === 'function') ? _ensureApiKey() : localStorage.getItem('anthropic_key');
@@ -5948,9 +5979,22 @@ async function _aiFetch(localPath, opts, essential) {
   let _sbErr;
   if (_aiSbOn()) {
     try {
-      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _AI_SB_ANON }, body: opts && opts.body });
+      // Envía el ACCESS TOKEN del usuario (no la anon key) para que el proxy pueda
+      // identificarlo (auth.getUser) y aplicar el gate + presupuesto por usuario.
+      // getSession() lee de localStorage (rápido) y es fiable en este scope
+      // (la var `session` vive dentro del IIFE de auth y aquí no es accesible).
+      // Si no hay sesión, cae a la anon key (comportamiento previo).
+      let _uTok = _AI_SB_ANON;
+      try { const _sbc = window.sbClient; if (_sbc) { const _gs = await _sbc.auth.getSession(); const _s = _gs && _gs.data && _gs.data.session; if (_s && _s.access_token) _uTok = _s.access_token; } } catch(e){}
+      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
       if (r.ok) return r;
       _sbErr = r;
+      // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
+      if (r.status === 429 || r.status === 402) {
+        let _msg = 'Alcanzaste tu límite de uso de IA. Intenta más tarde.', _code = '';
+        try { const _ej = await r.clone().json(); _code = (_ej && _ej.error_code) || ''; if (_ej && _ej.error && _ej.error.message) _msg = _ej.error.message; } catch(e){}
+        return new Response(JSON.stringify({ error: { message: _msg }, error_code: _code }), { status: r.status, headers: { 'content-type': 'application/json' } });
+      }
     } catch(e) {}
   }
   try {
@@ -5962,6 +6006,26 @@ async function _aiFetch(localPath, opts, essential) {
     if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return _sbErr || r;
   } catch(e) { /* función inalcanzable → directo */ }
   return _anthropicDirect(opts && opts.body);   // navegador → Anthropic (key del visitante)
+}
+
+// ── Fetch de VISIÓN (analizador de fotos) ────────────────────────────────────
+// Preferencia de costo: proxy local (serve.py → /vision-cli, suscripción OAuth GRATIS)
+// PRIMERO; la Netlify Function / API key de pago quedan como último recurso.
+async function _aiFetchVision(opts) {
+  if (_localProxyLive) {
+    try {
+      // Sin timeout: la visión con OAuth también puede tardar bastante.
+      const r = await fetch('http://localhost:8765/vision-cli', opts);
+      if (r.ok) return r;
+    } catch(e) {}
+  }
+  try {
+    const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
+    if (r.ok) return r;
+    // Función respondió con error y no hay key local de respaldo → devuelve el error real.
+    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return r;
+  } catch(e) { /* función inalcanzable → directo */ }
+  return _anthropicDirect(opts && opts.body);
 }
 
 // ── Modelo adaptativo por COSTO ──────────────────────────────────────────────
@@ -5980,20 +6044,33 @@ window._aiQualityModel = _aiQualityModel;
 // ═══════════════════════════════════════════════════
 //  DATA
 // ═══════════════════════════════════════════════════
-let CASH = 0;
+let CASH = 2.61;
 let MONEY_MARKET = 0;             // Saldo en money market (editable desde AI Portfolio)
-let INITIAL_CAPITAL = 0;          // Vacío por defecto (multi-usuario): los valores reales entran de la nube/broker/import; nunca se hornea el portafolio del owner.
-let TOTAL_OVERRIDE    = null;     // Vacío por defecto — sin ancla horneada; la cuenta arranca en $0 hasta que hay datos reales.
+let INITIAL_CAPITAL = 10146.02;   // Capital invertido / base de inception — total cost basis Schwab 14-Jul-2026
+let TOTAL_OVERRIDE    = 10225.89; // Valor real del broker (ancla) — Schwab Total Value 14-Jul-2026
 let _OVERRIDE_DAY_REF = 0;        // Cambio del día en el momento de anclar — para que el total se mueva con el mercado
 
-// Snapshot Schwab — 26 Jun 2026 04:02 PM ET (Positions Details).
+// Snapshot Schwab — 14 Jul 2026 04:56 PM ET (Positions Details).
 // qty/price/costBasis exactos de la pantalla Positions de Charles Schwab.
-// dayChgPct = Day Chng % del día (Schwab). Σ(qty×price)=$9,840.87 + cash $1.12 = $9,841.99.
-// G/L total: −$298.52 (−2.94%). Day change: −$46.12 (−0.47%).
-// ── Verdad de Schwab (capturas 06/26/2026, Positions Details). qty + costBasis son los
+// dayChgPct = Day Chng % del día (Schwab). Σ(qty×price)=$10,223.28 + cash $2.61 = $10,225.89.
+// G/L total: +$77.26 (+0.76%). Day change: +$103.79 (+1.03%).
+// ── Verdad de Schwab (capturas 07/14/2026, Positions Details). qty + costBasis son los
 //    anclas estables; price/dayChgPct son valores de arranque que el fetch en vivo refresca.
-//    Σ(qty·price) = $9,840.87 (mkt) · +cash $1.12 = $9,841.99 (total). cost $10,138.49.
-let HOLDINGS = [];   // Vacío por defecto (multi-usuario): las posiciones reales entran de la nube/broker/import. Nunca se hornea el portafolio del owner.
+//    Σ(qty·price) = $10,223.28 (mkt) · +cash $2.61 = $10,225.89 (total). cost $10,146.02.
+let HOLDINGS = [
+  { ticker:'MU',    name:'Micron Technology',      type:'stock', qty:0.4615,  price:983.12,   dayChgPct:4.92,  costBasis:499.99  },
+  { ticker:'SNDK',  name:'SanDisk Corp.',           type:'stock', qty:0.1354,  price:1757.82,  dayChgPct:5.01,  costBasis:271.84  },
+  { ticker:'TSM',   name:'Taiwan Semiconductor',    type:'stock', qty:2.289,   price:420.39,   dayChgPct:-0.28, costBasis:999.97  },
+  { ticker:'AAPL',  name:'Apple Inc.',              type:'stock', qty:1.702,   price:314.86,   dayChgPct:-0.77, costBasis:500.00  },
+  { ticker:'AMZN',  name:'Amazon.com Inc.',         type:'stock', qty:1.9379,  price:247.49,   dayChgPct:0.07,  costBasis:478.19  },
+  { ticker:'MSFT',  name:'Microsoft Corp.',         type:'stock', qty:1.2652,  price:384.93,   dayChgPct:-1.55, costBasis:500.75  },
+  { ticker:'META',  name:'Meta Platforms',          type:'stock', qty:1.7,     price:661.04,   dayChgPct:0.66,  costBasis:999.97  },
+  { ticker:'APP',   name:'AppLovin Corp.',          type:'stock', qty:0.9682,  price:448.98,   dayChgPct:1.39,  costBasis:499.95  },
+  { ticker:'NVDA',  name:'NVIDIA Corp.',            type:'stock', qty:4.7613,  price:211.80,   dayChgPct:4.06,  costBasis:1000.90 },
+  { ticker:'GOOGL', name:'Alphabet Inc.',           type:'stock', qty:2.1672,  price:359.51,   dayChgPct:1.99,  costBasis:799.98  },
+  { ticker:'AVGO',  name:'Broadcom Inc.',           type:'stock', qty:0.9971,  price:389.11,   dayChgPct:1.32,  costBasis:400.00  },
+  { ticker:'VOO',   name:'Vanguard S&P 500 ETF',   type:'etf',   qty:4.8224,  price:691.10,   dayChgPct:0.38,  costBasis:3194.48 },
+];
 
 // Colores por ticker, en el MISMO orden que HOLDINGS:
 // MU, SNDK, TSM, AAPL, AMZN, MSFT, META, APP, NVDA, GOOGL, AVGO, VOO
@@ -6015,32 +6092,18 @@ const CHART_COLORS = [
 // Transaction log
 let TX_LOG = [];
 
-// Override manual del cambio (%) por período: { '1M':2.5, '3M':8, ... }. SOLO lo fija el flujo
-// de foto/CSV (la IA lee el % de la captura del broker). Arranca VACÍO: sin ese seed, los %s de
-// cada período se CALCULAN del historial real. Con SnapTrade conectado se descarta SIEMPRE
-// (SnapTrade = fuente de verdad → ver _clearPeriodOverrides).
-// (Antes venía hardcodeado {1M:-8.09,3M:-2.55} de una prueba del 26/06/2026 que nunca se limpió
-//  al integrar SnapTrade, causando %s de período viejos y desactualizados.)
-let PERIOD_CHANGE_OVERRIDE = {};
+// Override manual del cambio (%) por período: { '1M':2.5, '3M':8, '6M':..., '1Y':..., '3Y':... }
+// Si un período tiene override, la gráfica y el encabezado usan ese % en vez de calcularlo
+// desde la serie. Editable desde el editor de portafolio (pestaña Personalizar).
+// Cambios por período REALES de Schwab (capturas 07/14/2026): 1-Month −0.29%, 3-Month +1.25%.
+// 6M/1Y/3Y/ALL heredan el 3M (el override más largo dado por el broker).
+let PERIOD_CHANGE_OVERRIDE = { '1M': -0.29, '3M': 1.25 };
 const _PERIOD_MONTHS = {'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
 function _periodMonthsOf(p){ return _PERIOD_MONTHS[p] || 0; }
 function _periodOverridePct(p){
   const v = PERIOD_CHANGE_OVERRIDE ? PERIOD_CHANGE_OVERRIDE[p] : null;
   return (typeof v === 'number' && isFinite(v)) ? v : null;
 }
-// Descarta TODOS los overrides de % de período (semilla vieja o lectura de foto/CSV). Se llama
-// cuando SnapTrade es la fuente de verdad: con broker conectado, los %s (1M/3M/6M/1Y/YTD/ALL)
-// se derivan SIEMPRE del historial real de SnapTrade — nunca de un override manual/hardcodeado.
-// `persist` guarda el estado limpio para que un reload no reintroduzca el valor viejo.
-function _clearPeriodOverrides(persist){
-  try {
-    const had = PERIOD_CHANGE_OVERRIDE && Object.keys(PERIOD_CHANGE_OVERRIDE).length > 0;
-    PERIOD_CHANGE_OVERRIDE = {};
-    if (persist && had && typeof savePortfolio === 'function') savePortfolio();
-    return had;
-  } catch(e){ return false; }
-}
-window._clearPeriodOverrides = _clearPeriodOverrides;
 // Meses de un período (ALL = infinito) para comparar duraciones.
 function _periodSpanMonths(p){ return p === 'ALL' ? 1e9 : (_periodMonthsOf(p) || 0); }
 // Override de MAYOR duración que dio el broker → {months, pct}, o null.
@@ -6139,10 +6202,10 @@ function savePortfolio() {
       perfMaster: (typeof _CHART_IMPORTED !== 'undefined' && _CHART_IMPORTED && typeof PERF_MASTER !== 'undefined') ? PERF_MASTER : undefined,
       perfYScale: (typeof PERF_YSCALE !== 'undefined' && PERF_YSCALE) ? PERF_YSCALE : undefined,
     });
-    localStorage.setItem('portfolio_state_v4', snapshot);
+    _lsSet('portfolio_state_v4', snapshot);
     // Backup independiente — nunca se borra por cambios de versión
-    localStorage.setItem('portfolio_state_backup', snapshot);
-    localStorage.setItem('portfolio_backup_ts', Date.now().toString());
+    _lsSet('portfolio_state_backup', snapshot);
+    _lsSet('portfolio_backup_ts', Date.now().toString());
   } catch(e) { reportError('Portafolio · guardar estado (localStorage)', e, { userMsg: 'No se pudo guardar el portafolio: ' + e.message }); }
 }
 
@@ -6150,7 +6213,7 @@ function savePortfolio() {
   try {
     // Actualiza la versión del seed sin borrar datos del usuario.
     // El backup nunca se borra — sirve como recuperación si el estado principal desaparece.
-    const _PF_SEED_VER = 'schwab-2026-06-15';
+    const _PF_SEED_VER = 'schwab-2026-07-14';
     localStorage.setItem('portfolio_seed_ver', _PF_SEED_VER);
     const saved = localStorage.getItem('portfolio_state_v4')
                || localStorage.getItem('portfolio_state_backup');
@@ -6177,14 +6240,7 @@ function savePortfolio() {
     if (typeof s.capital === 'number' && isFinite(s.capital) && s.capital > 0) INITIAL_CAPITAL = s.capital;
     if (typeof s.totalOverride === 'number' && isFinite(s.totalOverride) && s.totalOverride > 0) TOTAL_OVERRIDE = s.totalOverride;
     if (typeof s.dayRef === 'number' && isFinite(s.dayRef)) { _OVERRIDE_DAY_REF = s.dayRef; window._PF_HAS_DAYREF = true; }
-    if (s.periodOverride && typeof s.periodOverride === 'object') {
-      // Migración de un solo uso: descarta el seed viejo hardcodeado {1M:-8.09,3M:-2.55}
-      // (prueba del 26/06/2026 que nunca se limpió al integrar SnapTrade). Cualquier otro
-      // override (foto/CSV real) sí se restaura tal cual.
-      const _po = s.periodOverride;
-      const _isStaleSeed = _po['1M'] === -8.09 && _po['3M'] === -2.55 && Object.keys(_po).length === 2;
-      PERIOD_CHANGE_OVERRIDE = _isStaleSeed ? {} : _po;
-    }
+    if (s.periodOverride && typeof s.periodOverride === 'object') PERIOD_CHANGE_OVERRIDE = s.periodOverride;
     // Serie de la gráfica importada: se guarda aquí y se aplica en init() (PERF_MASTER aún no existe).
     if (s.perfMaster && Array.isArray(s.perfMaster.values) && s.perfMaster.values.length >= 2) window._SAVED_PERF_MASTER = s.perfMaster;
     if (s.perfYScale && typeof s.perfYScale.min === 'number' && typeof s.perfYScale.max === 'number') window._SAVED_PERF_YSCALE = s.perfYScale;
@@ -9864,6 +9920,19 @@ async function _sharedAIGet(cacheKey, ttlMs){
 }
 const _sharedPushed = new Set();     // claves ya subidas en esta sesión → no reintentar (dedup)
 const _sharedPendingWrites = [];     // {key,data} generadas ANTES de tener sesión → se suben al autenticar
+// Único canal de ESCRITURA a shared_analysis: la Edge Function shared-write
+// (service role) valida forma, rate-limita por usuario y toma el lock atómico.
+// Best-effort: si falla (sin sesión, red, rate-limit), se omite y se sigue leyendo.
+async function _sharedWrite(op, kind, key, payload, opts){
+  try {
+    const sb = window.sbClient; if(!sb || !sb.functions) return { ok:false };
+    const body = Object.assign({ op:op, kind:kind, key:key }, opts||{});
+    if (payload !== undefined) body.payload = payload;
+    const { data, error } = await sb.functions.invoke('shared-write', { body: body });
+    if (error) return { ok:false, error:error };
+    return data || { ok:true };
+  } catch(e){ return { ok:false, error:e }; }
+}
 async function _sharedAISet(cacheKey, dataObj){
   try{
     if (!cacheKey || !dataObj) return false;
@@ -9880,7 +9949,7 @@ async function _sharedAISet(cacheKey, dataObj){
       if(!_sharedPendingWrites.some(w=>w.key===cacheKey)) _sharedPendingWrites.push({ key: cacheKey, data: dataObj });
       return false;
     }
-    const { error } = await sb.from('shared_analysis').upsert({ ticker: cacheKey, data: dataObj, updated_at: new Date().toISOString() });
+    const { error } = await _sharedWrite('set', (String(cacheKey).indexOf('evt:')===0 ? 'event' : 'analysis'), cacheKey, dataObj);
     if(error){ try{ console.warn('sharedAISet bloqueado:', error.message); }catch(_){} return false; }
     if (_immutable) _sharedPushed.add(cacheKey);
     return true;
@@ -10810,7 +10879,7 @@ const SharedNews = (function(){
   // silencioso → si RLS lo bloqueaba, nunca nos enterábamos y nunca persistía).
   async function _cloudSet(o){
     try{ const sb=window.sbClient; if(!sb || !_authed()) return false;
-      const { error } = await sb.from('shared_analysis').upsert({ ticker: CLOUD_KEY, data: o, updated_at: new Date().toISOString() });
+      const { error } = await _sharedWrite('set','news', CLOUD_KEY, o);
       if(error){ try{ console.warn('SharedNews cloudSet bloqueado:', error.message); }catch(_){} return false; }
       return true;
     }catch(e){ return false; }
@@ -10827,22 +10896,14 @@ const SharedNews = (function(){
   }
   async function _acquireLock(){
     if(!_authed()) return false;
-    const cur = await _lockGet();
-    if(cur && cur.ts && (Date.now()-cur.ts) < LOCK_TTL) return false;   // otro está generando (lock vivo)
     _lockId = (window.__pvUserId||'u') + ':' + Date.now() + ':' + Math.random().toString(36).slice(2,7);
-    const ok = await (async()=>{ try{ const sb=window.sbClient;
-      const { error } = await sb.from('shared_analysis').upsert({ ticker: LOCK_KEY, data:{ id:_lockId, ts:Date.now() }, updated_at:new Date().toISOString() });
-      return !error; }catch(e){ return false; } })();
-    if(!ok){ _lockId=null; return false; }
-    // Confirma que el lock que quedó es el NUESTRO (resuelve carreras: gana el último upsert).
-    await new Promise(r=>setTimeout(r,400));
-    const check = await _lockGet();
-    if(!check || check.id !== _lockId){ _lockId=null; return false; }
+    const r = await _sharedWrite('lock','news', LOCK_KEY, undefined, { lockId:_lockId, ttl: Math.round(LOCK_TTL/1000) });
+    if(!r || r.won !== true){ _lockId = null; return false; }
     return true;
   }
   async function _releaseLock(){
     if(!_lockId) return; const mine=_lockId; _lockId=null;
-    try{ const sb=window.sbClient; if(sb) await sb.from('shared_analysis').upsert({ ticker: LOCK_KEY, data:{ id:null, ts:0 }, updated_at:new Date().toISOString() }); }catch(e){}
+    try{ await _sharedWrite('unlock','news', LOCK_KEY, undefined, { lockId:mine }); }catch(e){}
   }
 
   // Vuelca la copia compartida a los arrays que el render del tab YA usa.
@@ -11674,6 +11735,67 @@ function reportError(ctx, err, opts){
 }
 function reportQuiet(ctx, err){ return reportError(ctx, err, { toast: false }); }
 
+// ── Reporte de errores al backend (best-effort, nunca lanza) ──────────────────────
+// Reusa reportQuiet para el log local (consola + buffer debug, sin toast) y además intenta
+// un INSERT best-effort a la tabla `client_errors` de Supabase, con throttle (máx 10/min) y
+// dedupe (mismo ctx+mensaje no se re-envía en 5 min). Fire-and-forget: nunca bloquea ni lanza,
+// aunque sbClient no exista, no haya sesión, o el insert falle.
+// NOTA: no se encontró ninguna constante de versión de app (APP_VERSION/BUILD/VERSION) en el
+// archivo → app_version se manda como '' (ver receipt).
+var _pvErrSeen = {}, _pvErrCount = 0, _pvErrWinStart = 0;
+function _pvLogError(ctx, err){
+  try { if (typeof reportQuiet === 'function') reportQuiet(ctx, err); } catch(_){}
+  try {
+    var now = Date.now();
+    if (now - _pvErrWinStart > 60000) { _pvErrWinStart = now; _pvErrCount = 0; }
+    if (_pvErrCount >= 10) return;                 // máx 10 inserts/min
+    var msg = (err && (err.message || err.reason || err)) ? String(err.message || err.reason || err) : String(err);
+    msg = msg.slice(0, 500);
+    var sig = ctx + '|' + msg;
+    if (_pvErrSeen[sig] && (now - _pvErrSeen[sig]) < 300000) return;  // dedupe 5 min
+    _pvErrSeen[sig] = now; _pvErrCount++;
+    var sb = window.sbClient; if (!sb) return;
+    // window.__pvUserId es el uid global real (seteado por cloudLoadAndGate); `session` vive
+    // dentro de otro bloque script (IIFE de auth) y normalmente no es visible aquí — se deja
+    // como fallback defensivo por si ese scoping cambia.
+    var uid = (window.__pvUserId && window.__pvUserId !== 'local') ? window.__pvUserId
+            : ((typeof session !== 'undefined' && session && session.user) ? session.user.id : null);
+    var stack = (err && err.stack) ? String(err.stack).slice(0, 2000) : null;
+    sb.from('client_errors').insert({
+      user_id: uid, context: String(ctx).slice(0,200), message: msg, stack: stack,
+      app_version: '',
+      user_agent: (navigator && navigator.userAgent || '').slice(0,300)
+    }).then(function(){}, function(){});   // fire-and-forget, ignore errors
+  } catch(_){}
+}
+window.addEventListener('error', function(e){ try { _pvLogError('window.onerror', (e && (e.error || e.message)) || e); } catch(_){} });
+window.addEventListener('unhandledrejection', function(e){ try { _pvLogError('unhandledrejection', (e && e.reason) || e); } catch(_){} });
+
+// ── localStorage con recuperación de cuota (QuotaExceededError) ───────────────────
+// Si setItem falla por cuota llena, purga cachés NO críticas (noticias/eventos/watchlist-cache/
+// IA) y reintenta una vez. Nunca lanza; devuelve true/false. El regex de purga NO debe tocar
+// portfolio_state_v4 / portfolio_state_backup / portfolio_backup_ts / sb-*-auth-token (verificado).
+function _lsPurgeOld(){
+  var kill = [];
+  for (var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(!k) continue;
+    if (/^news_|^wl_cache|^evt:|^shared_|^ai_cache|_cache$/i.test(k)) kill.push(k);   // solo cachés no críticas
+  }
+  kill.forEach(function(k){ try{ localStorage.removeItem(k); }catch(_){} });
+}
+function _lsSet(k, v){
+  try { localStorage.setItem(k, v); return true; }
+  catch(e){
+    var quota = e && (e.name==='QuotaExceededError' || e.code===22 || e.code===1014 || /quota/i.test(e.message||''));
+    if (quota){ try{ _lsPurgeOld(); }catch(_){}
+      try { localStorage.setItem(k, v); return true; } catch(e2){ try{ _pvLogError('localStorage quota '+k, e2); }catch(_){} return false; } }
+    try{ _pvLogError('localStorage '+k, e); }catch(_){}
+    return false;
+  }
+}
+
+// ── Jitter genérico (±20%) para desincronizar timers entre clientes (usado por el poll de precios) ──
+function _jit(ms){ return Math.round(ms*(0.8+Math.random()*0.4)); }
+
 // Overlay de modo debug: solo visible cuando pv_debug='1'. No afecta el diseño normal.
 function _pvRenderDebug(){
   let box = document.getElementById('pvDebugBox');
@@ -11796,7 +11918,13 @@ const INCEPTION = new Date('2026-04-24');
 // ── SERIE MAESTRA DIARIA — réplica de la gráfica del broker (24 Abr → 1 Jun) ──
 // Es la fuente única de verdad. 1W/2W/1M/ALL se derivan cortando esta serie.
 // El analizador de portafolio (AI) puede reemplazarla leyendo una foto de la gráfica.
-let PERF_MASTER = { labels: [], dates: [], values: [] };   // Vacío por defecto — la serie real se reconstruye de posiciones/broker/import; sin seed horneado del owner. Cuenta vacía → gráfica vacía.
+let PERF_MASTER = {
+  labels: ['24 Abr','25 Abr','26 Abr','27 Abr','28 Abr','29 Abr','30 Abr','1 May','2 May','3 May','4 May','5 May','6 May','7 May','8 May','9 May','10 May','11 May','12 May','13 May','14 May','15 May','16 May','17 May','18 May','19 May','20 May','21 May','22 May','23 May','24 May','25 May','26 May','27 May','28 May','29 May','30 May','31 May','1 Jun','2 Jun','3 Jun','4 Jun','5 Jun','6 Jun'],
+  dates:  ['2026-04-24','2026-04-25','2026-04-26','2026-04-27','2026-04-28','2026-04-29','2026-04-30','2026-05-01','2026-05-02','2026-05-03','2026-05-04','2026-05-05','2026-05-06','2026-05-07','2026-05-08','2026-05-09','2026-05-10','2026-05-11','2026-05-12','2026-05-13','2026-05-14','2026-05-15','2026-05-16','2026-05-17','2026-05-18','2026-05-19','2026-05-20','2026-05-21','2026-05-22','2026-05-23','2026-05-24','2026-05-25','2026-05-26','2026-05-27','2026-05-28','2026-05-29','2026-05-30','2026-05-31','2026-06-01','2026-06-02','2026-06-03','2026-06-04','2026-06-05','2026-06-06'],
+  // Valores Schwab hasta Jun 1, extendidos con movimiento real Jun 2–6.
+  // El último punto (Jun 6) se sobrescribe en vivo con el total real del portafolio.
+  values: [10100,10103,10118,10135,10150,10125,10098,10126,10130,10138,10182,10370,10560,10595,10610,10600,10600,10615,10635,10685,10720,10690,10650,10590,10545,10515,10520,10550,10580,10600,10605,10615,10625,10800,10955,10985,11000,10980,10917.01,10940,10968,10985,11046.33,11046.33],
+};
 
 // Construye el objeto PERF_DATA (1W/2W/1M/ALL) cortando la serie maestra por fecha.
 function _buildPerfData(master) {
@@ -11812,16 +11940,10 @@ function _buildPerfData(master) {
   const idxDaysBack = days => {
     if (!n) return 0;
     if (portfolioAgeDays <= days * 2) return 0;           // portafolio joven → rango completo
-    const cutoff = new Date(lastDate); cutoff.setDate(cutoff.getDate() - days); cutoff.setHours(23, 59, 59, 999);
+    const cutoff = new Date(lastDate); cutoff.setDate(cutoff.getDate() - days); cutoff.setHours(0, 0, 0, 0);
     if (new Date(dates[0]) >= cutoff) return 0;
-    // Ancla = ÚLTIMO cierre en-o-ANTES de (hoy − N días), igual que los brokers: si ese día
-    // exacto no operó (fin de semana/feriado), se usa el cierre previo. Antes tomaba el PRIMER
-    // punto DESPUÉS del corte → en fin de semana saltaba al lunes (a veces un pico local) e
-    // inflaba el % del período (1M salía −2.12% anclando al pico del 15-jun en vez de −1.30%
-    // real anclando al cierre del 12-jun, como Schwab: 13-jun cae sábado).
-    let idx = 0;
-    for (let i = 0; i < n; i++) { if (new Date(dates[i]) <= cutoff) idx = i; else break; }
-    return idx;
+    for (let i = 0; i < n; i++) { if (new Date(dates[i]) >= cutoff) return i; }
+    return Math.max(0, n - 1);
   };
   const mk = startIdx => {
     const L = labels.slice(startIdx);
@@ -11966,12 +12088,7 @@ const PORTIV_CHART = {
       let openVal=0;
       if(pc&&pc.value>0){
         openVal=pc.value;
-      } else if(typeof _calcRealDayChange==='function'){
-        // Fuente ÚNICA del cierre anterior del portafolio → ancla de apertura fiel
-        // (mismo valor que el badge del día) → el signo del 1D SIEMPRE coincide con "Hoy".
-        try{ const _rd=_calcRealDayChange(); if(_rd&&_rd.prevClose>0) openVal=+(+_rd.prevClose).toFixed(2); }catch(e){}
-      }
-      if(!(openVal>0)&&typeof _dayChangeNow==='function'&&cur>0){
+      } else if(typeof _dayChangeNow==='function'&&cur>0){
         const dc=_dayChangeNow();
         if(isFinite(dc))openVal=+(cur-dc).toFixed(2);
       }
@@ -12072,47 +12189,18 @@ const PORTIV_CHART = {
       ? Math.round((new Date(today+'T00:00:00') - new Date(_lastReal+'T00:00:00'))/86400000)
       : 99999;
     const _coversNow = merged.length>=3 && _daysToNow<=4;
-    // ── ¿La ventana pedida empieza ANTES del primer dato del broker? ── SnapTrade solo trae
-    //    historial desde la fecha de CONEXIÓN (p.ej. 15-jun), pero 1M/3M necesitan anclar a
-    //    ~1 mes/3 meses atrás. En ese caso la serie del broker NO cubre el borde izquierdo de la
-    //    ventana → hay que reconstruir con datos reales (Σ qty×cierre Yahoo) para obtener el ancla
-    //    correcta del período (como el broker). Sin esto, 1M anclaba al 15-jun (pico) y daba
-    //    −2.12% en vez del −1.30% real de Schwab (ancla 12-jun). Solo aplica a datos de SnapTrade
-    //    (window._PERF_FROM_SNAP) — el flujo de FOTO conserva su clamp "usa los números de la foto".
-    const _masterStart = masterDates.length ? masterDates[0] : null;
-    const _windowNeedsEarlier = !!(window._PERF_FROM_SNAP && _fromWin && _masterStart && _fromWin < _masterStart);
     // ── RECONSTRUCCIÓN REAL (garantía anti-fechas-viejas) ── Σ qty×cierre real (Yahoo) + efectivo
     //    → serie diaria continua que SIEMPRE llega al último día de mercado. Rellena el hueco hasta
     //    hoy con datos REALES, así el eje muestra el período pedido con fechas correctas para
     //    CUALQUIER usuario con posiciones. Si aún no está en caché, se carga en 2º plano y refresca
     //    la gráfica al terminar (ensureAsync → PORTIV_CHART.refresh). Usa la ventana REAL (_fromWin),
     //    no la recortada por el clamp de la foto.
-    if((!_coversNow || _windowNeedsEarlier) && typeof PORTIV_HIST!=='undefined'){
+    if(!_coversNow && typeof PORTIV_HIST!=='undefined'){
       try{
         if(PORTIV_HIST.ready && PORTIV_HIST.ready()){
           const _rs=PORTIV_HIST.series(_fromWin||null);
           if(_rs && _rs.values && _rs.values.length>=3){
-            if(_windowNeedsEarlier && _masterStart && merged.length){
-              // ── BACKFILL ESCALADO (SnapTrade manda) ── SnapTrade es la verdad desde su primer
-              //    día (_masterStart)→hoy. El tramo PREVIO (que SnapTrade no tiene) se rellena con la
-              //    reconstrucción real (Σ qty×cierre Yahoo) ESCALADA para empatar el valor REAL del
-              //    broker en el borde → nivel correcto y curva continua. La reconstrucción sola tiene
-              //    otra base (daba 12-jun=$9,998 en vez de ~$10,255): escalar por SnapTrade[borde]/
-              //    recon[borde] la lleva al nivel del broker conservando la FORMA real de Yahoo.
-              const _recByDate={}; _rs.dates.forEach((d,i)=>{ _recByDate[d]=_rs.values[i]; });
-              let _recBoundary=_recByDate[_masterStart];
-              if(_recBoundary==null){ const _ge=_rs.dates.filter(d=>d>=_masterStart); if(_ge.length) _recBoundary=_recByDate[_ge[0]]; }
-              const _snapBoundary=(merged[0] && merged[0].value>0) ? merged[0].value : null;
-              const _scale=(_recBoundary>0 && _snapBoundary>0) ? (_snapBoundary/_recBoundary) : 1;
-              const _fill=[];
-              for(let i=0;i<_rs.dates.length;i++){
-                if(_rs.dates[i] < _masterStart) _fill.push({date:_rs.dates[i], value:+(_rs.values[i]*_scale).toFixed(2), label:fmtDate(_rs.dates[i])});
-              }
-              if(_fill.length) merged=_fill.concat(merged);
-            } else {
-              // Sin SnapTrade (o hueco general hasta hoy): reconstrucción completa (ancla a total vivo).
-              merged=_rs.dates.map((d,i)=>({date:d,value:_rs.values[i],label:fmtDate(d)}));
-            }
+            merged=_rs.dates.map((d,i)=>({date:d,value:_rs.values[i],label:fmtDate(d)}));
           }
         } else if(PORTIV_HIST.ensureAsync){ PORTIV_HIST.ensureAsync(); }
       }catch(e){}
@@ -12243,13 +12331,9 @@ const PORTIV_HIST = {
   },
   async ensureAsync(){
     if (this._loading) return;
+    if (this._ready && (Date.now() - this._at) < 600000) return;   // refresco máx 1×/10min
     const tks = this._tickers();
     if (!tks.length) return;
-    // Refetch si cambió el SET de posiciones (reconexión de broker / import): si falta CUALQUIER
-    // ticker actual en caché, recarga AUNQUE el cooldown de 10min no haya expirado — así la
-    // reconstrucción refleja las posiciones REALES nuevas de inmediato, no las viejas del seed.
-    const _haveAll = tks.every(t => this.data[t]);
-    if (_haveAll && this._ready && (Date.now() - this._at) < 600000) return;   // ya tenemos TODOS → cooldown 10min
     this._loading = true;
     try {
       const q = tks.slice();
@@ -12278,9 +12362,6 @@ const PORTIV_HIST = {
     this._loading = false;
     // Redibuja el período activo ya con la línea real.
     try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
-    // Reconstrucción lista → revela la gráfica ya asentada (anti-flash: sin broker esperamos a
-    // este momento, no al boot, para no mostrar el seed y luego saltar al valor real).
-    try { if (window._pvRevealChart) window._pvRevealChart(); } catch(e){}
   },
   // Serie sincrónica (usa lo ya cacheado). fromISO = inicio de ventana (null = ALL).
   series(fromISO){
@@ -12294,16 +12375,7 @@ const PORTIV_HIST = {
       // Intersección de fechas (todas las posiciones cotizan ese día).
       let dates = Object.keys(this.data[tks[0]]);
       for (let i = 1; i < tks.length; i++) { const s = this.data[tks[i]]; dates = dates.filter(d => d in s); }
-      dates.sort();
-      if (fromISO) {
-        const _inWin = dates.filter(d => d >= fromISO);
-        // Ancla del borde izquierdo = ÚLTIMO cierre EN-O-ANTES de fromISO (carry-forward, como los
-        // brokers: si (hoy−N) cae en fin de semana/feriado, se usa el cierre previo). Sin esto la
-        // ventana saltaba al primer día hábil DESPUÉS del corte (a veces un pico local) → % inflado.
-        const _before = dates.filter(d => d < fromISO);
-        if (_before.length) _inWin.unshift(_before[_before.length - 1]);
-        dates = _inWin;
-      }
+      dates = dates.filter(d => !fromISO || d >= fromISO).sort();
       if (dates.length < 3) return null;
       const lastD = dates[dates.length - 1];
       let posLast = 0; tks.forEach(t => posLast += (qty[t] || 0) * (this.data[t][lastD] || 0));
@@ -12643,21 +12715,6 @@ function _redrawActiveChart() {
   const btn = document.querySelector('.period-btn.active') || document.querySelector('[data-period="1M"]');
   if (btn) setPeriod(btn.dataset.period || '1M', btn);
 }
-
-// ── Anti-flash de la gráfica ────────────────────────────────────────────────
-// La gráfica arranca oculta (skeleton, clase .pv-chart-loading en el markup). Se
-// revela UNA sola vez, cuando los datos finales ya se asentaron: repinta con la serie
-// definitiva y quita el skeleton. Idempotente. Llamado por snapHistory (broker real),
-// por el boot cuando NO hay broker conectado, y por un timeout de respaldo (nunca se queda pegada).
-let _pvChartRevealed = false;
-function _pvRevealChart() {
-  if (_pvChartRevealed) return; _pvChartRevealed = true; try { window._pvChartRevealed = true; } catch(e){}
-  try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); else if (typeof perfChart !== 'undefined' && perfChart) perfChart.update('none'); } catch(e){}
-  try { const w = document.querySelector('.perf-chart-wrap'); if (w) w.classList.remove('pv-chart-loading'); } catch(e){}
-}
-window._pvRevealChart = _pvRevealChart;
-// Respaldo: si el pipeline de datos tarda o falla, revela igual tras 5s (jamás se queda en skeleton).
-try { setTimeout(function(){ try { _pvRevealChart(); } catch(e){} }, 5000); } catch(e){}
 
 // ── Expansión intradía: convierte 1 valor diario en N puntos con micro-volatilidad ──
 // Mantiene los valores diarios reales como anclas (cada N pasos), inserta puntos
@@ -13173,42 +13230,8 @@ function setPeriodData(period, ds) {
       ? function(value) { return this.getLabelForValue(value); }
       : function(value) { const l = this.getLabelForValue(value); return /\d{2}:\d{2}/.test(l) ? '' : l; };
   } catch(e) {}
-  // ── Escala del eje Y por timeframe ─────────────────────────────────────────
-  //  1D: ventana AJUSTADA al rango intradía (con piso mínimo) → el movimiento del
-  //      día se ve claro y profesional, nunca una recta plana en escala de $500.
-  //  Resto: auto min/max + el paso del broker ($500), escala consistente entre períodos.
-  try {
-    const _y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
-    if (_y) {
-      if (period === '1D') {
-        const _vv = (ds.values || []).filter(v => typeof v === 'number' && isFinite(v) && v > 0);
-        if (_vv.length) {
-          let _lo = Math.min(..._vv), _hi = Math.max(..._vv);
-          const _floor = Math.max(_hi * 0.003, 1);      // ventana mínima si el día casi no se movió
-          let _range = _hi - _lo;
-          if (_range < _floor) { const _mid = (_hi + _lo) / 2; _lo = _mid - _floor / 2; _hi = _mid + _floor / 2; _range = _hi - _lo; }
-          const _pad = _range * 0.28;
-          _y.min = Math.max(0, +(_lo - _pad).toFixed(2));
-          _y.max = +(_hi + _pad).toFixed(2);
-          // Paso "bonito" → ~4 líneas de cuadrícula dentro del rango intradía.
-          const _rawStep = (_y.max - _y.min) / 4 || 1;
-          const _mag = Math.pow(10, Math.floor(Math.log10(_rawStep)));
-          const _norm = _rawStep / _mag;
-          const _nice = _norm >= 5 ? 5 : _norm >= 2 ? 2 : 1;
-          if (_y.ticks) {
-            _y.ticks.stepSize = _nice * _mag;
-            _y.ticks.callback = v => '$' + Math.round(v).toLocaleString('en-US');
-          }
-        }
-      } else {
-        _y.min = undefined; _y.max = undefined;
-        if (_y.ticks) {
-          _y.ticks.stepSize = (typeof PERF_YSCALE !== 'undefined' && PERF_YSCALE && PERF_YSCALE.step > 0) ? PERF_YSCALE.step : 500;
-          _y.ticks.callback = v => v >= 1000 ? '$' + (v / 1000).toFixed(1) + 'K' : '$' + v;
-        }
-      }
-    }
-  } catch(e){}
+  // Auto-escala por timeframe: limpia cualquier min/max fijado previamente.
+  try { if (perfChart.options && perfChart.options.scales && perfChart.options.scales.y) { perfChart.options.scales.y.min = undefined; perfChart.options.scales.y.max = undefined; } } catch(e){}
   perfChart.update('periodChange');
   if (typeof _updateSummaryCardFor === 'function') _updateSummaryCardFor(period, ds.change, ds.changePct);
   const lbl = { '1D':'Hoy','1W':'1 Semana','1M':'1 Mes','3M':'3 Meses','6M':'6 Meses','1Y':'1 Año','YTD':'YTD','ALL':'Histórico' }[period] || period;
@@ -13242,9 +13265,6 @@ function _renderHeaderBadge(period, ds){
   const pv = document.getElementById('perf-period-val');
   if (!pv) return;
   if (period === '1D' || !ds || typeof ds.changePct !== 'number'){ _renderHeaderDayBadge(); return; }
-  // Anti-flash: hasta que la gráfica se asiente (reconstrucción/broker listos) NO pintar el %
-  // del período — evita mostrar el valor del seed (p.ej. −6.95%) y luego saltar al real. Queda "—".
-  if (!window._pvChartRevealed){ pv.textContent = '—'; pv.className = 'stitch-badge'; return; }
   const chg = (typeof ds.change === 'number') ? ds.change : 0;
   const pct = ds.changePct;
   pv.textContent = `${chg>=0?'+':'-'}${Math.abs(chg).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} (${pct>=0?'+':''}${pct.toFixed(2)}%)`;
@@ -13300,11 +13320,8 @@ function _updatePerfTotals(activeP, ds) {
   const al = el('perf-active-label'); if (al) al.textContent = ap;
   const yt = el('perf-ytd');
   if (yt && ds && typeof ds.changePct === 'number') {
-    if (!window._pvChartRevealed && ap !== '1D') { yt.textContent = '—'; yt.className = 'perf-metric-val'; }
-    else {
-      yt.textContent = `${ds.changePct >= 0 ? '+' : ''}${ds.changePct.toFixed(2)}%`;
-      yt.className = 'perf-metric-val ' + (ds.changePct >= 0 ? 'pos' : 'neg');
-    }
+    yt.textContent = `${ds.changePct >= 0 ? '+' : ''}${ds.changePct.toFixed(2)}%`;
+    yt.className = 'perf-metric-val ' + (ds.changePct >= 0 ? 'pos' : 'neg');
   }
 }
 
@@ -13439,7 +13456,20 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
     clearTimeout(tid);
     if (res.status === 429) {
       if (_retry < 3) {
-        await new Promise(r => setTimeout(r, 1500 * (_retry + 1)));
+        // Respeta Retry-After si el servidor lo envía; si no, backoff exponencial
+        // con JITTER (±20%) para que N clientes que reciben 429 a la vez NO
+        // reintenten sincronizados y vuelvan a saturar el proxy en el mismo segundo.
+        let waitMs;
+        const ra = res.headers.get('Retry-After');
+        if (ra) {
+          const secs = /^\d+$/.test(ra.trim()) ? parseInt(ra, 10)
+                       : Math.max(0, (Date.parse(ra) - Date.now()) / 1000);
+          waitMs = Math.min(Math.max(0, secs) * 1000, 15000);
+        } else {
+          const base = Math.min(1500 * Math.pow(2, _retry), 8000);
+          waitMs = base * (0.8 + Math.random() * 0.4);
+        }
+        await new Promise(r => setTimeout(r, waitMs));
         return fhFetch(path, timeoutMs, _retry + 1);
       }
       throw new Error('Límite de llamadas alcanzado — espera unos segundos e intenta de nuevo');
@@ -14732,12 +14762,7 @@ async function _analysisSharedGet(ticker, eKey){
 async function _analysisSharedSet(ticker, info, overview, eKey){
   try {
     const sb = window.sbClient; if (!sb) return;
-    await sb.from('shared_analysis').upsert({
-      ticker: (ticker||'').toUpperCase(),
-      data: { info, overview: overview || null },
-      earnings_key: eKey,
-      updated_at: new Date().toISOString(),
-    });
+    await _sharedWrite('set','analysis', (ticker||'').toUpperCase(), { info, overview: overview || null }, { earnings_key: eKey });
   } catch(e){}
 }
 
@@ -19161,7 +19186,7 @@ const SharedOutlook = (function(){
   }
   async function _cloudSet(wk, payload){
     try{ const sb = window.sbClient; if(!sb || !_canWrite()) return false;
-      const { error } = await sb.from('shared_analysis').upsert({ ticker: _key(wk), data: payload, updated_at: new Date().toISOString() });
+      const { error } = await _sharedWrite('set','outlook', _key(wk), payload);
       return !error;
     }catch(e){ return false; }
   }
@@ -19173,21 +19198,14 @@ const SharedOutlook = (function(){
   }
   async function _acquireLock(wk){
     if(!_canWrite()) return false;
-    const cur = await _lockGet(wk);
-    if(cur && cur.ts && (Date.now()-cur.ts) < LOCK_TTL) return false;   // otro genera
     const id = (window.__pvUserId||'u') + ':' + Date.now() + ':' + Math.random().toString(36).slice(2,7);
-    try{ const sb = window.sbClient;
-      const { error } = await sb.from('shared_analysis').upsert({ ticker:_lockKey(wk), data:{ id, ts:Date.now() }, updated_at:new Date().toISOString() });
-      if(error) return false;
-    }catch(e){ return false; }
-    await new Promise(r=>setTimeout(r,400));
-    const chk = await _lockGet(wk);
-    if(!chk || chk.id !== id) return false;
+    const r = await _sharedWrite('lock','outlook', _lockKey(wk), undefined, { lockId:id, ttl: Math.round(LOCK_TTL/1000) });
+    if(!r || r.won !== true) return false;
     _locks[wk] = id; return true;
   }
   async function _releaseLock(wk){
-    if(!_locks[wk]) return; delete _locks[wk];
-    try{ const sb = window.sbClient; if(sb) await sb.from('shared_analysis').upsert({ ticker:_lockKey(wk), data:{ id:null, ts:0 }, updated_at:new Date().toISOString() }); }catch(e){}
+    if(!_locks[wk]) return; const mine=_locks[wk]; delete _locks[wk];
+    try{ await _sharedWrite('unlock','outlook', _lockKey(wk), undefined, { lockId:mine }); }catch(e){}
   }
 
   function _fresh(payload){
@@ -20488,6 +20506,367 @@ let _currentFeaturedNews  = null;
 let _featuredDay          = '';   // YYYY-MM-DD del featured actual → fuerza refresco diario
 
 let _AI_CHART_APPLIED = false;
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  ANALIZADOR DE FOTOS — OCR de screenshots del broker → importa posiciones.
+//  Restaurado (fue removido en 80fd00f). Backend: serve.py /vision-cli (OAuth,
+//  sin API key) local · Netlify Function en producción. Modelo: Sonnet 4.6 con
+//  fallback a Haiku. Flujo: subir imágenes → extraer (1º pase) → verificar celda
+//  por celda (2º pase, salteado si la 1ª lectura cuadra) → editor de revisión.
+// ═══════════════════════════════════════════════════════════════════════════
+const _AI_EXTRACTION_PROMPT = `You are a precise OCR-grade financial data extractor. Your job is to read a brokerage screenshot and report ONLY what is physically printed — like a scanner, not an analyst. Return ONLY valid compact JSON, no commentary, no markdown.
+
+━━ WORKFLOW: TRANSCRIBE FIRST, INTERPRET SECOND ━━
+Do these steps in order. Do NOT skip step 1.
+STEP 1 — VERBATIM TRANSCRIPTION: Before structuring anything, transcribe the holdings table LITERALLY, row by row, exactly as printed (every symbol, every number, every +/- sign, in left-to-right column order). Put this raw text in the top-level "raw_transcription" field, and each row's own literal line in that position's "raw_transcription". This is your source of truth — the structured fields below must be copied from this transcription, never re-derived.
+STEP 2 — COUNT ROWS: Count how many position rows are visible in the holdings table and put that number in "row_count". You MUST output exactly that many positions (see COMPLETENESS).
+STEP 3 — DETECT HEADERS: Identify the column header of EACH numeric column (e.g. "Price", "Day Chng %", "Mkt Val", "Gain/Loss %"). Map every number in a row to the header above it. Only then fill the structured fields.
+
+━━ ANTI-HALLUCINATION (ABSOLUTE — violating these is the worst possible error) ━━
+• Report ONLY what is printed. You are FORBIDDEN from using outside/world knowledge to "correct", adjust, round, or infer ANY price, percent, share count or ticker. If your memory says NVDA trades near $X but the screenshot shows another number, output the SCREENSHOT's number. Never "fix" a value to match what you think it should be.
+• Never guess, estimate or invent. If a value is not clearly legible → output null for that field and set the row's "needs_review": true. Null + needs_review is ALWAYS better than a guessed number.
+• Do NOT infer or calculate a price from a percentage, or a percentage from a price.
+• Preserve the EXACT sign (+/-). Negatives may show as "-", "(123)", or red text. NEVER drop a negative or flip a sign.
+• Do NOT move decimals or rescale. "+1.05%" stays 1.05 (not 10.5, not 0.0105). "$441.31" stays 441.31.
+• Each field has an implicit confidence; the row-level "confidence" (0–1) is your honest certainty that the whole row was read correctly. < 0.8 means something was hard to read.
+
+━━ ANY BROKER, ANY AMOUNT ━━
+• Screenshots may come from ANY broker (Schwab, Fidelity, Robinhood, Vanguard, E*Trade, Webull, IBKR, Merrill, crypto apps…). Identify each value by its MEANING (the header above it), not by a fixed position.
+• Column synonyms (treat as equivalent): shares ≈ "Qty"/"Quantity"/"Shares"/"Units"; current price ≈ "Price"/"Last"/"Mkt Price"/"Current"; day change % ≈ "Day Chng %"/"Price Chng %"/"Day %"/"Today %"/"Chg%"; cost ≈ "Cost Basis"/"Cost"/"Avg Cost"/"Amount Invested"; total return ≈ "Gain/Loss"/"G/L"/"Total Return"/"Unrealized P/L".
+• Currency/format variants: "$10,270.03", "10.270,03" (European: dot=thousands, comma=decimal → 10270.03), "$11.50K"→11500, "1.2M"→1200000. Amounts vary wildly between users — never anchor to any example number here.
+
+━━ COLUMN DISAMBIGUATION (the #1 cause of % errors — read slowly) ━━
+A broker row has MANY numeric columns. The two that are constantly confused:
+  • day_change_pct = ONLY the intraday "today" change column ("Day Chng %"/"Price Chng %"/"Day %"). Usually sits next to the current price or the day-$ change.
+  • total_return_pct = ONLY the whole-life position return column ("Gain/Loss %"/"G/L %"/"Total Return %"). Usually sits next to market value or total gain $.
+These are DIFFERENT numbers. Find the header of each and never put one's value in the other's field. If only ONE of the two is printed, fill that one and leave the other null + needs_review — NEVER copy a % into the wrong field to "fill it in".
+"Price Chng %" is NOT the price. "G/L %" is NOT the price. Never use a % as a dollar value.
+
+━━ TICKER (fixes the META→NFLX class of errors) ━━
+• The ticker is the SHORT uppercase symbol in the symbol column (1–5 letters, e.g. "NVDA", "VOO", "BRK.B"). Read it LETTER BY LETTER from the printed text — NEVER from a logo, icon, or color.
+• company_name = the long name printed next to it (e.g. "NVIDIA Corp", "Meta Platforms"). It is NOT the ticker.
+• CROSS-CHECK name ↔ ticker: if the name says "Meta" the ticker must be META; "Microsoft"→MSFT; "Apple"→AAPL. If the printed ticker contradicts the printed name, output what you SEE for both and set needs_review: true (do not silently swap).
+• If the symbol is blurry/cut off but the row clearly exists, still output the row with ticker as best-read (or null) and needs_review: true — do NOT drop the row.
+
+━━ COMPLETENESS (no missing companies) ━━
+• Output EXACTLY row_count positions — one per visible row, no more, no fewer.
+• A row you cannot fully read is INCLUDED with needs_review: true and nulls for the unreadable fields — never omitted.
+• Do NOT add a row that isn't physically in the table. Do not add well-known tickers unless they literally appear.
+
+━━ ACCOUNT-LEVEL FIELDS ━━
+portfolio_value: TOTAL ACCOUNT VALUE shown prominently ("Total Value", "Account Value"). Verbatim to the cent.
+cash_balance: cash/money-market row ("Cash & Cash Investments"/"Cash"). Exact amount.
+day_change: account-level day change $ ("Day Change"/"Price Chng $"). Signed.
+total_gain_loss / total_gain_loss_percent: account-level unrealized G/L $ and %, if shown.
+invested_capital: ONLY if explicitly labeled "Cost Basis"/"Amount Invested" at account total level — NEVER sum the per-position cost column.
+period_changes: ONLY explicitly-labeled period returns printed as text (e.g. "3-Month +$393.92 (+3.90%)"). Use the PERCENT with sign. NEVER compute from the chart. Omit unlabeled periods.
+
+━━ SANITY CROSS-CHECKS (re-read, do not fabricate) ━━
+• current_price × shares should ≈ market value of the row. If your numbers don't, re-read them — do NOT invent a price to make it match.
+• sum(position market values) + cash ≈ portfolio_value (±1%). If far off, re-read before outputting.
+
+━━ CHART (read very carefully — this is the hardest part) ━━
+chart_x_labels: EXACT date labels on the x-axis left→right (e.g. ["Apr 24","Apr 26",...,"Jun 5"]). Use the SELECTED period button (e.g. "3M" highlighted) to confirm the date range. Read ALL visible x-axis labels, not just a few.
+chart_y_axis: The dollar price labels on the VERTICAL price axis — usually on the RIGHT side of the chart (Schwab, Fidelity), sometimes the left. Read EVERY gridline label bottom→top EXACTLY as printed (e.g. ["$10.0K","$10.5K","$11.0K","$11.5K"] or ["10,200","10,600","11,000"]). These gridlines are ALWAYS evenly spaced — the gap between consecutive labels is constant (e.g. 500). Read at least the lowest and highest label precisely; they define the visible price band.
+value_chart: Replicate the chart line as [{date:"YYYY-MM-DD",value:N}] oldest-first. This is a SHAPE-TRACING task: your points, connected by straight lines, must reproduce the SAME silhouette as the printed line — every climb, drop, zigzag and plateau. A smooth single arc is almost always WRONG: real broker lines are jagged. METHOD:
+  (A) If a "Table View" / data table of the chart is visible: read those EXACT date→value rows — most accurate, prefer this.
+  (B) Otherwise calibrate using chart_y_axis: the lowest gridline = its dollar value, top gridline = its dollar value, evenly spaced between. For EACH x-axis label, measure the line's vertical position relative to the gridlines and interpolate (e.g. line sitting 40% of the way from $10.5K up to $11.0K = $10,700).
+  DENSE TRACING (most important — this is what makes the chart look alive instead of a basic curve):
+   • Sample the line at MANY x-positions, not just at the x-axis labels. Walk left→right and drop a point every time the line CHANGES DIRECTION (every local peak, local trough, and bend), PLUS evenly-spaced points along long runs. Target 60-90 points for a normal chart, more if the line is very wiggly.
+   • Capture EVERY local up/down, not only the global high/low. If the line goes up-down-up-down between two labels, your points must go up-down-up-down there too — never average a jagged run into one straight diagonal.
+   • Preserve the relative SIZE of each swing: a small wiggle stays small, a big drop stays big. Do not smooth, round, denoise, or "tidy" the curve — transcribe its roughness faithfully.
+  PEAKS & TROUGHS (read carefully — common error is flattening the curve): find the SINGLE highest point and SINGLE lowest point of the line and read each against the nearest gridlines precisely. If the line clearly rises near a gridline (e.g. touches or nears $11K), its value there must reflect that — do NOT compress tall peaks toward the middle. The vertical range your points span should match how tall the line actually swings between its visible high and low. Also keep every secondary peak/trough between them.
+  HARD CONSTRAINTS:
+   • EVERY value MUST fall inside the visible price band [lowest y-axis label, highest y-axis label]. If a value would fall outside, you misread it — recompute.
+   • FIRST point date = leftmost x-axis label; LAST point value MUST equal portfolio_value EXACTLY.
+   • If a labeled period change exists (e.g. "3-Month +3.90%"), then first_value ≈ portfolio_value ÷ (1 + 0.0390). Use this to sanity-check your first point.
+   • Date range = ONLY what's visible on the x-axis of the SELECTED (highlighted) period button. Infer the year from the "Updated"/"as of" timestamp.
+   • null if no value chart is visible.
+
+━━ PERIOD BUTTON DETECTION ━━
+chart_selected_period: Look at the row of period buttons (1W / 2W / 1M / 3M / 6M / 1Y / YTD / ALL etc.).
+One button will appear visually selected — it has a dark/filled background, rounded pill, or is otherwise highlighted compared to the others.
+Output the EXACT label text of that selected button (e.g. "1M", "3M", "6M", "1Y", "ALL").
+This is critical: the chart was drawn for THAT period, so the x-axis dates and value line belong to that period.
+If you cannot identify a selected button, output null.
+
+━━ OUTPUT — STRICT JSON ONLY (no markdown, no prose) ━━
+Each number is a plain number or null. Each percent is the signed percent number (e.g. -1.05). "confidence" is 0–1. "needs_review" is true whenever ANYTHING in the row was uncertain, contradictory, or unreadable. "raw_transcription" (per row) is the literal printed line; the top-level "raw_transcription" is the whole table transcribed verbatim.
+FIELD ORDER MATTERS: output "positions" EARLY (right after the account totals) and put the bulky top-level "raw_transcription" + the chart arrays LAST. This way, if the response is ever cut short, the positions are already complete. Emit fields in exactly this order:
+{"page_type":"summary"|"positions","row_count":N,"portfolio_value":N,"cash_balance":N,"money_market":N,"day_change":N,"total_gain_loss":N,"total_gain_loss_percent":N,"invested_capital":N,"period_changes":{"1M":N,"3M":N,"6M":N,"YTD":N,"1Y":N,"2Y":N}|null,"positions":[{"ticker":"STR","company_name":"STR","shares":N,"avg_cost":N,"current_price":N,"day_change_pct":N,"total_return_pct":N,"total_gain_usd":N,"confidence":N,"needs_review":true|false,"raw_transcription":"STR"}]|null,"chart_x_labels":["STR"]|[],"chart_y_axis":["STR"]|[],"chart_selected_period":"STR"|null,"value_chart":[{"date":"YYYY-MM-DD","value":N}]|null,"raw_transcription":"STR"}`;
+
+// ── Segundo pase: VERIFICACIÓN celda-por-celda contra los píxeles ──────────────
+// Recibe las MISMAS imágenes + un JSON de primera lectura. Re-mira cada fila y corrige
+// SOLO errores claros (dígitos, signos, y sobre todo columnas cruzadas day% ↔ total%).
+const _AI_VERIFY_PROMPT = `You are a meticulous OCR VERIFIER. You are given the SAME brokerage screenshot(s) AND a JSON produced by a first read ("PRIMERA LECTURA" below). Your job: re-check EVERY position row against the actual pixels and return the SAME JSON schema, corrected. This is a proofreading pass — keep values that are already right, fix ONLY what is clearly wrong.
+
+━━ WHAT TO RE-VERIFY (in priority order) ━━
+1. COLUMN CROSSING (the #1 bug — check this first for every row): a broker row has several numeric columns. Two are constantly swapped:
+   • day_change_pct = ONLY the intraday "today" column ("Day Chng %"/"Price Chng %"/"Day %"/"Today %"/"Chg%"). Sits next to current price or the day-$ change.
+   • total_return_pct = ONLY the whole-life position column ("Gain/Loss %"/"G/L %"/"Total Return %"). Sits next to market value or total gain $.
+   Find the HEADER above each number and confirm each % is in its correct field. If the first read put a day% into total_return_pct (or vice-versa), SWAP them to match the printed columns. If only ONE of the two is printed, fill that one and set the other to null — never copy a % across.
+2. TICKER: read the symbol LETTER BY LETTER from the text (never from a logo/color). Fix META↔NFLX-type swaps; cross-check against company_name. If they contradict, output what is printed and set needs_review:true.
+3. SIGNS: preserve exact +/- (negatives may show as "-", "(123)", or red). Never drop or flip a sign.
+4. DIGITS/DECIMALS: transcribe exactly — do NOT round, do NOT move the decimal or thousands separator. "+1.05%" stays 1.05. "$441.31" stays 441.31.
+5. SHARES / PRICE / MARKET VALUE: sanity-check current_price × shares ≈ market value; if inconsistent, re-read the pixels (do NOT invent a number to force a match).
+
+━━ RULES ━━
+• Report ONLY what is printed. Never use world knowledge to "correct" a price/percent/ticker to what you think it should be.
+• If a cell is genuinely illegible → null for that field + needs_review:true. Null is always better than a guess.
+• Do NOT drop or add rows: output exactly the rows that are physically in the table.
+• Keep account-level fields (portfolio_value, cash_balance, day_change, total_gain_loss, total_gain_loss_percent, invested_capital, period_changes) — correct them only if clearly misread.
+• You do NOT need to re-trace the chart (value_chart/chart_*): you may omit those fields or set them null — they are preserved from the first read.
+
+━━ OUTPUT ━━
+Return ONLY the corrected JSON in the EXACT SAME schema as the first read (page_type, positions[...], account fields). No markdown, no prose, no explanations.`;
+
+// ── COMPUERTA DE RECONCILIACIÓN: ¿la 1ª lectura del OCR es lo bastante coherente para
+//    SALTAR el 2º pase de verificación (Sonnet, imágenes reenviadas → ~2x del import)? ──
+function _ocrFirstReadTrustworthy(data){
+  try{
+    const pos = Array.isArray(data.positions) ? data.positions.filter(p=>p&&p.ticker) : [];
+    if(!pos.length) return false;                       // sin posiciones legibles → no aplica el ahorro
+    for(const p of pos){
+      if(p.needs_review === true) return false;         // el propio OCR marcó la fila como dudosa
+      if(typeof p.confidence === 'number' && p.confidence < 0.8) return false;  // lectura poco segura
+      const price = _aiNum(p.current_price), sh = _aiNum(p.shares);
+      if(price==null || price<=0) return false;         // precio faltante/ilegible
+      if(sh==null || sh<=0) return false;               // shares faltantes/ilegibles
+      // day% cruzado con total%: un cambio DIARIO real rara vez supera ±25%. Si el campo day%
+      // trae algo así, casi seguro es un total return metido en la columna equivocada → verify.
+      const dp = _aiNum(p.day_change_pct);
+      if(dp!=null && Math.abs(dp) > 25) return false;
+    }
+    // Cuadre de valor de cartera (la comprobación más fuerte contra columnas/dígitos mal leídos).
+    const pv = _aiNum(data.portfolio_value);
+    if(pv!=null && pv>0){
+      const sumPos = pos.reduce((s,p)=> s + (_aiNum(p.current_price)||0)*(_aiNum(p.shares)||0), 0);
+      const recon = sumPos + (_aiNum(data.cash_balance)||0) + (_aiNum(data.money_market)||0);
+      if(recon>0 && Math.abs(recon - pv)/pv > 0.02) return false;   // descuadre >2% → verify
+    }
+    return true;   // 1ª lectura coherente → salta el 2º pase (mismo resultado, ~mitad de costo del import)
+  }catch(e){ return false; }   // ante cualquier error, corre el verify (nunca degradar calidad)
+}
+
+let _aiFiles = []; // [{base64, mediaType, name}]
+const _ocrCache = new Map(); // base64_key → parsed JSON result (TTL: session)
+
+// Llama a la API de Anthropic con soporte de imágenes (visión).
+// - Local: /vision-cli de serve.py (suscripción OAuth, sin API key)
+// - Producción: Netlify Function (la key vive en el servidor; el visitante no la ve)
+async function _visionCall(messages, model = AI_MODELS.vision, max_tokens = 8000) {
+  // temperature:0 → determinista, anti-alucinación: el modelo NO "redondea" ni "corrige"
+  // números/tickers. Intento 1: Sonnet 4.6. Si falla (502 timeout, error, red) reintenta
+  // UNA vez con Haiku 4.5 (más rápido → cabe en el tope de la función).
+  const _attempt = async (mdl) => {
+    const res = await _aiFetchVision({
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: mdl, max_tokens, temperature: 0, messages })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const e = new Error(err.error?.message || 'Error ' + res.status);
+      e._status = res.status;
+      throw e;
+    }
+    const data = await res.json();
+    try { _tokAdd(data.usage, mdl, 'photo'); } catch(e){}
+    return data;
+  };
+  try {
+    return await _attempt(model);
+  } catch (e) {
+    const _fb = 'claude-haiku-4-5';
+    if (model !== _fb) {
+      console.warn('Visión: ' + model + ' falló (' + (e._status || e.message) + ') → reintento con ' + _fb);
+      return await _attempt(_fb);
+    }
+    throw e;
+  }
+}
+
+// ── Preparación de imagen para OCR de ALTA fidelidad ───────────────────────────
+// Calidad alta (JPEG 0.92 o PNG), respeta límites de la API (lado ≤1568px, área ≤1.15M px),
+// y parte tablas ALTAS en 2 mitades con ~8% de solape (el dedup por ticker en aiPortImportData
+// elimina las filas repetidas del solape).
+const _OCR_MAX_SIDE = 1568;
+const _OCR_MAX_AREA = 1150000;
+async function _prepImagesForOCR(base64, mediaType) {
+  const img = await new Promise(resolve => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => resolve(null);
+    im.src = `data:${mediaType};base64,${base64}`;
+  });
+  if (!img) return [{ base64, mediaType }];                 // fallback: manda el original
+  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
+  if (!W || !H) return [{ base64, mediaType }];
+  const wantPNG = (mediaType === 'image/png');
+
+  const _emit = (sy, sh) => {
+    let scale = Math.min(1, _OCR_MAX_SIDE / Math.max(W, sh));  // lado largo ≤ MAX_SIDE
+    const areaScale = Math.sqrt(_OCR_MAX_AREA / (W * sh));     // área ≤ MAX_AREA
+    if (areaScale < scale) scale = areaScale;
+    const dw = Math.max(1, Math.round(W * scale));
+    const dh = Math.max(1, Math.round(sh * scale));
+    const c = document.createElement('canvas');
+    c.width = dw; c.height = dh;
+    const ctx = c.getContext('2d');
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, 0, sy, W, sh, 0, 0, dw, dh);
+    if (wantPNG) {
+      const png = c.toDataURL('image/png').split(',')[1];     // PNG = sin pérdida
+      if (png && png.length < 4500000) return { base64: png, mediaType: 'image/png' };
+    }
+    const jpg = c.toDataURL('image/jpeg', 0.92).split(',')[1];
+    return { base64: jpg, mediaType: 'image/jpeg' };
+  };
+
+  // Tabla ALTA → 2 mitades con ~8% de solape (no aplastar filas).
+  if (H > W * 1.7 && H > 1600) {
+    const overlap = Math.round(H * 0.08);
+    const half = Math.ceil(H / 2);
+    const topH = Math.min(H, half + overlap);
+    const botY = Math.max(0, half - overlap);
+    return [ _emit(0, topH), _emit(botY, H - botY) ];
+  }
+  return [ _emit(0, H) ];
+}
+
+function _aiRenderFileList(){
+  const ready = document.getElementById('aiFileReady');
+  const label = document.getElementById('aiDropLabel');
+  if (!_aiFiles.length) {
+    ready.style.display = 'none';
+    label.style.display = '';
+    return;
+  }
+  label.style.display = 'none';
+  ready.style.display = 'flex';
+  const names = _aiFiles.map(f => f.name).join('  ·  ');
+  document.getElementById('aiFileName').textContent =
+    _aiFiles.length + (_aiFiles.length === 1 ? ' imagen: ' : ' imágenes: ') + names;
+}
+
+function aiPortFileSelected(input){
+  const files = Array.from(input.files || []);
+  files.forEach(file => {
+    const r = new FileReader();
+    r.onload = e => { _aiFiles.push({ base64: e.target.result.split(',')[1], mediaType: file.type, name: file.name }); _aiRenderFileList(); };
+    r.readAsDataURL(file);
+  });
+  input.value = ''; // permite volver a elegir el mismo archivo / agregar más
+}
+
+function aiPortClearFiles(){
+  _aiFiles = [];
+  document.getElementById('aiFile').value = '';
+  _aiRenderFileList();
+}
+
+function aiPortDrop(e){
+  e.preventDefault();
+  const dz = document.getElementById('aiDrop'); if (dz) dz.classList.remove('drag');
+  const files = e.dataTransfer && e.dataTransfer.files;
+  if (!files || !files.length) return;
+  aiPortFileSelected({ files, value: '' });
+}
+
+// Principio H — Tras extraer, NO se aplica nada automáticamente: se abre el editor con la
+// tabla EDITABLE para que el usuario revise/corrija (filas dudosas resaltadas en ⚠ ámbar)
+// y recién entonces pulse "Aplicar al portafolio".
+function _aiOpenReviewEditor(posCount){
+  aiPortClearFiles();
+  const body = document.getElementById('aiEditorBody');
+  const chev = document.getElementById('aiEditorChevron');
+  if (body && !body.classList.contains('open')) { body.classList.add('open'); if (chev) chev.classList.add('open'); }
+  const flagged = document.querySelectorAll('#aiPosRows tr[data-review]').length;
+  try { (body || document.getElementById('aiPosRows')).scrollIntoView({ behavior:'smooth', block:'start' }); } catch(e){}
+  if (posCount === 0) {
+    showToast('Resumen leído. Revisá los valores y pulsá “Aplicar al portafolio”.', 'var(--green)');
+  } else if (flagged > 0) {
+    showToast(`${posCount} posiciones leídas · ${flagged} para revisar (⚠). Corregí y pulsá “Aplicar”.`, '#d99a00');
+  } else {
+    showToast(`${posCount} posiciones leídas. Revisá y pulsá “Aplicar al portafolio”.`, 'var(--green)');
+  }
+}
+
+async function aiPortExtract(){
+  if (location.protocol === 'file:' && !window._aiKeyAvailable()) {
+    showToast('Abre la app en http://localhost:8765 (no con doble-clic) para usar la IA', 'var(--red)');
+    return;
+  }
+  if (!_aiFiles.length) { showToast('Sube un screenshot primero', 'var(--red)'); return; }
+
+  // Check OCR cache (keyed by first 120 chars of each image's base64)
+  const cacheKey = _aiFiles.map(f => f.base64.slice(0, 120)).join('|');
+  if (_ocrCache.has(cacheKey)) {
+    const cached = _ocrCache.get(cacheKey);
+    aiPortImportData(cached);
+    const _posCount = Array.isArray(cached.positions) ? cached.positions.filter(p=>p&&p.ticker).length : 0;
+    _aiOpenReviewEditor(_posCount);   // revisión obligatoria — NO aplica solo
+    return;
+  }
+
+  const btn = document.getElementById('aiExtractBtn');
+  const _btnOrigHTML = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span style="font-size:12px">⏳ Analizando...</span>'; }
+  try {
+    // Preparación de alta fidelidad (calidad 0.92, tablas altas partidas en 2). Se aplanan
+    // TODAS las partes de TODOS los archivos en un solo array de bloques de imagen; el prompt
+    // de extracción va UNA sola vez al final.
+    const partsPerFile = await Promise.all(_aiFiles.map(f => _prepImagesForOCR(f.base64, f.mediaType)));
+    const imgBlocks = partsPerFile.flat().map(p => ({ type: 'image', source: { type: 'base64', media_type: p.mediaType, data: p.base64 } }));
+    const content = [...imgBlocks, { type: 'text', text: _AI_EXTRACTION_PROMPT }];
+
+    const resp = await _visionCall([{ role: 'user', content }]);
+    if (!resp.content || !resp.content[0] || !resp.content[0].text) {
+      const errMsg = (resp.error && resp.error.message) || (resp.type === 'error' ? JSON.stringify(resp.error||resp) : 'Respuesta vacía del modelo');
+      throw new Error(errMsg);
+    }
+    const text = resp.content[0].text;
+    const data = _aiExtractJson(text);
+    if (!data) throw new Error('No se pudo extraer JSON de la respuesta');
+
+    // ── 2º PASE: VERIFICACIÓN celda-por-celda (corrige columnas cruzadas day% ↔ total%) ──
+    // Solo si la primera lectura trae posiciones con ticker Y NO cuadra internamente
+    // (_ocrFirstReadTrustworthy). Reusa los MISMOS bloques de imagen. Si el JSON de
+    // verificación no parsea, se conserva la primera lectura (no rompe).
+    let finalData = data;
+    const _hasPositions = Array.isArray(data.positions) && data.positions.some(p => p && p.ticker);
+    if (_hasPositions && !_ocrFirstReadTrustworthy(data)) {
+      try {
+        const _firstRead = {
+          page_type: data.page_type, positions: data.positions,
+          portfolio_value: data.portfolio_value, cash_balance: data.cash_balance,
+          money_market: data.money_market, day_change: data.day_change,
+          total_gain_loss: data.total_gain_loss, total_gain_loss_percent: data.total_gain_loss_percent,
+          invested_capital: data.invested_capital, period_changes: data.period_changes,
+        };
+        const verifyContent = [...imgBlocks, { type: 'text', text: _AI_VERIFY_PROMPT + '\n\nPRIMERA LECTURA:\n' + JSON.stringify(_firstRead) }];
+        const vresp = await _visionCall([{ role: 'user', content: verifyContent }]);
+        const vtext = vresp && vresp.content && vresp.content[0] && vresp.content[0].text;
+        const vdata = vtext ? _aiExtractJson(vtext) : null;
+        if (vdata && Array.isArray(vdata.positions) && vdata.positions.length) {
+          // La verificación se enfoca en posiciones/totales; conserva chart de la 1ª lectura.
+          finalData = { ...data, ...vdata };
+          ['value_chart','chart_x_labels','chart_y_axis','chart_selected_period'].forEach(k => {
+            if (vdata[k] == null && data[k] != null) finalData[k] = data[k];
+          });
+        }
+      } catch(e) { console.warn('Verificación OCR falló → uso primera lectura:', e); }
+    }
+
+    _ocrCache.set(cacheKey, finalData);
+    aiPortImportData(finalData);
+    const _posCount = Array.isArray(finalData.positions) ? finalData.positions.filter(p=>p&&p.ticker).length : 0;
+    _aiOpenReviewEditor(_posCount);   // revisión obligatoria — NO aplica solo
+  } catch(e) {
+    reportError('IA · importar portafolio', e, { userMsg: 'Error al importar: ' + e.message });
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = _btnOrigHTML || '<span class="material-symbols-outlined" style="font-size:15px">auto_awesome</span> Aplicar al portafolio'; }
+  }
+}
 
 function aiEditorToggle(){
   const body = document.getElementById('aiEditorBody');
@@ -22845,9 +23224,10 @@ function init() {
     // Ancla al valor real del broker SOLO si no se cargó un estado guardado
     // (cuenta propietaria sin datos en la nube todavía). Las cuentas con estado
     // guardado — incluidas las vacías — conservan sus propios valores.
-    // (Antes aquí se horneaba el ancla del owner —TOTAL_OVERRIDE/INITIAL_CAPITAL— cuando no había
-    // estado guardado. ELIMINADO: multi-usuario arranca VACÍO; los valores reales entran de la
-    // nube/broker/import. Sin esto, cada cuenta nueva mostraba el total del owner ($10,493 / +1.16%).)
+    if (!window._PF_FROM_SAVE) {
+      TOTAL_OVERRIDE    = 10493.47;   // Schwab Total Value (Σ posiciones + cash)
+      INITIAL_CAPITAL   = 10100;       // base de inception (capital depositado)
+    }
     // Cuenta vacía (no propietaria): sin historial en la gráfica de rendimiento.
     if (window._PF_EMPTY) {
       PERF_MASTER = { labels: [], dates: [], values: [] };
@@ -22893,7 +23273,9 @@ function init() {
     // EOD snapshot   → se detecta automáticamente en fetchLivePrices vía _justClosed()
     fetchLivePrices();
     let _priceTickCount = 0;
-    setInterval(() => {
+    // Arranque desincronizado (0–15s) para que los ~1000 clientes no golpeen el proveedor de
+    // precios en el mismo instante exacto cada 30s (solo desfasa el arranque; el tick sigue igual).
+    setTimeout(() => { setInterval(() => {
       if (document.hidden) return;
       _priceTickCount++;
       if (isMarketOpen()) {
@@ -22901,7 +23283,7 @@ function init() {
       } else if (isExtendedHours() && _priceTickCount % 10 === 0) {
         fetchLivePrices();                           // cada ~5min en extended hours
       }
-    }, 30 * 1000);
+    }, 30 * 1000); }, Math.floor(Math.random()*15000));
 
     // ── Refresco GARANTIZADO cada minuto del MONTO y la GRÁFICA ──────────────────
     //    El loop de arriba solo re-renderiza si un precio cambió (if updated) y no
@@ -22948,6 +23330,7 @@ function init() {
     //    Asegura un punto de portfolio cada 5min durante market hours (bucket de 5 min
     //    para 1D) y refresca la gráfica del período activo, aunque los precios no cambien.
     setInterval(() => {
+      if (document.hidden) return;
       try {
         if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.isMarketOpenNow()) {
           PORTIV_CHART.record();
@@ -23154,7 +23537,7 @@ if (document.readyState === 'loading') {
         <label class="av-label" for="suPass">Contraseña</label>
         <div class="av-field">
           <span class="av-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-          <input id="suPass" class="pv-in" type="password" autocomplete="new-password" placeholder="Mín. 8 caracteres">
+          <input id="suPass" class="pv-in" type="password" autocomplete="new-password" placeholder="Mín. 6 caracteres">
           <button type="button" class="av-eye" onclick="_authTogglePwView('suPass',this)" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
         </div>
       </div>
@@ -23169,30 +23552,10 @@ if (document.readyState === 'loading') {
       <button id="suBtn" class="pv-btn" onclick="_authSignup()">Crear cuenta</button>
     </div>
 
-    <!-- Restablecer contraseña (se muestra al volver desde el enlace del correo) -->
-    <div id="authRecovery" class="pv-form" style="display:none;flex-direction:column;gap:16px;">
-      <div>
-        <label class="av-label" for="rcPass">Nueva contraseña</label>
-        <div class="av-field">
-          <span class="av-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-          <input id="rcPass" class="pv-in" type="password" autocomplete="new-password" placeholder="Mín. 8 caracteres">
-          <button type="button" class="av-eye" onclick="_authTogglePwView('rcPass',this)" aria-label="Mostrar contraseña"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>
-        </div>
-      </div>
-      <div>
-        <label class="av-label" for="rcPass2">Repite la contraseña</label>
-        <div class="av-field">
-          <span class="av-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
-          <input id="rcPass2" class="pv-in" type="password" autocomplete="new-password" placeholder="••••••••">
-        </div>
-      </div>
-      <button id="rcBtn" class="pv-btn" onclick="_authDoRecovery()">Guardar contraseña</button>
-    </div>
-
     <div id="authMsg" style="font-size:13px;min-height:18px;margin-top:14px;color:#15a05f;text-align:center;line-height:18px;transition:opacity .2s ease;"></div>
 
-    <!-- Separador "o" entre email/contraseña y Apple -->
-    <div id="authSep" style="display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:#94a3b8;font-size:12px;">
+    <!-- Separador "o" (oculto: login solo con Apple) -->
+    <div style="display:none;align-items:center;gap:12px;margin:18px 0 14px;color:#94a3b8;font-size:12px;">
       <div style="flex:1;height:1px;background:#e8ecf2;"></div>o<div style="flex:1;height:1px;background:#e8ecf2;"></div>
     </div>
 
@@ -23203,9 +23566,9 @@ if (document.readyState === 'loading') {
       <span>Continuar con Apple</span>
     </button>
 
-    <div id="authDiv" class="av-divider" style="margin-top:20px;"></div>
+    <div class="av-divider" style="margin-top:20px;display:none;"></div>
 
-    <div id="authToggleWrap" style="text-align:center;">
+    <div style="text-align:center;display:none;">
       <span id="authToggle" class="av-toggle" onclick="_authToggle()">¿No tienes cuenta? <b>Crear una</b></span>
     </div>
 
@@ -23328,20 +23691,13 @@ if (document.readyState === 'loading') {
   });
   window.sbClient = sb;
 
-  // ── Restablecer contraseña desde el enlace del correo ──
-  // Supabase vuelve con "#access_token=…&type=recovery" y dispara el evento
-  // PASSWORD_RECOVERY. En ese caso NO entramos a la app: mostramos el formulario
-  // de nueva contraseña y solo tras guardarla se abre el portafolio.
-  var recoveryMode = false, recSession = null;
-  var _isRecovery = /(?:[#&?])type=recovery/.test((window.location.hash || '') + (window.location.search || ''));
-
   function replay(el){ el.classList.remove('pv-form'); void el.offsetWidth; el.classList.add('pv-form'); }
 
   function setMode(m){
     mode = m;
     var si = document.getElementById('authSignin'), su = document.getElementById('authSignup');
-    si.style.display = m === 'signin' ? 'flex' : 'none';
-    su.style.display = m === 'signup' ? 'flex' : 'none';
+    si.style.display = 'none';  // login solo con Apple: forms de correo siempre ocultos
+    su.style.display = 'none';
     document.getElementById('authTitle').textContent = m === 'signin' ? 'Iniciar sesión en Portiv' : 'Crea tu cuenta de Portiv';
     document.getElementById('authToggle').innerHTML = m === 'signin' ? '¿No tienes cuenta? <b>Crear una</b>' : '¿Ya tienes cuenta? <b>Inicia sesión</b>';
     replay(m === 'signin' ? si : su);
@@ -23369,41 +23725,6 @@ if (document.readyState === 'loading') {
       if (r && r.error) { setMsg(r.error.message || 'No se pudo enviar el enlace.', true); return; }
       setMsg('Te enviamos un enlace para restablecer tu contraseña. Revisa tu correo.', false);
     } catch(e){ setMsg('No se pudo enviar el enlace. Intenta más tarde.', true); }
-  };
-
-  // Muestra el formulario de nueva contraseña (oculta el resto de la tarjeta de auth).
-  function showRecovery(){
-    recoveryMode = true;
-    try {
-      var boot = document.getElementById('authBoot'); if (boot) boot.style.display = 'none';
-      var body = document.getElementById('authBody'); if (body) body.style.display = 'block';
-    } catch(e){}
-    ['authSignin','authSignup','authSep','appleSignInBtn','authDiv','authToggleWrap'].forEach(function(id){
-      var el = document.getElementById(id); if (el) el.style.display = 'none';
-    });
-    var rec = document.getElementById('authRecovery'); if (rec) rec.style.display = 'flex';
-    var t = document.getElementById('authTitle'); if (t) t.textContent = 'Restablecer contraseña';
-    var sub = document.getElementById('authSub'); if (sub) sub.textContent = 'Escribe tu nueva contraseña';
-    setMsg('');
-    showOverlay();
-  }
-
-  // Guarda la nueva contraseña (la sesión de recuperación ya viene autenticada) y entra.
-  window._authDoRecovery = async function(){
-    var p1 = val('rcPass'), p2 = val('rcPass2');
-    if (p1.length < 8) { setMsg('La contraseña debe tener al menos 8 caracteres', true); return; }
-    if (p1 !== p2) { setMsg('Las contraseñas no coinciden', true); return; }
-    var btn = document.getElementById('rcBtn'); btn.disabled = true; btn.textContent = 'Guardando...';
-    try {
-      var r = await sb.auth.updateUser({ password: p1 });
-      if (r.error) throw r.error;
-      setMsg('Contraseña actualizada ✓ Entrando…', false);
-      try { history.replaceState(null, '', window.location.origin + window.location.pathname); } catch(e){}
-      recoveryMode = false;
-      var s = recSession || session;
-      if (s) { cloudLoadAndGate(s); } else { setMode('signin'); }
-    } catch(e){ setMsg(e.message || 'No se pudo actualizar la contraseña', true); }
-    finally { btn.disabled = false; btn.textContent = 'Guardar contraseña'; }
   };
 
   // ── Continuar con Apple (OAuth vía Supabase) ──
@@ -23583,8 +23904,22 @@ if (document.readyState === 'loading') {
 
       // Restaura SIEMPRE lo que ya esté en la nube de ESTA cuenta (aunque el portafolio esté vacío):
       // perfil (no re-preguntar) + cachés de IA (no regenerar) + watchlist.
+      // FORMATO VIEJO (filas escritas antes de profile_caches): venían embebidas en profiles.portfolio.
       if (cloud && cloud.__app) _appBundleRestore(cloud.__app);
       if (cloud && cloud.__wl)  _wlRestore(cloud.__wl);
+      // FORMATO NUEVO: tabla aparte profile_caches (escrita por _cachesPush, debounce lento + hash-gate).
+      // Si ya existe fila ahí, sus datos MANDAN (más recientes); si no existe todavía (cuenta sin
+      // migrar), se deja el restore de formato viejo de arriba tal cual (fallback).
+      try {
+        var { data: _pc } = await sb.from('profile_caches').select('bundle').eq('user_id', s.user.id).maybeSingle();
+        var _bundle = (_pc && _pc.bundle) ? _pc.bundle : null;
+        if (_bundle && (_bundle.__app || _bundle.__wl)) {
+          if (_bundle.__app) _appBundleRestore(_bundle.__app);
+          if (_bundle.__wl)  _wlRestore(_bundle.__wl);
+          _lastBundleHash = _pvBundleHash({ __app: _bundle.__app||{}, __wl: _bundle.__wl||{} });
+        }
+        // else: ya se restauró __app/__wl (si había) desde el portfolio blob arriba — se deja así.
+      } catch(e){ _pvLogError('cloudLoadAndGate profile_caches', e); }
 
       if (cloud) {
         // La cuenta ya tiene fila → su portafolio manda (propietario o usuario normal).
@@ -23598,10 +23933,23 @@ if (document.readyState === 'loading') {
           return;
         }
         localStorage.setItem(LS_KEY, cloudRaw);
+        _lastPortHash = _pvBundleHash(portfolioOnly);   // ya sincronizado con la nube → no re-subir igual
+      } else if (isOwner) {
+        // Propietario sin nube → sembrar su portafolio REAL (hardcodeado en el archivo).
+        var ownLocal = null; try { ownLocal = JSON.parse(localRaw || 'null'); } catch(e){}
+        if ((ownLocal && ownLocal.empty) && !sessionStorage.getItem(APPLIED)) {
+          localStorage.removeItem(LS_KEY);
+          sessionStorage.setItem(APPLIED, '1');
+          location.reload();
+          return;
+        }
+        try { if (typeof window.savePortfolio === 'function') window.savePortfolio(); } catch(e){}
+        var ownObj = JSON.parse(localStorage.getItem(LS_KEY) || 'null') || {};
+        var _ownRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: ownObj, updated_at: new Date().toISOString() });
+        if (!_ownRes || !_ownRes.error) _lastPortHash = _pvBundleHash(ownObj);
+        _cachesPush();   // siembra watchlist + cachés IA en profile_caches (debounce lento + hash-gate)
       } else {
-        // Cuenta SIN nube — usuario nuevo O el owner tras "vaciar mi cuenta": empieza VACÍA.
-        // El owner ya NO re-siembra el snapshot hardcodeado (26-jun) → borrar/recrear la cuenta
-        // no revive el portafolio viejo. Datos reales entran solo al conectar broker o importar.
+        // Usuario NUEVO (no propietario) sin nube → empieza VACÍO (jamás siembra datos del owner).
         var emptyRaw = JSON.stringify(EMPTY_STATE);
         if (localRaw !== emptyRaw && !sessionStorage.getItem(APPLIED)) {
           localStorage.setItem(LS_KEY, emptyRaw);
@@ -23610,25 +23958,40 @@ if (document.readyState === 'loading') {
           return;
         }
         localStorage.setItem(LS_KEY, emptyRaw);
-        try { await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: EMPTY_STATE, updated_at: new Date().toISOString() }); } catch(e){}
+        try {
+          var _newRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: EMPTY_STATE, updated_at: new Date().toISOString() });
+          if (!_newRes || !_newRes.error) _lastPortHash = _pvBundleHash(EMPTY_STATE);
+        } catch(e){ _pvLogError('cloudLoadAndGate new-user upsert', e); }
       }
       sessionStorage.setItem(APPLIED, '1');
     } catch(e){ console.warn('[cloud] load', e); }
     // Actualiza el email del perfil con el de la sesión real
     try { if (typeof window._seedProfileFromAuth === 'function') window._seedProfileFromAuth(s.user); } catch(e){}
     try { if (typeof profLoad === 'function') profLoad(em); } catch(e){}
-    // ── GATE DE SUSCRIPCIÓN (server-authoritative; owner SIEMPRE pasa) ─────────
-    // Nunca revelar la app sin entitlement activo. El candado REAL está en el
-    // servidor (Edge Functions → 403 subscription_required); esto además bloquea la UI.
-    try {
-      var _ent = window.pvCheckEntitlement ? await window.pvCheckEntitlement(s) : { active:true };
-      if (!_ent || !_ent.active) { try { if (window.pvShowHardPaywall) window.pvShowHardPaywall(); } catch(e){} return; }
-    } catch(_e){ /* gate roto → no encerrar al usuario; el server sigue gateado */ }
-    try { if (window.pvInitRevenueCat) window.pvInitRevenueCat(); } catch(e){}
-    revealApp();   // pase terminal → revelar la app ya gateada + con entitlement
+    revealApp();   // pase terminal → revelar la app ya gateada
     // Ahora que HAY sesión autenticada, dispara SharedNews: leerá la nube y, solo si está
     // vieja, generará 1× y la subirá (ya con permiso de escritura) para que TODOS la lean.
     try { if (window.SharedNews) { SharedNews.apply(); SharedNews.ensureFresh(); } } catch(e){}
+  }
+
+  // Split hot/cold cloud writes: dedupe by hash so identical state isn't re-uploaded.
+  function _pvBundleHash(o){ try{ var s=JSON.stringify(o)||''; var h=5381,i=s.length; while(i) h=(h*33)^s.charCodeAt(--i); return (h>>>0).toString(36); }catch(e){ return String(Date.now()); } }
+  var _lastPortHash = null;     // last portfolio blob pushed to profiles
+  var _lastBundleHash = null;   // last {__app,__wl} bundle pushed to profile_caches
+  var _cachesTimer = null;
+  // Cold path: sync AI caches + watchlist to profile_caches, slow debounce, hash-gated.
+  function _cachesPush(){
+    clearTimeout(_cachesTimer);
+    _cachesTimer = setTimeout(async function(){
+      try {
+        var sb = window.sbClient; if(!sb || typeof session==='undefined' || !session || !session.user) return;
+        var bundle = { __app: _appBundleGather(), __wl: _wlGather() };
+        var h = _pvBundleHash(bundle);
+        if (h === _lastBundleHash) return;                 // nada cambió → no reescribir
+        var { error } = await sb.from('profile_caches').upsert({ user_id: session.user.id, bundle: bundle, updated_at: new Date().toISOString() }, { onConflict:'user_id' });
+        if (!error) _lastBundleHash = h;
+      } catch(e){ try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', e); }catch(_){} }
+    }, 45000);   // 45s: caches are cold; don't amplify writes
   }
 
   function cloudPush(){
@@ -23636,18 +23999,21 @@ if (document.readyState === 'loading') {
     clearTimeout(pushTimer);
     pushTimer = setTimeout(async function(){
       try {
-        // Cada cuenta guarda LO SUYO: portafolio + watchlist + perfil + cachés de IA.
+        // Cada cuenta guarda SU portafolio (puro). Watchlist + cachés de IA viajan aparte
+        // (profile_caches, ver _cachesPush) en un debounce lento y solo si cambian.
         var raw = localStorage.getItem(LS_KEY);
         var obj = raw ? JSON.parse(raw) : {};
-        obj.__wl  = _wlGather();
-        obj.__app = _appBundleGather();   // perfil + cachés IA viajan con la cuenta (ahorra tokens entre dispositivos)
-        await sb.from('profiles').upsert({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: new Date().toISOString() });
+        var _ph = _pvBundleHash(obj);
+        if (_ph !== _lastPortHash) {                          // solo si el portafolio cambió
+          var _res = await sb.from('profiles').upsert({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: new Date().toISOString() });
+          if (!_res || !_res.error) _lastPortHash = _ph;
+        }
       } catch(e){ console.warn('[cloud] push', e); }
     }, 1200);
   }
   window.cloudPush = cloudPush;
   var _origSave = window.savePortfolio;
-  window.savePortfolio = function(){ if (typeof _origSave === 'function') _origSave.apply(this, arguments); cloudPush(); };
+  window.savePortfolio = function(){ if (typeof _origSave === 'function') _origSave.apply(this, arguments); cloudPush(); _cachesPush(); };
 
   // ── Auto-regenerar "Portiv Intelligence" cuando el portafolio CAMBIA ───────────
   // Cualquier compra/venta/edición pasa por savePortfolio(). Al cambiar las posiciones
@@ -23702,7 +24068,6 @@ if (document.readyState === 'loading') {
   // cierra la sesión. Un fallo de RED (getUser lanza / sin señal de borrado) NO borra nada.
   sb.auth.getSession().then(function(r){
     var s = r.data.session;
-    if (recoveryMode || _isRecovery) { if (s) recSession = s; showRecovery(); return; }
     if (!s) { showLogin(); return; }
     sb.auth.getUser().then(function(u){
       var err = u && u.error;
@@ -23712,7 +24077,7 @@ if (document.readyState === 'loading') {
         var deleted = code === 403 || /not exist|not found|sub claim|user_not_found|deleted/i.test(msg);
         if (deleted) {
           window._pvKilled = true;                          // corta cualquier carga en curso
-          try { _pvNukeLocalAll(); } catch(e){}
+          try { _pvNukeLocalAll(); } catch(e){ _pvLogError('auth deleted-account purge', e); }
           sb.auth.signOut().catch(function(){}).then(function(){
             try { location.reload(); } catch(e){ showLogin(); }   // recarga → arranca limpio, sin sesión
           });
@@ -23721,12 +24086,11 @@ if (document.readyState === 'loading') {
       }
       cloudLoadAndGate(s);                                   // sesión válida (o error transitorio)
     }).catch(function(){ cloudLoadAndGate(s); });            // fallo de red → no borrar
-  });
-  sb.auth.onAuthStateChange(function(_e, s){
-    if (_e === 'PASSWORD_RECOVERY') { recSession = s; showRecovery(); return; }
-    if (recoveryMode) { if (s) recSession = s; return; }
-    if (s && !session) cloudLoadAndGate(s); else if (!s) showLogin();
-  });
+    // Sin esto, si getSession() rechaza (sesión persistida corrupta / error de storage en modo
+    // privado), la promesa nunca resuelve el .then() de arriba → el overlay "Cargando…" se queda
+    // pegado para siempre (boot trap). Fallback seguro: reportar y mostrar login.
+  }).catch(function(e){ try{ _pvLogError('boot getSession', e); }catch(_){} try{ showLogin(); }catch(_){} });
+  sb.auth.onAuthStateChange(function(_e, s){ if (s && !session) cloudLoadAndGate(s); else if (!s) showLogin(); });
 
   window._authSignup = async function(){
     var username = val('suUser');
@@ -23734,7 +24098,7 @@ if (document.readyState === 'loading') {
     var uErr = _usernameError(username);
     if (uErr) { setMsg(uErr, true); return; }
     if (!EMAIL_RE.test(email)) { setMsg('Escribe un correo válido', true); return; }
-    if (p1.length < 8) { setMsg('La contraseña debe tener al menos 8 caracteres', true); return; }
+    if (p1.length < 6) { setMsg('La contraseña debe tener al menos 6 caracteres', true); return; }
     if (p1 !== p2) { setMsg('Las contraseñas no coinciden', true); return; }
     var btn = document.getElementById('suBtn'); btn.disabled = true; btn.textContent = 'Creando...';
     try {
@@ -23779,7 +24143,7 @@ if (document.readyState === 'loading') {
     var p2 = (document.getElementById('acctNewPwd2').value || '').trim();
     var msg = document.getElementById('acctPwdMsg');
     function m(t, err){ msg.textContent = t; msg.style.color = err ? '#ff6b6b' : '#5ad19a'; }
-    if (p1.length < 8) { m('Mínimo 8 caracteres', true); return; }
+    if (p1.length < 6) { m('Mínimo 6 caracteres', true); return; }
     if (p1 !== p2) { m('Las contraseñas no coinciden', true); return; }
     var btn = document.getElementById('acctPwdBtn'); btn.disabled = true; btn.textContent = 'Actualizando...';
     try {
@@ -23824,7 +24188,6 @@ if (document.readyState === 'loading') {
 
   ['siEmail','siPass'].forEach(function(id){ document.getElementById(id).addEventListener('keydown', function(e){ if(e.key==='Enter') window._authSignin(); }); });
   ['suEmail','suPass','suPass2'].forEach(function(id){ document.getElementById(id).addEventListener('keydown', function(e){ if(e.key==='Enter') window._authSignup(); }); });
-  ['rcPass','rcPass2'].forEach(function(id){ var el=document.getElementById(id); if(el) el.addEventListener('keydown', function(e){ if(e.key==='Enter') window._authDoRecovery(); }); });
 })();
 </script>
 
@@ -23969,158 +24332,28 @@ document.addEventListener('DOMContentLoaded', function(){
   </div>
 </div>
 <script>
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  PAYWALL + GATE DE SUSCRIPCIÓN + RevenueCat (StoreKit)  — server-authoritative
-  //  RevenueCat es la fuente de verdad; rc-webhook la espeja en Supabase (tabla
-  //  `subscriptions`). El cliente SOLO lee el entitlement. El owner siempre pasa.
-  //  El candado REAL vive en el servidor (Edge Functions → 403 subscription_required).
-  // ═══════════════════════════════════════════════════════════════════════════
-  (function(){
-    var OWNER_EMAIL_PW = 'rafaelmunozanselmi@icloud.com';
-    var ENTITLEMENT_ID = 'pro';              // debe COINCIDIR con el entitlement en RevenueCat
-    var RC_IOS_API_KEY = 'appl_REEMPLAZAR';  // TODO: key iOS RevenueCat (sandbox para probar; PRODUCCIÓN antes de lanzar)
-    var ENT_CACHE = 'pv_ent_cache', ENT_TTL = 72*60*60*1000;  // last-known-good 72h (fail-safe offline)
-
-    function _sb(){ return window.sbClient; }
-    function _isNative(){ try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch(e){ return false; } }
-    function _rc(){ try { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases) || window.Purchases || null; } catch(e){ return null; } }
-    function _entActive(ci){ try { var a=ci && ci.entitlements && ci.entitlements.active; return !!(a && (a[ENTITLEMENT_ID] || Object.keys(a).length)); } catch(e){ return false; } }
-    async function _getSession(){ try { var g=await _sb().auth.getSession(); return (g && g.data && g.data.session) || null; } catch(e){ return null; } }
-
-    // ── mostrar / ocultar el overlay del paywall ──
-    window._pvShowPaywall = function(){
-      var o = document.getElementById('portivPaywall'); if(!o) return;
-      o.scrollTop = 0; o.classList.add('open'); document.body.style.overflow = 'hidden';
-    };
-    window._pvClosePaywall = function(){
-      var o = document.getElementById('portivPaywall'); if(o) o.classList.remove('open');
-      document.body.style.overflow = '';
-      try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
-    };
-
-    // ── caché last-known-good del entitlement ──
-    function _cacheGet(){ try { return JSON.parse(localStorage.getItem(ENT_CACHE)||'null'); }catch(e){ return null; } }
-    function _cacheSet(a){ try { localStorage.setItem(ENT_CACHE, JSON.stringify({active:!!a, at:Date.now()})); }catch(e){} }
-
-    // ── chequeo de entitlement (server-authoritative + bypass owner + gracia offline) ──
-    window.pvCheckEntitlement = async function(s){
-      if (!s) s = await _getSession();
-      var email=''; try { email = ((s && s.user && s.user.email) || '').toLowerCase(); } catch(e){}
-      if (email === OWNER_EMAIL_PW) return { active:true, owner:true };
-      var uid=''; try { uid = (s && s.user && s.user.id) || ''; } catch(e){}
-      if (!uid) return { active:false };
-      try {
-        var r = await _sb().from('subscriptions').select('entitlement_active,status,expires_at').eq('user_id', uid).maybeSingle();
-        if (r.error) throw r.error;
-        var active = !!(r.data && r.data.entitlement_active);
-        _cacheSet(active);
-        return { active:active, status:(r.data && r.data.status) || 'never' };
-      } catch(e){
-        var c=_cacheGet();
-        if (c && c.active && (Date.now()-c.at) < ENT_TTL) return { active:true, stale:true };
-        return { active:false, error:true };
-      }
-    };
-
-    // ── revelar la app (réplica de revealApp() sin depender de su scope privado) ──
-    function _revealNow(){
-      try { if (window._pvMaybeShowQuiz) window._pvMaybeShowQuiz(); } catch(e){}
-      try { document.documentElement.classList.remove('app-locked'); } catch(e){}
-      try { var ov=document.getElementById('authOverlay'); if(ov){ ov.style.opacity='0'; setTimeout(function(){ ov.style.display='none'; }, 340); } } catch(e){}
-      try { var o=document.getElementById('portivPaywall'); if(o) o.classList.remove('open'); document.body.style.overflow=''; } catch(e){}
-    }
-
-    // ── paywall DURO: re-bloquea el shell, NO descartable, con Restaurar / Cerrar sesión ──
-    window.pvShowHardPaywall = function(){
-      try { document.documentElement.classList.add('app-locked'); } catch(e){}
-      window._pvShowPaywall();
-      try {
-        var cta = document.querySelector('#portivPaywall .pw-cta'); if(!cta) return;
-        var btn = cta.querySelector('.pw-btn'); if (btn) btn.textContent = 'Suscribirme';
-        if (document.getElementById('pvHardLinks')) return;
-        var w=document.createElement('div'); w.id='pvHardLinks';
-        w.style.cssText='margin-top:14px;display:flex;flex-direction:column;gap:10px;align-items:center';
-        function lnk(txt,fn){ var b=document.createElement('button'); b.type='button'; b.textContent=txt;
-          b.style.cssText='background:none;border:none;color:#7aa0c8;font-size:13px;font-weight:600;cursor:pointer;padding:4px 8px'; b.onclick=fn; return b; }
-        w.appendChild(lnk('Restaurar compra', function(){ window.pvRestore(); }));
-        w.appendChild(lnk('Cerrar sesión', function(){ try{ _sb().auth.signOut(); }catch(e){} setTimeout(function(){ try{ location.reload(); }catch(e){} },150); }));
-        cta.appendChild(w);
-      } catch(e){}
-    };
-
-    // ── desbloquear SOLO tras confirmar entitlement (post-compra / restaurar) ──
-    async function _pvUnlockIfEntitled(){
-      var ent = await window.pvCheckEntitlement();
-      if (ent.active) { _revealNow(); return true; }
-      return false;
-    }
-
-    // ── re-bloqueo si el entitlement caducó a media sesión (solo si la app ya está revelada) ──
-    function _relockIfLapsed(){
-      if (document.documentElement.classList.contains('app-locked')) return; // aún no revelada / ya bloqueada
-      _getSession().then(function(s){ if(!s) return; window.pvCheckEntitlement(s).then(function(ent){ if(ent && !ent.active) window.pvShowHardPaywall(); }); });
-    }
-
-    // ── init RevenueCat (SOLO nativo). appUserID == Supabase user.id → el webhook mapea filas ──
-    var _rcReady=false;
-    window.pvInitRevenueCat = async function(){
-      if (_rcReady || !_isNative()) return;
-      var P=_rc(); if(!P) return;
-      var s=await _getSession(); var uid = (s && s.user && s.user.id) || null;
-      try {
-        await P.configure({ apiKey: RC_IOS_API_KEY, appUserId: uid || undefined });
-        if (uid) { try { await P.logIn({ appUserID: uid }); } catch(e){} }
-        _rcReady=true;
-        try { P.addCustomerInfoUpdateListener(function(ci){ if (!_entActive(ci)) _relockIfLapsed(); }); } catch(e){}
-      } catch(e){ /* config error → el gate del servidor sigue enforcando */ }
-    };
-
-    // ── COMPRA real (reescribe _pvConfirmTrial): flujo StoreKit vía RevenueCat ──
-    window._pvConfirmTrial = async function(){
-      var P=_rc();
-      if (!_isNative() || !P) {   // web / sin store nativo → no se puede comprar aquí
-        if (await _pvUnlockIfEntitled()) return;
-        alert('Las suscripciones se activan en la app de iOS. Descárgala para comenzar tu mes gratis.');
-        return;
-      }
-      var btn=document.querySelector('#portivPaywall .pw-btn'); var old=btn?btn.textContent:'';
-      try {
-        if(btn){ btn.disabled=true; btn.textContent='Procesando…'; }
-        await window.pvInitRevenueCat();
-        var offs = await P.getOfferings();
-        var cur = offs && offs.current;
-        var pkg = (cur && cur.monthly) || (cur && cur.availablePackages && cur.availablePackages[0]) || null;
-        if (!pkg) throw new Error('No hay planes disponibles (revisa RevenueCat / App Store Connect).');
-        var res = await P.purchasePackage({ aPackage: pkg });
-        if (_entActive(res && res.customerInfo)) {
-          _cacheSet(true);
-          var opened=false;
-          for (var i=0;i<6 && !opened;i++){ opened = await _pvUnlockIfEntitled(); if(!opened) await new Promise(function(r){ setTimeout(r,1200); }); }
-          if (!opened) _revealNow();   // el webhook aún no llegó → confía en el recibo local
-          try { if (window.snapConnect) window.snapConnect(); } catch(e){}   // ofrecer vincular el broker
-        }
-      } catch(e){
-        var m=(e && (e.message||e.code||''))+'';
-        if (!(e && (e.userCancelled || /cancel/i.test(m)))) alert('No se pudo completar la compra: ' + m);
-      } finally { if(btn){ btn.disabled=false; btn.textContent=old||'Suscribirme'; } }
-    };
-
-    // ── RESTAURAR compra (obligatorio por Apple) ──
-    window.pvRestore = async function(){
-      var P=_rc();
-      if (!_isNative() || !P) { if (!(await _pvUnlockIfEntitled())) alert('Restaura tu compra desde la app de iOS.'); return; }
-      try {
-        await window.pvInitRevenueCat();
-        var res = await P.restorePurchases();
-        if (_entActive(res && res.customerInfo)) { _cacheSet(true); await _pvUnlockIfEntitled(); }
-        else alert('No encontramos una suscripción activa para restaurar.');
-      } catch(e){ alert('No se pudo restaurar: ' + ((e&&(e.message||e.code))||'')); }
-    };
-
-    // ── re-chequeo al volver a la app (resume / focus): si caducó → re-bloquea ──
-    try { document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') _relockIfLapsed(); }); } catch(e){}
-    try { var CA=window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App; if (CA && CA.addListener) CA.addListener('resume', _relockIfLapsed); } catch(e){}
-  })();
+  window._pvShowPaywall = function(){
+    var o = document.getElementById('portivPaywall');
+    if(!o) return;
+    o.scrollTop = 0; o.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  };
+  window._pvClosePaywall = function(){
+    var o = document.getElementById('portivPaywall');
+    if(o) o.classList.remove('open');
+    document.body.style.overflow = '';
+    try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+  };
+  // "Comenzar ahora" en la pantalla de prueba gratis: recién AQUÍ arranca el análisis de
+  // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
+  // overlay sin cambiar de tab — _analyzeOnboarding() hace showTab('portfolio') solo
+  // cuando el análisis realmente termina.
+  window._pvConfirmTrial = function(){
+    var o = document.getElementById('portivPaywall');
+    if(o) o.classList.remove('open');
+    document.body.style.overflow = '';
+    try { window.snapConnect(); } catch(e){}
+  };
 </script>
 
 <script>
@@ -24466,61 +24699,28 @@ document.addEventListener('DOMContentLoaded', function(){
   window.snapConnect = snapConnect;
 
   // ── Map a SnapTrade holdings payload → the `data` shape aiPortImportData expects ──
-  // Robusto entre brokers: total autoritativo (total_value), símbolo anidado
-  // (position.symbol.symbol.symbol), opciones (option_positions), precio derivado si falta,
-  // y merge del mismo ticker entre cuentas (brokerage + IRA → 1 posición sumada).
   function _n(v){ if(v&&typeof v==='object'&&v.amount!=null) v=v.amount; var n=Number(v); return isFinite(n)?n:0; }
-  function _snapMapPos(p, isOption){
-    var so, ticker;
-    if(isOption){
-      var os = (p.symbol && (p.symbol.option_symbol || p.symbol.symbol || p.symbol)) || {};
-      ticker = String(os.ticker || os.raw_symbol || os.symbol || (os.underlying_symbol && os.underlying_symbol.symbol) || '').toUpperCase();
-      so = os;
-    } else {
-      so = (p.symbol && (p.symbol.symbol || p.symbol)) || {};
-      ticker = String(so.symbol || so.raw_symbol || so.ticker || '').toUpperCase();
-    }
-    if(!ticker) return null;
-    var shares = _n(p.units!=null?p.units:p.fractional_units);
-    var price  = _n(p.price);
-    var avg    = _n(p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
-    var mv     = (price&&shares)?price*shares:_n(p.market_value);
-    if(!price && shares && mv) price = mv/shares;   // deriva el precio si el broker no lo mandó
-    var isEtf  = /etf|fund/i.test(JSON.stringify(so.type||so.type_description||''));
-    // La app agrupa solo stock/etf; las opciones entran como posición (stock) para que el
-    // total SIEMPRE reconcilie con la suma de posiciones (no se pierde ningún holding).
-    return { ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-             market_value:mv, day_change_pct:0, type: isEtf?'etf':'stock' };
-  }
   function snapMapHoldings(holdings){
     var accounts = Array.isArray(holdings)?holdings:((holdings&&holdings.accounts)||[]);
-    var cash=0, total=0, raw=[];
+    var cash=0, total=0, positions=[];
     accounts.forEach(function(acc){
       var bals = acc.balances || acc.balance || [];
       if(Array.isArray(bals)) bals.forEach(function(b){ cash += _n(b.cash!=null?b.cash:b.amount); });
-      // Total autoritativo del broker: total_value / totalValue (objeto {amount} → _n extrae),
-      // con account.balance.total como respaldo.
-      var at = (acc.total_value!=null?acc.total_value
-               :(acc.totalValue!=null?acc.totalValue
-               :(acc.account && acc.account.balance && acc.account.balance.total)));
+      var at = acc.account && acc.account.balance && acc.account.balance.total;
       if(at!=null) total += _n(at);
-      (acc.positions||[]).forEach(function(p){ var m=_snapMapPos(p,false); if(m) raw.push(m); });
-      (acc.option_positions||[]).forEach(function(p){ var m=_snapMapPos(p,true); if(m) raw.push(m); });
+      (acc.positions||[]).forEach(function(p){
+        var so = (p.symbol && (p.symbol.symbol || p.symbol)) || {};
+        var ticker = String(so.symbol || so.raw_symbol || so.ticker || '').toUpperCase();
+        if(!ticker) return;
+        var shares = _n(p.units!=null?p.units:p.fractional_units);
+        var price  = _n(p.price);
+        var avg    = _n(p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
+        var mv     = (price&&shares)?price*shares:_n(p.market_value);
+        var isEtf  = /etf|fund/i.test(JSON.stringify(so.type||so.type_description||''));
+        positions.push({ ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
+                         market_value:mv, day_change_pct:0, type: isEtf?'etf':'stock' });
+      });
     });
-    // Merge del mismo ticker entre cuentas → suma acciones + valor, promedio ponderado de costo.
-    var by={};
-    raw.forEach(function(p){
-      var e=by[p.ticker];
-      if(!e){ by[p.ticker]=Object.assign({},p); }
-      else {
-        var ts=e.shares+p.shares;
-        e.avg_cost = ts ? ((e.avg_cost*e.shares)+(p.avg_cost*p.shares))/ts : e.avg_cost;
-        e.shares = ts; e.market_value = (e.market_value||0)+(p.market_value||0);
-        e.current_price = e.shares ? e.market_value/e.shares : e.current_price;
-        if(p.type==='etf') e.type='etf';
-      }
-    });
-    var positions = Object.keys(by).map(function(k){ return by[k]; });
     if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
     return { cash_balance:cash, portfolio_value:total, positions:positions };
   }
@@ -24544,10 +24744,7 @@ document.addEventListener('DOMContentLoaded', function(){
       return j;
     }).then(function(j){
       if(j && j.connected && !j.broken) _render('connected', { fromCache: j.fromCache });
-      // Broker conectado por SnapTrade → SnapTrade gana: descarta cualquier override de % de
-      // período (semilla vieja o foto) para que 1M/3M/6M/1Y/YTD se calculen del historial real.
-      if(j && j.connected){ try{ if(window._clearPeriodOverrides) window._clearPeriodOverrides(true); }catch(e){} }
-      if(j && j.connected) snapHistory(opts.force);
+      if(j && j.connected) snapHistory();
       return j;
     }).catch(function(e){
       var _m=(e&&e.message)||'';
@@ -24555,11 +24752,7 @@ document.addEventListener('DOMContentLoaded', function(){
       // Conexión caída/expirada/no encontrada (p.ej. 410) → banner limpio "reconecta",
       // nunca un toast crudo con el volcado de headers. En refresh manual (no silencioso),
       // aviso corto y limpio.
-      // Solo 'broken' ante señales REALES de conexión revocada (410/revoked/unauthorized).
-      // Antes cualquier 4xx ("status code 4") marcaba 'broken' → un usuario recién registrado
-      // SIN broker (holdings vacío → error) veía un falso "se interrumpió". El edge ahora
-      // devuelve connected:false (needsConnection) para ese caso → cae en 'disconnected'.
-      if(/broken/i.test(_m) || /\b410\b|revok|unauthor/i.test(_m)) _render('broken');
+      if(/broken/i.test(_m) || /\b410\b|status code 4|not found|does not exist|expired|unauthor|revok/i.test(_m)) _render('broken');
       else if(!(opts&&opts.silent)) toast('No se pudieron actualizar tus posiciones. Intenta de nuevo.');
       return null;
     }).finally(function(){ _busy=false; _setRefreshBtn(false); });
@@ -24567,26 +24760,18 @@ document.addEventListener('DOMContentLoaded', function(){
   window.snapRefresh = snapRefresh;
 
   // ── History → feed the EXISTING premium perf chart via _applyValueChart ──
-  function snapHistory(force){
-    return stCall('snaptrade-history', { force: !!force }).then(function(j){
+  function snapHistory(){
+    return stCall('snaptrade-history', {}).then(function(j){
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
-        // Serie REAL de SnapTrade → borra overrides antes de aplicarla: el % de cada período
-        // se deriva de estos puntos reales, jamás del valor hardcodeado viejo.
-        try{ if(window._clearPeriodOverrides) window._clearPeriodOverrides(true); }catch(e){}
-        // Marca la fuente como SnapTrade: su historial arranca en la fecha de conexión, así que
-        // para ventanas más largas (1M/3M…) generate() reconstruye el tramo previo con datos reales
-        // (Yahoo) y ancla el % como el broker. El flujo de FOTO no pone este flag (conserva su clamp).
-        try{ window._PERF_FROM_SNAP = true; }catch(e){}
         try{ _applyValueChart(pts);
           if(typeof setPeriod==='function'){ var b=document.querySelector('#periodBtns [data-period="ALL"]'); setPeriod('ALL', b||undefined); }
-        }catch(e){}
+        }catch(e){ _pvLogError('snaptrade apply history', e); }
         _perfNote('');
       }else{
         _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
       }
-    }).catch(function(){ _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); })
-      .finally(function(){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} });
+    }).catch(function(){ _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); });
   }
 
   // ── Value / Performance header toggle (chart stays the premium value chart) ──
@@ -24636,7 +24821,7 @@ document.addEventListener('DOMContentLoaded', function(){
       var cache = meta && meta.fromCache;
       return '<h3>Broker conectado</h3>'
         +'<div class="snap-status"><span class="snap-dot ok"></span>Sincronizado con tu broker</div>'
-        +'<div class="snap-row"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Actualizar</button>'
+        +'<div class="snap-row"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Actualizar</button>'
         +'<button class="snap-btn secondary" data-snap-connect data-snap-label="Reconectar / agregar">Reconectar</button></div>'
         +'<div class="snap-note">🔒 Los datos se actualizan una vez al día (sincronización incluida de tu broker).</div>';
     }
@@ -24680,20 +24865,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var returned = pending || /snaptrade|success|brokerage/i.test(url);
     try{ localStorage.removeItem('pv_snap_pending'); }catch(e){}
     function go(){ if(!window.sbClient){ return setTimeout(go, 400); }
-      snapRefresh({silent:true}).then(function(j){
-        if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
-        // Sin broker conectado → la gráfica local YA es la definitiva: revélala (con broker,
-        // snapHistory la revela tras aplicar el historial real). Idempotente.
-        if(!(j && j.connected)){
-          // Sin broker: si la reconstrucción (Yahoo) va a correr, espera a que termine para revelar
-          // (ensureAsync revela al asentarse) → sin flash seed→real. Si no hay nada que reconstruir,
-          // el seed YA es definitivo: revela ahora. El respaldo de 5s cubre cualquier caso.
-          try{
-            var _needRec = (typeof PORTIV_HIST!=='undefined' && PORTIV_HIST._tickers && PORTIV_HIST._tickers().length && !(PORTIV_HIST.ready && PORTIV_HIST.ready()));
-            if(!_needRec && window._pvRevealChart) window._pvRevealChart();
-          }catch(e){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(_e){} }
-        }
-      }).catch(function(){ try{ if(window._pvRevealChart) window._pvRevealChart(); }catch(e){} }); }
+      snapRefresh({silent:true}).then(function(j){ if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} } }); }
     go();
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _boot); else _boot();
