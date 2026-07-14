@@ -3748,11 +3748,147 @@
       <div class="ra-mcard"><div class="ra-mlabel">52W Range</div><div class="ra-mval ra-mval-sm" id="rf-range">—</div></div>
     </div>
 
-    <!-- Metrics -->
-    <div class="ra-card" style="margin-bottom:16px" id="r-metrics-card">
-      <div class="ra-card-title">Métricas Financieras Clave</div>
-      <div class="metric-grid" id="r-metrics"></div>
-    </div>
+    <!-- (Cuadro "Métricas Financieras Clave" eliminado: sus múltiplos viven ahora en
+         "Datos financieros" del análisis, con contexto de lectura por métrica.) -->
+
+    <!-- ═══ Estilos del análisis rediseñado (scoped .pvx / prefijo px- + tokens --px-*
+         para NO colisionar con .card/.metric/.dim ni con el tema --st-* de la app) ═══ -->
+    <style id="pvx-analysis-style">
+      .pvx{
+        --px-ink:#1a2536; --px-ink-soft:#3a4658; --px-muted:#7b8494; --px-line:#e9ebef;
+        --px-card:#ffffff; --px-green:#2f8f63; --px-green-strong:#1f6b48; --px-green-text:#1f7a4d;
+        --px-green-soft:#e7f2ec; --px-green-bar:#2d7a55; --px-amber:#a9791f; --px-amber-soft:#f3ead4;
+        --px-red:#c1443e; --px-red-soft:#f7e6e5; --px-blue:#3563b8; --px-navy:#0c1524; --px-track:#e6eaf0;
+        font-family:'Manrope','Inter',system-ui,sans-serif; color:var(--px-ink);
+      }
+      .pvx *{box-sizing:border-box}
+      .pvx .px-card{background:var(--px-card);border:1px solid var(--px-line);border-radius:18px;padding:24px 26px;margin-bottom:20px;box-shadow:0 1px 3px rgba(15,30,55,.05),0 8px 24px rgba(15,30,55,.04)}
+      .pvx .px-sec-title{display:flex;align-items:center;gap:12px;font-family:'Poppins','Manrope',sans-serif;font-size:19px;font-weight:700;color:var(--px-ink);margin:0 0 18px}
+      .pvx .px-sec-title::before{content:"";width:4px;height:21px;border-radius:3px;background:var(--px-green-strong);display:block;flex:0 0 auto}
+      .pvx .px-intro{margin:-6px 0 0;color:var(--px-muted);font-size:13px}
+      .pvx .px-hint{font-size:12px;color:var(--px-muted);margin-top:12px;line-height:1.55}
+      .pvx .px-hint b{color:var(--px-green-text);font-weight:600}
+      /* rating */
+      .pvx .px-rating-card{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+      .pvx .px-rating-badge{text-align:center;flex:0 0 auto;min-width:96px;padding-top:2px}
+      .pvx .px-rating-badge .num{font-family:'Poppins','Manrope',sans-serif;font-size:48px;font-weight:800;line-height:.9}
+      .pvx .px-rating-badge .lbl{font-size:12px;font-weight:700;letter-spacing:1px;margin-top:6px}
+      .pvx .px-rating-badge .sub{font-size:10px;color:var(--px-muted);letter-spacing:1px;margin-top:2px}
+      .pvx .px-rating-desc{flex:1;min-width:220px;font-size:14.5px;color:var(--px-ink-soft);line-height:1.6}
+      /* pill / bullets */
+      .pvx .px-pill{display:inline-block;background:#e8eef6;color:#2c4a73;font-weight:600;font-size:13px;padding:6px 14px;border-radius:20px;margin-bottom:14px}
+      .pvx .px-pill.green{background:var(--px-green-soft);color:var(--px-green-text)}
+      .pvx .px-pill.amber{background:var(--px-amber-soft);color:var(--px-amber)}
+      .pvx .px-pill.red{background:var(--px-red-soft);color:var(--px-red)}
+      .pvx .px-clean{margin:0;padding-left:20px}
+      .pvx .px-clean li{margin:8px 0;color:var(--px-ink-soft);font-size:14px;line-height:1.55}
+      /* dimensions */
+      .pvx .px-dim{display:flex;align-items:center;padding:11px 0;border-bottom:1px solid #f1f2f5}
+      .pvx .px-dim:last-child{border-bottom:none}
+      .pvx .px-dim .name{font-size:14px;color:var(--px-ink)}
+      .pvx .px-dim .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+      .pvx .px-track{width:110px;height:7px;border-radius:5px;background:var(--px-track);overflow:hidden}
+      .pvx .px-track > i{display:block;height:100%;border-radius:5px}
+      .pvx .px-tag{font-size:13px;font-weight:700;min-width:70px;text-align:right}
+      /* metrics (datos financieros) */
+      .pvx .px-metric{display:flex;align-items:center;padding:14px 0;border-bottom:1px solid #f1f2f5}
+      .pvx .px-metric:last-child{border-bottom:none}
+      .pvx .px-metric .k{font-size:14.5px;color:var(--px-ink);flex:0 0 auto;min-width:118px}
+      .pvx .px-metric .ctx{font-size:12px;color:var(--px-muted);margin:0 18px 0 auto;text-align:right}
+      .pvx .px-metric .ctx b{color:var(--px-green-text);font-weight:600}
+      .pvx .px-metric .ctx b.hi{color:var(--px-red)}
+      .pvx .px-metric .v{text-align:right;flex:0 0 auto;min-width:96px}
+      .pvx .px-metric .v .big{font-family:'Poppins','Manrope',sans-serif;font-size:17px;font-weight:700}
+      .pvx .px-metric .v .tiny{font-size:11.5px;color:var(--px-muted);margin-top:1px}
+      /* health grid */
+      .pvx .px-hgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+      .pvx .px-hbox{border:1px solid var(--px-line);border-radius:14px;padding:15px 17px}
+      .pvx .px-hbox .kk{font-size:12.5px;color:var(--px-muted)}
+      .pvx .px-hbox .vv{font-family:'Poppins','Manrope',sans-serif;font-size:21px;font-weight:800;margin:5px 0 2px}
+      .pvx .px-hbox .dd{font-size:12px;color:var(--px-ink-soft);line-height:1.45}
+      .pvx .px-hbox .dd.good{color:var(--px-green-text)}
+      .pvx .px-hbox .dd.warn{color:var(--px-amber)}
+      /* scenarios */
+      .pvx .px-scen{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+      .pvx .px-scol{border:1px solid var(--px-line);border-radius:15px;padding:18px;position:relative}
+      .pvx .px-scol.base{border-color:#bcdccb;background:#f6fbf8}
+      .pvx .px-scol .stag{font-size:10.5px;font-weight:800;letter-spacing:.7px;padding:4px 10px;border-radius:20px;display:inline-block;margin-bottom:10px}
+      .pvx .px-scol.bull .stag{background:var(--px-green-soft);color:var(--px-green-text)}
+      .pvx .px-scol.base .stag{background:#dcefe4;color:var(--px-green-strong)}
+      .pvx .px-scol.bear .stag{background:var(--px-red-soft);color:var(--px-red)}
+      .pvx .px-scol .starget{font-family:'Poppins','Manrope',sans-serif;font-size:24px;font-weight:800}
+      .pvx .px-scol.bull .starget{color:var(--px-green-text)}
+      .pvx .px-scol.bear .starget{color:var(--px-red)}
+      .pvx .px-scol .sret{font-size:12.5px;font-weight:700;margin:2px 0 10px}
+      .pvx .px-scol .sret.pos{color:var(--px-green-text)} .pvx .px-scol .sret.neg{color:var(--px-red)}
+      .pvx .px-scol .sass{font-size:12px;color:var(--px-ink-soft);line-height:1.5}
+      .pvx .px-scol .sprob{font-size:11px;color:var(--px-muted);margin-top:10px;padding-top:9px;border-top:1px dashed #e4e7ec}
+      /* pros/risks */
+      .pvx .px-pr{display:grid;grid-template-columns:1fr 1fr;gap:34px}
+      .pvx .px-pr h4{font-family:'Poppins','Manrope',sans-serif;font-size:13px;font-weight:800;letter-spacing:.4px;margin:0 0 12px;text-transform:uppercase}
+      .pvx .px-pr .pros h4{color:var(--px-green-text)} .pvx .px-pr .risks h4{color:var(--px-red)}
+      .pvx .px-pr ul{margin:0;padding-left:18px} .pvx .px-pr li{margin:9px 0;color:var(--px-ink-soft);font-size:13px;line-height:1.5}
+      /* consensus */
+      .pvx .px-cons-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+      .pvx .px-cons-top .lbl{font-size:11px;letter-spacing:.5px;color:var(--px-muted);font-weight:700;text-transform:uppercase}
+      .pvx .px-cons-top .rec{font-family:'Poppins','Manrope',sans-serif;font-weight:800;letter-spacing:.5px}
+      .pvx .px-cons-bar{height:11px;border-radius:7px;overflow:hidden;display:flex;margin-bottom:9px}
+      .pvx .px-cons-bar i{display:block;height:100%}
+      .pvx .px-cons-legend{display:flex;justify-content:space-between;font-size:12.5px;color:var(--px-ink-soft)}
+      .pvx .px-cons-legend b{color:var(--px-ink)}
+      /* price target range */
+      .pvx .px-ptr{margin-top:22px}
+      .pvx .px-ptr-scale{position:relative;height:56px;margin:26px 8px 6px}
+      .pvx .px-ptr-line{position:absolute;top:26px;left:0;right:0;height:6px;border-radius:6px;background:linear-gradient(90deg,#e6b9b7,#e6e0c2,#bfe0cf)}
+      .pvx .px-ptr-pt{position:absolute;top:12px;transform:translateX(-50%);text-align:center}
+      .pvx .px-ptr-pt .dot{width:14px;height:14px;border-radius:50%;margin:0 auto;border:3px solid #fff;box-shadow:0 0 0 1px #ccc}
+      .pvx .px-ptr-pt .pl{font-size:10.5px;color:var(--px-muted);margin-bottom:4px}
+      .pvx .px-ptr-pt .pv{font-family:'Poppins','Manrope',sans-serif;font-size:12.5px;font-weight:800;margin-top:4px}
+      .pvx .px-ptr-pt.low .dot{background:var(--px-red)} .pvx .px-ptr-pt.cur .dot{background:var(--px-navy)}
+      .pvx .px-ptr-pt.avg .dot{background:var(--px-green)} .pvx .px-ptr-pt.high .dot{background:var(--px-green-strong)}
+      /* return box + projection rows */
+      .pvx .px-retbox{border:2px solid var(--px-navy);border-radius:14px;padding:18px 22px;margin:18px 0 6px;background:linear-gradient(180deg,#fbfdfc,#f4f9f6)}
+      .pvx .px-retbox .rl{font-size:11px;letter-spacing:.6px;color:var(--px-muted);font-weight:700;text-transform:uppercase}
+      .pvx .px-retbox .rn{font-family:'Poppins','Manrope',sans-serif;font-size:34px;font-weight:800;line-height:1;margin:6px 0}
+      .pvx .px-retbox .rd{font-size:12.5px;color:var(--px-ink-soft);line-height:1.5}
+      .pvx .px-proj{display:flex;align-items:center;padding:13px 0;border-bottom:1px solid #f1f2f5}
+      .pvx .px-proj:last-child{border-bottom:none}
+      .pvx .px-proj .pt{font-family:'Poppins','Manrope',sans-serif;font-weight:700;font-size:14px}
+      .pvx .px-proj .ps{font-size:11px;color:var(--px-muted);margin-top:2px}
+      .pvx .px-proj .pr2{margin-left:auto;text-align:right}
+      .pvx .px-proj .pr2 .pp{font-family:'Poppins','Manrope',sans-serif;font-weight:800;font-size:16px}
+      .pvx .px-proj .pr2 .pc{font-size:12.5px;font-weight:600}
+      .pvx .px-proj .pr2 .pc.pos{color:var(--px-green-text)} .pvx .px-proj .pr2 .pc.neg{color:var(--px-red)}
+      /* catalysts */
+      .pvx .px-cat{display:flex;gap:14px;padding:13px 0;border-bottom:1px solid #f1f2f5;align-items:flex-start}
+      .pvx .px-cat:last-child{border-bottom:none}
+      .pvx .px-cat .cd{flex:0 0 auto;width:92px;font-family:'Poppins','Manrope',sans-serif;font-weight:700;font-size:12.5px;color:var(--px-green-text)}
+      .pvx .px-cat .cc b{font-weight:700} .pvx .px-cat .cc span{display:block;font-size:12px;color:var(--px-muted);margin-top:2px;line-height:1.45}
+      .pvx .px-cat .cimp{margin-left:auto;flex:0 0 auto;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:20px}
+      .pvx .px-cat .cimp.hi{background:var(--px-red-soft);color:var(--px-red)}
+      .pvx .px-cat .cimp.md{background:var(--px-amber-soft);color:var(--px-amber)}
+      .pvx .px-cat .cimp.lo{background:#eef0f3;color:var(--px-muted)}
+      /* ownership / insiders */
+      .pvx .px-own{display:flex;gap:24px;flex-wrap:wrap;align-items:center}
+      .pvx .px-own-legend{flex:1;min-width:200px}
+      .pvx .px-oleg{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13.5px}
+      .pvx .px-oleg .sw{width:12px;height:12px;border-radius:4px;flex:0 0 auto}
+      .pvx .px-oleg .on{color:var(--px-ink-soft)} .pvx .px-oleg .ov{margin-left:auto;font-family:'Poppins','Manrope',sans-serif;font-weight:700}
+      .pvx .px-insider{margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)}
+      .pvx .px-insider h4{font-family:'Poppins','Manrope',sans-serif;font-size:13px;margin:0 0 10px;color:var(--px-ink-soft)}
+      .pvx .px-itx{display:flex;align-items:center;padding:8px 0;font-size:13px;gap:12px}
+      .pvx .px-itx .idir{font-weight:800;font-size:10.5px;padding:2px 8px;border-radius:6px;flex:0 0 auto}
+      .pvx .px-itx .idir.buy{background:var(--px-green-soft);color:var(--px-green-text)}
+      .pvx .px-itx .idir.sell{background:var(--px-red-soft);color:var(--px-red)}
+      .pvx .px-itx .idir.neu{background:#eef0f3;color:var(--px-muted)}
+      .pvx .px-itx .iname{color:var(--px-ink)} .pvx .px-itx .iamt{margin-left:auto;color:var(--px-ink-soft);font-family:'Poppins','Manrope',sans-serif;font-weight:600}
+      .pvx .px-disclaimer{font-size:11px;color:var(--px-muted);text-align:center;padding:6px 0 18px;line-height:1.6}
+      @media(max-width:760px){
+        .pvx .px-hgrid,.pvx .px-scen,.pvx .px-pr{grid-template-columns:1fr}
+        .pvx .px-rating-card{gap:16px}
+      }
+      @media(prefers-reduced-motion:reduce){ .pvx *{transition:none!important;animation:none!important} }
+    </style>
 
     <!-- Expert Analysis -->
     <div style="margin-bottom:16px" id="r-analysis-card">
@@ -5819,6 +5955,7 @@ setInterval(() => { try { _amPrewarmLeader(); } catch(e){} }, 7000);
 const _ANTHROPIC_MODEL_MAP = {
   'claude-haiku-4-5':  'claude-haiku-4-5-20251001',
   'claude-sonnet-4-6': 'claude-sonnet-4-6',
+  'claude-sonnet-5':   'claude-sonnet-5',
   'claude-opus-4-8':   'claude-opus-4-8',
 };
 
@@ -5835,6 +5972,10 @@ const AI_MODELS = {
   // Sonnet extrae con más precisión. Fallback automático a Haiku en _visionCall si Sonnet
   // falla o se pasa de tiempo (502). Así: calidad de Sonnet por defecto, Haiku como red de seguridad.
   vision:     'claude-sonnet-4-6',
+  // Narrativa del análisis por acción (intro "qué es / cómo gana", pros, riesgos, valoración).
+  // Sonnet 5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
+  // (qbio:v1:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
+  narrative:  'claude-sonnet-5',
 };
 async function _anthropicDirect(rawBody) {
   const key = (typeof _ensureApiKey === 'function') ? _ensureApiKey() : localStorage.getItem('anthropic_key');
@@ -6016,17 +6157,6 @@ async function _aiFetchVision(opts) {
     try {
       // Sin timeout: la visión con OAuth también puede tardar bastante.
       const r = await fetch('http://localhost:8765/vision-cli', opts);
-      if (r.ok) return r;
-    } catch(e) {}
-  }
-  // PRODUCCIÓN (GitHub Pages es estático → la función Netlify no existe → POST daba 405):
-  // la visión va al proxy Supabase (anthropic-proxy), igual que el fetch de IA principal.
-  // Adjunta el token del usuario logueado (o la anon key) para pasar el gate de la función.
-  if (typeof _aiSbOn === 'function' && _aiSbOn()) {
-    try {
-      let _uTok = _AI_SB_ANON;
-      try { const _sbc = window.sbClient; if (_sbc) { const _gs = await _sbc.auth.getSession(); const _s = _gs && _gs.data && _gs.data.session; if (_s && _s.access_token) _uTok = _s.access_token; } } catch(e){}
-      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
       if (r.ok) return r;
     } catch(e) {}
   }
@@ -15252,20 +15382,12 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
     {l:'EV/EBITDA',     v: evEb!=null?xf(evEb):'N/A',s: ''},
   ];
 
-  // En ETFs no aplican las métricas de acción → se oculta por completo la tarjeta.
-  const _metricsCard = $('r-metrics-card');
-  if (_isEtfTicker(ticker, info)) {
-    if (_metricsCard) _metricsCard.style.display = 'none';
-    $('r-metrics').innerHTML = '';
-  } else {
-    if (_metricsCard) _metricsCard.style.display = '';
-    $('r-metrics').innerHTML = mets.map(m=>`
-      <div class="metric-card">
-        <div class="metric-label">${m.l}</div>
-        <div class="metric-val">${m.v}</div>
-        ${m.s?`<div class="metric-sub">${m.s}</div>`:''}
-      </div>`).join('');
-  }
+  // Cuadro "Métricas Financieras Clave" ELIMINADO del DOM: sus múltiplos ahora viven en
+  // "Datos financieros" del análisis (con contexto por métrica). Se conserva el guard por
+  // si el elemento no existe → no-op en vez de romper el render.
+  const _mEl = $('r-metrics');
+  if (_mEl) _mEl.innerHTML = _isEtfTicker(ticker, info) ? '' : mets.map(m=>`
+      <div class="metric-card"><div class="metric-label">${m.l}</div><div class="metric-val">${m.v}</div>${m.s?`<div class="metric-sub">${m.s}</div>`:''}</div>`).join('');
 
   // ── Ratings
   const gRating = _computeGeneralRating({pe,fpe,roe,roa,revG,epsG,pm,de,beta,info});
@@ -16195,99 +16317,244 @@ function _qualRatingColor(r){
   return 'var(--red)';
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════
+//  ANÁLISIS REDISEÑADO — PROCEDENCIA DE DATOS (para Rafael)
+//  ---------------------------------------------------------------------------------
+//  CONECTADO A DATOS REALES POR TICKER (dinámico, nada hardcodeado de Netflix):
+//    • Rating, foso, ventajas por dimensión, márgenes, múltiplos ....... deterministas (info Finnhub)
+//    • Intro / pros / riesgos / valoración ............................. Sonnet 5 (AI_MODELS.narrative),
+//        editorial COMPANY_BIOS si existe, cacheado 1× global en la nube (qbio:v1:TICKER)
+//    • Salud financiera: FCF, margen FCF (fcf/ventas), dividendo, D/E, beta . info Finnhub
+//    • Escenarios 1 año + rango de objetivos de precio ................. targetLow/Mean/High analistas
+//    • Consenso Buy/Hold/Sell .......................................... info.recoBreakdown
+//    • Retorno esperado + proyecciones 3m/6m/1a/3a ..................... _expReturn (MISMA fn del portafolio)
+//    • Próximos resultados (catalizador) ............................... EPS (Finnhub earnings calendar)
+//    • Actividad de insiders ........................................... SEC Form 4 vía Finnhub
+//  PENDIENTE DE FUENTE (hoy la sección/fila se OCULTA — nunca se inventa):
+//    • Barras de crecimiento ingresos/EPS trimestral por barra (se cubre con la tarjeta #r-eps existente)
+//    • Tabla de comparación con competidores (peers: falta métrica financiera por peer)
+//    • Dona de % ownership institucional / insiders / retail / short interest
+//    • Recompras, cobertura de intereses, efectivo vs deuda (totales), promedio histórico de múltiplos 5a
+//  ---------------------------------------------------------------------------------
+//  Degradación ESTRICTA: cada bloque devuelve null/[] si falta el dato → la sección no se renderiza.
+// ══════════════════════════════════════════════════════════════════════════════════
+async function _pvxExtras(ticker, info){
+  ticker = (ticker||'').toUpperCase();
+  const px = info.regularMarketPrice || 0;
+  const bil = v => { if(v==null) return null; const a=Math.abs(v),s=v<0?'-':''; if(a>=1e12)return `${s}$${(a/1e12).toFixed(2)}T`; if(a>=1e9)return `${s}$${(a/1e9).toFixed(1)}B`; if(a>=1e6)return `${s}$${(a/1e6).toFixed(0)}M`; return `${s}$${a.toFixed(0)}`; };
+  const pf = v => v!=null ? `${(v*100).toFixed(1)}%` : null;
+  const d2 = v => v!=null ? v.toFixed(2) : null;
+
+  // Consenso Buy/Hold/Sell (real, de recoBreakdown).
+  let consensus = null;
+  const reco = info.recoBreakdown;
+  if (reco){
+    const sb=reco.strongBuy||0,b=reco.buy||0,h=reco.hold||0,s=reco.sell||0,ss=reco.strongSell||0, tot=sb+b+h+s+ss;
+    if (tot>0){
+      const buyN=sb+b, sellN=s+ss;
+      const verdict = buyN>(h+sellN) ? {label:'COMPRAR',cls:'pos'} : sellN>buyN ? {label:'VENDER',cls:'neg'} : {label:'MANTENER',cls:''};
+      consensus = { tot, buyN, holdN:h, sellN, buyPct:Math.round(buyN/tot*100), holdPct:Math.round(h/tot*100), sellPct:Math.round(sellN/tot*100), verdict };
+    }
+  }
+
+  // Rango de objetivos de precio (real; requiere low + mean + high de analistas).
+  let targetRange = null;
+  const tLow=info.targetLowPrice, tMean=info.targetMeanPrice, tHigh=info.targetHighPrice;
+  if (px>0 && tLow>0 && tMean>0 && tHigh>0 && tHigh>=tLow){
+    const min=Math.min(tLow,px), max=Math.max(tHigh,px), span=(max-min)||1;
+    const pos = x => (4 + (x-min)/span*92).toFixed(1);
+    targetRange = { low:tLow, cur:px, avg:tMean, high:tHigh,
+      posLow:pos(tLow), posCur:pos(px), posAvg:pos(tMean), posHigh:pos(tHigh), avgPct:((tMean/px-1)*100) };
+  }
+
+  // Retorno esperado + proyecciones 3m/6m/1a/3a — MISMO cálculo que el panel de portafolio.
+  let retBox=null, proj=null;
+  if (px>0){
+    try { _cacheInfo(ticker, info); } catch(e){}
+    const er = _expReturn(ticker);
+    const g=er.gAnnual, gCap=Math.max(-0.25,Math.min(0.30,er.growth));
+    retBox = { totalPct:(er.total*100).toFixed(1), gPct:(g*100).toFixed(1), divPct:(er.divYield*100).toFixed(2), gSrc:er.gSrc, divSrc:er.divSrc||'dividend yield', total:er.total };
+    const mk=(label,price,note)=>{ const chg=price-px; return {label,note,price,chg,chgPct:chg/px*100}; };
+    proj = [
+      mk('3 meses', px*Math.pow(1+g,0.25), `Apreciación ${(g*100).toFixed(1)}%/año ÷ 4 trimestres`),
+      mk('6 meses', px*Math.pow(1+g,0.5),  `Apreciación ${(g*100).toFixed(1)}%/año ÷ 2`),
+      mk('1 año',   px*Math.pow(1+g,1),    `Apreciación ${(g*100).toFixed(1)}% compuesta`),
+      mk('3 años',  px*Math.pow(1+gCap,3), `Tasa ${(gCap*100).toFixed(1)}%/año (cap ±30% a 3A)`),
+    ];
+  }
+
+  // Escenarios a 1 año — anclados en objetivos REALES de analistas (si existen).
+  let scenarios=null;
+  if (px>0 && tMean>0){
+    const bear=(tLow>0?tLow:tMean*0.8), base=tMean, bull=(tHigh>0?tHigh:tMean*1.15);
+    const r=t=>((t/px-1)*100);
+    scenarios=[
+      {cls:'bear',tag:'PESIMISTA',target:bear,retPct:r(bear),assumption:'El crecimiento decepciona y el múltiplo se comprime; alineado con el analista más pesimista.',prob:25},
+      {cls:'base',tag:'BASE',      target:base,retPct:r(base),assumption:'Crecimiento y márgenes en línea con lo que espera el consenso de analistas.',prob:50},
+      {cls:'bull',tag:'OPTIMISTA', target:bull,retPct:r(bull),assumption:'La ejecución supera lo previsto y el múltiplo se expande; alineado con el analista más optimista.',prob:25},
+    ];
+  }
+
+  // Salud financiera + márgenes (solo filas con dato real).
+  const health=[];
+  const push=(kk,vv,dd,tone)=>{ if(vv!=null) health.push({kk,vv,dd,tone:tone||''}); };
+  const gm=info.grossMargins, om=info.operatingMargins, pm=info.profitMargins;
+  if(gm!=null) push('Margen bruto',     pf(gm), 'Lo que queda tras el costo de producir', gm>0.4?'good':'');
+  if(om!=null) push('Margen operativo', pf(om), 'Tras los costos de operar el negocio', om>0.15?'good':om<0?'warn':'');
+  if(pm!=null) push('Margen neto',      pf(pm), 'Beneficio final por cada dólar vendido', pm>0.1?'good':pm<0?'warn':'');
+  const fcf=info.freeCashflow;
+  if(fcf!=null) push('Flujo de caja libre (FCF)', bil(fcf), 'Efectivo real que queda tras invertir en el negocio', fcf>0?'good':'warn');
+  const ps=info.priceToSales, mc=info.marketCap;
+  if(fcf!=null && ps>0 && mc>0){ const rev=mc/ps; if(rev>0){ const fm=fcf/rev; push('Margen de FCF', (fm*100).toFixed(1)+'%', `Convierte ${(fm*100).toFixed(0)}¢ de cada dólar en efectivo libre`, fm>0.1?'good':fm<0?'warn':''); } }
+  const divY=info.dividendYield||info.trailingAnnualDividendYield||0;
+  health.push({kk:'Dividendo', vv:(divY*100).toFixed(2)+'%', dd: divY>0?`Reparte ${(divY*100).toFixed(1)}% anual a sus accionistas`:'No paga dividendo — reinvierte todo en crecer', tone: divY>0?'good':'warn'});
+  const de=info.debtToEquity;
+  if(de!=null) push('Deuda / Equity', d2(de), de<0.5?'Balance conservador, poca deuda':de<1.5?'Apalancamiento moderado, manejable':'Apalancamiento elevado — sensible a tasas', de<0.5?'good':de>2?'warn':'');
+  const beta=info.beta;
+  if(beta!=null) push('Volatilidad (beta)', d2(beta), beta<0.8?'Se mueve menos que el mercado':beta<1.3?'Se mueve parecido al mercado':'Más volátil que el mercado', beta>1.8?'warn':'');
+
+  // Catalizadores: próximos resultados (real, de EPS) + temas editoriales (bios).
+  let catalysts=[];
+  try{
+    let q=null;
+    // Solo lectura de caché (EPS.renderStock ya la llenó): NO bloquear el análisis con una
+    // llamada de red por una sección menor. Si aún no está, los catalizadores editoriales bastan.
+    if (typeof EPS!=='undefined' && EPS._cache && EPS._cache[ticker] && Array.isArray(EPS._cache[ticker].quarters)) q=EPS._cache[ticker].quarters.find(x=>x&&x.future&&x.date);
+    if(q){ const M=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; const d=new Date((q.date||'')+'T12:00:00'); const ds=isNaN(d)?q.date:`${d.getDate()} ${M[d.getMonth()]} ${d.getFullYear()}`; catalysts.push({date:ds, title:'Próximo reporte de resultados', desc:'El evento con más impacto del trimestre — el mercado reacciona fuerte al beat/miss.', impact:'hi'}); }
+  }catch(e){}
+  const bioC = (typeof COMPANY_BIOS!=='undefined') ? COMPANY_BIOS[ticker] : null;
+  if(bioC && Array.isArray(bioC.catalysts)) bioC.catalysts.slice(0,4).forEach(c=>catalysts.push({date:'Tema', title:c, desc:'', impact:'md'}));
+  if(!catalysts.length) catalysts=null;
+
+  return { px, consensus, targetRange, retBox, proj, scenarios, health: health.length?health:null, catalysts };
+}
+
 // Pinta el análisis determinista como tarjetas .rax-sec dentro de #r-analysis.
 function _renderQualAnalysis(a, el){
   if (!el || !a) return;
+  el.classList.add('pvx');   // activa tokens --px-* y clases px- (aisladas del tema de la app)
   const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  const clr = _qualRatingColor(a.rating);
+  const rc  = r => r==null?'var(--px-muted)': r>=8?'var(--px-green)': r>=6.5?'var(--px-blue)': r>=5?'var(--px-amber)':'var(--px-red)';
   const bullets = arr => (Array.isArray(arr) && arr.length)
-    ? `<ul style="margin:0;padding-left:18px">${arr.map(b => `<li style="font-size:13.5px;line-height:1.6;color:var(--st-primary);margin-bottom:7px">${esc(b)}</li>`).join('')}</ul>`
-    : '<div style="font-size:13px;color:var(--text3)">—</div>';
+    ? `<ul class="px-clean">${arr.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`
+    : '<div style="font-size:13px;color:var(--px-muted)">—</div>';
+  const money = v => v>=1e9?`$${(v/1e9).toFixed(1)}B`:v>=1e6?`$${(v/1e6).toFixed(1)}M`:v>=1e3?`$${(v/1e3).toFixed(0)}K`:`$${(v||0).toFixed(0)}`;
+  const clr = rc(a.rating);
   let h = '';
-  // Cabecera: rating (número calculado) + etiqueta + BIO (qué es / cómo gana dinero).
-  h += `<div class="rax-sec" style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
-    <div style="flex:0 0 auto;text-align:center;min-width:96px">
-      <div style="font-size:44px;font-weight:800;color:${clr};line-height:1">${a.rating!=null ? a.rating.toFixed(1) : '—'}</div>
-      <div style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:${clr};margin-top:2px">${esc(a.rating_label)}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:1px">RATING / 10</div>
+
+  // 1) RATING general (badge + descripción en español simple).
+  h += `<div class="px-card px-rating-card">
+    <div class="px-rating-badge">
+      <div class="num" style="color:${clr}">${a.rating!=null ? a.rating.toFixed(1) : '—'}</div>
+      <div class="lbl" style="color:${clr}">${esc(a.rating_label)}</div>
+      <div class="sub">RATING / 10</div>
     </div>
-    <div style="flex:1;min-width:220px">
-      <div style="font-size:14px;line-height:1.65;color:var(--st-primary)">${esc(a.bio || '')}</div>
-    </div>
+    <div class="px-rating-desc">${esc(a.bio || (a.moat_bullets||[]).join('. '))}</div>
   </div>`;
-  // Foso (moat): etiqueta de fuerza + drivers.
-  h += `<div class="rax-sec"><div class="rax-sec-title">Foso competitivo (moat)</div>
-    <div style="display:inline-block;font-size:12px;font-weight:800;color:${a.moat.color};background:var(--st-surface-cont);border:1px solid var(--st-surface-highest);padding:4px 12px;border-radius:999px;margin-bottom:12px">${esc(a.moat.label)}</div>
+
+  // 2) FOSO competitivo (moat): pill de fuerza + bullets.
+  const moatCls = /fuerte/i.test(a.moat.label)?'green': /sin foso|débil/i.test(a.moat.label)?'red':'amber';
+  h += `<div class="px-card"><h2 class="px-sec-title">Foso competitivo (moat)</h2>
+    <span class="px-pill ${moatCls}">${esc(a.moat.label)}</span>
     ${bullets(a.moat_bullets)}</div>`;
-  // Desglose de ventajas competitivas por dimensión (estructura sector + evidencia).
+
+  // 3) VENTAJAS competitivas por dimensión (barra + etiqueta).
   if (Array.isArray(a.moatFactors) && a.moatFactors.length){
-    h += `<div class="rax-sec"><div class="rax-sec-title">Ventajas competitivas por dimensión</div>
-      <div style="display:flex;flex-direction:column;gap:2px">${a.moatFactors.map(f=>`
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--st-surface-highest)">
-          <span style="font-size:13px;color:var(--st-primary)">${esc(f.n)}</span>
-          <div style="display:flex;align-items:center;gap:9px">
-            <div style="width:56px;height:6px;background:var(--st-surface-highest);border-radius:999px;overflow:hidden"><div style="height:100%;width:${f.w};background:${f.c};border-radius:999px"></div></div>
-            <span style="font-size:12px;font-weight:700;color:${f.c};min-width:58px;text-align:right">${esc(f.s)}</span>
-          </div>
-        </div>`).join('')}</div>
-      <div style="font-size:10.5px;color:var(--text3);margin-top:8px">Cada dimensión combina qué ventaja es estructuralmente posible en el sector con la evidencia financiera de la empresa.</div>
-    </div>`;
+    const ds = s => s==='Fuerte'?{c:'var(--px-green-bar)',w:'82%',t:'var(--px-green-text)'}: s==='Moderado'?{c:'var(--px-amber)',w:'50%',t:'var(--px-amber)'}:{c:'#9aa4b2',w:'18%',t:'var(--px-muted)'};
+    h += `<div class="px-card"><h2 class="px-sec-title">Ventajas competitivas por dimensión</h2>
+      ${a.moatFactors.map(f=>{const d=ds(f.s);return `<div class="px-dim"><span class="name">${esc(f.n)}</span><div class="right"><span class="px-track"><i style="width:${d.w};background:${d.c}"></i></span><span class="px-tag" style="color:${d.t}">${esc(f.s)}</span></div></div>`;}).join('')}
+      <div class="px-hint">Cada dimensión combina qué ventaja es estructuralmente posible en el sector con la evidencia financiera de la empresa.</div></div>`;
   }
-  // Márgenes (% de beneficio) con barras.
-  if (a.margenes.length){
-    h += `<div class="rax-sec"><div class="rax-sec-title">% de beneficio (márgenes)</div>${a.margenes.map(m=>{
-      const pct = Math.max(0, Math.min(100, m.v*100));
-      const c = m.v<0 ? 'var(--red)' : m.v>0.3 ? 'var(--green)' : m.v>0.1 ? 'var(--blue)' : 'var(--yellow)';
-      return `<div style="margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px"><span style="font-size:13px;color:var(--st-primary);font-weight:600">${esc(m.l)}</span><span style="font-size:15px;font-weight:800;color:${c}">${(m.v*100).toFixed(1)}%</span></div>
-        <div style="height:8px;border-radius:999px;background:var(--st-surface-highest);overflow:hidden"><div style="height:100%;width:${pct}%;background:${c};border-radius:999px"></div></div>
-        <div style="font-size:11px;color:var(--text3);margin-top:3px">${esc(m.hint)}</div>
-      </div>`;
-    }).join('')}</div>`;
+
+  // 5) DATOS financieros: múltiplo + columna central de lectura (contexto por métrica).
+  const datos = (a.datos||[]).filter(d=>d.v && d.v!=='—' && d.v!=='N/A');
+  if (datos.length){
+    h += `<div class="px-card"><h2 class="px-sec-title">Datos financieros</h2>
+      ${datos.map(d=>{const hi=/premium|cara|alta|exigente|elevad|muy alta/i.test(d.s||'');return `<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">${d.s?`lectura: <b class="${hi?'hi':''}">${esc(d.s)}</b>`:''}</span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`;}).join('')}
+      <div class="px-hint">La columna del centro traduce cada múltiplo a lenguaje simple: si "23x" es barato, justo o premium <em>para esta empresa</em>.</div></div>`;
   }
-  // Datos financieros: tabla clave/valor + nota corta.
-  h += `<div class="rax-sec"><div class="rax-sec-title">Datos financieros</div>${a.datos.map(d=>`<div class="rax-row"><span class="rax-row-l">${esc(d.l)}</span><span style="text-align:right"><span class="rax-row-v">${esc(d.v)}</span>${d.s?`<span style="display:block;font-size:11px;font-weight:500;color:var(--text3);margin-top:1px">${esc(d.s)}</span>`:''}</span></div>`).join('')}</div>`;
-  // Actividad de directivos (insiders) — SEC Formulario 4 vía Finnhub.
-  if (a.insiders){
-    const ins = a.insiders;
-    const toneClr = ins.tone==='pos'?'var(--green)':ins.tone==='neg'?'var(--red)':'var(--yellow)';
-    const money = v => v>=1e9?`$${(v/1e9).toFixed(1)}B`:v>=1e6?`$${(v/1e6).toFixed(1)}M`:v>=1e3?`$${(v/1e3).toFixed(0)}K`:`$${(v||0).toFixed(0)}`;
-    const nsh   = v => v>=1e6?`${(v/1e6).toFixed(2)}M`:v>=1e3?`${(v/1e3).toFixed(0)}K`:`${v||0}`;
-    const actL  = c => ({P:'Compra',S:'Venta',A:'Concesión',M:'Ejerc. opción',F:'Retención fiscal',G:'Donación',C:'Conversión',X:'Ejercicio',D:'Disposición'}[c]||c||'—');
-    const actC  = c => c==='P'?'var(--green)':c==='S'?'var(--red)':'var(--text3)';
-    h += `<div class="rax-sec"><div class="rax-sec-title">Actividad de directivos (insiders)</div>`;
-    if (ins.empty){
-      h += `<div style="font-size:13px;color:var(--text3)">Sin operaciones de insiders reportadas a la SEC (Formulario 4) en los últimos 12 meses.</div>`;
-    } else {
-      h += `<div style="display:inline-block;font-size:13px;font-weight:800;color:${toneClr};background:var(--st-surface-cont);border:1px solid var(--st-surface-highest);padding:4px 14px;border-radius:999px;margin-bottom:10px">${esc(ins.label)}</div>`;
-      h += `<div style="font-size:12.5px;color:var(--st-primary);line-height:1.6;margin-bottom:12px">Últimos 12 meses en mercado abierto: <strong style="color:var(--green)">compras ${money(ins.buyVal)}</strong> · <strong style="color:var(--red)">ventas ${money(ins.sellVal)}</strong>${ins.discCount?` · ${ins.discCount} ${ins.discCount===1?'operación':'operaciones'}`:''}.</div>`;
-      if (ins.holders && ins.holders.length){
-        h += `<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin:4px 0 4px">Mayores tenedores internos</div>`;
-        h += ins.holders.map(hh=>`<div class="rax-row"><span class="rax-row-l">${esc(hh.name)}</span><span style="text-align:right"><span class="rax-row-v">${nsh(hh.share)} acc.</span><span style="display:block;font-size:11px;font-weight:600;color:${actC(hh.code)};margin-top:1px">${esc(actL(hh.code))}${hh.date?` · ${esc(hh.date)}`:''}</span></span></div>`).join('');
-      }
-      if (ins.ops && ins.ops.length){
-        h += `<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;margin:12px 0 4px">Operaciones recientes</div>`;
-        h += ins.ops.map(o=>`<div class="rax-row"><span class="rax-row-l">${esc(o.name)} <span style="color:${actC(o.code)};font-weight:700">${esc(actL(o.code))}</span></span><span style="text-align:right"><span class="rax-row-v">${nsh(Math.abs(o.change))} acc.${o.price?` @ $${o.price.toFixed(2)}`:''}</span><span style="display:block;font-size:11px;color:var(--text3);margin-top:1px">${esc(o.date)}</span></span></div>`).join('');
-      }
-      h += `<div style="font-size:10.5px;color:var(--text3);margin-top:10px;line-height:1.5">Fuente: SEC Formulario 4 vía Finnhub. El veredicto solo considera operaciones discrecionales en mercado abierto (compra/venta); concesiones y ejercicios de opciones no cuentan como señal.</div>`;
+
+  // 6) SALUD financiera (márgenes + FCF + apalancamiento + dividendo). Solo filas con dato.
+  if (a.health && a.health.length){
+    h += `<div class="px-card"><h2 class="px-sec-title">Salud financiera</h2>
+      <p class="px-intro">¿La empresa genera efectivo de verdad y aguanta sus deudas? Esto separa un buen negocio de uno frágil.</p>
+      <div class="px-hgrid" style="margin-top:16px">${a.health.map(x=>`<div class="px-hbox"><div class="kk">${esc(x.kk)}</div><div class="vv">${esc(x.vv)}</div><div class="dd ${x.tone}">${esc(x.dd)}</div></div>`).join('')}</div></div>`;
+  }
+
+  // 8) VALORACIÓN: pill + resumen.
+  h += `<div class="px-card"><h2 class="px-sec-title">Valoración</h2>
+    <span class="px-pill ${/barata|razonable/i.test(a.valLabel)?'green':/cara/i.test(a.valLabel)?'red':'amber'}">${esc(a.valLabel)}</span>
+    ${a.valoracion_full ? `<p style="color:var(--px-ink-soft);margin:0;font-size:14.5px;line-height:1.6">${esc(a.valoracion_full)}</p>` : ''}</div>`;
+
+  // 9) PROS y RIESGOS: dos columnas.
+  const col = (title, cls, icon, arr) => `<div class="${cls}"><h4>${icon} ${title}</h4>${(Array.isArray(arr)&&arr.length)?`<ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<div style="font-size:13px;color:var(--px-muted)">—</div>'}</div>`;
+  h += `<div class="px-card"><h2 class="px-sec-title">Pros y riesgos</h2>
+    <div class="px-pr">${col('PROS','pros','✓',a.pros)}${col('RIESGOS','risks','⚠',a.riesgos)}</div></div>`;
+
+  // 10) ESCENARIOS a 1 año (pesimista / base / optimista) — anclados en objetivos reales.
+  if (a.scenarios && a.scenarios.length){
+    h += `<div class="px-card"><h2 class="px-sec-title">Escenarios a 1 año</h2>
+      <p class="px-intro">En vez de un solo número, tres futuros posibles. La realidad casi siempre cae en un punto intermedio.</p>
+      <div class="px-scen" style="margin-top:16px">${a.scenarios.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div><div class="sprob">Probabilidad estimada: ${s.prob}%</div></div>`).join('')}</div></div>`;
+  }
+
+  // 11) PROYECCIONES de precio: consenso + rango de objetivos + retorno esperado + filas.
+  if (a.retBox || a.consensus || a.targetRange){
+    let p = `<div class="px-card"><h2 class="px-sec-title">Proyecciones de precio</h2>`;
+    if (a.consensus){ const c=a.consensus, rClr=c.verdict.cls==='pos'?'var(--px-green-text)':c.verdict.cls==='neg'?'var(--px-red)':'var(--px-amber)';
+      p += `<div class="px-cons-top"><span class="lbl">Consenso de ${c.tot} analistas</span><span class="rec" style="color:${rClr}">${c.verdict.label}</span></div>
+        <div class="px-cons-bar"><i style="width:${c.buyPct}%;background:var(--px-green-bar)"></i><i style="width:${c.holdPct}%;background:var(--px-amber)"></i><i style="width:${c.sellPct}%;background:var(--px-red)"></i></div>
+        <div class="px-cons-legend"><span><b>${c.buyN}</b> compra (${c.buyPct}%)</span><span><b>${c.holdN}</b> mantener (${c.holdPct}%)</span><span><b>${c.sellN}</b> vender (${c.sellPct}%)</span></div>`;
     }
-    h += `</div>`;
+    if (a.targetRange){ const t=a.targetRange;
+      p += `<div class="px-ptr"><div style="font-family:'Poppins','Manrope',sans-serif;font-size:14px;font-weight:700">Rango de objetivos de precio</div>
+        <div class="px-ptr-scale">
+          <div class="px-ptr-line"></div>
+          <div class="px-ptr-pt low"  style="left:${t.posLow}%"><div class="pl">Mínimo</div><div class="dot"></div><div class="pv">$${t.low.toFixed(0)}</div></div>
+          <div class="px-ptr-pt cur"  style="left:${t.posCur}%"><div class="pl">Hoy</div><div class="dot"></div><div class="pv">$${t.cur.toFixed(0)}</div></div>
+          <div class="px-ptr-pt avg"  style="left:${t.posAvg}%"><div class="pl">Promedio</div><div class="dot"></div><div class="pv">$${t.avg.toFixed(0)}</div></div>
+          <div class="px-ptr-pt high" style="left:${t.posHigh}%"><div class="pl">Máximo</div><div class="dot"></div><div class="pv">$${t.high.toFixed(0)}</div></div>
+        </div>
+        <div class="px-hint">El objetivo promedio implica ${t.avgPct>=0?'+':''}${t.avgPct.toFixed(0)}% frente al precio de hoy.</div></div>`;
+    }
+    if (a.retBox){ const r=a.retBox, pos=r.total>=0, rClr=pos?'var(--px-green-text)':'var(--px-red)';
+      p += `<div class="px-retbox"><div class="rl">Retorno total esperado anual</div>
+        <div class="rn" style="color:${rClr}">${pos?'+':''}${r.totalPct}%</div>
+        <div class="rd"><b>${r.gPct}%</b> apreciación + <b>${r.divPct}%</b> dividendos = <b>${r.totalPct}%</b> retorno total <span style="color:var(--px-muted)">(mismo cálculo que el panel de portafolio)</span></div></div>`;
+      if (a.proj){ p += a.proj.map(x=>`<div class="px-proj"><div><div class="pt">${esc(x.label)}</div><div class="ps">${esc(x.note)}</div></div><div class="pr2"><div class="pp">$${x.price.toFixed(2)}</div><div class="pc ${x.chg>=0?'pos':'neg'}">${x.chg>=0?'+':'−'}$${Math.abs(x.chg).toFixed(2)} (${x.chgPct>=0?'+':''}${x.chgPct.toFixed(2)}%)</div></div></div>`).join(''); }
+      p += `<div class="px-hint">Tasas consistentes con el panel de "Retorno Esperado del Portafolio": el mismo ticker aporta el mismo retorno en ambas vistas.</div>`;
+    }
+    p += `</div>`;
+    h += p;
   }
-  // Valoración: etiqueta + razonamiento (con conocimiento de la empresa).
-  h += `<div class="rax-sec"><div class="rax-sec-title">Valoración</div>
-    <div style="display:inline-block;font-size:12px;font-weight:800;color:var(--st-secondary);margin-bottom:8px">${esc(a.valLabel)}</div>
-    ${a.valoracion_full ? `<div style="font-size:14px;line-height:1.65;color:var(--st-primary)">${esc(a.valoracion_full)}</div>` : ''}</div>`;
-  // Pros y riesgos: cuadro comparativo de dos columnas.
-  const col = (title, color, icon, arr) => `<div>
-    <div style="font-size:12px;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">${icon} ${title}</div>
-    ${(Array.isArray(arr)&&arr.length)?`<ul style="margin:0;padding-left:18px">${arr.map(x=>`<li style="font-size:13px;line-height:1.55;color:var(--st-primary);margin-bottom:8px">${esc(x)}</li>`).join('')}</ul>`:'<div style="font-size:13px;color:var(--text3)">—</div>'}
-  </div>`;
-  h += `<div class="rax-sec"><div class="rax-sec-title">Pros y riesgos</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:20px">
-      ${col('Pros', 'var(--green)', '✓', a.pros)}
-      ${col('Riesgos', 'var(--red)', '⚠', a.riesgos)}
-    </div></div>`;
+
+  // 12) PRÓXIMOS catalizadores (fecha + evento + impacto).
+  if (a.catalysts && a.catalysts.length){
+    h += `<div class="px-card"><h2 class="px-sec-title">Próximos catalizadores</h2>
+      <p class="px-intro">Fechas y temas que pueden mover el precio: cuándo conviene prestar atención.</p>
+      <div style="margin-top:12px">${a.catalysts.map(c=>`<div class="px-cat"><div class="cd">${esc(c.date)}</div><div class="cc"><b>${esc(c.title)}</b>${c.desc?`<span>${esc(c.desc)}</span>`:''}</div><span class="cimp ${c.impact}">${c.impact==='hi'?'Alto':c.impact==='md'?'Medio':'Bajo'}</span></div>`).join('')}</div></div>`;
+  }
+
+  // 13) QUIÉN es dueño / actividad de directivos (insiders) — datos reales SEC F4.
+  //     (El % institucional/insiders/short NO se expone por el proveedor → dona omitida.)
+  if (a.insiders && !a.insiders.empty){
+    const ins = a.insiders;
+    const toneCls = ins.tone==='pos'?'green':ins.tone==='neg'?'red':'amber';
+    h += `<div class="px-card"><h2 class="px-sec-title">Actividad de directivos (insiders)</h2>
+      <span class="px-pill ${toneCls}">${esc(ins.label)}</span>
+      <div style="font-size:13px;color:var(--px-ink-soft);line-height:1.6;margin:2px 0 4px">Últimos 12 meses en mercado abierto: <b style="color:var(--px-green-text)">compras ${money(ins.buyVal)}</b> · <b style="color:var(--px-red)">ventas ${money(ins.sellVal)}</b>${ins.discCount?` · ${ins.discCount} ${ins.discCount===1?'operación':'operaciones'}`:''}.</div>`;
+    if (ins.ops && ins.ops.length){
+      h += `<div class="px-insider"><h4>Movimientos recientes de insiders</h4>${ins.ops.map(o=>{const buy=o.code==='P';return `<div class="px-itx"><span class="idir ${buy?'buy':'sell'}">${buy?'COMPRA':'VENTA'}</span><span class="iname">${esc(o.name)}</span><span class="iamt">${buy?'+':'−'}${money(Math.abs(o.change)*(o.price||0))}${o.date?` · ${esc(o.date)}`:''}</span></div>`;}).join('')}</div>`;
+    }
+    h += `<div class="px-hint">Las ventas programadas suelen ser rutina (impuestos, diversificación). Las <b>compras</b> con dinero propio son la señal más valiosa: un insider apuesta a que la acción sube. Fuente: SEC Formulario 4 vía Finnhub.</div></div>`;
+  }
+
+  // 14) Disclaimer.
+  h += `<div class="px-disclaimer">Análisis generado automáticamente con datos de mercado. No constituye asesoría de inversión.</div>`;
+
   el.innerHTML = h;
+  // Las proyecciones ahora viven dentro del análisis → ocultamos la tarjeta antigua duplicada.
+  try { if (a.retBox){ const pc=document.getElementById('r-projections-card'); if(pc) pc.style.display='none'; } } catch(e){}
 }
 
 // Frase de veredicto de valuación (determinista) — usada cuando no hay texto de IA.
@@ -16333,7 +16600,13 @@ function _narrFromBio(bio){
 // Llamada de IA BARATA: JSON corto con bio/pros/riesgos/valoración. null si falla/sin key.
 async function _fetchNarrativeAI(ticker, info, facts){
   if (typeof _aiFetch !== 'function') return null;
-  if (!(window._aiKeyAvailable && window._aiKeyAvailable())) return null;
+  // Puede generar si hay key del navegador (local/dev) O si el proxy de Supabase está
+  // disponible (producción GitHub Pages: routing server-authoritative + presupuesto por
+  // usuario, igual que visión). Sin esto, en el sitio desplegado la narrativa nunca se
+  // generaba para tickers sin bio editorial → análisis pobre en la mayoría de acciones.
+  const _canGen = (window._aiKeyAvailable && window._aiKeyAvailable())
+               || (typeof _aiSbOn === 'function' && _aiSbOn());
+  if (!_canGen) return null;
   const name = info.longName || info.shortName || ticker;
   const SYSTEM = `Eres un analista de inversiones. Respondes SOLO con un objeto JSON válido en ESPAÑOL, sin markdown ni texto extra. Esquema exacto:
 {"que_es":"1-2 frases: qué hace la empresa en lenguaje llano","como_gana_dinero":"1-2 frases: de dónde vienen sus ingresos y su ventaja competitiva","pros":["3-4 fortalezas concretas y específicas"],"riesgos":["3-4 riesgos específicos de esta empresa, no genéricos"],"valoracion_text":"2-3 frases explicando si la acción está cara o barata y POR QUÉ, con conocimiento real del negocio y sus perspectivas"}
@@ -16344,11 +16617,11 @@ Devuelve el JSON.`;
   try {
     const res = await _aiFetch('claude-cli', {
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model: AI_MODELS.reasoning, max_tokens: 700, system: SYSTEM, prompt })
+      body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: 1200, system: SYSTEM, prompt })
     }, true);
     if (!res.ok) return null;
     const data = await res.json();
-    try { _tokAdd(data.usage, AI_MODELS.reasoning, 'research'); } catch(e){}
+    try { _tokAdd(data.usage, AI_MODELS.narrative, 'research'); } catch(e){}
     const obj = _aiExtractJson(data.text || '');
     if (!obj || typeof obj !== 'object') return null;
     obj.pros    = Array.isArray(obj.pros)    ? obj.pros    : [];
@@ -16603,7 +16876,12 @@ async function _upgradeAnalysisToAI(ticker, info){
     moatFactors: _moatFactorBreakdown(info, base.moat, (base.moat_bullets||[]).concat(bio||[])),
     insiders: _summarizeInsiders(insRaw),
   });
-  _renderQualAnalysis(a, cur);
+  // Datos dinámicos por ticker de las secciones nuevas (escenarios, salud, rango de
+  // objetivos, proyecciones reutilizando _expReturn, catalizadores). Degradación elegante.
+  try { Object.assign(a, await _pvxExtras(ticker, info)); } catch(e){}
+  const cur2 = document.getElementById('r-analysis');
+  if (!cur2 || cur2.dataset.tk !== ticker) return;   // el usuario cambió de acción durante el await
+  _renderQualAnalysis(a, cur2);
 }
 function esc0(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -20904,6 +21182,7 @@ const _CHAT_COOLDOWN = 3000;
 // cache write (5 min) ≈ 1.25x input. Búsqueda web ≈ $0.01 por consulta.
 const _PRICING = {
   'claude-sonnet-4-6': { in: 3.00, out: 15.00 },
+  'claude-sonnet-5':   { in: 3.00, out: 15.00 },
   'claude-haiku-4-5':  { in: 1.00, out:  5.00 },
   'claude-opus-4-8':   { in: 5.00, out: 25.00 },
 };
@@ -23838,7 +24117,10 @@ if (document.readyState === 'loading') {
     var accountKeys = [
       'portfolio_state_v4','portfolio_state_backup','portfolio_backup_ts',
       'portiv_intraday_v2','portiv_daily_v2','portiv_daily_history_v1','portiv_prev_close_v1',
-      'pv_profile_local','portiv_profile_v1'
+      'pv_profile_local','portiv_profile_v1',
+      // BUG 2: marca de sincronización del portafolio (por-cuenta) → se limpia al cambiar de cuenta
+      // para que el estado de sync de una cuenta no contamine la comparación de recencia de otra.
+      'pv_port_synced','pv_port_saved_at'
     ];
     accountKeys.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
     try { Object.keys(localStorage).forEach(function(k){ if (/^portiv_profile_v1_/.test(k)) localStorage.removeItem(k); }); } catch(e){}
@@ -23909,8 +24191,27 @@ if (document.readyState === 'loading') {
     } catch(e){}
 
     try {
-      var r = await sb.from('profiles').select('portfolio').eq('id', s.user.id).maybeSingle();
+      var r = await sb.from('profiles').select('portfolio, updated_at').eq('id', s.user.id).maybeSingle();
+
+      // BUG 1: el cliente de Supabase RESUELVE (no lanza) ante muchos errores (RLS, 4xx/5xx,
+      // PostgREST) devolviendo {data:null, error:{...}}. Si no se revisa r.error, una lectura
+      // fallida caería en la rama "usuario nuevo" y SEMBRARÍA EMPTY_STATE → borraría la cuenta
+      // real (local Y nube). Por eso: ante error de lectura ABORTAR el gate de forma segura —
+      // NO tocar localStorage, NO upsert, NO sembrar. Revelar la app con lo que haya en local y
+      // reintentar UNA sola vez por si fue transitorio. La nube JAMÁS se sobrescribe a partir de
+      // una lectura fallida. (Fila ausente = r.error nulo + r.data nulo → usuario realmente nuevo.)
+      if (r && r.error) {
+        try { _pvLogError('cloudLoadAndGate select profiles', r.error); } catch(_){}
+        revealApp();
+        if (!window._pvGateRetried) {
+          window._pvGateRetried = true;
+          setTimeout(function(){ try { if (session) cloudLoadAndGate(session); } catch(e){} }, 5000);
+        }
+        return;
+      }
+
       var cloud = r.data && r.data.portfolio;
+      var cloudUpdatedAt = (r.data && r.data.updated_at) || null;
       var localRaw = localStorage.getItem(LS_KEY);
 
       // Restaura SIEMPRE lo que ya esté en la nube de ESTA cuenta (aunque el portafolio esté vacío):
@@ -23933,18 +24234,44 @@ if (document.readyState === 'loading') {
       } catch(e){ _pvLogError('cloudLoadAndGate profile_caches', e); }
 
       if (cloud) {
-        // La cuenta ya tiene fila → su portafolio manda (propietario o usuario normal).
+        // La cuenta ya tiene fila en la nube.
         var portfolioOnly = Object.assign({}, cloud);
         delete portfolioOnly.__wl; delete portfolioOnly.__app;
-        var cloudRaw = JSON.stringify(portfolioOnly);
-        if (cloudRaw !== localRaw && !sessionStorage.getItem(APPLIED)) {
-          localStorage.setItem(LS_KEY, cloudRaw);   // perfil/IA ya restaurados arriba → sobreviven al reload
-          sessionStorage.setItem(APPLIED, '1');
-          location.reload();
-          return;
+
+        // BUG 2: ¿local tiene cambios sin subir (pv_port_synced==='0') y la nube NO es más nueva
+        // que el último guardado local? → LOCAL GANA (no pisar ediciones offline). Last-writer-wins
+        // por timestamp confiable persistido en local (pv_port_saved_at) vs updated_at de la nube.
+        var _synced = null, _savedAt = null;
+        try { _synced = localStorage.getItem('pv_port_synced'); _savedAt = localStorage.getItem('pv_port_saved_at'); } catch(e){}
+        var _localAhead = (_synced === '0');
+        var _cloudNewer = false;
+        try { _cloudNewer = !!(cloudUpdatedAt && _savedAt && (new Date(cloudUpdatedAt).getTime() > new Date(_savedAt).getTime())); } catch(e){ _cloudNewer = false; }
+
+        if (_localAhead && !_cloudNewer && localRaw) {
+          // Local manda: NO sobrescribir local con la nube vieja. Empujar local → nube de inmediato.
+          // OJO: NO pre-fijar _lastPortHash al hash de local aquí — _cloudPushCore gatea por
+          // (_ph === _lastPortHash) y saltaría la subida. Al completar con éxito, _cloudPushCore
+          // fija _lastPortHash al hash de local y marca pv_port_synced='1'. Si falla (sigue sin red),
+          // deja synced='0' → se reintenta en el evento 'online' (BUG 5). No se pierde la edición offline.
+          try { cloudFlushNow(); } catch(e){}
+        } else {
+          // La nube gana (local ya sincronizado, o la nube es genuinamente más nueva) → sobrescribe local.
+          // BUG 4: comparar objetos CANONICALIZADOS (no strings crudos): jsonb puede devolver las llaves
+          // en otro orden → evita un reload y una reescritura espurios cuando el contenido es idéntico.
+          var cloudRaw = JSON.stringify(portfolioOnly);
+          var _cloudCanon = _pvCanon(portfolioOnly);
+          var _localCanon = null; try { _localCanon = _pvCanon(JSON.parse(localRaw || 'null')); } catch(e){ _localCanon = null; }
+          if (_cloudCanon !== _localCanon && !sessionStorage.getItem(APPLIED)) {
+            localStorage.setItem(LS_KEY, cloudRaw);   // perfil/IA ya restaurados arriba → sobreviven al reload
+            sessionStorage.setItem(APPLIED, '1');
+            location.reload();
+            return;
+          }
+          localStorage.setItem(LS_KEY, cloudRaw);
+          _lastPortHash = _pvBundleHash(portfolioOnly);   // ya sincronizado con la nube → no re-subir igual
+          // BUG 2: la copia local ahora ES la de la nube → marcar sincronizado (no pendiente).
+          try { localStorage.setItem('pv_port_synced', '1'); if (cloudUpdatedAt) localStorage.setItem('pv_port_saved_at', cloudUpdatedAt); } catch(e){}
         }
-        localStorage.setItem(LS_KEY, cloudRaw);
-        _lastPortHash = _pvBundleHash(portfolioOnly);   // ya sincronizado con la nube → no re-subir igual
       } else if (isOwner) {
         // Propietario sin nube → sembrar su portafolio REAL (hardcodeado en el archivo).
         var ownLocal = null; try { ownLocal = JSON.parse(localRaw || 'null'); } catch(e){}
@@ -23956,8 +24283,12 @@ if (document.readyState === 'loading') {
         }
         try { if (typeof window.savePortfolio === 'function') window.savePortfolio(); } catch(e){}
         var ownObj = JSON.parse(localStorage.getItem(LS_KEY) || 'null') || {};
-        var _ownRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: ownObj, updated_at: new Date().toISOString() });
-        if (!_ownRes || !_ownRes.error) _lastPortHash = _pvBundleHash(ownObj);
+        var _ownStamp = new Date().toISOString();
+        var _ownRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: ownObj, updated_at: _ownStamp });
+        if (!_ownRes || !_ownRes.error) {
+          _lastPortHash = _pvBundleHash(ownObj);
+          try { localStorage.setItem('pv_port_synced', '1'); localStorage.setItem('pv_port_saved_at', _ownStamp); } catch(e){}  // BUG 2: local == nube
+        }
         _cachesPush();   // siembra watchlist + cachés IA en profile_caches (debounce lento + hash-gate)
       } else {
         // Usuario NUEVO (no propietario) sin nube → empieza VACÍO (jamás siembra datos del owner).
@@ -23970,8 +24301,12 @@ if (document.readyState === 'loading') {
         }
         localStorage.setItem(LS_KEY, emptyRaw);
         try {
-          var _newRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: EMPTY_STATE, updated_at: new Date().toISOString() });
-          if (!_newRes || !_newRes.error) _lastPortHash = _pvBundleHash(EMPTY_STATE);
+          var _newStamp = new Date().toISOString();
+          var _newRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: EMPTY_STATE, updated_at: _newStamp });
+          if (!_newRes || !_newRes.error) {
+            _lastPortHash = _pvBundleHash(EMPTY_STATE);
+            try { localStorage.setItem('pv_port_synced', '1'); localStorage.setItem('pv_port_saved_at', _newStamp); } catch(e){}  // BUG 2: local == nube (vacío)
+          }
         } catch(e){ _pvLogError('cloudLoadAndGate new-user upsert', e); }
       }
       sessionStorage.setItem(APPLIED, '1');
@@ -23986,45 +24321,147 @@ if (document.readyState === 'loading') {
   }
 
   // Split hot/cold cloud writes: dedupe by hash so identical state isn't re-uploaded.
-  function _pvBundleHash(o){ try{ var s=JSON.stringify(o)||''; var h=5381,i=s.length; while(i) h=(h*33)^s.charCodeAt(--i); return (h>>>0).toString(36); }catch(e){ return String(Date.now()); } }
+  // BUG 4: serializador CANÓNICO estable — ordena llaves en TODOS los niveles (recursivo) para
+  // producir una cadena determinista. jsonb (nube) puede devolver las llaves en otro orden que
+  // local; comparar/hashear la forma canónica evita reloads y reescrituras espurias por puro orden.
+  function _pvCanon(o){
+    if (o === null || typeof o !== 'object') return JSON.stringify(o);
+    if (Array.isArray(o)) return '[' + o.map(_pvCanon).join(',') + ']';
+    var keys = Object.keys(o).sort();
+    return '{' + keys.map(function(k){ return JSON.stringify(k) + ':' + _pvCanon(o[k]); }).join(',') + '}';
+  }
+  // Hash sobre la forma CANÓNICA (no JSON.stringify crudo) → estados semánticamente iguales
+  // producen el mismo hash aunque cambie el orden de llaves (elimina reescrituras espurias).
+  function _pvBundleHash(o){ try{ var s=_pvCanon(o)||''; var h=5381,i=s.length; while(i) h=(h*33)^s.charCodeAt(--i); return (h>>>0).toString(36); }catch(e){ return String(Date.now()); } }
   var _lastPortHash = null;     // last portfolio blob pushed to profiles
   var _lastBundleHash = null;   // last {__app,__wl} bundle pushed to profile_caches
   var _cachesTimer = null;
   // Cold path: sync AI caches + watchlist to profile_caches, slow debounce, hash-gated.
+  // Núcleo (sin debounce) de la subida de cachés/watchlist. Self-gated por _lastBundleHash: no
+  // reescribe si nada cambió. Reutilizable por el flush inmediato (BUG 3).
+  async function _cachesPushCore(){
+    try {
+      var sb2 = window.sbClient; if(!sb2 || typeof session==='undefined' || !session || !session.user) return;
+      var bundle = { __app: _appBundleGather(), __wl: _wlGather() };
+      var h = _pvBundleHash(bundle);
+      if (h === _lastBundleHash) return;                 // nada cambió → no reescribir
+      var { error } = await sb2.from('profile_caches').upsert({ user_id: session.user.id, bundle: bundle, updated_at: new Date().toISOString() }, { onConflict:'user_id' });
+      if (!error) _lastBundleHash = h;
+    } catch(e){ try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', e); }catch(_){} }
+  }
   function _cachesPush(){
     clearTimeout(_cachesTimer);
-    _cachesTimer = setTimeout(async function(){
-      try {
-        var sb = window.sbClient; if(!sb || typeof session==='undefined' || !session || !session.user) return;
-        var bundle = { __app: _appBundleGather(), __wl: _wlGather() };
-        var h = _pvBundleHash(bundle);
-        if (h === _lastBundleHash) return;                 // nada cambió → no reescribir
-        var { error } = await sb.from('profile_caches').upsert({ user_id: session.user.id, bundle: bundle, updated_at: new Date().toISOString() }, { onConflict:'user_id' });
-        if (!error) _lastBundleHash = h;
-      } catch(e){ try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', e); }catch(_){} }
-    }, 45000);   // 45s: caches are cold; don't amplify writes
+    _cachesTimer = setTimeout(_cachesPushCore, 45000);   // 45s: caches are cold; don't amplify writes
   }
 
+  // Núcleo (sin debounce) de la subida del portafolio. Respeta el hash-gate: no sube si nada
+  // cambió. BUG 2/5: marca pv_port_synced='1' tras un upsert exitoso (local ya está en la nube),
+  // y '0' si falla (queda pendiente de reintento al volver la conexión).
+  async function _cloudPushCore(){
+    if (!session || !session.user) return;
+    try {
+      // Cada cuenta guarda SU portafolio (puro). Watchlist + cachés de IA viajan aparte
+      // (profile_caches, ver _cachesPush) en un debounce lento y solo si cambian.
+      var raw = localStorage.getItem(LS_KEY);
+      var obj = raw ? JSON.parse(raw) : {};
+      var _ph = _pvBundleHash(obj);
+      if (_ph === _lastPortHash) return;                    // nada cambió → no reescribir
+      var _stamp = new Date().toISOString();
+      var _res = await sb.from('profiles').upsert({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: _stamp });
+      if (!_res || !_res.error) {
+        _lastPortHash = _ph;
+        try { localStorage.setItem('pv_port_synced', '1'); localStorage.setItem('pv_port_saved_at', _stamp); } catch(e){}  // BUG 2: sincronizado
+      } else {
+        try { localStorage.setItem('pv_port_synced', '0'); } catch(e){}                                                    // BUG 5: pendiente
+        try { if (typeof reportQuiet==='function') reportQuiet('cloud · push', _res.error); } catch(_){}
+      }
+    } catch(e){
+      try { localStorage.setItem('pv_port_synced', '0'); } catch(_){}                                                      // BUG 5: pendiente de reintento
+      try { if (typeof reportQuiet==='function') reportQuiet('cloud · push', e); } catch(_){}
+    }
+  }
   function cloudPush(){
     if (!session) return;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(async function(){
-      try {
-        // Cada cuenta guarda SU portafolio (puro). Watchlist + cachés de IA viajan aparte
-        // (profile_caches, ver _cachesPush) en un debounce lento y solo si cambian.
-        var raw = localStorage.getItem(LS_KEY);
-        var obj = raw ? JSON.parse(raw) : {};
-        var _ph = _pvBundleHash(obj);
-        if (_ph !== _lastPortHash) {                          // solo si el portafolio cambió
-          var _res = await sb.from('profiles').upsert({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: new Date().toISOString() });
-          if (!_res || !_res.error) _lastPortHash = _ph;
-        }
-      } catch(e){ console.warn('[cloud] push', e); }
-    }, 1200);
+    pushTimer = setTimeout(_cloudPushCore, 1200);
   }
   window.cloudPush = cloudPush;
+
+  // BUG 3: red de seguridad best-effort al descargar/pausar la página. NOTA: el endpoint REST de
+  // Supabase exige headers (apikey, Authorization Bearer, Prefer) y navigator.sendBeacon NO permite
+  // setear headers → sería rechazado por RLS (401). Por eso el "beacon" real usa fetch(keepalive:true),
+  // que SÍ envía headers y sobrevive al unload igual que sendBeacon; solo si no existe se cae a
+  // sendBeacon (sin auth, mejor que nada). Idempotente vía on_conflict=id + Prefer merge-duplicates.
+  function _beaconPush(obj){
+    try {
+      if (!session || !session.user || !session.access_token) return false;
+      var url  = SUPABASE_URL + '/rest/v1/profiles?on_conflict=id';
+      var body = JSON.stringify({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: new Date().toISOString() });
+      if (typeof fetch === 'function') {
+        fetch(url, {
+          method: 'POST', keepalive: true,
+          headers: {
+            'apikey': SUPABASE_ANON,
+            'Authorization': 'Bearer ' + session.access_token,
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates'
+          },
+          body: body
+        }).catch(function(){});
+        return true;
+      }
+      if (navigator && typeof navigator.sendBeacon === 'function') {
+        return navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+      }
+      return false;
+    } catch(e){ return false; }
+  }
+
+  // BUG 3: flush INMEDIATO (sin debounce) al ocultar/pausar la app. En iOS, al deslizar/matar la
+  // app se perdía lo pendiente (hasta 45s de cachés + la última operación). Cancela los debounces
+  // y dispara los upsert de inmediato; idempotente y respeta los hash-gates (no sube si nada cambió).
+  function cloudFlushNow(){
+    try {
+      if (!session || !session.user) return;
+      clearTimeout(pushTimer);
+      clearTimeout(_cachesTimer);
+      // Red de seguridad síncrona SOLO si el portafolio tiene cambios sin subir (hash-gate). Si el
+      // upsert asíncrono de abajo alcanza a completar, el on_conflict=id lo vuelve idempotente.
+      try {
+        var raw = localStorage.getItem(LS_KEY);
+        var obj = raw ? JSON.parse(raw) : null;
+        if (obj && _pvBundleHash(obj) !== _lastPortHash) _beaconPush(obj);
+      } catch(e){}
+      _cloudPushCore();     // subida asíncrona normal del portafolio (self-gated por _lastPortHash)
+      _cachesPushCore();    // cachés frías + watchlist (self-gated por _lastBundleHash)
+    } catch(e){ try{ if(typeof reportQuiet==='function') reportQuiet('cloud · flush', e); }catch(_){} }
+  }
+  window.cloudFlushNow = cloudFlushNow;
+
   var _origSave = window.savePortfolio;
-  window.savePortfolio = function(){ if (typeof _origSave === 'function') _origSave.apply(this, arguments); cloudPush(); _cachesPush(); };
+  window.savePortfolio = function(){
+    if (typeof _origSave === 'function') _origSave.apply(this, arguments);
+    // BUG 2: registra que local puede estar ADELANTE de la nube (cambios aún sin subir). Persiste
+    // aunque se recargue la página → la carga compara recencia y no pisa ediciones offline.
+    try { localStorage.setItem('pv_port_synced', '0'); localStorage.setItem('pv_port_saved_at', new Date().toISOString()); } catch(e){}
+    cloudPush(); _cachesPush();
+  };
+
+  // BUG 3: enlaza el flush a los eventos de ocultar/descargar/pausar (orden de fiabilidad).
+  try { document.addEventListener('visibilitychange', function(){ if (document.hidden) cloudFlushNow(); }); } catch(e){}
+  try { window.addEventListener('pagehide', function(){ cloudFlushNow(); }); } catch(e){}
+  try {
+    // Capacitor: evento nativo 'pause' al mandar la app a segundo plano en iOS. Si el plugin
+    // @capacitor/app no está incluido, se omite sin romper. // TODO Capacitor App pause
+    var _capApp = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) || null;
+    if (_capApp && typeof _capApp.addListener === 'function') { _capApp.addListener('pause', function(){ cloudFlushNow(); }); }
+  } catch(e){}
+  // BUG 5: al recuperar conectividad, reintenta subir si algo quedó pendiente (pv_port_synced==='0').
+  try {
+    window.addEventListener('online', function(){
+      try { if (localStorage.getItem('pv_port_synced') === '0') cloudFlushNow(); } catch(e){}
+    });
+  } catch(e){}
 
   // ── Auto-regenerar "Portiv Intelligence" cuando el portafolio CAMBIA ───────────
   // Cualquier compra/venta/edición pasa por savePortfolio(). Al cambiar las posiciones
