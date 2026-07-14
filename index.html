@@ -2883,7 +2883,7 @@
 <script>
   (function(){
     try {
-      if (localStorage.getItem('portiv_theme') === 'dark') document.body.classList.add('dark-theme');
+      /* Modo oscuro retirado: se fuerza SIEMPRE modo claro. */ document.body.classList.remove('dark-theme');
     } catch(e){}
   })();
 </script>
@@ -4536,8 +4536,8 @@
     <p class="set-page-sub" data-i18n="set.subtitle">Gestiona tu cuenta y las preferencias de la aplicación.</p>
   </div>
 
-  <!-- ── A) CUENTA ── -->
-  <div class="prof-card" style="order:3">
+  <!-- ── A) CUENTA ── (ocultada a pedido: logout sigue disponible en el menú "Mi cuenta") -->
+  <div class="prof-card" style="order:3;display:none">
     <div class="prof-card-title" data-i18n="set.account">Cuenta</div>
 
     <div class="set-row">
@@ -4580,20 +4580,6 @@
   <div class="prof-card" style="order:2">
     <div class="prof-card-title" data-i18n="set.preferences">Preferencias de la Interfaz</div>
 
-    <div class="set-row">
-      <label data-i18n="set.theme">Tema (Ajuste de Luz)</label>
-      <div class="set-theme-toggle" id="setThemeToggle">
-        <button class="set-theme-opt" data-theme="light" onclick="setTheme('light')">
-          <span class="material-symbols-outlined">light_mode</span>
-          <span data-i18n="set.lightMode">Modo Claro</span>
-        </button>
-        <button class="set-theme-opt" data-theme="dark" onclick="setTheme('dark')">
-          <span class="material-symbols-outlined">dark_mode</span>
-          <span data-i18n="set.darkMode">Modo Oscuro</span>
-        </button>
-      </div>
-    </div>
-
     <div class="set-row" style="margin-bottom:0">
       <label data-i18n="set.language">Idioma</label>
       <select id="setLanguage" class="set-select" onchange="changeLanguage(this.value)">
@@ -4635,13 +4621,6 @@
         <input id="profFullName" type="text" placeholder="Tu nombre"
           oninput="document.getElementById('profDisplayName').textContent=this.value;profUpdateAvatar()" />
       </div>
-      <div class="prof-field">
-        <label>Divisa base</label>
-        <div class="prof-currency-row">
-          <button class="currency-btn sel" id="currUSD" onclick="profSetCurrency('USD')">$ USD</button>
-          <button class="currency-btn" id="currEUR" onclick="profSetCurrency('EUR')">€ EUR</button>
-        </div>
-      </div>
     </div>
     <div style="margin-top:20px">
       <button onclick="profSave()" style="display:inline-flex;align-items:center;gap:8px;padding:11px 24px;background:var(--navy);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s;"
@@ -4661,8 +4640,8 @@
 
   <div id="snapConnectCard" class="snap-card"></div>
 
-  <!-- ── 4. EDITOR DEL PORTAFOLIO (rediseñado) ── -->
-  <div class="prof-card" style="order:5">
+  <!-- ── 4. EDITOR DEL PORTAFOLIO (rediseñado) ── (ocultado a pedido) -->
+  <div class="prof-card" style="order:5;display:none">
     <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" onclick="aiEditorToggle()">
       <div>
         <div class="prof-card-title" style="margin-bottom:2px">Editor del Portafolio</div>
@@ -5210,16 +5189,20 @@ async function renderSettings(){
 
   // ── Cuenta: email + username REALES de la sesión (Supabase). El username se fijó al
   //    crear la cuenta (user_metadata.username) → aquí se muestra y precarga el campo.
-  let email = '', username = '';
+  let email = '', username = '', metaFull = '';
   try {
     const sb = window.sbClient;
     if (sb && sb.auth) {
       const { data } = await sb.auth.getUser();
       const u = data && data.user;
       email = (u && u.email) || '';
-      username = (u && u.user_metadata && (u.user_metadata.username || u.user_metadata.display_name || u.user_metadata.full_name || u.user_metadata.name)) || '';
+      const md = (u && u.user_metadata) || {};
+      username = (md.username || md.display_name || md.full_name || md.name) || '';
+      // Apple entrega el nombre en full_name (o given+family) en el PRIMER login.
+      metaFull = (md.full_name || [md.given_name, md.family_name].filter(Boolean).join(' ') || md.name) || '';
     }
   } catch(e){}
+  metaFull = String(metaFull).trim();
   if (!email) { const ae = document.getElementById('acctEmail'); email = (ae && ae.textContent && ae.textContent !== '—') ? ae.textContent.replace(/^@/,'') : ''; }
 
   const emailEl = document.getElementById('setCurrentEmail');
@@ -5228,14 +5211,21 @@ async function renderSettings(){
   // Identidad (tarjeta "Configuración General")
   const ed = document.getElementById('profEmailDisplay'); if (ed && email) ed.textContent = email;
 
-  // Campo "Nombre de usuario": respeta el que el usuario ya guardó localmente; si no hay,
-  // usa el username de registro (Supabase). Prefijo "@" visual consistente.
+  // Nombre completo: si el login (Apple) entregó nombre y el campo está vacío, precárgalo tal cual.
+  const fnEl = document.getElementById('profFullName');
+  if (fnEl && !fnEl.value.trim() && metaFull) {
+    fnEl.value = metaFull;
+    const nd0 = document.getElementById('profDisplayName'); if (nd0) nd0.textContent = metaFull;
+  }
+  // Nombre de usuario: respeta lo guardado localmente; si no, usa el NOMBRE PEGADO (sin espacios)
+  // del login con Apple ("Andrés Morales" -> "AndrésMorales"); si tampoco, el username de registro.
   const uEl = document.getElementById('profUsername');
   if (uEl && !uEl.value.trim()) {
     let savedU = '';
     try { savedU = (JSON.parse(localStorage.getItem('portiv_profile_v1')||'{}').username || '').trim(); } catch(e){}
     if (savedU) uEl.value = savedU;
-    else if (username) uEl.value = '@' + String(username).replace(/^@/,'');
+    else if (metaFull) uEl.value = metaFull.replace(/\s+/g,'');
+    else if (username) uEl.value = String(username).replace(/^@/,'');
   }
   try { if (typeof profUpdateAvatar === 'function') profUpdateAvatar(); } catch(e){}
 }
