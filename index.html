@@ -23617,7 +23617,15 @@ if (document.readyState === 'loading') {
     // Actualiza el email del perfil con el de la sesión real
     try { if (typeof window._seedProfileFromAuth === 'function') window._seedProfileFromAuth(s.user); } catch(e){}
     try { if (typeof profLoad === 'function') profLoad(em); } catch(e){}
-    revealApp();   // pase terminal → revelar la app ya gateada
+    // ── GATE DE SUSCRIPCIÓN (server-authoritative; owner SIEMPRE pasa) ─────────
+    // Nunca revelar la app sin entitlement activo. El candado REAL está en el
+    // servidor (Edge Functions → 403 subscription_required); esto además bloquea la UI.
+    try {
+      var _ent = window.pvCheckEntitlement ? await window.pvCheckEntitlement(s) : { active:true };
+      if (!_ent || !_ent.active) { try { if (window.pvShowHardPaywall) window.pvShowHardPaywall(); } catch(e){} return; }
+    } catch(_e){ /* gate roto → no encerrar al usuario; el server sigue gateado */ }
+    try { if (window.pvInitRevenueCat) window.pvInitRevenueCat(); } catch(e){}
+    revealApp();   // pase terminal → revelar la app ya gateada + con entitlement
     // Ahora que HAY sesión autenticada, dispara SharedNews: leerá la nube y, solo si está
     // vieja, generará 1× y la subirá (ya con permiso de escritura) para que TODOS la lean.
     try { if (window.SharedNews) { SharedNews.apply(); SharedNews.ensureFresh(); } } catch(e){}
@@ -23961,28 +23969,158 @@ document.addEventListener('DOMContentLoaded', function(){
   </div>
 </div>
 <script>
-  window._pvShowPaywall = function(){
-    var o = document.getElementById('portivPaywall');
-    if(!o) return;
-    o.scrollTop = 0; o.classList.add('open');
-    document.body.style.overflow = 'hidden';
-  };
-  window._pvClosePaywall = function(){
-    var o = document.getElementById('portivPaywall');
-    if(o) o.classList.remove('open');
-    document.body.style.overflow = '';
-    try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
-  };
-  // "Comenzar ahora" en la pantalla de prueba gratis: recién AQUÍ arranca el análisis de
-  // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
-  // overlay sin cambiar de tab — _analyzeOnboarding() hace showTab('portfolio') solo
-  // cuando el análisis realmente termina.
-  window._pvConfirmTrial = function(){
-    var o = document.getElementById('portivPaywall');
-    if(o) o.classList.remove('open');
-    document.body.style.overflow = '';
-    try { window.snapConnect(); } catch(e){}
-  };
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  PAYWALL + GATE DE SUSCRIPCIÓN + RevenueCat (StoreKit)  — server-authoritative
+  //  RevenueCat es la fuente de verdad; rc-webhook la espeja en Supabase (tabla
+  //  `subscriptions`). El cliente SOLO lee el entitlement. El owner siempre pasa.
+  //  El candado REAL vive en el servidor (Edge Functions → 403 subscription_required).
+  // ═══════════════════════════════════════════════════════════════════════════
+  (function(){
+    var OWNER_EMAIL_PW = 'rafaelmunozanselmi@icloud.com';
+    var ENTITLEMENT_ID = 'pro';              // debe COINCIDIR con el entitlement en RevenueCat
+    var RC_IOS_API_KEY = 'appl_REEMPLAZAR';  // TODO: key iOS RevenueCat (sandbox para probar; PRODUCCIÓN antes de lanzar)
+    var ENT_CACHE = 'pv_ent_cache', ENT_TTL = 72*60*60*1000;  // last-known-good 72h (fail-safe offline)
+
+    function _sb(){ return window.sbClient; }
+    function _isNative(){ try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch(e){ return false; } }
+    function _rc(){ try { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Purchases) || window.Purchases || null; } catch(e){ return null; } }
+    function _entActive(ci){ try { var a=ci && ci.entitlements && ci.entitlements.active; return !!(a && (a[ENTITLEMENT_ID] || Object.keys(a).length)); } catch(e){ return false; } }
+    async function _getSession(){ try { var g=await _sb().auth.getSession(); return (g && g.data && g.data.session) || null; } catch(e){ return null; } }
+
+    // ── mostrar / ocultar el overlay del paywall ──
+    window._pvShowPaywall = function(){
+      var o = document.getElementById('portivPaywall'); if(!o) return;
+      o.scrollTop = 0; o.classList.add('open'); document.body.style.overflow = 'hidden';
+    };
+    window._pvClosePaywall = function(){
+      var o = document.getElementById('portivPaywall'); if(o) o.classList.remove('open');
+      document.body.style.overflow = '';
+      try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+    };
+
+    // ── caché last-known-good del entitlement ──
+    function _cacheGet(){ try { return JSON.parse(localStorage.getItem(ENT_CACHE)||'null'); }catch(e){ return null; } }
+    function _cacheSet(a){ try { localStorage.setItem(ENT_CACHE, JSON.stringify({active:!!a, at:Date.now()})); }catch(e){} }
+
+    // ── chequeo de entitlement (server-authoritative + bypass owner + gracia offline) ──
+    window.pvCheckEntitlement = async function(s){
+      if (!s) s = await _getSession();
+      var email=''; try { email = ((s && s.user && s.user.email) || '').toLowerCase(); } catch(e){}
+      if (email === OWNER_EMAIL_PW) return { active:true, owner:true };
+      var uid=''; try { uid = (s && s.user && s.user.id) || ''; } catch(e){}
+      if (!uid) return { active:false };
+      try {
+        var r = await _sb().from('subscriptions').select('entitlement_active,status,expires_at').eq('user_id', uid).maybeSingle();
+        if (r.error) throw r.error;
+        var active = !!(r.data && r.data.entitlement_active);
+        _cacheSet(active);
+        return { active:active, status:(r.data && r.data.status) || 'never' };
+      } catch(e){
+        var c=_cacheGet();
+        if (c && c.active && (Date.now()-c.at) < ENT_TTL) return { active:true, stale:true };
+        return { active:false, error:true };
+      }
+    };
+
+    // ── revelar la app (réplica de revealApp() sin depender de su scope privado) ──
+    function _revealNow(){
+      try { if (window._pvMaybeShowQuiz) window._pvMaybeShowQuiz(); } catch(e){}
+      try { document.documentElement.classList.remove('app-locked'); } catch(e){}
+      try { var ov=document.getElementById('authOverlay'); if(ov){ ov.style.opacity='0'; setTimeout(function(){ ov.style.display='none'; }, 340); } } catch(e){}
+      try { var o=document.getElementById('portivPaywall'); if(o) o.classList.remove('open'); document.body.style.overflow=''; } catch(e){}
+    }
+
+    // ── paywall DURO: re-bloquea el shell, NO descartable, con Restaurar / Cerrar sesión ──
+    window.pvShowHardPaywall = function(){
+      try { document.documentElement.classList.add('app-locked'); } catch(e){}
+      window._pvShowPaywall();
+      try {
+        var cta = document.querySelector('#portivPaywall .pw-cta'); if(!cta) return;
+        var btn = cta.querySelector('.pw-btn'); if (btn) btn.textContent = 'Suscribirme';
+        if (document.getElementById('pvHardLinks')) return;
+        var w=document.createElement('div'); w.id='pvHardLinks';
+        w.style.cssText='margin-top:14px;display:flex;flex-direction:column;gap:10px;align-items:center';
+        function lnk(txt,fn){ var b=document.createElement('button'); b.type='button'; b.textContent=txt;
+          b.style.cssText='background:none;border:none;color:#7aa0c8;font-size:13px;font-weight:600;cursor:pointer;padding:4px 8px'; b.onclick=fn; return b; }
+        w.appendChild(lnk('Restaurar compra', function(){ window.pvRestore(); }));
+        w.appendChild(lnk('Cerrar sesión', function(){ try{ _sb().auth.signOut(); }catch(e){} setTimeout(function(){ try{ location.reload(); }catch(e){} },150); }));
+        cta.appendChild(w);
+      } catch(e){}
+    };
+
+    // ── desbloquear SOLO tras confirmar entitlement (post-compra / restaurar) ──
+    async function _pvUnlockIfEntitled(){
+      var ent = await window.pvCheckEntitlement();
+      if (ent.active) { _revealNow(); return true; }
+      return false;
+    }
+
+    // ── re-bloqueo si el entitlement caducó a media sesión (solo si la app ya está revelada) ──
+    function _relockIfLapsed(){
+      if (document.documentElement.classList.contains('app-locked')) return; // aún no revelada / ya bloqueada
+      _getSession().then(function(s){ if(!s) return; window.pvCheckEntitlement(s).then(function(ent){ if(ent && !ent.active) window.pvShowHardPaywall(); }); });
+    }
+
+    // ── init RevenueCat (SOLO nativo). appUserID == Supabase user.id → el webhook mapea filas ──
+    var _rcReady=false;
+    window.pvInitRevenueCat = async function(){
+      if (_rcReady || !_isNative()) return;
+      var P=_rc(); if(!P) return;
+      var s=await _getSession(); var uid = (s && s.user && s.user.id) || null;
+      try {
+        await P.configure({ apiKey: RC_IOS_API_KEY, appUserId: uid || undefined });
+        if (uid) { try { await P.logIn({ appUserID: uid }); } catch(e){} }
+        _rcReady=true;
+        try { P.addCustomerInfoUpdateListener(function(ci){ if (!_entActive(ci)) _relockIfLapsed(); }); } catch(e){}
+      } catch(e){ /* config error → el gate del servidor sigue enforcando */ }
+    };
+
+    // ── COMPRA real (reescribe _pvConfirmTrial): flujo StoreKit vía RevenueCat ──
+    window._pvConfirmTrial = async function(){
+      var P=_rc();
+      if (!_isNative() || !P) {   // web / sin store nativo → no se puede comprar aquí
+        if (await _pvUnlockIfEntitled()) return;
+        alert('Las suscripciones se activan en la app de iOS. Descárgala para comenzar tu mes gratis.');
+        return;
+      }
+      var btn=document.querySelector('#portivPaywall .pw-btn'); var old=btn?btn.textContent:'';
+      try {
+        if(btn){ btn.disabled=true; btn.textContent='Procesando…'; }
+        await window.pvInitRevenueCat();
+        var offs = await P.getOfferings();
+        var cur = offs && offs.current;
+        var pkg = (cur && cur.monthly) || (cur && cur.availablePackages && cur.availablePackages[0]) || null;
+        if (!pkg) throw new Error('No hay planes disponibles (revisa RevenueCat / App Store Connect).');
+        var res = await P.purchasePackage({ aPackage: pkg });
+        if (_entActive(res && res.customerInfo)) {
+          _cacheSet(true);
+          var opened=false;
+          for (var i=0;i<6 && !opened;i++){ opened = await _pvUnlockIfEntitled(); if(!opened) await new Promise(function(r){ setTimeout(r,1200); }); }
+          if (!opened) _revealNow();   // el webhook aún no llegó → confía en el recibo local
+          try { if (window.snapConnect) window.snapConnect(); } catch(e){}   // ofrecer vincular el broker
+        }
+      } catch(e){
+        var m=(e && (e.message||e.code||''))+'';
+        if (!(e && (e.userCancelled || /cancel/i.test(m)))) alert('No se pudo completar la compra: ' + m);
+      } finally { if(btn){ btn.disabled=false; btn.textContent=old||'Suscribirme'; } }
+    };
+
+    // ── RESTAURAR compra (obligatorio por Apple) ──
+    window.pvRestore = async function(){
+      var P=_rc();
+      if (!_isNative() || !P) { if (!(await _pvUnlockIfEntitled())) alert('Restaura tu compra desde la app de iOS.'); return; }
+      try {
+        await window.pvInitRevenueCat();
+        var res = await P.restorePurchases();
+        if (_entActive(res && res.customerInfo)) { _cacheSet(true); await _pvUnlockIfEntitled(); }
+        else alert('No encontramos una suscripción activa para restaurar.');
+      } catch(e){ alert('No se pudo restaurar: ' + ((e&&(e.message||e.code))||'')); }
+    };
+
+    // ── re-chequeo al volver a la app (resume / focus): si caducó → re-bloquea ──
+    try { document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='visible') _relockIfLapsed(); }); } catch(e){}
+    try { var CA=window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App; if (CA && CA.addListener) CA.addListener('resume', _relockIfLapsed); } catch(e){}
+  })();
 </script>
 
 <script>
