@@ -16637,6 +16637,7 @@ function _buildQualAnalysis(ticker, info){
            moat, moat_bullets, datos, margenes, valLabel, valText, riesgos_fallback: riesgos,
            // Métricas propias (para la fila de la empresa en la comparación con competidores) + flag ETF.
            selfMetrics:{ pe:(typeof pe==='number')?pe:null, revG:(revG!=null)?revG*100:null, netM:(pm!=null)?pm*100:null, roe:(roe!=null)?roe*100:null },
+           sector:(info&&info.sector)||'', industry:(info&&info.industry)||'',   // → clasificación de peers (wlNiche)
            isEtf:(typeof _isEtfTicker==='function' ? _isEtfTicker(ticker, info) : false) };
 }
 
@@ -16745,15 +16746,44 @@ function _peersRowsLoad(){ try { return JSON.parse(localStorage.getItem(_PEERS_R
 function _peersRowsGet(tk){ const c=_peersRowsLoad()[(tk||'').toUpperCase()]; if(!c||!Array.isArray(c.rows)) return null; if(Date.now()-(c.at||0)>_PEERS_ROWS_TTL) return null; return c.rows; }
 function _peersRowsSet(tk, rows){ try { const c=_peersRowsLoad(); c[(tk||'').toUpperCase()]={rows, at:Date.now()}; localStorage.setItem(_PEERS_ROWS_LS, JSON.stringify(c)); } catch(e){} }
 
-// Trae peers reales + sus fundamentales. selfMetrics = {pe,revG,netM,roe} de la empresa (de info).
-// SECUENCIAL con pausas → gentil con el proxy compartido (no ráfaga). Devuelve rows o null.
-async function _peersCompData(ticker, selfMetrics){
+// Universo de peers por NICHO (mismos tickers que usa el clasificador wlNiche). Se usa para
+// derivar competidores SIN el endpoint /stock/peers, que el proxy compartido bloquea (403
+// "endpoint not allowed"). Cada peer se enriquece luego con /stock/metric (ese SÍ funciona).
+const _PEER_UNIVERSE = {
+  'Semiconductores': ['NVDA','AMD','MU','TSM','ASML','AMAT','LRCX','KLAC','INTC','QCOM','AVGO','MRVL'],
+  'Ciberseguridad':  ['CRWD','PANW','ZS','FTNT','OKTA','S','CYBR','TENB','QLYS'],
+  'Software':        ['MSFT','ORCL','CRM','ADBE','NOW','INTU','SAP','WDAY','TEAM','HUBS'],
+  'Cloud · SaaS':    ['SNOW','DDOG','MDB','CFLT','NET','GTLB','ESTC','BILL','SMAR'],
+  'Mega-cap Tech':   ['AAPL','GOOGL','META','AMZN','NFLX','MSFT'],
+  'AdTech · Social': ['APP','TTD','RDDT','SNAP','PINS','MGNI','DV'],
+  'Defensa · Gobierno':['PLTR','AXON','LDOS','SAIC','BAH','CSCO'],
+  'Espacio':         ['RKLB','ASTS','LUNR','IRDM'],
+  'Tech · Otros':    ['AAPL','GOOGL','META','MSFT','AMZN'],
+  'Pagos · Fintech': ['MA','V','AXP','PYPL','SQ','AFRM','COIN','HOOD','NU','SOFI','FI','FIS'],
+  'Finanzas':        ['JPM','BAC','WFC','GS','MS','C','USB','SCHW'],
+  'Salud · Biotech': ['LLY','JNJ','UNH','PFE','ABBV','MRK','TMO','ABT','AMGN'],
+  'Energía':         ['XOM','CVX','COP','NEE','CEG','VST','SO','DUK'],
+  'Consumer':        ['AMZN','COST','WMT','MCD','SBUX','NKE','HD','LOW','TGT','BKNG','UBER'],
+  'Industrial':      ['CAT','DE','GE','HON','RTX','LMT','NOC','GD','BA','MMM'],
+};
+// Deriva hasta 4 competidores reales del MISMO nicho (vía wlNiche). Sin red (solo listas).
+function _derivePeers(ticker, info){
   ticker = (ticker||'').toUpperCase();
-  let peers = [];
-  try {
-    const p = await fhFetch(`/stock/peers?symbol=${ticker}`, 9000);
-    if (Array.isArray(p)) peers = p;
-  } catch(e){}
+  let niche = '';
+  try { if (typeof wlNiche==='function') niche = wlNiche(ticker, info||{}).niche || ''; } catch(e){}
+  let pool = _PEER_UNIVERSE[niche] || [];
+  // Nicho tech disperso / sin lista → cae a las mega-cap tech como referencia.
+  if (!pool.length && (String(niche).indexOf('Tech')>=0 || (info && /tech|communic/i.test(info.sector||'')))) pool = _PEER_UNIVERSE['Mega-cap Tech'];
+  const seen={}, out=[];
+  for (const t of pool){ const u=(t||'').toUpperCase(); if (u && u!==ticker && !seen[u]){ seen[u]=1; out.push(u); if (out.length>=4) break; } }
+  return out;
+}
+
+// Trae peers reales + sus fundamentales. selfMetrics = {pe,revG,netM,roe} de la empresa (de info).
+// peerTickers = lista ya derivada por _derivePeers. SECUENCIAL con pausas → gentil con el proxy.
+async function _peersCompData(ticker, selfMetrics, peerTickers){
+  ticker = (ticker||'').toUpperCase();
+  let peers = Array.isArray(peerTickers) ? peerTickers : [];
   peers = Array.from(new Set(peers.map(t=>(t||'').toUpperCase()).filter(t=>t && t!==ticker))).slice(0, 4);
   const selfRow = Object.assign({ ticker, self:true, pe:null, revG:null, netM:null, roe:null }, selfMetrics||{});
   if (!peers.length) return { rows:[selfRow], note:'No hay comparables disponibles para esta empresa.' };
@@ -16785,7 +16815,7 @@ function _renderPeersInto(host, ticker, rows){
 // Carga LAZY (2º plano) de la comparación: usa caché si existe; si no, fetch gentil, cachea y
 // re-pinta el slot. Nunca bloquea el análisis. Guard por ticker para no duplicar peticiones.
 const _peersInflight = new Set();
-async function _fillPeers(ticker, selfMetrics){
+async function _fillPeers(ticker, selfMetrics, peerTickers){
   ticker = (ticker||'').toUpperCase();
   const host = document.getElementById('pvx-peers-host');
   if (!host || host.dataset.tk !== ticker) return;
@@ -16794,7 +16824,7 @@ async function _fillPeers(ticker, selfMetrics){
   if (_peersInflight.has(ticker)) return;
   _peersInflight.add(ticker);
   try {
-    const data = await _peersCompData(ticker, selfMetrics);
+    const data = await _peersCompData(ticker, selfMetrics, peerTickers);
     if (data && Array.isArray(data.rows) && data.rows.length > 1) _peersRowsSet(ticker, data.rows);
     const h2 = document.getElementById('pvx-peers-host');
     if (h2 && h2.dataset.tk === ticker) _renderPeersInto(h2, ticker, data ? data.rows : null);
@@ -17060,7 +17090,12 @@ function _renderQualAnalysis(a, el){
       _ph.dataset.tk = a.ticker;
       const _cachedPeers = _peersRowsGet(a.ticker);
       if (_cachedPeers) _renderPeersInto(_ph, a.ticker, _cachedPeers);
-      else _fillPeers(a.ticker, a.selfMetrics);
+      else {
+        // Deriva competidores del mismo nicho (sin depender de campos cacheados en 'a').
+        const _pt = (typeof _derivePeers==='function') ? _derivePeers(a.ticker, {sector:a.sector||'',industry:a.industry||''}) : [];
+        if (_pt.length) _fillPeers(a.ticker, a.selfMetrics, _pt);
+        else _ph.innerHTML = '';   // sin comparables → sin tabla solitaria
+      }
     }
   } catch(e){}
   // Las proyecciones ahora viven dentro del análisis → ocultamos la tarjeta antigua duplicada.
@@ -19444,7 +19479,10 @@ async function _buildWeekCatalysts() {
       const f = mon.toISOString().split('T')[0];
       const t = fri.toISOString().split('T')[0];
       const { earnings } = await apiCall({action:'earningsCalendar', from:f, to:t}, 10000);
-      const held = new Set(TICKERS);
+      // FIX: antes `new Set(TICKERS)` → TICKERS no existe como global → ReferenceError que el
+      // catch de abajo se tragaba, matando TODO el bloque de earnings (nunca se agregaban al outlook).
+      // El origen real de los símbolos en cartera es HOLDINGS[].ticker.
+      const held = new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).map(h => h.ticker));
       (earnings || []).forEach(e => {
         if (!e || !(held.has(e.symbol) || _BIGCAP_EARNINGS_WATCH.has(e.symbol))) return;
         const d = new Date(e.date + 'T00:00:00');
@@ -19822,9 +19860,12 @@ window._weekVolLevel = _weekVolLevel;
 // caen los eventos cuya fecha ya pasó, se refrescan las fechas y, si hay IA disponible y la
 // semana no tiene seed curado, se regenera con contenido fresco. Idempotente por día.
 let _outlookDailyTimer = null;
-function _runDailyOutlookRefresh(){
+async function _runDailyOutlookRefresh(){
   try { localStorage.setItem('outlook_last_day', (typeof _todayISO==='function'?_todayISO():new Date().toISOString().slice(0,10))); } catch(e){}
   try { if (typeof _refreshNewsWeekDates === 'function') _refreshNewsWeekDates(); } catch(e){}
+  // Refresca el calendario de resultados ANTES de reconstruir los cuadros → así "X reporta
+  // resultados (hora)" entra en Esta/Próxima Semana en el refresh de medianoche.
+  try { if (typeof _buildWeekCatalysts === 'function') await _buildWeekCatalysts(); } catch(e){}
   try { if (typeof PORTIV_NEWS !== 'undefined') PORTIV_NEWS.buildThisWeek(true).then(()=>PORTIV_NEWS.renderThisWeek()).catch(()=>{}); } catch(e){}
   try { if (typeof _renderNextWeekOutlook === 'function') _renderNextWeekOutlook(); } catch(e){}
   // Semana SIN seed curado → regenera con IA (contenido nuevo). Con seed, el re-render ya basta.
@@ -20168,6 +20209,10 @@ key_themes = exactamente 3 temas clave.`;
     }
     try{
       // 4) Estructura determinista (gratis) + narrativa IA market-general.
+      // Primero refresca el calendario de resultados (Finnhub) → puebla THIS_WEEK_NEWS/NEXT_WEEK_NEWS
+      // con los earnings de megacaps/bancos ANTES de construir el seed; si no, el cuadro sale sin
+      // "X reporta resultados". (_buildWeekCatalysts arma ambas semanas en una pasada.)
+      try{ if(typeof _buildWeekCatalysts === 'function') await _buildWeekCatalysts(); }catch(e){}
       const data = _buildFallbackOutlookData(off);
       data._weekKey = wk; data.ts = Date.now(); data._shared = true;
       const narr = await _genNarr(data, off);
