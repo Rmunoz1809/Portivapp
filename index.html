@@ -19863,13 +19863,12 @@ let _outlookDailyTimer = null;
 async function _runDailyOutlookRefresh(){
   try { localStorage.setItem('outlook_last_day', (typeof _todayISO==='function'?_todayISO():new Date().toISOString().slice(0,10))); } catch(e){}
   try { if (typeof _refreshNewsWeekDates === 'function') _refreshNewsWeekDates(); } catch(e){}
-  // Refresca el calendario de resultados ANTES de reconstruir los cuadros → así "X reporta
-  // resultados (hora)" entra en Esta/Próxima Semana en el refresh de medianoche.
-  try { if (typeof _buildWeekCatalysts === 'function') await _buildWeekCatalysts(); } catch(e){}
   try { if (typeof PORTIV_NEWS !== 'undefined') PORTIV_NEWS.buildThisWeek(true).then(()=>PORTIV_NEWS.renderThisWeek()).catch(()=>{}); } catch(e){}
   try { if (typeof _renderNextWeekOutlook === 'function') _renderNextWeekOutlook(); } catch(e){}
   // Semana SIN seed curado → regenera con IA (contenido nuevo). Con seed, el re-render ya basta.
   try { if (typeof _buildWeeklyOutlook === 'function') _buildWeeklyOutlook(); } catch(e){}
+  // Funde los earnings en los seeds (aunque vengan cacheados sin ellos) y re-renderiza.
+  try { if (typeof _ensureOutlookEarnings === 'function') await _ensureOutlookEarnings(); } catch(e){}
 }
 function _scheduleDailyOutlookRefresh(){
   try {
@@ -19887,6 +19886,10 @@ function _initDailyOutlookRefresh(){
     const today = (typeof _todayISO==='function'?_todayISO():new Date().toISOString().slice(0,10));
     if (last !== today) _runDailyOutlookRefresh();
     _scheduleDailyOutlookRefresh();
+    // SIEMPRE (cambie o no el día): funde los earnings en los seeds ya plantados y re-renderiza,
+    // tras un breve margen para que el render inicial haya sembrado weekly_outlook_<W>. Corrige el
+    // caso "seed cacheado sin resultados" tras hard refresh sin depender de nube/sesión.
+    setTimeout(function(){ try { if (typeof _ensureOutlookEarnings === 'function') _ensureOutlookEarnings(); } catch(e){} }, 2500);
   } catch(e){}
 }
 window._initDailyOutlookRefresh = _initDailyOutlookRefresh;
@@ -20003,6 +20006,65 @@ function _renderNextWeekOutlook(){
   el.innerHTML = _nwHtml;
 }
 window._renderNextWeekOutlook = _renderNextWeekOutlook;
+
+// ── FIX DEFINITIVO earnings en Outlook ──────────────────────────────────────────
+// Problema: los cuadros "Esta/Próxima Semana" pintan desde el seed weekly_outlook_<W>.
+// Ese seed se planta a veces con datos macro-only (antes de que corra el calendario de
+// resultados) y, una vez guardado, NUNCA se reconstruye (el render solo arma fallback si
+// NO hay seed). Hard refresh no borra localStorage → el seed viejo sin earnings persiste.
+// Solución: inyectar los earnings (Finnhub, vía _buildWeekCatalysts→NEXT/THIS_WEEK_NEWS)
+// directamente en los días del seed en cada carga — independiente de nube/sesión/timing.
+function _mergeEarningsIntoSeed(seed, off){
+  if(!seed || !Array.isArray(seed.days)) return false;
+  let fresh; try{ fresh = _buildFallbackOutlookData(off); }catch(e){ return false; }
+  // Agrupar earnings frescos por fecha ISO (yyyy-m-d) del día correspondiente.
+  const earnByISO = {};
+  (fresh.days||[]).forEach(d => {
+    const dd = _parseSpanishDate(d.date || '');
+    if(!dd) return;
+    const iso = dd.getFullYear()+'-'+dd.getMonth()+'-'+dd.getDate();
+    (d.events||[]).forEach(e => { if(e && e.category==='earnings'){ (earnByISO[iso]=earnByISO[iso]||[]).push(e); } });
+  });
+  if(!Object.keys(earnByISO).length) return false;
+  let changed = false;
+  seed.days.forEach(d => {
+    const dd = _parseSpanishDate(d.date || '');
+    if(!dd) return;
+    const iso = dd.getFullYear()+'-'+dd.getMonth()+'-'+dd.getDate();
+    const earns = earnByISO[iso];
+    if(!earns || !earns.length) return;
+    if(!Array.isArray(d.events)) d.events = [];
+    earns.forEach(ev => {
+      const dup = d.events.some(x => x && x.category==='earnings' && x.title===ev.title);
+      if(!dup){ d.events.push(ev); changed = true; }
+    });
+  });
+  return changed;
+}
+// Refresca el calendario de resultados y lo funde en los seeds locales de ambas semanas,
+// luego re-renderiza. Llamado en cada carga y en el refresh diario → los earnings salen
+// aunque el seed venga cacheado sin ellos (nube/local viejo).
+async function _ensureOutlookEarnings(){
+  try{ if(typeof _buildWeekCatalysts === 'function') await _buildWeekCatalysts(); }catch(e){}
+  [0,1].forEach(off => {
+    try{
+      const key = 'weekly_outlook_' + _weekKey(off);
+      const seed = JSON.parse(localStorage.getItem(key) || 'null');
+      if(!seed || !Array.isArray(seed.days) || !seed.days.length) return; // sin seed → otros paths lo arman (ya con earnings porque catalysts corrió)
+      if(_mergeEarningsIntoSeed(seed, off)){ localStorage.setItem(key, JSON.stringify(seed)); }
+    }catch(e){}
+  });
+  // "Esta Semana" la pinta PORTIV_NEWS desde su modelo interno → hay que RECONSTRUIR (buildThisWeek),
+  // no solo re-render: buildThisWeek vuelve a traer el calendario de resultados (ahora con megacaps).
+  try{
+    if(typeof PORTIV_NEWS !== 'undefined'){
+      await PORTIV_NEWS.buildThisWeek(true);
+      PORTIV_NEWS.renderThisWeek();
+    }
+  }catch(e){}
+  try{ if(typeof _renderNextWeekOutlook === 'function') _renderNextWeekOutlook(); }catch(e){}
+}
+window._ensureOutlookEarnings = _ensureOutlookEarnings;
 
 // Construye un objeto de outlook ESTRUCTURADO (días/eventos) desde fuentes gratuitas
 // (calendario macro determinista + earnings ya cargados en NEXT_WEEK_NEWS). Devuelve el
@@ -23011,13 +23073,17 @@ const PORTIV_NEWS = {
   // Convierte earnings de Finnhub → eventos canónicos (solo tickers de la cartera).
   _earningsToEvents(earnings){
     const held = this._heldSet();
-    return (earnings || []).filter(e => e && held.has(e.symbol)).map(e => {
+    // Incluye resultados de TUS posiciones + de megacaps/bancos que mueven el mercado aunque no
+    // los tengas (antes filtraba solo `held` → "Esta Semana" nunca mostraba JPM/GS/NFLX/etc).
+    const _watch = (typeof _BIGCAP_EARNINGS_WATCH !== 'undefined') ? _BIGCAP_EARNINGS_WATCH : new Set();
+    return (earnings || []).filter(e => e && (held.has(e.symbol) || _watch.has(e.symbol))).map(e => {
       const when = e.hour === 'bmo' ? 'antes de la apertura' : e.hour === 'amc' ? 'tras el cierre' : '';
       const h = (typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).find(x => x.ticker === e.symbol);
       const parts = [`${h ? h.name : e.symbol} (${e.symbol}) publica resultados trimestrales ${when || 'esta semana'}.`];
       if (e.epsEstimate != null) parts.push(`EPS estimado: ${e.epsEstimate}.`);
       if (e.revenueEstimate != null) parts.push(`Ingresos estimados: $${(e.revenueEstimate/1e9).toFixed(1)}B.`);
-      parts.push('Revisa especialmente la guía hacia adelante; es una de tus posiciones, el impacto es directo.');
+      parts.push(h ? 'Revisa especialmente la guía hacia adelante; es una de tus posiciones, el impacto es directo.'
+                   : 'Revisa especialmente la guía hacia adelante; por su peso puede mover al sector/índice aunque no la tengas.');
       return this._mkEvent({
         title: `${e.symbol} reporta resultados${when ? ' ('+when+')' : ''}`,
         summary: parts.join(' '),
@@ -23063,6 +23129,9 @@ const PORTIV_NEWS = {
     const todayIdx  = isWeekend ? 5 : Math.max(1, Math.min(5, this.nyWeekday() || 5));
     for (let di = 1; di <= 5; di++){
       const list = (byDay[di] || []).sort((a,b) => b.score - a.score).slice(0, this.CFG.topPerDay);
+      // Los resultados (earnings) SIEMPRE se muestran aunque el score de las noticias del día los
+      // deje fuera del top-N: el usuario quiere ver qué megacap/banco reporta y a qué hora.
+      (byDay[di] || []).forEach(e => { if (e.category === 'earnings' && !list.includes(e)) list.push(e); });
       // Solo se omiten días SIN eventos. Los días futuros CON catalizadores agendados
       // (CPI, PPI, earnings, etc.) SÍ se muestran — son eventos reales conocidos de antemano.
       if (!list.length) continue;
