@@ -3060,10 +3060,10 @@
               <span class="perf-metric-label">Today</span>
               <span class="perf-metric-val" id="perf-day">—</span>
             </div>
-            <div class="perf-metric">
-              <span class="perf-metric-label" id="perf-active-label">1M</span>
-              <span class="perf-metric-val" id="perf-ytd">—</span>
-            </div>
+            <!-- Métrica "1D/período" eliminada: mostraba el cambio primer→último punto del chart
+                 (p.ej. -0.46%) y chocaba con Today (día real +0.12%). Solo se muestra Today. -->
+            <span class="perf-metric-val" id="perf-ytd" style="display:none">—</span>
+            <span id="perf-active-label" style="display:none"></span>
           </div>
         </div>
         <div class="perf-chart-wrap">
@@ -15093,6 +15093,21 @@ function _researchSnapSet(ticker, snap){
     } catch(_){}
   }
 }
+// Borra el snapshot persistente de un ticker (se usa cuando la empresa REPORTA y hay que
+// forzar una recarga completa con los fundamentales/rating nuevos).
+function _researchSnapDelete(ticker){
+  try { delete _researchSnapCache[(ticker||'').toUpperCase()];
+    localStorage.setItem(_RESEARCH_SNAP_LS, JSON.stringify(_researchSnapCache)); } catch(e){}
+}
+// Purga TODOS los cachés de análisis de un ticker (fundamentales, narrativa y el análisis
+// ensamblado). Se llama al detectar un earnings nuevo → la próxima carga regenera el
+// rating y los números frescos, sean buenos o malos.
+function _invalidateAnalysisCaches(ticker){
+  const tk = (ticker||'').toUpperCase();
+  try { delete _stockAnalysisCache[tk]; localStorage.setItem(_STOCK_ANALYSIS_LS, JSON.stringify(_stockAnalysisCache)); } catch(e){}
+  try { const c=_narrLoad(); if (c[tk]) { delete c[tk]; localStorage.setItem(_NARR_LS, JSON.stringify(c)); } } catch(e){}
+  try { const q=_qualLoad(); if (q[tk]) { delete q[tk]; localStorage.setItem(_QUAL_LS, JSON.stringify(q)); } } catch(e){}
+}
 
 // ── Refresco LIGERO de solo el precio (1 llamada /quote, barata) ───────────────
 // El resto del análisis queda cacheado; únicamente el precio/cambio del día se
@@ -15167,6 +15182,27 @@ async function _fetchResearch(ticker) {
       }
       // Prefetch de los demás períodos → cambiar de fecha es instantáneo y con data real.
       try { _prefetchAllResearchPeriods(ticker, _snap.info); } catch(e){}
+      // ── ACTUALIZACIÓN POR EARNINGS ────────────────────────────────────────────
+      // El snapshot puede tener hasta 24 h. Si la empresa REPORTÓ en esa ventana, sus
+      // fundamentales y rating están viejos. Chequeo barato en 2º plano: bajo EPS (se
+      // cachea), y si el último trimestre reportado es MÁS NUEVO que el del snapshot →
+      // purgo cachés y recargo TODO con los números nuevos. Sin esto, un reporte reciente
+      // no se reflejaba hasta que el snapshot expirara.
+      (async () => {
+        try {
+          if (typeof EPS === 'undefined') return;
+          await EPS.fetch(ticker);
+          const freshKey = _analysisEarningsKey(ticker);
+          const snapKey  = _snap.eKey || 'na';
+          if (freshKey && freshKey !== 'na' && snapKey !== 'na' && freshKey !== snapKey
+              && (currentResearchTicker||'').toUpperCase() === (ticker||'').toUpperCase()) {
+            _invalidateAnalysisCaches(ticker);
+            _researchSnapDelete(ticker);
+            if (_researchInflight === _tk) _researchInflight = null;   // libera el guard antes de recargar
+            _fetchResearch(ticker);   // recarga completa con fundamentales + rating frescos
+          }
+        } catch(e){}
+      })();
       return;
     }
     $('researchLoadingTxt').textContent = 'Cargando métricas...';
@@ -17005,29 +17041,43 @@ function _summarizeInsiders(raw){
   return { empty:false, label, tone, buyVal, sellVal, buySh, sellSh, discCount:disc.length, holders, ops };
 }
 
-// Análisis por acción: números/rating/foso/márgenes/datos DETERMINISTAS + narrativa
-// (bio, pros, riesgos, valoración) editorial o IA-barata cacheada. Carga TODO y luego
-// muestra el análisis completo de una sola vez (spinner único, sin campos a medio cargar).
-async function _upgradeAnalysisToAI(ticker, info){
+// ── Caché del análisis ENSAMBLADO (objeto `a` listo para pintar) ─────────────────
+// Objetivo (petición del usuario): al RE-ENTRAR a una acción NO debe salir el spinner
+// "Analizando…" y luego cargar — debe pintarse el análisis completo AL INSTANTE. Para eso
+// guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
+// segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
+// caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
+const _QUAL_LS  = 'portiv_qual_analysis_v1';
+const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
+function _qualLoad(){ try { return JSON.parse(localStorage.getItem(_QUAL_LS)||'{}')||{}; } catch(e){ return {}; } }
+function _qualGet(tk, eKey){
+  const c = _qualLoad()[(tk||'').toUpperCase()];
+  if (!c || !c.a) return null;
+  if (eKey && eKey!=='na' && c.eKey && c.eKey!==eKey) return null;   // reportó → caché viejo, invalida
+  if (Date.now()-(c.ts||0) > _QUAL_TTL) return null;                 // expiró
+  return c.a;
+}
+function _qualSet(tk, a, eKey){
+  tk = (tk||'').toUpperCase();
+  try { const c=_qualLoad(); c[tk]={a, eKey:eKey||'na', ts:Date.now()};
+    localStorage.setItem(_QUAL_LS, JSON.stringify(c)); }
+  catch(e){ try { localStorage.setItem(_QUAL_LS, JSON.stringify({[tk]:{a, eKey:eKey||'na', ts:Date.now()}})); } catch(_){} }
+}
+
+// Ensambla el objeto `a` COMPLETO: determinista (_buildQualAnalysis) + narrativa (bio/pros/
+// riesgos/valoración) + insiders + extras (escenarios/salud/proyecciones). Hace la red.
+// Devuelve null si no hay base (p.ej. la construcción falló). Sin efectos de UI.
+async function _assembleAnalysis(ticker, info){
   ticker = (ticker||'').toUpperCase();
-  const el = document.getElementById('r-analysis');
-  if (!el) return;
-  if (_isEtfTicker(ticker, info)) { el.innerHTML = ''; el.style.display = 'none'; return; }   // ETF → sin análisis por empresa
-  el.dataset.tk = ticker;
-  el.style.display = 'block';
-  el.innerHTML = `<div class="rax-sec" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:40px 24px"><span class="pv-ai-spin"></span><span style="font-size:14px;font-weight:600;color:var(--text2)">Analizando ${esc0(ticker)}…</span></div>`;
-  let base, narr, insRaw = null;
+  let base=null, narr=null, insRaw=null;
   try {
     base = _buildQualAnalysis(ticker, info);
     const facts = _stockFactsForPrompt(ticker, info);
-    const insP = _fetchInsiders(ticker).catch(() => null);   // insiders en paralelo con la narrativa
+    const insP  = _fetchInsiders(ticker).catch(() => null);   // insiders en paralelo con la narrativa
     narr = await _getStockNarrative(ticker, info, facts);
     insRaw = await insP;
   } catch(e){ base = base || null; narr = narr || null; }
-  const cur = document.getElementById('r-analysis');
-  if (!cur || cur.dataset.tk !== ticker) return;                 // el usuario cambió de acción
-  if (!base) { cur.innerHTML=''; cur.style.display='none'; return; }
-  // Ensambla determinista + narrativa (con respaldos si la narrativa falló).
+  if (!base) return null;
   const bio = [narr&&narr.que_es, narr&&narr.como_gana_dinero].filter(Boolean).join(' ');
   const a = Object.assign({}, base, {
     bio: bio || (base.moat_bullets||[]).join('. '),
@@ -17037,12 +17087,50 @@ async function _upgradeAnalysisToAI(ticker, info){
     moatFactors: _moatFactorBreakdown(info, base.moat, (base.moat_bullets||[]).concat(bio||[])),
     insiders: _summarizeInsiders(insRaw),
   });
-  // Datos dinámicos por ticker de las secciones nuevas (escenarios, salud, rango de
-  // objetivos, proyecciones reutilizando _expReturn, catalizadores). Degradación elegante.
   try { Object.assign(a, await _pvxExtras(ticker, info)); } catch(e){}
-  const cur2 = document.getElementById('r-analysis');
-  if (!cur2 || cur2.dataset.tk !== ticker) return;   // el usuario cambió de acción durante el await
-  _renderQualAnalysis(a, cur2);
+  return a;
+}
+
+// Análisis por acción: números/rating/foso/márgenes/datos DETERMINISTAS + narrativa
+// (bio, pros, riesgos, valoración) editorial o IA-barata cacheada. RE-ENTRADA = instantánea
+// desde caché (sin spinner); refresco silencioso en 2º plano. Solo la 1ª vez (o tras un
+// earnings nuevo) muestra el spinner "Analizando…".
+async function _upgradeAnalysisToAI(ticker, info){
+  ticker = (ticker||'').toUpperCase();
+  const el = document.getElementById('r-analysis');
+  if (!el) return;
+  if (_isEtfTicker(ticker, info)) { el.innerHTML = ''; el.style.display = 'none'; return; }   // ETF → sin análisis por empresa
+  el.dataset.tk = ticker;
+  el.style.display = 'block';
+  const eKey = _analysisEarningsKey(ticker);
+
+  // ── RE-ENTRADA INSTANTÁNEA: hay análisis ensamblado del MISMO earnings → píntalo YA ──
+  const cached = _qualGet(ticker, eKey);
+  if (cached) {
+    try { _renderQualAnalysis(cached, el); } catch(e){}
+    // Refresco silencioso en 2º plano SOLO si el caché ya tiene >30 min (evita gastar red en
+    // re-entradas seguidas). Sin spinner: si algo cambió, se re-pinta sin que el usuario lo note.
+    const _ent = _qualLoad()[ticker];
+    const _fresh = _ent && (Date.now() - (_ent.ts || 0) < 30 * 60 * 1000);
+    if (_fresh) return;
+    _assembleAnalysis(ticker, info).then(a => {
+      if (!a) return;
+      _qualSet(ticker, a, eKey);
+      if (JSON.stringify(a) === JSON.stringify(cached)) return;   // nada cambió → no re-pintar (evita parpadeo)
+      const cur = document.getElementById('r-analysis');
+      if (cur && cur.dataset.tk === ticker) { try { _renderQualAnalysis(a, cur); } catch(e){} }
+    }).catch(()=>{});
+    return;
+  }
+
+  // ── 1ª vez (o tras un reporte nuevo): spinner único + build completo + guardar ──
+  el.innerHTML = `<div class="rax-sec" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:40px 24px"><span class="pv-ai-spin"></span><span style="font-size:14px;font-weight:600;color:var(--text2)">Analizando ${esc0(ticker)}…</span></div>`;
+  const a = await _assembleAnalysis(ticker, info).catch(() => null);
+  const cur = document.getElementById('r-analysis');
+  if (!cur || cur.dataset.tk !== ticker) return;                 // el usuario cambió de acción
+  if (!a) { cur.innerHTML=''; cur.style.display='none'; return; }
+  _qualSet(ticker, a, eKey);
+  _renderQualAnalysis(a, cur);
 }
 function esc0(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
