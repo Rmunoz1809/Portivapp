@@ -15253,7 +15253,24 @@ async function _fetchResearch(ticker) {
     // algún período tarda; los que no lleguen se cargan al pulsarlos.
     $('researchLoadingTxt').textContent = 'Cargando todas las gráficas...';
     try { await Promise.race([_prefetchAllResearchPeriods(ticker, info), new Promise(r => setTimeout(r, 3000))]); } catch(e){}
-    // Revelar la acción ya con las gráficas listas.
+    // ── ANÁLISIS ANTES DE REVELAR ──────────────────────────────────────────────
+    // El usuario NO quiere ver "cargando gráfica → luego Analizando…": la pantalla de
+    // carga debe quedarse hasta que el análisis TAMBIÉN esté listo, y entonces revelar
+    // todo completo de una vez. Pre-ensamblamos el análisis aquí (con el overlay aún
+    // visible) y lo dejamos en caché → al revelar, _upgradeAnalysisToAI lo pinta al
+    // instante desde ese caché, sin el spinner "Analizando…". Cap de 12s: si la narrativa/
+    // insiders tardaran, revelamos igual (el análisis se completa en 2º plano) para no colgar.
+    if (!_isEtfTicker(ticker, info)) {
+      $('researchLoadingTxt').textContent = 'Cargando análisis...';
+      try {
+        const _a = await Promise.race([
+          _assembleAnalysis(ticker, info),
+          new Promise(r => setTimeout(() => r(null), 12000)),
+        ]);
+        if (_a && currentResearchTicker === ticker) _qualSet(ticker, _a, _eKey);
+      } catch(e){}
+    }
+    // Revelar la acción ya con las gráficas Y el análisis listos.
     _renderResearch(ticker, info, researchChartCache['1mo'] || _initChart, newsObj?.news || [], overview);
     // Precio en vivo del header (Finnhub /quote): corrige un precio de snapshot viejo.
     _refreshResearchPrice(ticker);
