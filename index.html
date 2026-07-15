@@ -11536,16 +11536,22 @@ function _newsImportance(n) {
 }
 
 function renderNewsTab() {
-  // Banner "configura tu API key" solo si NO hay forma de obtener precios en vivo:
-  // ni proxy Supabase, ni Netlify Function (sitio desplegado), ni key local.
+  // Banner "configura tu API key": RETIRADO en producción. El proxy Supabase (y la Netlify
+  // Function en su caso) SIEMPRE proveen precios + noticias sin key local, así que el aviso solo
+  // aparecía por un fallo TRANSITORIO del proxy (un 404/5xx marcaba `_fhProxyDead=true` en la
+  // sesión → `_finnhubAvailable()` daba false → banner). Se oculta SIEMPRE para que nunca reaparezca.
   const _banner = document.getElementById('snSetupBanner');
-  if (_banner) _banner.style.display = (typeof _finnhubAvailable === 'function' && _finnhubAvailable()) ? 'none' : 'flex';
+  if (_banner) _banner.style.display = 'none';
 
   rebuildNewsFromHoldings();
   // Noticias GENERALES compartidas (hoy/esta semana/próxima): sobrescriben las
   // secciones del tab con la copia única de la nube (misma para todos). Si aún no
   // hay copia, queda el fallback de arriba hasta que ensureFresh() la traiga/genere.
   try { if (window.SharedNews) { SharedNews.apply(); SharedNews.ensureFresh(); } } catch(e){}
+  // Outlook semanal (Esta/Próxima semana): sincroniza con la nube al abrir el tab → si el tick de
+  // medianoche ET se perdió (app cerrada), abrir Noticias trae/regenera la copia del día. TTL-gated
+  // + lock global → sigue siendo 1× global (lee la nube; solo regenera si está vencida y hay sesión).
+  try { if (window.SharedOutlook && typeof SharedOutlook.sync === 'function') SharedOutlook.sync(); } catch(e){}
   // FALLBACK DETERMINISTA (sin IA, sin costo): si no hay noticias "de hoy" (IA/nube no disponible
   // — p.ej. en file://, feriado, o serve.py apagado), trae las de mercado REALES de Finnhub vía el
   // proxy remoto (funciona en file://) y re-renderiza. Garantiza que "Most Important News of Today"
@@ -12222,6 +12228,20 @@ const PORTIV_CHART = {
 
     // ── 1D: ancla de apertura (09:30) + puntos intraday de HOY ──────────
     if(period==='1D'){
+      // PREFERENCIA: reconstrucción intradía REAL (09:30→ahora) desde los precios de 5 min de
+      // cada posición → curva de HOY correcta AUNQUE el usuario no haya tenido el app abierto.
+      // Si aún no está lista se dispara en 2º plano (redibuja al terminar) y, mientras, se cae
+      // al sistema de snapshots locales de abajo.
+      try {
+        if (typeof PORTIV_HIST !== 'undefined') {
+          if (PORTIV_HIST.intradayReady && PORTIV_HIST.intradayReady()) {
+            const _ri = PORTIV_HIST.seriesIntraday();
+            if (_ri && _ri.values && _ri.values.length >= 2) return _ri;
+          } else if (PORTIV_HIST.ensureIntradayAsync) {
+            PORTIV_HIST.ensureIntradayAsync();
+          }
+        }
+      } catch(e){}
       const cur=typeof calcTotals==='function'?+calcTotals().total.toFixed(2):0;
       // Valor de apertura del día = total actual − cambio del día (lo da el API).
       // Si no hay día-cambio, se cae a prevClose; y si tampoco, al primer punto.
@@ -12527,6 +12547,98 @@ const PORTIV_HIST = {
         return +(v + cash).toFixed(2);
       });
       return { dates, values, labels: dates.slice() };
+    } catch(e){ return null; }
+  },
+
+  // ── Reconstrucción INTRADÍA REAL (gráfica 1D) ──────────────────────────────
+  //  Mismo principio que la reconstrucción diaria pero a 5 min: baja la serie 1d/5m de
+  //  CADA posición (Yahoo) y arma valor(t)=Σ qty×precio(t)+efectivo para TODA la sesión
+  //  09:30→ahora. Así la curva de HOY es REAL y va de la apertura al momento actual SIN
+  //  IMPORTAR a qué hora entró el usuario (antes solo existían los snapshots grabados desde
+  //  que se abrió el app → la línea arrancaba tarde y salía corta/plana).
+  intra: {},            // ticker → { 'HH:MM': precio }  (solo HOY, hora de NY)
+  _intraReady:false, _intraLoading:false, _intraAt:0,
+  intradayReady(){ return this._intraReady; },
+  _etHHMM(ts){
+    try { const p = PORTIV_CHART._nyParts(new Date(ts*1000));
+      return String(p.h).padStart(2,'0')+':'+String(p.mi).padStart(2,'0'); } catch(e){ return null; }
+  },
+  _etDay(ts){
+    try { const p = PORTIV_CHART._nyParts(new Date(ts*1000));
+      return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`; } catch(e){ return null; }
+  },
+  async ensureIntradayAsync(){
+    if (this._intraLoading) return;
+    if (this._intraReady && (Date.now()-this._intraAt) < 90000) return;   // refresco máx 1×/90s
+    const tks = this._tickers();
+    if (!tks.length) return;
+    this._intraLoading = true;
+    try {
+      const today = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : null;
+      const q = tks.slice();
+      const one = async (tk)=>{
+        try {
+          if (typeof _yhChart !== 'function') return;
+          const y = await _yhChart(tk, '1d', '5m', 7000);   // sesión de HOY a 5 min
+          if (y && Array.isArray(y.timestamps) && y.timestamps.length && Array.isArray(y.closes)){
+            const m = {};
+            for (let i=0;i<y.timestamps.length;i++){
+              const c = y.closes[i]; if (c==null) continue;
+              const ts = y.timestamps[i];
+              if (today && this._etDay(ts) !== today) continue;    // solo HOY
+              const hhmm = this._etHHMM(ts); if (!hhmm) continue;
+              const mins = (+hhmm.slice(0,2))*60 + (+hhmm.slice(3,5));
+              if (mins < 570 || mins > 960) continue;              // sesión regular 09:30–16:00
+              m[hhmm] = c;
+            }
+            if (Object.keys(m).length) this.intra[tk] = m;
+          }
+        } catch(e){}
+      };
+      const CONC=3;
+      const workers = Array.from({length:Math.min(CONC,q.length)}, async ()=>{ while(q.length){ await one(q.shift()); } });
+      await Promise.all(workers);
+      this._intraReady = this._tickers().every(t => this.intra[t] && Object.keys(this.intra[t]).length);
+      this._intraAt = Date.now();
+    } catch(e){}
+    this._intraLoading = false;
+    // Redibuja 1D ya con la curva real si es el período activo.
+    try { if (typeof activePeriod!=='undefined' && activePeriod==='1D' && PORTIV_CHART.refresh) PORTIV_CHART.refresh('1D'); } catch(e){}
+  },
+  // Serie intradía sincrónica (usa lo cacheado por ensureIntradayAsync). null si no está lista.
+  seriesIntraday(){
+    try {
+      const tks = this._tickers();
+      if (!tks.length) return null;
+      for (const t of tks){ if (!this.intra[t] || !Object.keys(this.intra[t]).length) return null; }
+      const qty = {};
+      (HOLDINGS||[]).forEach(h=>{ if(h&&h.ticker&&+h.qty>0){ const t=h.ticker.toUpperCase(); qty[t]=(qty[t]||0)+(+h.qty); } });
+      const toMin = k => (+k.slice(0,2))*60 + (+k.slice(3,5));
+      // Línea maestra de tiempos = UNIÓN de todos los buckets de 5 min (orden cronológico).
+      const set = new Set(); tks.forEach(t=> Object.keys(this.intra[t]).forEach(k=> set.add(k)));
+      const times = [...set].sort((a,b)=> toMin(a)-toMin(b));
+      if (times.length < 2) return null;
+      // Precio de un ticker en t = último bucket ≤ t (forward-fill); antes de su 1er bucket = su
+      // 1er precio. Rellena huecos sin inventar movimiento.
+      const sortedKeys = {}; tks.forEach(t=>{ sortedKeys[t] = Object.keys(this.intra[t]).sort((a,b)=>toMin(a)-toMin(b)); });
+      const priceAt = (t, mt)=>{ const ks=sortedKeys[t]; let px=this.intra[t][ks[0]];
+        for (let i=0;i<ks.length;i++){ if (toMin(ks[i])<=mt) px=this.intra[t][ks[i]]; else break; } return px; };
+      // Efectivo implícito constante = total en vivo − valor de posiciones al último tiempo.
+      const lastM = toMin(times[times.length-1]);
+      let posLast = 0; tks.forEach(t=> posLast += (qty[t]||0) * priceAt(t,lastM));
+      let liveTotal = 0; try { liveTotal = (typeof calcTotals==='function') ? +calcTotals().total.toFixed(2) : 0; } catch(e){}
+      const cash = (liveTotal>0) ? (liveTotal - posLast) : 0;
+      const values = times.map(k=>{ const mt=toMin(k); let v=0; tks.forEach(t=> v += (qty[t]||0)*priceAt(t,mt)); return +(v+cash).toFixed(2); });
+      const today = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : '';
+      const base = values[0], last = values[values.length-1];
+      return {
+        labels: times.slice(),
+        dates: times.map(()=>today),
+        values,
+        change: +(last-base).toFixed(2),
+        changePct: +(base>0?(last-base)/base*100:0).toFixed(2),
+        since: 'apertura',
+      };
     } catch(e){ return null; }
   }
 };
@@ -13190,7 +13302,15 @@ function initPerfChart() {
   // Arrancar YA con la serie "normal" (diaria real, suave) — la MISMA que genera
   // setPeriod('1M') después. Evita el flash de la versión intradía "robusta" (jagged).
   let d = null;
-  try { if (typeof PORTIV_CHART !== 'undefined') d = PORTIV_CHART.generate('1M'); } catch(e) {}
+  // ANTI-FLASH: si hay una foto cacheada de la curva 1M REAL de HOY (de una sesión previa del
+  // mismo día), dibújala YA → el primer frame es la curva real, no la provisional. La
+  // reconstrucción en 2º plano la reconfirma sin cambio visible.
+  try {
+    const _snap = JSON.parse(localStorage.getItem('pv_perf_snap_1M') || 'null');
+    const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
+    if (_snap && _snap.day === _day && Array.isArray(_snap.values) && _snap.values.length > 2) d = _snap;
+  } catch(e) {}
+  if (!d) { try { if (typeof PORTIV_CHART !== 'undefined') d = PORTIV_CHART.generate('1M'); } catch(e) {} }
   if (!d || !d.values || !d.values.length) d = _scaleSeriesToTotal(PERF_DATA['1M']);
   if (d && Array.isArray(d.labels) && Array.isArray(d.values)) {
     const _n0 = Math.min(d.labels.length, d.values.length);
@@ -13374,6 +13494,19 @@ function setPeriodData(period, ds) {
   // Auto-escala por timeframe: limpia cualquier min/max fijado previamente.
   try { if (perfChart.options && perfChart.options.scales && perfChart.options.scales.y) { perfChart.options.scales.y.min = undefined; perfChart.options.scales.y.max = undefined; } } catch(e){}
   perfChart.update('periodChange');
+  // CACHÉ ANTI-FLASH: guarda el ÚLTIMO dataset dibujado de 1M/1D (sellado con el día ET). Como
+  // la reconstrucción REAL redibuja DESPUÉS del arranque, la caché acaba conteniendo la curva
+  // real; al reabrir el app se hidrata al instante (initPerfChart) → ya NO se ve primero la
+  // versión provisional de 1M y luego la real. El live-anchor corrige el último punto igual.
+  try {
+    if (period === '1M' || period === '1D') {
+      const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
+      localStorage.setItem('pv_perf_snap_' + period, JSON.stringify({
+        day: _day, labels: ds.labels, values: ds.values,
+        change: ds.change, changePct: ds.changePct, since: ds.since || '',
+      }));
+    }
+  } catch(e){}
   if (typeof _updateSummaryCardFor === 'function') _updateSummaryCardFor(period, ds.change, ds.changePct);
   const lbl = { '1D':'Hoy','1W':'1 Semana','1M':'1 Mes','3M':'3 Meses','6M':'6 Meses','1Y':'1 Año','YTD':'YTD','ALL':'Histórico' }[period] || period;
   const since = ds.since || '';
@@ -13595,10 +13728,15 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
       throw new Error(`Finnhub no disponible (${res.status})`);
     }
     clearTimeout(tid);
-    if (res.status === 429) {
+    // 429 = límite de plan; 403 = RECHAZO POR RÁFAGA del proxy compartido (cuando el
+    // bloque `info` dispara 6 llamadas a la vez, el proxy rechaza alguna con 403). Ambos
+    // son transitorios y se recuperan con el MISMO backoff serial: una cotización sola sí
+    // responde. Antes el 403 se tiraba de inmediato → esa llamada quedaba en null y podía
+    // provocar el falso "Ticker no encontrado" y el "+0.00%".
+    if (res.status === 429 || res.status === 403) {
       if (_retry < 3) {
         // Respeta Retry-After si el servidor lo envía; si no, backoff exponencial
-        // con JITTER (±20%) para que N clientes que reciben 429 a la vez NO
+        // con JITTER (±20%) para que N clientes que reciben 429/403 a la vez NO
         // reintenten sincronizados y vuelvan a saturar el proxy en el mismo segundo.
         let waitMs;
         const ra = res.headers.get('Retry-After');
@@ -13786,14 +13924,35 @@ async function apiCall(params, timeoutMs = 15000) {
     // Precio en vivo: Yahoo primero (mismos números que Yahoo); Finnhub de respaldo.
     var _yMeta  = (yh && yh.meta) || null;
     var _yPrice = (_yMeta && typeof _yMeta.regularMarketPrice === 'number' && _yMeta.regularMarketPrice > 0) ? _yMeta.regularMarketPrice : null;
-    var _px = _yPrice || (quote && quote.c) || 0;
+    var _q2 = quote;   // cotización Finnhub efectiva (el reintento serial puede reemplazarla)
+    var _px = _yPrice || (_q2 && _q2.c) || 0;
+    if (!_px) {
+      // REINTENTO SERIAL antes de declarar "no encontrado". La ráfaga de 6 llamadas en
+      // paralelo de este bloque provoca rechazos transitorios (403/429) del proxy compartido;
+      // una sola cotización, ya fuera de la ráfaga, casi siempre SÍ responde. Esto elimina el
+      // falso "Ticker no encontrado" en símbolos válidos (NFLX, FRCOY, …). Primero Finnhub
+      // (barato) y, si aún falla, Yahoo (que también trae el cierre previo para el % del día).
+      try {
+        var _rq = await fhFetch(`/quote?symbol=${ticker}`, timeoutMs);
+        if (_rq && typeof _rq.c === 'number' && _rq.c > 0) { _q2 = _rq; _px = _rq.c; }
+      } catch(_e) {}
+      if (!_px) {
+        try {
+          var _ry = await _yhChart(ticker, '1d', '1d', timeoutMs);
+          var _rm = _ry && _ry.meta;
+          if (_rm && typeof _rm.regularMarketPrice === 'number' && _rm.regularMarketPrice > 0) {
+            _yMeta = _rm; _yPrice = _rm.regularMarketPrice; _px = _yPrice;
+          }
+        } catch(_e) {}
+      }
+    }
     if (!_px) {
       throw new Error(`Ticker "${ticker}" no encontrado. Verifica el símbolo.`);
     }
     var _yPrev = (_yMeta && typeof _yMeta.chartPreviousClose === 'number' && _yMeta.chartPreviousClose > 0) ? _yMeta.chartPreviousClose : null;
     var _dChg, _dPct;
     if (_yPrice && _yPrev) { _dChg = _yPrice - _yPrev; _dPct = _dChg / _yPrev * 100; }
-    else { _dChg = (quote && quote.d) || 0; _dPct = (quote && quote.dp) || 0; }
+    else { _dChg = (_q2 && _q2.d) || 0; _dPct = (_q2 && _q2.dp) || 0; }
     // Si el perfil no cargó (proxy lento/429), NO etiquetar como "ETF" — eso era un
     // mislabel: una acción normal aparecía como ETF. Dejar sector vacío; el tipo real ETF
     // se detecta por la lista de tickers conocidos más abajo (quoteType).
@@ -19373,9 +19532,15 @@ function _renderNextWeekOutlook(){
   // Verificación de fechas en background (acotada + cacheada) → al terminar re-renderiza y filtra pasados.
   try { _verifyWeekEventDates(); } catch(e){}
   let bottom = '';
-  if (Array.isArray(seed.key_themes) && seed.key_themes.length){
+  // Temas clave: si el seed (posiblemente viejo/cloud) trae <2, se recomputan DETERMINISTAS
+  // desde los eventos del propio seed → nunca queda una sola línea.
+  let _themes = Array.isArray(seed.key_themes) ? seed.key_themes : [];
+  if (_themes.length < 2 && typeof _composeWeekSummary === 'function') {
+    try { const _s = _composeWeekSummary(seed.days || []); if (_s && Array.isArray(_s.themes) && _s.themes.length >= _themes.length) _themes = _s.themes; } catch(e){}
+  }
+  if (_themes.length){
     bottom += `<div class="wo-section-lbl">Temas clave</div><div class="swc-list">`;
-    seed.key_themes.forEach(t => { bottom += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${t.title||''}</div><div class="swc-theme-ctx">${t.detail||''}</div></div></div></div></div>`; });
+    _themes.forEach(t => { bottom += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${t.title||''}</div><div class="swc-theme-ctx">${t.detail||''}</div></div></div></div></div>`; });
     bottom += `</div>`;
   }
   const _nwHtml = `<div class="wo-report">${topHtml}${html}${bottom}</div>`;
@@ -19501,6 +19666,19 @@ const SharedOutlook = (function(){
     return !!(payload && payload.obj && payload.ver === VER && (payload.lang||'es') === _lang()
               && payload.ts && (Date.now()-payload.ts) < TTL);
   }
+  // Día ET (YYYY-MM-DD) — usado por el refresh diario para rodar al cruzar medianoche NY.
+  function _etDay(){
+    try{ const p=(typeof PORTIV_NEWS!=='undefined')?PORTIV_NEWS.nyParts():null; if(p) return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`; }catch(e){}
+    try{ const x={}; new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).forEach(o=>x[o.type]=o.value); return `${x.year}-${x.month}-${x.day}`; }catch(e){ return new Date().toISOString().slice(0,10); }
+  }
+  // Frescura según el caller: normal = TTL 24h; daily (scheduler 00:00 ET) = exige que la copia
+  // de nube sea del MISMO día ET → fuerza UNA regeneración al cruzar medianoche. Sigue siendo 1×
+  // global: el primero que genera hoy la sube con etDay=hoy y el resto la leen ya fresca (0 gasto).
+  function _freshFor(payload, opts){
+    if(opts && opts.daily)
+      return !!(payload && payload.obj && payload.ver === VER && (payload.lang||'es') === _lang() && payload.etDay === _etDay());
+    return _fresh(payload);
+  }
   function _applyToLocal(off, obj){
     try{ localStorage.setItem('weekly_outlook_' + _wkOf(off), JSON.stringify(obj)); }catch(e){}
   }
@@ -19559,18 +19737,18 @@ key_themes = exactamente 3 temas clave.`;
     }
   }
 
-  async function _ensureOne(off){
+  async function _ensureOne(off, opts){
     const wk = _wkOf(off);
-    // 1) Nube fresca → aplicar y salir (0 gasto).
+    // 1) Nube fresca (según el caller: TTL 24h o "mismo día ET" si daily) → aplicar y salir (0 gasto).
     const cloud = await _cloudGet(wk);
-    if(_fresh(cloud)){ _applyToLocal(off, cloud.obj); _rerender(off); return; }
+    if(_freshFor(cloud, opts)){ _applyToLocal(off, cloud.obj); _rerender(off); return; }
     // 2) Sin sesión REAL → no generamos (RLS no deja escribir). Nos quedamos con seed/local.
     if(!_canWrite()) return;
     // 3) Lock global: si otro genera, esperamos y re-leemos (no gastamos).
     if(!(await _acquireLock(wk))){
       await new Promise(r=>setTimeout(r, 3000));
       const again = await _cloudGet(wk);
-      if(_fresh(again)){ _applyToLocal(off, again.obj); _rerender(off); }
+      if(_freshFor(again, opts)){ _applyToLocal(off, again.obj); _rerender(off); }
       return;
     }
     try{
@@ -19581,9 +19759,12 @@ key_themes = exactamente 3 temas clave.`;
       if(narr){
         if(narr.theme)          data.theme = narr.theme;
         if(narr.market_context) data.market_context = narr.market_context;
-        if(narr.key_themes && narr.key_themes.length) data.key_themes = narr.key_themes;
+        // Solo adopta los temas de la IA si trajo ≥2; si devolvió 0-1 (respuesta corta) se
+        // CONSERVAN los deterministas (_composeWeekSummary garantiza ≥3) → el cuadro "Temas
+        // clave" nunca colapsa a una sola línea.
+        if(narr.key_themes && narr.key_themes.length >= 2) data.key_themes = narr.key_themes;
       }
-      await _cloudSet(wk, { obj: data, ts: Date.now(), ver: VER, lang: _lang() });
+      await _cloudSet(wk, { obj: data, ts: Date.now(), ver: VER, lang: _lang(), etDay: _etDay() });
       _applyToLocal(off, data);
       _rerender(off);
     }catch(e){ try{ console.warn('[SharedOutlook] gen', e); }catch(_){}
@@ -19601,8 +19782,17 @@ key_themes = exactamente 3 temas clave.`;
     try{ await _ensureOne(0); await _ensureOne(1); }
     finally{ _syncing = false; }
   }
+  // Refresh DIARIO (scheduler 00:00 ET): fuerza que la copia de nube sea del día ET actual.
+  // Al cruzar medianoche, el primer usuario autenticado regenera esta+próxima semana 1× (lock
+  // global) y la sube con etDay=hoy; el resto la leen ya fresca. Así el outlook rueda cada día
+  // con info nueva sin romper el patrón "1× global".
+  async function forceRefresh(){
+    if(_syncing) return; _syncing = true;
+    try{ await _ensureOne(0, { daily:true }); await _ensureOne(1, { daily:true }); }
+    finally{ _syncing = false; }
+  }
 
-  return { hydrate, refresh, sync: refresh };
+  return { hydrate, refresh, sync: refresh, forceRefresh };
 })();
 window.SharedOutlook = SharedOutlook;
 
@@ -19683,8 +19873,20 @@ function _composeWeekSummary(days) {
   if (fomc) themes.push({ title:'Fed — la decisión de tasas manda', detail:`La reunión de la Fed ${dayOf(fomc)} es el evento de la semana: la decisión y, sobre todo, el tono de la conferencia recalibran las expectativas de tasas para todo el portafolio.` });
   if (conf||retail) themes.push({ title:'Consumo — ¿aguanta el gasto?', detail:'Los datos de consumo de la semana revelan el estado del bolsillo estadounidense. Si el consumidor frena el gasto, MA (transacciones), AMZN (e-commerce) y APP (publicidad) son los más expuestos.' });
   if (ism||adp) themes.push({ title:'Actividad y empleo — el pulso de la economía', detail:'El ISM (actividad industrial/servicios) y el ADP (empleo privado) anticipan la fortaleza de la economía. Lecturas sólidas apoyan a las cíclicas y semiconductores (NVDA, MU, TSM); lecturas débiles reavivan temores de desaceleración.' });
-  // Garantiza profundidad: siempre añade el tema de rotación/posicionamiento.
-  if (themes.length < 2) themes.push({ title:'Posicionamiento — digestión post-datos', detail:`La semana ${volLevel==='low'?'ligera en datos deja al mercado guiado por el flujo de resultados y la técnica':'concentra varias publicaciones que el mercado irá digiriendo día a día'}. Vigila la rotación entre crecimiento (NVDA, APP, MSFT) y defensivas: el sentido del dinero anticipa cómo lee el mercado el próximo movimiento de la Fed.` });
+  // ── Garantiza PROFUNDIDAD: el cuadro "Temas clave" SIEMPRE muestra ≥3 temas ──────────
+  //   Antes solo se añadía 1 tema de relleno cuando había <2 → en semanas ligeras (sin NFP/CPI/
+  //   FOMC…) el cuadro colapsaba a UNA sola línea ("Posicionamiento — digestión post-datos").
+  //   Ahora se rellena con temas evergreen (posicionamiento, resultados, técnica) hasta llegar a
+  //   3, sin duplicar los ya derivados de los eventos reales de la semana.
+  const _fillThemes = [
+    { title:'Posicionamiento — digestión post-datos', detail:`La semana ${volLevel==='low'?'ligera en datos deja al mercado guiado por el flujo de resultados y la técnica':'concentra varias publicaciones que el mercado irá digiriendo día a día'}. Vigila la rotación entre crecimiento (NVDA, APP, MSFT) y defensivas: el sentido del dinero anticipa cómo lee el mercado el próximo movimiento de la Fed.` },
+    { title:'Resultados corporativos — el flujo del trimestre', detail:'Más allá del calendario macro, la temporada de resultados marca posiciones individuales. Sorpresas positivas en guías reavivan el apetito por riesgo; decepciones en megacaps arrastran a los índices por su peso.' },
+    { title:'Técnica y liquidez — niveles a vigilar', detail:'Sin un catalizador único, el precio se guía por niveles técnicos, cobertura de posiciones y liquidez. El S&P 500 (VOO) y el Nasdaq marcan la dirección general; los semiconductores (NVDA, TSM, MU) suelen liderar tanto los rebotes como las correcciones.' },
+  ];
+  for (const _ft of _fillThemes) {
+    if (themes.length >= 3) break;
+    if (!themes.some(t => t.title === _ft.title)) themes.push(_ft);
+  }
 
   // ── Watchlist del portafolio según los drivers de la semana ──
   const watch = [];
@@ -20168,8 +20370,9 @@ function scheduleDailyOutlookRefresh() {
       } catch(e) { try { refreshNextWeekOutlook(true); } catch(_){} }
       // Outlook semanal CLOUD-SHARED (esta + próxima semana): la IA genera 1× al día de forma
       // global, se sube a Supabase y todos leen la misma copia. Corre tras SharedNews para que
-      // DAILY_NEWS ya esté poblado como contexto de la narrativa.
-      try { if (window.SharedOutlook) setTimeout(() => { try { SharedOutlook.refresh(); } catch(_){} }, 4000); } catch(e) {}
+      // DAILY_NEWS ya esté poblado como contexto de la narrativa. forceRefresh (no refresh) fuerza
+      // la regeneración al cruzar medianoche ET → la PRÓXIMA semana deja de quedarse pegada 2 días.
+      try { if (window.SharedOutlook) setTimeout(() => { try { (SharedOutlook.forceRefresh||SharedOutlook.refresh)(); } catch(_){} }, 4000); } catch(e) {}
     } catch(e) {}
   };
   tick();                          // al abrir la app: corre si el día ET aún no se refrescó
@@ -22533,10 +22736,9 @@ const PORTIV_NEWS = {
       this.buildThisWeek().then(() => this.renderThisWeek()).catch(()=>{});
       return;
     }
-    if (!model.days || !model.days.length){
-      el.innerHTML = `<div class="pn-empty">Sin catalizadores relevantes esta semana todavía. Se irán llenando automáticamente con los 2 eventos más importantes por día.</div>`;
-      return;
-    }
+    // Aunque no haya NINGÚN evento aún, NO cortamos aquí: el render de abajo pinta SIEMPRE los 5
+    // días hábiles (con nota de sesión en los vacíos) → la semana completa nunca desaparece.
+    if (!Array.isArray(model.days)) model.days = [];
     // Badge de volatilidad junto al título (idéntico al Outlook): volatilidad REAL de la
     // semana (no "alta" por un solo evento) — ver _weekVolLevel.
     const _topImp = _weekVolLevel(model);
@@ -22569,17 +22771,36 @@ const PORTIV_NEWS = {
     const _todayET = new Date(_p0.y, _p0.mo - 1, _p0.d);
     let _roChanged = false;
     let html = '<div class="swc-list">';
-    model.days.forEach(day => {
-      const topImp = day.events.some(e=>e.impact==='high') ? 'high'
-                   : day.events.some(e=>e.impact==='medium') ? 'medium' : 'low';
+    // ── SEMANA COMPLETA (lunes→viernes) SIEMPRE ──────────────────────────────────────
+    //   Antes se iteraba solo `model.days`, que omite los días SIN eventos → el cuadro
+    //   "terminaba en hoy" cuando los días futuros (jue/vie) aún no tenían catalizadores.
+    //   Ahora se recorren SIEMPRE los 5 días hábiles: los que tienen eventos se pintan igual
+    //   y los vacíos muestran una nota de sesión neutral (sin inventar catalizadores) para que
+    //   la semana entera esté siempre visible.
+    const _byIdx = {}; (model.days||[]).forEach(d => { if (d && d.dayIdx) _byIdx[d.dayIdx] = d; });
+    const _emptyNote = {
+      1:'Sin catalizadores macro de primer nivel: el mercado digiere el fin de semana y reposiciona.',
+      2:'Jornada sin dato macro dominante — la atención va al flujo de resultados y a los movimientos de analistas.',
+      3:'Mitad de semana sin catalizador de primer nivel: día de rotación sectorial (crecimiento vs. valor).',
+      4:'Sesión técnica sin gran publicación macro — el mercado se mueve por flujo y cobertura de posiciones.',
+      5:'Cierre semanal sin dato macro relevante: ajuste de posiciones antes del fin de semana.',
+    };
+    for (let _di = 1; _di <= 5; _di++) {
+      const day = _byIdx[_di] || { dayIdx: _di, events: [] };
+      const _evs = day.events || [];
+      const topImp = _evs.some(e=>e.impact==='high') ? 'high'
+                   : _evs.some(e=>e.impact==='medium') ? 'medium' : 'low';
       // Etiqueta de día idéntica al Outlook: "Lunes 15 jun" (sin "de", mes abreviado).
-      const _d = new Date(_mon0); _d.setDate(_mon0.getDate() + ((day.dayIdx||1) - 1));
-      const dayLabel = `${this._DOW_ES[day.dayIdx||1]} ${_d.getDate()} ${this._MON_ES[_d.getMonth()]}`;
+      const _d = new Date(_mon0); _d.setDate(_mon0.getDate() + (_di - 1));
+      const dayLabel = `${this._DOW_ES[_di]} ${_d.getDate()} ${this._MON_ES[_d.getMonth()]}`;
       html += `<div class="swc-day-group"><div class="swc-day-header">
         <span class="swc-day-name">${dayLabel}</span>
-        <span class="swc-day-date" style="${impStyle[topImp]};padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;font-family:'Manrope',sans-serif">${impLabel[topImp]}</span>
+        ${_evs.length ? `<span class="swc-day-date" style="${impStyle[topImp]};padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;font-family:'Manrope',sans-serif">${impLabel[topImp]}</span>` : ''}
       </div><div class="swc-items">`;
-      day.events.forEach(ev => {
+      if (!_evs.length) {
+        html += `<div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-ctx" style="color:var(--st-on-surf-var)">${_emptyNote[_di]||'Sin catalizadores programados para este día.'}</div></div></div>`;
+      }
+      _evs.forEach(ev => {
         const k = 'pn_' + ev.id; window._outlookEvents[k] = ev;
         const tk = (ev.tickers||[]).slice(0,5);
         const ct = catTag[ev.category] || catTag.other;
@@ -22610,7 +22831,7 @@ const PORTIV_NEWS = {
             </div></div>`;
       });
       html += '</div></div>';
-    });
+    }
     html += '</div>';
     // Persistir los resultados reales recién calculados → se congelan tras el día.
     if (_roChanged) { try { this.save(0, model); } catch(e) {} }
@@ -23550,6 +23771,10 @@ function init() {
       try { PORTIV_VAL.reconcile(); } catch(e){ console.warn('reconcile error', e); }
     }
     initPerfChart();
+    // Arranca YA las reconstrucciones REALES (diaria + intradía 5min) para que 1M/1D queden
+    // listas cuanto antes → menos ventana de "curva provisional" y 1D con la sesión completa
+    // 09:30→ahora desde el primer clic (aunque el usuario acabe de abrir el app).
+    try { if (typeof PORTIV_HIST !== 'undefined') { if (PORTIV_HIST.ensureAsync) PORTIV_HIST.ensureAsync(); if (PORTIV_HIST.ensureIntradayAsync) PORTIV_HIST.ensureIntradayAsync(); } } catch(e){}
     unlockPeriods();
     _renderTokenBadge(); // muestra el gasto semanal del chat desde el inicio
     requestAnimationFrame(() => requestAnimationFrame(() => {
