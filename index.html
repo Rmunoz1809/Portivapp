@@ -3401,6 +3401,8 @@
     .pa-prosbox { display:grid; grid-template-columns:1fr 1fr; gap:0; background:#fff; border:1px solid var(--border); border-radius:var(--pa-radius); overflow:hidden; box-shadow:0 1px 3px rgba(11,28,48,.06); }
     @media(max-width:640px){ .pa-prosbox { grid-template-columns:1fr; } }
     @media(max-width:640px){ .pa-top-grid { grid-template-columns:1fr !important; } }
+    /* Cel + iPad: quitar por completo el cuadro "Detalle de Activos"; Pros/Contras ocupa el ancho. Desktop lo mantiene. */
+    @media(max-width:1024px){ .pa-asset-detail-col{ display:none !important; } .pa-top-grid{ grid-template-columns:1fr !important; } }
     .pa-care { padding:20px 22px; }
     .pa-care.strengths { border-right:1px solid var(--border); }
     .pa-care-title { display:flex; align-items:center; gap:8px; font-family:'Manrope',sans-serif; font-size:15px; font-weight:700; color:var(--st-primary); margin-bottom:14px; }
@@ -3557,7 +3559,7 @@
 
     <!-- Fila 2: Detalle de Activos + Pros/Contras — dos columnas simétricas -->
     <div class="pa-top-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;align-items:start">
-      <div>
+      <div class="pa-asset-detail-col">
         <div class="pa-label" style="margin-bottom:12px">Detalle de Activos</div>
         <div class="pa-asset-card"><div id="port-asset-detail"></div></div>
       </div>
@@ -3623,6 +3625,12 @@
     #tab-analizar .ra-pills .ppill{border:none;background:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--st-on-surf-var);cursor:pointer;transition:all .12s}
     #tab-analizar .ra-pills .ppill:hover{color:var(--st-primary)}
     #tab-analizar .ra-pills .ppill.active{background:#fff;color:var(--st-primary);box-shadow:0 1px 3px rgba(11,28,48,.12)}
+    /* Mobile/tablet: 8 pills (1D…5A) no caben en una fila → envuelven centradas para que YTD/5A no se salgan del cuadro */
+    @media(max-width:760px){
+      #tab-analizar .ra-card-head{flex-direction:column;align-items:stretch}
+      #tab-analizar .ra-pills{display:flex;flex-wrap:wrap;justify-content:center;width:100%}
+      #tab-analizar .ra-pills .ppill{flex:0 0 auto;padding:6px 10px}
+    }
     #tab-analizar .ra-side{display:flex;flex-direction:column;gap:16px}
     #tab-analizar .ra-rating-head{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;color:var(--st-primary);margin-bottom:12px}
     #tab-analizar .ra-rating-ico{font-size:20px;color:var(--st-secondary)}
@@ -17041,8 +17049,7 @@ function _renderQualAnalysis(a, el){
     h += `<div class="px-hint">Las ventas programadas suelen ser rutina (impuestos, diversificación). Las <b>compras</b> con dinero propio son la señal más valiosa: un insider apuesta a que la acción sube. Fuente: SEC Formulario 4 vía Finnhub.</div></div>`;
   }
 
-  // 14) Disclaimer.
-  h += `<div class="px-disclaimer">Análisis generado automáticamente con datos de mercado. No constituye asesoría de inversión.</div>`;
+  // 14) Disclaimer — removido a pedido (no se muestra en ninguna versión).
 
   el.innerHTML = h;
   // ② Competidores: llena el slot LAZY. Si ya está cacheado → instantáneo; si no, fetch gentil
@@ -24682,13 +24689,49 @@ if (document.readyState === 'loading') {
   // signInWithOAuth redirige el navegador a Apple; al volver, detectSessionInUrl
   // + onAuthStateChange (más abajo) recogen la sesión. El botón solo queda en
   // estado "cargando" mientras se prepara el redirect.
+  // Helpers para el flujo NATIVO (iOS): nonce aleatorio → se manda crudo a Supabase y
+  // su SHA-256 a Apple (Apple guarda el hash en el claim `nonce` del identity token;
+  // Supabase re-hashea el crudo y compara). Evita replay del token.
+  function _appleGenNonce(){
+    var a = new Uint8Array(16); crypto.getRandomValues(a);
+    return Array.from(a).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+  }
+  async function _appleSha256Hex(str){
+    var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(function(b){ return b.toString(16).padStart(2,'0'); }).join('');
+  }
+
   window._authAppleSignin = async function(){
     var btn = document.getElementById('appleSignInBtn');
     var lbl = btn ? btn.querySelector('span') : null;
     var origTxt = lbl ? lbl.textContent : '';
     if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'default'; }
     if (lbl) lbl.textContent = 'Conectando con Apple…';
+    var _isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
     try {
+      // ── iOS nativo: Sign in with Apple NATIVO (ASAuthorization) → todo dentro de la app,
+      //    sin abrir Safari ni redirigir a la web. Devuelve identity token → signInWithIdToken. ──
+      if (_isNative) {
+        var ASI = (window.Capacitor.Plugins && window.Capacitor.Plugins.SignInWithApple) || null;
+        if (!ASI) throw new Error('Inicio de sesión con Apple no disponible en esta versión de la app.');
+        var rawNonce = _appleGenNonce();
+        var hashedNonce = await _appleSha256Hex(rawNonce);
+        var res = await ASI.authorize({
+          clientId: 'com.portivapp.portafolio',   // = Bundle ID; debe estar en los Client IDs del proveedor Apple en Supabase
+          redirectURI: 'https://portivapp.com/',   // ignorado por ASAuthorization nativo, requerido por la firma del plugin
+          scopes: 'email name',
+          nonce: hashedNonce
+        });
+        var idToken = res && res.response && res.response.identityToken;
+        if (!idToken) throw new Error('Apple no devolvió el token de identidad.');
+        var rn = await sb.auth.signInWithIdToken({ provider: 'apple', token: idToken, nonce: rawNonce });
+        if (rn && rn.error) throw rn.error;
+        // onAuthStateChange recoge la sesión y revela la app. Restauramos el botón por si el gate tarda.
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+        if (lbl) lbl.textContent = origTxt;
+        return;
+      }
+      // ── Web: OAuth por redirect (comportamiento original) ──
       // redirectTo: en producción usa el origin real; si estás en localhost/127/file://
       // (donde el servidor puede estar apagado al volver de Apple → ERR_CONNECTION_REFUSED)
       // cae al dominio de producción para no aterrizar en una URL muerta.
@@ -24702,7 +24745,10 @@ if (document.readyState === 'loading') {
       if (r && r.error) throw r.error;
       // Éxito: el navegador se va a apple.com. No restauramos el botón (se sale de la página).
     } catch(e){
-      setMsg((e && e.message) || 'No se pudo iniciar sesión con Apple.', true);
+      // El usuario canceló el diálogo nativo → no es un error que mostrar.
+      var _msg = (e && (e.message || e.error)) || '';
+      var _canceled = /cancel|1001|AuthorizationError|popup_closed/i.test(String(_msg));
+      if (!_canceled) setMsg(_msg || 'No se pudo iniciar sesión con Apple.', true);
       if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
       if (lbl) lbl.textContent = origTxt;
     }
