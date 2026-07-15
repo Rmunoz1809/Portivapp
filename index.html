@@ -11148,9 +11148,11 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
       if(c2 && !_staleToday(c2)){ o=c2; _saveLocal(o); apply(); _failed=false; _rerender(); return; }
       // Timeout duro: la búsqueda web NUNCA debe colgar el spinner. Si tarda demasiado se
       // trata como "sin novedades" → se conservan las anteriores (o cae al fallback local).
+      // 90s (antes 30s): la generación con web_search real tarda 50-70s → a 30s SIEMPRE hacía
+      // timeout y conservaba las noticias del día anterior ("no se actualizaban"). 90s le da margen.
       const fresh = await Promise.race([
         _generate(),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout de búsqueda de noticias')), 30000))
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout de búsqueda de noticias')), 90000))
       ]);
       const now = Date.now();
       // NUNCA sobrescribir noticias buenas con un resultado VACÍO (feriado / día sin noticias):
