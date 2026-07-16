@@ -6233,11 +6233,31 @@ async function _aiFetchVision(opts) {
       if (r.ok) return r;
     } catch(e) {}
   }
+  // PRODUCCIÓN: proxy Supabase (key server-side) ANTES que Netlify. En GitHub Pages / host
+  // estático la Netlify Function no existe → daba 405 ("Error al importar: Error 405"). El
+  // analizador de fotos debe pasar por el MISMO proxy que el resto de la IA (_aiFetch).
+  let _sbErr;
+  if (typeof _aiSbOn === 'function' && _aiSbOn()) {
+    try {
+      let _uTok = _AI_SB_ANON;
+      try { const _sbc = window.sbClient; if (_sbc) { const _gs = await _sbc.auth.getSession(); const _s = _gs && _gs.data && _gs.data.session; if (_s && _s.access_token) _uTok = _s.access_token; } } catch(e){}
+      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
+      if (r.ok) return r;
+      _sbErr = r;
+      // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
+      if (r.status === 429 || r.status === 402) {
+        let _msg = 'Alcanzaste tu límite de uso de IA. Intenta más tarde.', _code = '';
+        try { const _ej = await r.clone().json(); _code = (_ej && _ej.error_code) || ''; if (_ej && _ej.error && _ej.error.message) _msg = _ej.error.message; } catch(e){}
+        return new Response(JSON.stringify({ error: { message: _msg }, error_code: _code }), { status: r.status, headers: { 'content-type': 'application/json' } });
+      }
+    } catch(e) {}
+  }
   try {
     const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
     if (r.ok) return r;
-    // Función respondió con error y no hay key local de respaldo → devuelve el error real.
-    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return r;
+    // Función respondió con error y no hay key local de respaldo → devuelve el error real
+    // (el de Supabase si lo hubo, para no ocultar la causa con un 405 del host estático).
+    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return _sbErr || r;
   } catch(e) { /* función inalcanzable → directo */ }
   return _anthropicDirect(opts && opts.body);
 }
@@ -10036,40 +10056,17 @@ function _openOutlookEvent(evKey, outlookKey) {
 
   const sb = $('nmSentBadge');
   if (sb) {
-    if (!_pubOK) {
-      // Aún no se publica → NUNCA sentimiento/resultado. Sólo "PROGRAMADO".
-      sb.className = 'nm-sent-badge su';
-      sb.textContent = 'PROGRAMADO · AÚN NO PUBLICADO';
-    } else if (_cachedEvResult && _cachedEvResult.ocurrio === false) {
-      // IA ya confirmó que no ocurrió → badge "PROGRAMADO" desde el inicio
-      sb.className = 'nm-sent-badge su';
-      sb.textContent = 'PROGRAMADO · AÚN NO PUBLICADO';
-    } else if (_cachedEvResult && _cachedEvResult.ocurrio && _cachedEvResult.sentimiento && !_ro) {
-      const sc = _cachedEvResult.sentimiento==='pos'?'sp':_cachedEvResult.sentimiento==='neg'?'sn':'su';
-      const il = {alto:'ALTO',medio:'MEDIO',bajo:'BAJO'}[_cachedEvResult.impacto]||'MEDIO';
-      sb.className = `nm-sent-badge ${sc}`;
-      sb.textContent = `${_cachedEvResult.sentimiento==='pos'?'Sentimiento Alcista':_cachedEvResult.sentimiento==='neg'?'Sentimiento Bajista':'Sentimiento Neutral'} · IMPACTO ${il}`;
-    } else if (_ro) {
-      const sc = _ro.sentiment==='pos'?'sp':_ro.sentiment==='neg'?'sn':'su';
-      const il = {high:'ALTO',medium:'MEDIO',low:'BAJO'}[_ro.impact];
-      sb.className = `nm-sent-badge ${sc}`;
-      sb.textContent = `${_ro.sentiment==='pos'?'Sentimiento Alcista':_ro.sentiment==='neg'?'Sentimiento Bajista':'Sentimiento Neutral'} · IMPACTO ${il}`;
-    } else {
-      sb.className = `nm-sent-badge ${ev.impact==='high'?'sn':'su'}`;
-      sb.textContent = ev.impact==='high'?'ALTO IMPACTO':ev.impact==='medium'?'IMPACTO MEDIO':'BAJO IMPACTO';
-    }
+    // Catalizador PROGRAMADO: SIEMPRE "Programado · Impacto X". Nunca sentimiento (alcista/
+    // bajista) ni veredicto bueno/malo — ni de caché IA, ni de _ro, ni antes ni después de la
+    // fecha. Se queda programado por decisión de UX.
+    const _il = ev.impact==='high'?'ALTO':ev.impact==='medium'?'MEDIO':'BAJO';
+    sb.className = 'nm-sent-badge su';
+    sb.textContent = `PROGRAMADO · IMPACTO ${_il}`;
   }
 
-  // Si hay resultado cacheado, pre-poblar Market Context antes de que el modal abra
-  // (evita el parpadeo de contenido determinista → contenido AI)
-  if (_cachedEvResult && (_pubOK || _cachedEvResult.ocurrio !== true)) {
-    const mkt = document.getElementById('nmMktBody');
-    if (mkt) _renderEventResult(mkt, _cachedEvResult);
-    if (_cachedEvResult.ocurrio === false) {
-      const card = document.getElementById('nmImpactCard');
-      if (card) card.style.display = 'none';
-    }
-  }
+  // Catalizador PROGRAMADO: NUNCA se pre-puebla "Market Context" con un resultado/veredicto.
+  // "Cómo afecta al mercado" queda como brief prospectivo (nmImpactExplain) — sin decir si el
+  // evento salió bueno o malo. (_cachedEvResult se ignora a propósito.)
   set('nmByline', (ev.time||'TBD') + (ev.tickers_affected&&ev.tickers_affected.length ? ' • Afecta: ' + ev.tickers_affected.join(', ') : ''));
 
   // ── Impact on Portfolio: qué posiciones del usuario toca el evento. Se muestra tanto en
@@ -10080,12 +10077,10 @@ function _openOutlookEvent(evKey, outlookKey) {
     const affected = (ev.tickers_affected||ev.tickers||[]).map(t=>String(t).trim().toUpperCase()).filter(Boolean);
     const heldObjs = affected.map(t=>HOLDINGS.find(h=>h.ticker===t)).filter(Boolean);
     if (!heldObjs.length) { if(card) card.style.display='none'; return; }
+    // Catalizador PROGRAMADO: SIEMPRE texto prospectivo (posiciones a vigilar). Nunca
+    // "Resultado: Sentimiento X" — no se dice si el evento salió bueno o malo.
     let footer;
-    if (_ro) {
-      const sentTxt = _ro.sentiment==='pos'?'Sentimiento Alcista':_ro.sentiment==='neg'?'Sentimiento Bajista':'Sentimiento Neutral';
-      const impTxt = {high:'alto',medium:'medio',low:'bajo'}[_ro.impact];
-      footer = `Resultado: ${sentTxt} · Impacto ${impTxt} en el mercado.`;
-    } else {
+    {
       const impTxt = {high:'alto',medium:'medio',low:'bajo'}[ev.impact]||'moderado';
       footer = `Evento programado · impacto estimado ${impTxt}. ${heldObjs.length===1?'Esta posición de tu portafolio podría moverse':'Estas posiciones de tu portafolio podrían moverse'} cuando se publique.`;
     }
@@ -10250,6 +10245,9 @@ window._sharedFlushPending = _sharedFlushPending;
 // por cada cacheKey, solo haya UNA generación en vuelo: los demás reusan esa misma promesa.
 const _evResultInflight = new Map();   // cacheKey → Promise
 async function _fetchEventResultData(ev) {
+  // Catalizadores PROGRAMADOS: NUNCA se genera ni actualiza un resultado (bueno/malo). Se
+  // quedan como "Programado" — sin veredicto, sin gasto de API, sin auto-actualización.
+  return null;
   if (location.protocol === 'file:' && !window._aiKeyAvailable()) return null;
   const cacheKey = _eventCacheKey(ev);
   const cached = _nmAiGet(cacheKey);
@@ -19843,8 +19841,8 @@ function _renderWeeklyOutlook(data) {
         window._outlookEvents[outlookKey][evKey] = e;
         const ct = catTag[e.category]||catTag.other;
         const tickers = (e.tickers_affected||[]).map(t => `<span class="swc-tag ${HOLDINGS.some(h=>h.ticker===t)?'swc-tag-held':''}">${t}</span>`).join('');
-        const _cachedRes = _nmAiGet(_eventCacheKey(e));
-        const _resChip = (_cachedRes && _cachedRes.ocurrio) ? _buildCalResultChip(_cachedRes) : '';
+        // Catalizador PROGRAMADO: nunca chip de resultado (bueno/malo) en la card.
+        const _resChip = '';
         daysHtml += `<div class="swc-item" data-evkey="${evKey}" data-outlookkey="${outlookKey}" onclick="_openOutlookEvent('${evKey}','${outlookKey}')" onmouseenter="_prefetchOutlookEvent('${evKey}','${outlookKey}')" ontouchstart="_prefetchOutlookEvent('${evKey}','${outlookKey}')"><div class="swc-item-body"><div class="swc-item-title">${e.title||''}</div><div class="swc-item-ctx">${(e.description||'').slice(0,140)}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span><span class="swc-tag">${e.time||'TBD'}</span>${tickers}</div>${_resChip}</div></div>`;
       });
       daysHtml += '</div></div>';
@@ -23611,7 +23609,9 @@ const PORTIV_NEWS = {
         let ctxText = ev.summary || ev.marketImpact || '';
         // ── Resultado real SOLO una vez PUBLICADO (fecha + hora ET). Antes de eso el
         //    evento se muestra como "⏳ Programado" — sin sentimiento falso ni doble resultado. ──
-        const _published = this._isPublished(ev, day.dayIdx);
+        // Catalizador PROGRAMADO: se queda "Programado", nunca muestra resultado/sentimiento
+        // ni se auto-actualiza. (Antes: al publicarse mostraba el resultado real — revertido.)
+        const _published = false; // this._isPublished(ev, day.dayIdx);
         let ro = null;
         if (_published) {
           ro = this._realizedOutcome(ev, day.dayIdx);           // ya publicado → calcular/congelar
