@@ -555,6 +555,13 @@
   /* wrapper */
   .nm-layout { display:grid;grid-template-columns:1fr 340px;gap:28px;max-width:1100px;margin:0 auto;padding:36px 28px 60px; }
   @media(max-width:860px){ .nm-layout{grid-template-columns:1fr;} .nm-sidebar{order:-1;} }
+  /* Solo celular: quitar por completo el cuadro "Impact on Portfolio" y dejar un espacio
+     en blanco abajo para poder leer la noticia completa (el bottom-nav fijo tapaba las
+     últimas líneas). */
+  @media(max-width:700px){
+    #nmImpactCard, #nmSidebar, .nm-sidebar { display:none !important; }
+    .nm-layout { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)) !important; }
+  }
   /* article */
   .nm-article {}
   .nm-breadcrumb { font-size:10px;font-weight:700;letter-spacing:.9px;text-transform:uppercase;color:#8a96a3;margin-bottom:18px;display:flex;align-items:center;gap:6px; }
@@ -13565,6 +13572,21 @@ function initPerfChart() {
       }
     }
   });
+  // Limpia el crosshair+tooltip cuando el usuario suelta el dedo o el cursor sale: en touch
+  // Chart.js deja el tooltip activo tras el touchend y la guía vertical quedaba "colgada".
+  try {
+    var _cv = perfChart.canvas;
+    var _clearCross = function(){
+      try {
+        if (perfChart.tooltip) perfChart.tooltip.setActiveElements([], {x:0,y:0});
+        perfChart.setActiveElements([]);
+        perfChart.update('none');
+      } catch(e){}
+    };
+    ['touchend','touchcancel','pointerup','pointercancel','pointerleave','mouseleave'].forEach(function(ev){
+      _cv.addEventListener(ev, _clearCross, {passive:true});
+    });
+  } catch(e){}
   _applyChartYBounds(); // escala consistente desde el arranque
   _applyPerfYScale();   // eje Y a la escala de la foto del broker desde el inicio
 }
@@ -16885,43 +16907,43 @@ async function _peersCompData(ticker, selfMetrics, peerTickers){
 // Posición de mercado por ticker: cuota aprox. + estructura (monopolio/oligopolio/fragmentado) + líderes.
 // Hechos de industria reales y estables, redactados como aproximación (~). NO son métricas inventadas del app.
 const _MARKET_POSITION = {
-  'MU':  'En DRAM es el nº3 mundial (~20-25% de cuota), detrás de Samsung (~40%) y SK Hynix (~35%); en NAND ronda el ~10-13%. Es un oligopolio de 3 grandes, no un monopolio: sus márgenes suben y bajan con fuerza según el ciclo de oferta/demanda de memoria.',
-  'WDC': 'En discos duros (HDD) forma un duopolio con Seagate (~40-45% cada uno); en NAND compite vía su alianza con Kioxia. Sector concentrado y muy cíclico.',
-  'STX': 'En discos duros forma un duopolio con Western Digital (~40-45% cada uno) y lidera en capacidad para centros de datos. No hace memoria flash, así que evita ese ciclo.',
-  'SNDK':'Escindida de Western Digital en 2025, es uno de los grandes de almacenamiento flash/NAND (~10% del mercado). Compite con Samsung, SK Hynix/Solidigm, Micron y Kioxia en un sector fragmentado.',
-  'NVDA':'Domina los aceleradores de IA para centros de datos con ~80-90% de cuota: un cuasi-monopolio de facto. AMD e Intel están muy por detrás; su verdadero foso es el software (CUDA), no solo el chip.',
-  'AMD': 'En CPU x86 forma un duopolio con Intel y le va ganando cuota (~35-40% y subiendo). En GPU de IA es el claro nº2, aún lejos de Nvidia.',
-  'INTC':'Aún líder en CPU x86 para PC pero perdiendo cuota ante AMD año tras año. Su apuesta de foundry (fabricar para terceros) arranca muy por detrás de TSMC.',
-  'TSM': 'Mayor foundry del mundo (~60-65% del mercado) y fabrica >90% de los chips más avanzados. Es un cuasi-monopolio en la fabricación de vanguardia: Nvidia, Apple y AMD dependen de él.',
-  'ASML':'Único fabricante del planeta de litografía EUV, imprescindible para los chips avanzados: monopolio absoluto en esa tecnología. Su mayor riesgo es geopolítico, no competitivo.',
-  'AMAT':'Nº1 en equipos de fabricación de semiconductores por ingresos. Oligopolio con Lam Research, KLA y ASML; cada uno domina su especialidad.',
-  'LRCX':'Líder en equipos de grabado y deposición para chips. Oligopolio de equipos junto a Applied Materials y Tokyo Electron.',
-  'KLAC':'Cuasi-monopolio en inspección y metrología de obleas (>50% de cuota): revisa que los chips salgan sin defectos. Pocos rivales creíbles.',
-  'AVGO':'Líder en varios nichos de chips de red y conectividad, con poder de fijar precios casi monopólico en algunos ASICs; sumó software con VMware. Muy diversificado.',
-  'QCOM':'Líder en modems y chips para móviles premium (fuera de Apple, que ya diseña los suyos). Cobra regalías por patentes clave de comunicaciones.',
-  'MRVL':'Chips de infraestructura y centros de datos. Es un retador en crecimiento, no el líder; compite con Broadcom en redes y ASICs a medida.',
-  'AAPL':'Tiene ~18-20% de los smartphones por unidades pero se queda con la mayor parte del beneficio de todo el sector. Domina la gama alta y su foso es el ecosistema (iOS + servicios).',
-  'GOOGL':'Controla ~90% de las búsquedas del mundo: un cuasi-monopolio. Android domina el móvil y YouTube lidera el vídeo; su riesgo mayor es regulatorio.',
-  'META': 'Dueña de las mayores redes sociales del mundo (~4.000 millones de usuarios entre sus apps). Con Google forma el duopolio de la publicidad digital.',
-  'AMZN': 'Nº1 del comercio electrónico en EEUU (~38%) y líder de la nube con AWS (~30%). Dos negocios dominantes bajo el mismo techo.',
-  'MSFT': 'Windows está en ~70%+ de los PC, Office domina la productividad y Azure es el nº2 en nube (~23%). Cuasi-monopolio en software empresarial.',
-  'NFLX': 'La mayor plataforma de streaming por suscriptores e ingresos, aunque el sector se llenó de rivales (Disney+, Amazon, etc.). Lidera pero ya no está sola.',
-  'V':    'Mayor red de pagos del mundo; con Mastercard forma un duopolio (juntas >50% del pago con tarjeta fuera de China). Negocio de peaje con márgenes altísimos.',
-  'MA':   'Segunda mayor red de pagos; duopolio con Visa. Cobra una pequeña comisión por cada transacción a escala global: márgenes muy altos.',
-  'AXP':  'Red de pagos cerrada y premium, enfocada en clientes de alto gasto. Es más pequeña que Visa/Mastercard pero controla toda su cadena (red + banco).',
-  'JPM':  'El mayor banco de EEUU por activos y muy diversificado, pero la banca está fragmentada: no hay monopolio y compite con miles de bancos.',
-  'BAC':  'Segundo mayor banco de EEUU por activos. Sector fragmentado y sensible a los tipos de interés; sin dominio absoluto.',
-  'WFC':  'Uno de los cuatro grandes bancos de EEUU, fuerte en banca minorista e hipotecas. Sector fragmentado, sin monopolio.',
-  'GS':   'Líder en banca de inversión y trading; oligopolio con Morgan Stanley y JPMorgan. Negocio cíclico ligado a los mercados.',
-  'MS':   'Líder en gestión de patrimonio y banca de inversión; oligopolio con Goldman Sachs. Su giro a comisiones de patrimonio lo hace más estable.',
-  'LLY':  'Líder en fármacos GLP-1 para diabetes y obesidad, en un duopolio con Novo Nordisk sobre un mercado enorme y en plena expansión.',
-  'UNH':  'La mayor aseguradora de salud de EEUU y muy integrada (seguros + servicios). Sector concentrado en pocos gigantes pero competido.',
-  'PLTR': 'Software de análisis de datos e IA para gobierno y grandes empresas. Nicho con pocos rivales directos; su foso es lo pegado que queda a la operación del cliente.',
-  'CRWD': 'Líder en seguridad de dispositivos (EDR) desde la nube. Mercado en crecimiento pero muy disputado con Microsoft, SentinelOne y Palo Alto.',
-  'PANW': 'Líder en ciberseguridad de red y plataforma integrada. Sector fragmentado en el que gana terreno consolidando varias herramientas en una.',
-  'COST': 'Club de membresía líder junto a Sam’s Club. Su foso es la lealtad y la cuota de socios; retail muy competido pero con márgenes defendidos por volumen.',
-  'TSLA': 'Pionero y líder en vehículos eléctricos, aunque pierde cuota frente a los fabricantes chinos y tradicionales. Su apuesta real es software, conducción autónoma y energía.',
-  'UBER': 'Líder en movilidad compartida en EEUU (~70%+) y fuerte en reparto. Duopolios regionales con Lyft (movilidad) y DoorDash (comida).',
+  'MU':  'En DRAM es el nº3 mundial (~20-25% de cuota), detrás de Samsung (~40%) y SK Hynix (~35%); en NAND ronda el ~10-13%. Es un oligopolio de 3 grandes en DRAM, no un monopolio, lo que da cierta disciplina de precios. Aun así sus márgenes son de los más cíclicos del sector: se hunden con la sobreoferta y se disparan con la demanda de memoria para IA (HBM), hoy su mayor palanca.',
+  'WDC': 'En discos duros (HDD) forma un duopolio con Seagate, con ~40-45% de cuota cada uno; en memoria flash compite a través de su alianza con Kioxia. Su valor depende de dos ciclos distintos —disco y NAND— muy sensibles a la oferta. Por eso escindió su negocio flash (Sandisk), para separar esas dinámicas.',
+  'STX': 'En discos duros forma un duopolio con Western Digital (~40-45% cada uno) y lidera en unidades de alta capacidad para centros de datos. Al no fabricar memoria flash, evita ese ciclo y se concentra en el almacenamiento masivo. Su apuesta tecnológica (HAMR) busca abaratar el coste por terabyte frente al SSD.',
+  'SNDK':'Escindida de Western Digital en 2025, es uno de los grandes del almacenamiento flash/NAND (~10% del mercado). Compite en un sector fragmentado con Samsung, SK Hynix/Solidigm, Micron y Kioxia. Los precios son muy cíclicos y la escala en fabricación es lo que marca la diferencia.',
+  'NVDA':'Domina los aceleradores de IA para centros de datos con ~80-90% de cuota: un cuasi-monopolio de facto. Su verdadero foso no es solo el chip, sino el software (CUDA) y el ecosistema, que atan al cliente. AMD e Intel van años por detrás, aunque los propios hiperescaladores diseñan chips propios como amenaza a largo plazo.',
+  'AMD': 'En CPU x86 forma un duopolio con Intel y le gana cuota año tras año (~35-40% y subiendo), sobre todo en servidores. En GPU de IA es el claro nº2, aún lejos de Nvidia, pero la única alternativa creíble. Su modelo sin fábricas propias (usa TSMC) le da flexibilidad frente a un Intel más pesado.',
+  'INTC':'Aún líder en CPU x86 para PC, pero pierde cuota ante AMD trimestre a trimestre. Su gran apuesta es convertirse en foundry y fabricar para terceros, un negocio en el que arranca muy por detrás de TSMC y que quema mucho capital. Es la transformación más arriesgada del sector.',
+  'TSM': 'Mayor foundry del mundo (~60-65% de cuota) y fabrica más del 90% de los chips más avanzados. Es un cuasi-monopolio de la fabricación de vanguardia: Nvidia, Apple y AMD dependen de él para sus mejores productos. Su único riesgo real es geopolítico (Taiwán), no competitivo.',
+  'ASML':'Único fabricante del planeta de litografía EUV, la máquina imprescindible para los chips avanzados: un monopolio absoluto en esa tecnología. Cada equipo cuesta cientos de millones y nadie más sabe fabricarlo. Su riesgo es geopolítico y de ciclo, no de competencia.',
+  'AMAT':'Nº1 en equipos de fabricación de semiconductores por ingresos, con la cartera más amplia. Forma un oligopolio con Lam Research, KLA y ASML, donde cada uno domina su especialidad. Se beneficia de cualquier expansión de capacidad del sector, venga de quien venga.',
+  'LRCX':'Líder en equipos de grabado y deposición, pasos críticos para apilar chips en 3D (clave en memoria avanzada). Forma un oligopolio de equipos junto a Applied Materials y Tokyo Electron. Su crecimiento va ligado a la inversión en memoria y en nodos de vanguardia.',
+  'KLAC':'Cuasi-monopolio en inspección y metrología de obleas (>50% de cuota): sus máquinas detectan defectos antes de que arruinen un lote entero. Cuanto más complejos son los chips, más se necesitan sus equipos. Pocos rivales creíbles y márgenes de los más altos del sector.',
+  'AVGO':'Líder en varios nichos de chips de red y conectividad, con poder de fijar precios casi monopólico en ciertos ASICs a medida. Sumó una gran pata de software con la compra de VMware, que estabiliza sus ingresos. Muy diversificado y con márgenes de élite.',
+  'QCOM':'Líder en modems y chips para móviles premium (fuera de Apple, que ya diseña los suyos). Además cobra regalías por patentes clave de comunicaciones, un negocio de altísimo margen. Su reto es depender del ciclo del smartphone y diversificar hacia automoción e IoT.',
+  'MRVL':'Chips de infraestructura y centros de datos: redes, almacenamiento y ASICs a medida para IA. Es un retador en fuerte crecimiento, no el líder; compite de tú a tú con Broadcom por los chips personalizados de los hiperescaladores. Su tesis se apoya casi toda en la demanda de IA.',
+  'AAPL':'Tiene ~18-20% de los smartphones por unidades, pero captura la mayor parte del beneficio de todo el sector. Su foso es el ecosistema (iOS, App Store, servicios), que retiene al cliente y genera ingresos recurrentes de alto margen. Domina la gama alta, donde está casi todo el dinero.',
+  'GOOGL':'Controla ~90% de las búsquedas del mundo: un cuasi-monopolio que financia casi todo lo demás. Android lidera el móvil y YouTube el vídeo. Su mayor riesgo no es un rival, sino la regulación antimonopolio y que la IA cambie la forma de buscar.',
+  'META': 'Dueña de las mayores redes sociales del mundo (~4.000 millones de usuarios entre Facebook, Instagram y WhatsApp). Con Google forma el duopolio de la publicidad digital. Su apuesta cara y a largo plazo por el metaverso (Reality Labs) es el principal punto de debate.',
+  'AMZN': 'Nº1 del comercio electrónico en EEUU (~38%) y, sobre todo, líder de la nube con AWS (~30%), que aporta la mayoría del beneficio. Dos negocios dominantes bajo un mismo techo, más una publicidad que crece rápido. Su escala logística es casi imposible de replicar.',
+  'MSFT': 'Windows está en ~70%+ de los PC, Office domina la productividad y Azure es el nº2 en nube (~23%) creciendo rápido. Su integración con IA (OpenAI/Copilot) refuerza toda la cartera. Es uno de los fosos más anchos y diversificados del mercado.',
+  'NFLX': 'La mayor plataforma de streaming del mundo por suscriptores e ingresos, y ya rentable donde muchos rivales pierden dinero. El sector se llenó de competidores (Disney+, Amazon…), así que su ventaja es la escala y el catálogo. Sus nuevas palancas son la publicidad y frenar las cuentas compartidas.',
+  'V':    'Mayor red de pagos del mundo; con Mastercard forma un duopolio que mueve más del 50% del pago con tarjeta fuera de China. Es un negocio de peaje: cobra una comisión mínima por transacción, sin asumir riesgo de crédito. Márgenes altísimos y crece con el paso del efectivo a lo digital.',
+  'MA':   'Segunda mayor red de pagos; duopolio con Visa sobre los rieles del pago global. Igual que Visa, cobra por transacción sin asumir el crédito, con márgenes muy altos. Su riesgo a largo plazo son los nuevos sistemas de pago que intenten saltarse sus rieles.',
+  'AXP':  'Red de pagos cerrada y premium, centrada en clientes de alto gasto a los que además presta (a diferencia de Visa/Mastercard). Es más pequeña, pero controla toda la cadena —red, tarjeta y banco—, lo que le da márgenes y lealtad. Su principal riesgo es el crédito en una recesión.',
+  'JPM':  'El mayor banco de EEUU por activos y el más diversificado (minorista, inversión, gestión). Aun así la banca está muy fragmentada: compite con miles de bancos y no hay monopolio. Suele salir reforzado de las crisis, cuando los rivales débiles caen.',
+  'BAC':  'Segundo mayor banco de EEUU por activos, muy fuerte en banca minorista y depósitos. Sector fragmentado y muy sensible a los tipos de interés, que mueven sus beneficios. Su enorme base de depósitos baratos es su principal ventaja.',
+  'WFC':  'Uno de los cuatro grandes bancos de EEUU, muy centrado en banca minorista e hipotecas. Sector fragmentado, sin monopolio. Sale de años de sanciones regulatorias que le limitaron el crecimiento, lo que le abre margen de mejora.',
+  'GS':   'Líder en banca de inversión y trading, en un oligopolio junto a Morgan Stanley y JPMorgan. Es un negocio cíclico: brilla cuando hay muchas operaciones y salidas a bolsa. Intenta añadir ingresos más estables de gestión de activos.',
+  'MS':   'Líder en gestión de patrimonio y banca de inversión; oligopolio con Goldman Sachs. Su giro hacia comisiones de gestión de patrimonio lo hace menos cíclico que los rivales de trading puro. Ese ingreso recurrente es su gran atractivo.',
+  'LLY':  'Líder en fármacos GLP-1 para diabetes y obesidad, en un duopolio con Novo Nordisk sobre un mercado gigantesco y en plena explosión. La demanda supera con creces a la oferta, lo que le da un poder de precios poco habitual en farma. Su reto es ampliar capacidad y defender patentes.',
+  'UNH':  'La mayor aseguradora de salud de EEUU y muy integrada (seguros + servicios médicos vía Optum). El sector está concentrado en pocos gigantes, pero es competido y muy regulado. Su escala y sus datos le dan ventajas de coste difíciles de igualar.',
+  'PLTR': 'Software de análisis de datos e IA para gobierno y grandes empresas, con pocos rivales directos de su alcance. Su foso es lo pegado que queda a la operación del cliente una vez implantado. El gran debate es su valoración, muy alta respecto a sus ventas.',
+  'CRWD': 'Líder en seguridad de dispositivos (EDR) desde la nube, con una plataforma a la que suma cada vez más módulos para el mismo cliente. Mercado en crecimiento pero disputado con Microsoft, SentinelOne y Palo Alto. Su ventaja es una sola plataforma y datos de amenazas a gran escala.',
+  'PANW': 'Líder en ciberseguridad de red y en plataforma integrada, ganando terreno al consolidar varias herramientas en una (su estrategia de "platformización"). Es un sector fragmentado con muchos actores de nicho. Busca ser el proveedor único de seguridad de sus clientes.',
+  'COST': 'Club de membresía líder junto a Sam’s Club, con un modelo peculiar: gana casi todo el beneficio de las cuotas de socios, no del margen de los productos. Eso le permite vender barato y fidelizar. Retail muy competido, pero su lealtad y volumen son un foso real.',
+  'TSLA': 'Pionero y líder en vehículos eléctricos, aunque pierde cuota frente a los fabricantes chinos (BYD) y a las marcas tradicionales. Su verdadera tesis de valor está en el software, la conducción autónoma y la energía, más que en vender coches. Es una apuesta a futuro con valoración muy alta.',
+  'UBER': 'Líder en movilidad compartida en EEUU (~70%+) y muy fuerte en reparto de comida. Forma duopolios regionales con Lyft (movilidad) y DoorDash (comida), y su tamaño le da un efecto de red difícil de replicar. Ya genera caja tras años de pérdidas.',
 };
 // Frase de BRECHA vs rivales derivada de los datos REALES de la tabla (P/E vs mediana + liderazgo margen/ROE).
 function _peerGapText(ticker, rows){
@@ -16956,7 +16978,7 @@ function _renderPeersInto(host, ticker, rows){
   let _posBlock = '';
   if (_gap || _pos){
     const _body = [_gap, _pos].filter(Boolean).join(' ');
-    _posBlock = `<div class="px-mktpos" style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--px-green,#0A7A52);background:var(--px-green-soft,rgba(10,122,82,.06));border-radius:8px;font-size:13.5px;line-height:1.65;color:var(--px-ink-soft,#3a4a44)"><b style="color:var(--px-green-text,#0A7A52)">Posición de mercado.</b> ${esc(_body)}</div>`;
+    _posBlock = `<div class="px-mktpos" style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--px-ink,#1a2536);background:rgba(26,37,54,.045);border-radius:8px;font-size:13.5px;line-height:1.7;color:var(--px-ink-soft,#3a4658)"><b style="color:var(--px-ink,#1a2536)">Posición de mercado.</b> ${esc(_body)}</div>`;
   }
   host.innerHTML = `<div class="px-card"><h2 class="px-sec-title">Comparación con competidores</h2>
     <p class="px-intro">La misma acción se ve distinta al lado de sus rivales. Aquí ${esc(ticker)} contra sus competidores del sector.</p>
