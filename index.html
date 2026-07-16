@@ -22917,7 +22917,7 @@ window.PORTIV_SYNC = PORTIV_SYNC;
 //  Cero datos fake · fechas nunca hardcodeadas · rotación real lunes 08:00 America/New_York.
 // ════════════════════════════════════════════════════════════════════════════
 const PORTIV_NEWS = {
-  VERSION: 1,
+  VERSION: 2,
   TZ: 'America/New_York',
   CFG: {
     topPerDay: 2,            // máx eventos por día en "Esta Semana" (solo los 2 catalizadores top)
@@ -23067,6 +23067,20 @@ const PORTIV_NEWS = {
     const impLbl = { high:'Alto', medium:'Medio', low:'Bajo' }[ro.impact];
     return `<span class="swc-tag" style="${sent.style};font-weight:700">${sent.ic} ${sent.lbl} · Impacto ${impLbl}</span>`;
   },
+  // Texto de RESULTADO local (sin API) para un catalizador ya publicado. Deriva la reacción del
+  // movimiento real de sus tickers (earnings de UNH → mueve UNH; jobless claims → VOO proxy).
+  _realizedLine(ev, ro){
+    if (!ro) return '';
+    const dir = ro.avg > 0.02 ? 'subió' : ro.avg < -0.02 ? 'bajó' : 'quedó plano';
+    const mag = Math.abs(ro.avg).toFixed(2);
+    const held = (ev.heldTickers && ev.heldTickers.length) ? ev.heldTickers.join(', ')
+               : (ev.tickers || []).slice(0, 3).join(', ');
+    const who = held || 'el mercado (VOO)';
+    const mov = (dir === 'quedó plano') ? `${who} quedó plano` : `${who} ${dir} ${mag}%`;
+    return (ev.category === 'earnings')
+      ? `Resultado publicado: ${mov} en la sesión.`
+      : `Dato publicado: ${mov} tras la cifra.`;
+  },
 
   _SEMIS: ['nvda','tsm','mu','amd','asml','smh','soxx','semiconductor','chip','chips','wafer','foundry'],
   _INDEX_KW: ['s&p','sp500','spx','spy','nasdaq','ndx','qqq','dow jones','russell','iwm','vix','índice','index'],
@@ -23178,6 +23192,26 @@ const PORTIV_NEWS = {
   //  PIPELINE — Construye el modelo CANÓNICO de una semana desde fuentes reales.
   //  Flujo: fetch → normaliza → dedup → clasifica → puntúa → ordena → top/día → JSON.
   // ──────────────────────────────────────────────────────────────────────────
+  // Macro DETERMINISTA y COMPLETO (CPI, PPI, jobless claims, Retail Sales, FOMC, Nonfarm, ADP,
+  // ISM…) desde el calendario económico real de EE.UU. Sin API. Cada catalizador programado
+  // se rellena con su RESULTADO local al publicarse (ver _realizedOutcome / _realizedLine).
+  _macroEventsRich(offset){
+    try {
+      if (typeof _macroEventsForWeek !== 'function') return this._macroEvents(offset);
+      const mon = this.mondayOf(offset);
+      return _macroEventsForWeek(mon).map(m => this._mkEvent({
+        title:   m.h,
+        summary: m.detail || '',
+        impact:  m.imp || 'medium',          // high | medium | low (m.imp, NO m.impact)
+        category: 'macro',
+        tickers: String(m.impact || '').split(',').map(t => t.trim()).filter(Boolean),
+        time:    m.time || 'TBD',
+        source:  'Calendario económico EE.UU.',
+        s:       m.s || 'neu',
+        date:    new Date(m._date + 'T12:00:00'),
+      }));
+    } catch(e){ return this._macroEvents(offset); }
+  },
   // Evento macro recurrente DETERMINISTA (NFP 1er viernes, ISM 1er hábil) — fecha calculada, no hardcodeada.
   _macroEvents(offset){
     const mon = this.mondayOf(offset);
@@ -23400,11 +23434,9 @@ const PORTIV_NEWS = {
     const b = this.weekBounds(0);
     const [earnings] = await Promise.all([ this.fetch.earnings(b.startISO, b.endISO) ]);
     const events = [
-      ...this._macroEvents(0),
+      ...this._macroEventsRich(0),   // macro determinista RICO (CPI/PPI/jobless claims/FOMC/Nonfarm) — sin API
       ...this._earningsToEvents(earnings),
-      ...this._newsToEvents(),
-      ...this._weekTopToEvents(),   // fusiona el acumulado legacy (persistido en week_top_*)
-      ...this._outlookToEvents(0),  // MIGRA los catalizadores del outlook de esta semana
+      ...this._outlookToEvents(0),   // catalizadores del outlook de esta semana (sin noticias genéricas)
     ];
     const model = this._toCanonical(events, 0);
     // ── ESTABILIDAD DE "HOY" Y DÍAS PASADOS ──────────────────────────────────────────
@@ -23440,7 +23472,7 @@ const PORTIV_NEWS = {
     const cached = this.load(1);
     const b = this.weekBounds(1);
     const earnings = await this.fetch.earnings(b.startISO, b.endISO);
-    const events = [ ...this._macroEvents(1), ...this._earningsToEvents(earnings) ];
+    const events = [ ...this._macroEventsRich(1), ...this._earningsToEvents(earnings) ];
     const model = this._toCanonical(events, 1);
     this.save(1, model); this._next = model;
     // El outlook narrativo IA (Claude+web_search) se encarga del render de "Próxima Semana".
@@ -23539,7 +23571,7 @@ const PORTIV_NEWS = {
         const k = 'pn_' + ev.id; window._outlookEvents[k] = ev;
         const tk = (ev.tickers||[]).slice(0,5);
         const ct = catTag[ev.category] || catTag.other;
-        const ctxText = ev.summary || ev.marketImpact || '';
+        let ctxText = ev.summary || ev.marketImpact || '';
         // ── Resultado real SOLO una vez PUBLICADO (fecha + hora ET). Antes de eso el
         //    evento se muestra como "⏳ Programado" — sin sentimiento falso ni doble resultado. ──
         const _published = this._isPublished(ev, day.dayIdx);
@@ -23549,6 +23581,8 @@ const PORTIV_NEWS = {
           if (ro && JSON.stringify(ro) !== JSON.stringify(ev.realized || null)) { ev.realized = ro; _roChanged = true; }
           else if (!ro && ev.realized) { ro = ev.realized; }    // sin datos ahora pero ya había
         }
+        // Publicado → el texto describe el RESULTADO local del catalizador (earnings/jobless claims/etc).
+        if (_published) { const _rl = this._realizedLine(ev, ro); if (_rl) ctxText = _rl; }
         const _impES = ({ high:'Alto', medium:'Medio', low:'Bajo' })[ev.impact] || 'Medio';
         const realizedTag = _published
           ? this._realizedBadge(ro)
