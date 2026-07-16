@@ -12613,10 +12613,20 @@ const PORTIV_CHART = {
       // derivado del % del broker) y el FIN (=total en vivo) al dato real, preservando la FORMA
       // (picos/valles) de la serie. Sin esto, si la serie venía de una reconstrucción imperfecta
       // (inicio erróneo), la CURVA podía contradecir el badge (badge +0.55% con línea que baja).
-      if(_base>0 && vals.length>=2 && isFinite(first) && Math.abs(last2-first)>1e-6){
+      if(_base>0 && vals.length>=2 && isFinite(first)){
         const _oldFirst=first, _denom=(last2-_oldFirst), _num=(last2-_base);
-        for(let i=0;i<vals.length;i++){ vals[i]=+(_base+(vals[i]-_oldFirst)*_num/_denom).toFixed(2); }
-        vals[0]=+_base.toFixed(2); vals[vals.length-1]=+last2.toFixed(2);
+        // Guard RELATIVO al nivel de la serie: si el rango [first..last] es < ~0.05% del valor
+        // final, _denom es diminuto y la afín AMPLIFICA el ruido → la curva contradice el badge
+        // o se dispara. En ese caso construye una rampa monótona limpia _base→last2 (conservando
+        // el nº de puntos). Solo aplica la afín cuando el rango es suficientemente grande.
+        const _rel = Math.abs(_denom) / Math.max(1, Math.abs(last2));
+        if(_rel > 0.0005){
+          for(let i=0;i<vals.length;i++){ vals[i]=+(_base+(vals[i]-_oldFirst)*_num/_denom).toFixed(2); }
+          vals[0]=+_base.toFixed(2); vals[vals.length-1]=+last2.toFixed(2);
+        } else {
+          const _n=vals.length;
+          for(let i=0;i<_n;i++){ const t=i/(_n-1); vals[i]=+(_base+(last2-_base)*t).toFixed(2); }
+        }
       }
     }
     const _raw={labels:lbls,dates,values:vals,change,changePct,since:lbls[0]||''};
@@ -12695,6 +12705,9 @@ window.PORTIV_BROKER = {
   sync(data) {
     if (!data || typeof data !== 'object') { console.warn('[PORTIV_BROKER] payload inválido'); return false; }
     try {
+      // Bloque 4: conexión de broker REAL → limpia la semilla personal del dueño antes de aplicar
+      // (no filtrar 10,146/10,225/−1.21% ni fechas de abril-2026 a otra cuenta). Idempotente.
+      try { if (typeof _brokerClearSeed === 'function') _brokerClearSeed(); } catch(e){}
       // ── POSICIONES (autoritativas) ──
       if (Array.isArray(data.positions)) {
         const clean = data.positions.filter(p => p && p.ticker && isFinite(+p.qty));
@@ -12938,6 +12951,14 @@ window.PORTIV_HIST = PORTIV_HIST;
 const _DAILY_LS_KEY = 'portiv_daily_history_v1';
 
 function _todayISO() {
+  // "Hoy" = fecha de MERCADO (America/New_York), NO la local del dispositivo. En Panamá (o
+  // cualquier zona ≠ ET, incl. el horario de verano de EE.UU.) la fecha local difería un día
+  // de la ET → off-by-one: ejes mal etiquetados, el remapeo a "hoy" de _sanitizeValueChart y
+  // los chequeos _daysToNow<=4 / _coversStart fallaban. Delega en el MISMO helper del motor de
+  // la gráfica (PORTIV_CHART._todayET) para que el último punto y el borde derecho coincidan.
+  try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART._todayET) return PORTIV_CHART._todayET(); } catch(e){}
+  // Fallback: ET vía Intl (en-CA da YYYY-MM-DD).
+  try { return new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); } catch(e){}
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
@@ -13166,10 +13187,25 @@ function _injectPeriodAnchors(periodChanges, totalVal){
     let refTotal = +totalVal;
     try { if (typeof calcTotals === 'function') { const lt = +calcTotals().total.toFixed(2); if (lt > 0) refTotal = lt; } } catch(e){}
     const spanMonths = { '1M':1, '3M':3, '6M':6, '1Y':12, '2Y':24, '3Y':36 };
-    const today = new Date();
-    const todayISO = today.toISOString().slice(0,10);
+    // "Hoy" = fecha de MERCADO ET (no la local del dispositivo) → el ancla de hoy y las
+    // fronteras de período caen en la MISMA fecha que abre la ventana de generate().
+    const todayISO = (typeof _todayISO === 'function') ? _todayISO() : new Date().toISOString().slice(0,10);
+    const today = new Date(todayISO + 'T12:00:00');
     const map = {};
     PERF_MASTER.dates.forEach((d,i) => { if (d) map[d] = PERF_MASTER.values[i]; });
+    // Bloque 3.2: si la serie viene EN VIVO del broker (densa y real), NO pisar sus puntos con
+    // el ancla sintética. Solo se inyecta el ancla donde la serie está VACÍA (hueco real). El
+    // camino de la FOTO (OCR) NO activa _BROKER_LIVE → ahí las anclas siguen operando como antes
+    // (necesarias para que el % del período reproduzca el del broker exacto sin drift).
+    const _brokerLive = (typeof window !== 'undefined' && window._BROKER_LIVE);
+    const _realDates = _brokerLive ? Object.keys(map) : [];
+    const _hasRealNear = (isoStr) => {
+      if (!_realDates.length) return false;
+      const t0 = new Date(isoStr + 'T12:00:00').getTime();
+      for (const d of _realDates){ const t = new Date(d + 'T12:00:00').getTime();
+        if (isFinite(t) && Math.abs(t - t0) <= 2*86400000) return true; }
+      return false;
+    };
     Object.keys(periodChanges).forEach(k => {
       const pct = (typeof _aiNum === 'function') ? _aiNum(periodChanges[k]) : +periodChanges[k];
       if (pct == null || !isFinite(pct) || (1 + pct/100) === 0) return;
@@ -13186,9 +13222,10 @@ function _injectPeriodAnchors(periodChanges, totalVal){
         iso = d.toISOString().slice(0,10);
       }
       const v = +(refTotal / (1 + pct/100)).toFixed(2);
-      // Ancla el valor al inicio del período = total/(1+%). Sobrescribe el punto de esa fecha
-      // exacta para que el % calculado REPRODUZCA el del broker (los demás días no se tocan).
-      if (v > 0) map[iso] = v;
+      // Ancla el valor al inicio del período = total/(1+%) SOLO si esa zona está vacía. Si ya
+      // hay un punto REAL del broker (serie en vivo) dentro de ±2 días, se respeta (no inventar
+      // sobre dato real). El ancla de hoy (map[todayISO], abajo) queda intacta en ambos casos.
+      if (v > 0 && !_hasRealNear(iso)) map[iso] = v;
     });
     map[todayISO] = +refTotal.toFixed(2);  // hoy = total en vivo (consistente con generate())
     const dates = Object.keys(map).sort();
@@ -22161,6 +22198,22 @@ function _aiOpenReviewEditor(posCount){
   }
 }
 
+// Hash barato y determinista de TODO el base64 (muestrea cada ~997 chars → rápido en imágenes
+// grandes). Se usa para la clave de caché OCR: dos screenshots del mismo dispositivo comparten
+// cabecera (los primeros ~120 chars) → una clave por prefijo colisionaba y servía un resultado
+// cacheado equivocado. Longitud total + hash del contenido completo desambigua sin costo notable.
+function _cheapHash(s){
+  const n = s.length; let h = 0x811c9dc5;
+  // Muestrea TODO el string con paso adaptativo (≤~2048 muestras → rápido incluso en base64 de
+  // varios MB) y mezcla SIEMPRE el último char + la longitud. Un paso fijo (p.ej. 997) podía
+  // saltarse justo el byte que difiere entre dos screenshots de igual longitud → falsa colisión.
+  const step = Math.max(1, Math.floor(n / 2048));
+  for (let i = 0; i < n; i += step) { h = (h ^ s.charCodeAt(i)); h = Math.imul(h, 16777619) >>> 0; }
+  if (n) { h = (h ^ s.charCodeAt(n - 1)) >>> 0; }
+  h = (h ^ n) >>> 0;
+  return h.toString(36);
+}
+
 async function aiPortExtract(){
   if (location.protocol === 'file:' && !window._aiKeyAvailable()) {
     showToast('Abre la app en http://localhost:8765 (no con doble-clic) para usar la IA', 'var(--red)');
@@ -22168,8 +22221,8 @@ async function aiPortExtract(){
   }
   if (!_aiFiles.length) { showToast('Sube un screenshot primero', 'var(--red)'); return; }
 
-  // Check OCR cache (keyed by first 120 chars of each image's base64)
-  const cacheKey = _aiFiles.map(f => f.base64.slice(0, 120)).join('|');
+  // Check OCR cache (clave = longitud total + hash de TODO el base64, no solo el prefijo → sin colisiones)
+  const cacheKey = _aiFiles.map(f => f.base64.length + ':' + _cheapHash(f.base64)).join('|');
   if (_ocrCache.has(cacheKey)) {
     const cached = _ocrCache.get(cacheKey);
     aiPortImportData(cached);
@@ -22220,6 +22273,23 @@ async function aiPortExtract(){
         if (vdata && Array.isArray(vdata.positions) && vdata.positions.length) {
           // La verificación se enfoca en posiciones/totales; conserva chart de la 1ª lectura.
           finalData = { ...data, ...vdata };
+          // Bloque 5.2: NUNCA reducir el conjunto de posiciones. Si la verificación trae MENOS
+          // filas que la 1ª lectura, fusiona por ticker: parte de la 1ª lectura COMPLETA y solo
+          // actualiza (o agrega) las filas que la verificación corrige. Solo se acepta como
+          // reemplazo total cuando trae ≥ tantas filas como la 1ª lectura.
+          const _firstPos = Array.isArray(data.positions) ? data.positions : [];
+          const _vPos = vdata.positions;
+          if (_vPos.length >= _firstPos.length) {
+            finalData.positions = _vPos;                         // conjunto igual o mayor → reemplazo directo
+          } else {
+            const _tk = p => String((p && p.ticker) || '').trim().toUpperCase();
+            const _byTk = new Map();
+            _firstPos.forEach(p => { const k = _tk(p); if (k) _byTk.set(k, p); });   // base = 1ª lectura
+            _vPos.forEach(p => { const k = _tk(p); if (k) _byTk.set(k, p); });       // corrige/añade con la verificación
+            // Conserva cualquier fila sin ticker de la 1ª lectura (no identificable, no se descarta).
+            const _noTk = _firstPos.filter(p => !_tk(p));
+            finalData.positions = [..._byTk.values(), ..._noTk];
+          }
           ['value_chart','chart_x_labels','chart_y_axis','chart_selected_period'].forEach(k => {
             if (vdata[k] == null && data[k] != null) finalData[k] = data[k];
           });
@@ -24636,8 +24706,8 @@ function _seedPerfFromNow(){
     if (PERF_MASTER && Array.isArray(PERF_MASTER.values) && PERF_MASTER.values.length >= 2) return false;
     const total = +calcTotals().total.toFixed(2);
     if (!(total > 0)) return false;                       // sin valor todavía → no sembrar
-    const today = new Date();
-    const iso   = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`;
+    const iso   = (typeof _todayISO === 'function') ? _todayISO() : new Date().toISOString().slice(0,10);
+    const today = new Date(iso + 'T12:00:00');   // fecha de MERCADO ET (no la local del dispositivo)
     const lbl   = _fmtDayMonthES(today);
     // 2 puntos idénticos en la fecha de hoy → línea plana 0% (punto de partida).
     PERF_MASTER = { labels: [lbl, lbl], dates: [iso, iso], values: [total, total] };
@@ -24659,6 +24729,28 @@ function _aiSyncPerfSeries(){
     ['1M','ALL','1W','2W'].forEach(k => { const pd = PERF_DATA[k]; if (pd && pd.values && pd.values.length) pd.values[pd.values.length - 1] = total; });
   } catch(e) {}
 }
+
+// ── Bloque 4: al confirmarse una conexión de broker REAL, borra la semilla personal del dueño
+// (snapshot Schwab hardcodeado: INITIAL_CAPITAL/TOTAL_OVERRIDE/PERF_MASTER/PERIOD_CHANGE_OVERRIDE)
+// ANTES de aplicar los datos del broker. Así una cuenta recién conectada NUNCA ve 10,146 / 10,225
+// / −1.21% / +0.55% ni fechas de abril-2026 ajenas. Idempotente (flag window._SEED_CLEARED) para
+// no re-borrar en refrescos. El modo demo / sin-conectar NO se toca: solo se limpia con una
+// conexión de broker activa. La inception efectiva de la gráfica pasa a ser el PRIMER punto real
+// de la serie del broker (PERF_MASTER); INCEPTION/INCEPTION_DATE son const → no reasignables, así
+// que no se usan como semilla una vez que hay serie real.
+function _brokerClearSeed(){
+  try { if (typeof window !== 'undefined' && window._SEED_CLEARED) return true; } catch(e){}
+  try { PERF_MASTER = { dates:[], values:[], labels:[] }; } catch(e){}
+  try { if (typeof _buildPerfData === 'function') PERF_DATA = _buildPerfData(PERF_MASTER); } catch(e){}
+  try { PERIOD_CHANGE_OVERRIDE = {}; } catch(e){}
+  try { TOTAL_OVERRIDE = null; } catch(e){}            // el total se recalcula desde las posiciones/serie reales
+  try { INITIAL_CAPITAL = 0; } catch(e){}              // lo fija el broker (capital/primer punto real); 0 = sin semilla
+  try { window._SAVED_PERF_MASTER = null; } catch(e){} // no re-sembrar desde snapshot guardado
+  try { _chartYMin = null; if (typeof _chartYMax !== 'undefined') _chartYMax = null; } catch(e){}
+  try { window._SEED_CLEARED = true; } catch(e){}
+  return true;
+}
+try { if (typeof window !== 'undefined') window._brokerClearSeed = _brokerClearSeed; } catch(e){}
 
 // Devuelve la API key guardada en el navegador; si no existe, la pide una vez y la guarda.
 function _ensureApiKey(){
@@ -26388,7 +26480,27 @@ document.addEventListener('DOMContentLoaded', function(){
       });
     });
     if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
-    return { cash_balance:cash, portfolio_value:total, positions:positions };
+    // Bloque 2.3: si el broker expone rendimiento por período en el payload (algunas cuentas lo
+    // traen), léelo → aiPortImportData lo ancla vía _injectPeriodAnchors. Si NO viene, NO se
+    // inventa override: se omite → PORTIV_HIST reconstruye el % REAL de cada ventana (Yahoo).
+    var period_changes = null;
+    try {
+      var _src = null;
+      if (holdings && typeof holdings==='object' && !Array.isArray(holdings)) _src = holdings.period_changes || holdings.performance || holdings.returns || null;
+      if (!_src) { for (var _i=0;_i<accounts.length;_i++){ var _a=accounts[_i]; var _c=_a&&(_a.period_changes||_a.performance||_a.returns); if(_c){ _src=_c; break; } } }
+      if (_src && typeof _src==='object') {
+        var _pc={};
+        ['1M','3M','6M','YTD','1Y','2Y','3Y'].forEach(function(k){
+          var raw = (_src[k]!=null)?_src[k]:_src[k.toLowerCase()];
+          var n = (raw && typeof raw==='object' && raw.percent!=null) ? Number(raw.percent) : Number(raw);
+          if(isFinite(n)) _pc[k]=n;
+        });
+        if (Object.keys(_pc).length) period_changes=_pc;
+      }
+    } catch(e){}
+    var out = { cash_balance:cash, portfolio_value:total, positions:positions };
+    if (period_changes) out.period_changes = period_changes;
+    return out;
   }
   window.snapMapHoldings = snapMapHoldings;
 
@@ -26400,11 +26512,25 @@ document.addEventListener('DOMContentLoaded', function(){
     return stCall('snaptrade-refresh', {}).then(function(j){
       if(!j || !j.connected){ _render('disconnected'); return j; }
       if(j.broken){ _render('broken'); }
+      // Bloque 4: conexión de broker REAL confirmada → borra la semilla personal del dueño ANTES
+      // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
+      try { if (typeof window._brokerClearSeed==='function') window._brokerClearSeed(); }catch(e){}
       try{
         var data = snapMapHoldings(j.holdings);
         if(data.positions.length || data.cash_balance){
           if(typeof aiPortImportData==='function') aiPortImportData(data);
-          if(typeof aiPortApply==='function') return Promise.resolve(aiPortApply()).then(function(){ return j; });
+          if(typeof aiPortApply==='function') return Promise.resolve(aiPortApply())
+            // Bloque 2.1: SnapTrade no trae cierre previo → snapMapHoldings deja day_change_pct=0
+            // y el badge del día salía $0.00. Tras aplicar, refresca precios en vivo (fetchLivePrices
+            // captura regularMarketPreviousClose → h._prevClose, justo lo que _calcRealDayChange
+            // necesita) y redibuja. Si algo falla, seguimos con el estado ya aplicado.
+            .then(function(){ if(typeof fetchLivePrices==='function') return fetchLivePrices(); })
+            .then(function(){
+              try{ if(typeof renderAll==='function') renderAll(); }catch(e){}
+              try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
+              return j;
+            })
+            .catch(function(){ return j; });
         }
       }catch(e){ console.warn('[snaptrade] apply failed', e); }
       return j;
@@ -26426,15 +26552,28 @@ document.addEventListener('DOMContentLoaded', function(){
   window.snapRefresh = snapRefresh;
 
   // ── History → feed the EXISTING premium perf chart via _applyValueChart ──
+  var _snapHistoryFirstApply = false;   // Bloque 2.4: solo la 1ª vez fijamos el período; luego respetamos la selección del usuario
   function snapHistory(){
     return stCall('snaptrade-history', {}).then(function(j){
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
-        try{ _applyValueChart(pts);
-          if(typeof setPeriod==='function'){ var b=document.querySelector('#periodBtns [data-period="ALL"]'); setPeriod('ALL', b||undefined); }
+        try{
+          // Bloque 2.2: serie REAL y densa del broker → dibujar TAL CUAL, sin puente browniano.
+          // El flag ANTES de aplicar/redibujar hace que generate() salte _densifyDaily.
+          window._BROKER_LIVE = true;
+          _applyValueChart(pts);
+          // Bloque 2.4: fija el período automáticamente SOLO la 1ª vez de la sesión. En refrescos
+          // posteriores conserva el timeframe que el usuario tenía y solo redibuja (no lo pisa).
+          if(!_snapHistoryFirstApply){
+            _snapHistoryFirstApply = true;
+            if(typeof setPeriod==='function'){ var b=document.querySelector('#periodBtns [data-period="ALL"]'); setPeriod('ALL', b||undefined); }
+          } else if(typeof _redrawActiveChart==='function'){ _redrawActiveChart(); }
         }catch(e){ _pvLogError('snaptrade apply history', e); }
         _perfNote('');
       }else{
+        // Sin historial disponible → NO hay serie real densa: _BROKER_LIVE=false para que las
+        // ventanas cortas se reconstruyan con PORTIV_HIST (real, Yahoo), no con la semilla ajena.
+        window._BROKER_LIVE = false;
         _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
       }
     }).catch(function(){ _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); });
