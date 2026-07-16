@@ -2517,14 +2517,18 @@
 
   /* ── Tabla de posiciones: el sidebar (220px) + panel derecho (300px) reducen
        el ancho real, así que ocultamos columnas redundantes para que NO se corte. ── */
-  /* Columnas: 1 Símbolo, 2 Qty, 3 Precio, 4 Day $ (cambio de precio de la acción),
-     5 Day %, 6 Mkt Val, 7 Día $ (cambio $ de la posición), 8 Día % (duplicado del 5),
-     9 Costo, 10 G/L $, 11 G/L %.
-     Ocultamos siempre Mkt Val (6), Día $ (7) y la columna % DUPLICADA (8) — así queda
-     un único par "Day $ / Day %" por acción, como en el broker (Price Chng $ / %). */
-  #posRows td:nth-child(6), .ptable-wrap thead th:nth-child(6), .ptable-wrap tfoot td:nth-child(6),
-  #posRows td:nth-child(7), .ptable-wrap thead th:nth-child(7), .ptable-wrap tfoot td:nth-child(7),
-  #posRows td:nth-child(8), .ptable-wrap thead th:nth-child(8), .ptable-wrap tfoot td:nth-child(8) {
+  /* Columnas: 1 Símbolo, 2 Qty, 3 Precio, 4 Day $ (cambio de precio POR ACCIÓN),
+     5 Day % (duplicado del 8), 6 Mkt Val, 7 Día $ (cambio $ de la POSICIÓN = qty×Δprecio),
+     8 Día %, 9 Costo, 10 G/L $, 11 G/L %.
+     FIX (fracciones): se muestra el par de la POSICIÓN (7/8), NO el POR ACCIÓN (4/5). Con
+     acciones fraccionarias el Δ por acción (col 4) es enorme al lado de una posición chica
+     — p.ej. SNDK −$177/acción con 0.13 acc parecía −91% cuando el día real fue −$24. Además
+     los subtotales/total ya ponían el día$ de la posición en la col 7 (la 4 quedaba vacía),
+     así que mostrar 7/8 hace consistentes TODAS las filas. Ocultamos Day $ POR ACCIÓN (4),
+     su % duplicado (5) y Mkt Val (6). */
+  #posRows td:nth-child(4), .ptable-wrap thead th:nth-child(4), .ptable-wrap tfoot td:nth-child(4),
+  #posRows td:nth-child(5), .ptable-wrap thead th:nth-child(5), .ptable-wrap tfoot td:nth-child(5),
+  #posRows td:nth-child(6), .ptable-wrap thead th:nth-child(6), .ptable-wrap tfoot td:nth-child(6) {
     display: none !important;
   }
   /* Compactar para que la última columna (Trade) no se corte */
@@ -2534,8 +2538,7 @@
   .holdings-card .trade-btn { padding: 3px 7px !important; }
 }
 /* En desktop angosto (sidebar + panel derecho visible) ocultar también Precio (3).
-   Mantenemos visible Day $ (4) — el cambio de precio en $ de la acción, que el usuario
-   quiere ver junto al Day % (igual que el broker). */
+   Queda visible el par de la POSICIÓN: Día $ (7) / Día % (8). */
 @media (min-width: 900px) and (max-width: 1500px) {
   #posRows td:nth-child(3),
   .ptable-wrap thead th:nth-child(3),
