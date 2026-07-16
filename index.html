@@ -6371,11 +6371,11 @@ function _effectiveOverridePct(period){
   //     inicio ≈ 3M). Ver _maxOverride.
   //   • 1W/2W (sin override) → null → salen de la serie real acumulada, fiel en ventanas cortas y
   //     que rueda día a día.
-  const direct = _periodOverridePct(period);
-  if (direct != null) return direct;
-  const mx = _maxOverride();
-  if (mx && _periodSpanMonths(period) > mx.months) return mx.pct;
-  return null;
+  // SIN HERENCIA (no inventar): solo se usa el % que el broker DIO para ESE período. Los
+  // períodos que el broker no cubrió (p.ej. 6M/1Y cuando la cartera es joven) NO copian el 3M
+  // — quedan bloqueados/ocultos hasta que exista historial real (ver _periodAvailable /
+  // unlockPeriods). ALL/YTD (sin override directo) → null → serie REAL desde el inicio.
+  return _periodOverridePct(period);
 }
 // Base ANCLADA del override: el % del broker se interpreta como el cambio hasta el
 // CIERRE PREVIO (estable intradía). Así base = prevClose/(1+pct/100) NO se mueve con el
@@ -12623,8 +12623,10 @@ const PORTIV_CHART = {
     // Densificado DIARIO profesional: rellena entre las anclas reales con puente browniano
     // determinista → la línea tiene movimiento tipo broker sin alterar montos ni %.
     // (change/changePct/since se conservan del cálculo con las anclas exactas.)
+    // BROKER EN VIVO: la serie ya viene densa y REAL del broker → se dibuja TAL CUAL, sin
+    // rellenar con puente browniano (no inventar movimiento entre cierres reales).
     try {
-      if(typeof _densifyDaily==='function'){
+      if(!window._BROKER_LIVE && typeof _densifyDaily==='function'){
         const _dense=_densifyDaily(_raw);
         if(_dense&&_dense.values&&_dense.values.length>=_raw.values.length){
           _dense.change=_raw.change; _dense.changePct=_raw.changePct; _dense.since=_raw.since;
@@ -12666,6 +12668,96 @@ const PORTIV_CHART = {
   },
 };
 window.PORTIV_CHART = PORTIV_CHART;
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  PORTIV_BROKER — Ingesta de datos REALES de un broker conectado (PRÓXIMAMENTE)
+//  ─────────────────────────────────────────────────────────────────────────────
+//  Punto de entrada ÚNICO para la conexión directa con el broker (API). Reemplaza el
+//  estado de la app con lo que el broker envía, de forma FIEL y SIN INVENTAR:
+//    • Posiciones (con su cierre previo REAL → día$/día% exactos, no derivados).
+//    • Serie de valor total REAL → fuente única de la gráfica; NUNCA se extrapola más
+//      allá de lo que el broker manda (los períodos sin cobertura quedan ocultos).
+//    • % por período etiquetados por el broker (autoritativos).
+//  Reusa el MISMO camino de render fiel que el analizador de fotos (HOLDINGS, PERF_MASTER,
+//  PERIOD_CHANGE_OVERRIDE, unlockPeriods, renderAll). Cuando se cablee el broker, llamar:
+//
+//    PORTIV_BROKER.sync({
+//      positions: [{ ticker, name, type:'stock'|'etf', qty, price, prevClose, costBasis, reinvest }],
+//      series:    { dates:['YYYY-MM-DD', …], values:[Number, …], labels:[…]? },  // valor total real
+//      periodChanges: { '1M':-1.21, '3M':0.55, '6M':…, '1Y':… },                 // opcional
+//      cash: Number, moneyMarket: Number, totalValue: Number, asOf: 'YYYY-MM-DD'
+//    })
+//
+//  Devuelve true si aplicó. Valida todo y NO lanza (un feed inválido nunca rompe la app).
+window.PORTIV_BROKER = {
+  connected: false,
+  lastSync: null,
+  sync(data) {
+    if (!data || typeof data !== 'object') { console.warn('[PORTIV_BROKER] payload inválido'); return false; }
+    try {
+      // ── POSICIONES (autoritativas) ──
+      if (Array.isArray(data.positions)) {
+        const clean = data.positions.filter(p => p && p.ticker && isFinite(+p.qty));
+        if (clean.length) {
+          const oldNames = {}; HOLDINGS.forEach(h => oldNames[h.ticker] = h.name);
+          HOLDINGS.length = 0;
+          clean.forEach(p => {
+            const qty = +p.qty, price = isFinite(+p.price) ? +p.price : 0;
+            const h = {
+              ticker: String(p.ticker).toUpperCase().trim(),
+              name: p.name || oldNames[String(p.ticker).toUpperCase().trim()] || p.ticker,
+              type: p.type || 'stock',
+              qty: qty, price: price,
+              dayChgPct: isFinite(+p.dayChgPct) ? +p.dayChgPct : 0,
+              costBasis: (isFinite(+p.costBasis) && +p.costBasis > 0) ? +p.costBasis : qty * price,
+              reinvest: p.reinvest !== false,
+            };
+            // Cierre previo REAL del broker → día$ y día% EXACTOS (calcH usa h._prevClose).
+            if (isFinite(+p.prevClose) && +p.prevClose > 0) h._prevClose = +p.prevClose;
+            HOLDINGS.push(h);
+          });
+          if (typeof CHART_COLORS !== 'undefined' && typeof EXTRA_COLORS !== 'undefined') {
+            CHART_COLORS.length = 0;
+            HOLDINGS.forEach((h, i) => CHART_COLORS.push(EXTRA_COLORS[i % EXTRA_COLORS.length]));
+          }
+        }
+      }
+      // ── EFECTIVO / MONEY MARKET / TOTAL ──
+      if (isFinite(+data.cash)) CASH = +data.cash;
+      if (isFinite(+data.moneyMarket)) MONEY_MARKET = +data.moneyMarket;
+      if (isFinite(+data.totalValue) && +data.totalValue > 0) TOTAL_OVERRIDE = +data.totalValue;
+      // ── SERIE DE VALOR REAL → PERF_MASTER (fuente única; sin extrapolar) ──
+      if (data.series && Array.isArray(data.series.dates) && Array.isArray(data.series.values)
+          && data.series.values.length >= 2 && data.series.dates.length === data.series.values.length) {
+        const ds = data.series.dates.slice();
+        const vs = data.series.values.map(Number);
+        const lbls = (Array.isArray(data.series.labels) && data.series.labels.length === ds.length)
+          ? data.series.labels.slice()
+          : ds.map(d => { try { return (typeof fmtDate === 'function') ? fmtDate(d) : d; } catch(e) { return d; } });
+        PERF_MASTER = { dates: ds, values: vs, labels: lbls };
+        _CHART_IMPORTED = true;                                  // dibujar FIEL, respetar cobertura
+        if (typeof _buildPerfData === 'function') PERF_DATA = _buildPerfData(PERF_MASTER);
+        try { if (typeof _chartYMin !== 'undefined') { _chartYMin = null; _chartYMax = null; } } catch(e) {}
+      }
+      // ── % POR PERÍODO ETIQUETADOS POR EL BROKER (autoritativos) ──
+      if (data.periodChanges && typeof data.periodChanges === 'object') {
+        const ov = {};
+        for (const k in data.periodChanges) { const v = +data.periodChanges[k]; if (isFinite(v)) ov[k] = v; }
+        if (Object.keys(ov).length) PERIOD_CHANGE_OVERRIDE = ov;
+      }
+      this.connected = true;
+      this.lastSync = data.asOf || null;
+      window._BROKER_LIVE = true;
+      // ── Redibujar TODO fielmente ──
+      try { if (typeof _OVERRIDE_DAY_REF !== 'undefined' && typeof _dayChangeNow === 'function') _OVERRIDE_DAY_REF = _dayChangeNow(); } catch(e) {}
+      try { if (typeof unlockPeriods === 'function') unlockPeriods(); } catch(e) {}
+      try { if (typeof savePortfolio === 'function') savePortfolio(); } catch(e) {}
+      try { if (typeof renderAll === 'function') renderAll(); } catch(e) {}
+      try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); } catch(e) {}
+      return true;
+    } catch(e) { console.error('[PORTIV_BROKER] sync error:', e); return false; }
+  }
+};
 
 // ══════════════════════════════════════════════════════════
 //  PORTIV_HIST — Reconstrucción REAL del valor del portafolio
@@ -13345,35 +13437,66 @@ function sliceFromAll(months) {
   return { labels, values, change, changePct };
 }
 
-// ── Unlock period buttons as milestones are reached ──────────────────────────
-function unlockPeriods() {
-  const now = new Date();
-  const container = $('periodBtns');
-  const allBtn = container.querySelector('[data-period="ALL"]');
-
-  // Días de historial REAL disponibles en la serie maestra (importada del broker o
-  // acumulada localmente). Si el broker trae 1 año de gráfica, 1Y debe poder mostrarse
-  // aunque el "milestone" por fecha aún no llegue.
-  let masterSpanDays = 0;
+// ── Duración de cada período en días (para saber si hay datos REALES que lo cubran) ──
+const _PERIOD_DAYS = { '1W':7, '2W':14, '1M':30, '3M':91, '6M':182, '1Y':365, '2Y':730, '3Y':1095 };
+// Días de historial REAL en la serie maestra (importada del broker / foto o acumulada).
+function _brokerSpanDays() {
   try {
-    const D = (PERF_MASTER && PERF_MASTER.dates) || [];
-    if (D.length >= 2) masterSpanDays = (new Date(D[D.length-1]) - new Date(D[0])) / 86400000;
+    const D = (typeof PERF_MASTER !== 'undefined' && PERF_MASTER.dates) || [];
+    if (D.length >= 2) return (new Date(D[D.length-1]) - new Date(D[0])) / 86400000;
   } catch(e) {}
-
+  return 0;
+}
+// ── ¿HAY datos REALES para dibujar este período? — regla ANTI-INVENTO ──
+// Un período solo está disponible si existe historial real que lo cubra. Si no, se OCULTA
+// (nunca se dibuja una gráfica inventada/extrapolada). Se habilita cuando:
+//   (a) el broker/foto trae una serie que abarca ese período,
+//   (b) el broker etiquetó el % de ese período (nos dio ese dato), o
+//   (c) ya transcurrió ese tiempo REAL desde que empezaste a invertir (INCEPTION_DATE)
+//       → los cierres diarios acumulados llenan la ventana.
+// 1D (intradía), YTD y ALL (desde el inicio) siempre son reales → siempre disponibles.
+function _periodAvailable(key) {
+  if (key === '1D' || key === 'ALL' || key === 'YTD') return true;
+  const days = _PERIOD_DAYS[key];
+  if (!days) return true;
+  const margin = 0.9;                                             // 10% de tolerancia de lectura
+  if (_brokerSpanDays() >= days * margin) return true;           // (a) serie del broker lo cubre
+  if (_periodOverridePct(key) != null) return true;              // (b) broker etiquetó ese período
+  let ageDays = 0;
+  try { ageDays = (Date.now() - INCEPTION_DATE.getTime()) / 86400000; } catch(e) {}
+  if (ageDays >= days * margin) return true;                     // (c) ya pasó ese tiempo real
+  return false;                                                  // sin datos → NO dibujar
+}
+// ── Mostrar/ocultar botones de período según haya datos REALES (unlock progresivo) ──
+// Antes solo AÑADÍA milestones y nunca ocultaba → 6M/1Y (hardcodeados en el HTML) salían
+// siempre, dibujando gráficas inventadas. Ahora: crea los milestones que falten en el DOM
+// cuando ya hay datos, y muestra/oculta TODOS los botones por _periodAvailable.
+function unlockPeriods() {
+  const container = $('periodBtns');
+  if (!container) return;
+  const allBtn = container.querySelector('[data-period="ALL"]');
+  // Crear milestones que aún no están en el DOM (p.ej. 3A) cuando ya hay datos reales.
   PERIOD_MILESTONES.forEach(m => {
-    // Mostrar si: (a) ya llegó su fecha de desbloqueo, (b) el usuario/broker fijó un
-    // override de cambio para ese período, o (c) hay suficiente historial importado
-    // para cubrirlo (con 10% de margen para lecturas justas del rango).
-    const haveData = masterSpanDays >= (m.months * 30 * 0.9);
-    if (now < m.unlockDate && _periodOverridePct(m.key) == null && !haveData) return;
-    if (container.querySelector(`[data-period="${m.key}"]`)) return;         // Already added
+    if (!_periodAvailable(m.key)) return;
+    if (container.querySelector(`[data-period="${m.key}"]`)) return;
     const btn = document.createElement('button');
     btn.className = 'period-btn';
     btn.dataset.period = m.key;
     btn.textContent = m.label;
     btn.onclick = function() { setPeriod(m.key, this); };
-    container.insertBefore(btn, allBtn);                                     // Keep before ALL
+    container.insertBefore(btn, allBtn);
   });
+  // Mostrar/ocultar según datos reales.
+  container.querySelectorAll('.period-btn[data-period]').forEach(btn => {
+    btn.style.display = _periodAvailable(btn.dataset.period) ? '' : 'none';
+  });
+  // Si el período ACTIVO quedó oculto (sin datos) → saltar al más largo disponible.
+  if (typeof activePeriod !== 'undefined' && activePeriod && !_periodAvailable(activePeriod)) {
+    const order = ['ALL','3Y','2Y','1Y','6M','3M','1M','2W','1W','1D'];
+    const fb = order.find(p => { const b = container.querySelector(`.period-btn[data-period="${p}"]`); return b && b.style.display !== 'none' && _periodAvailable(p); }) || '1M';
+    const b = container.querySelector(`.period-btn[data-period="${fb}"]`);
+    if (b && typeof setPeriod === 'function') setPeriod(fb, b);
+  }
 }
 
 let perfChart = null;
