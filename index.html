@@ -10026,9 +10026,21 @@ function _openOutlookEvent(evKey, outlookKey) {
   // desde el primer frame, sin flash de "IMPACTO MEDIO" → "PROGRAMADO".
   const _cachedEvResult = (ev.category !== 'other') ? _nmAiGet(_eventCacheKey(ev)) : null;
 
+  // Determinista: ¿ya se publicó? Si NO, jamás sentimiento/resultado (ni de caché IA), sólo
+  // "PROGRAMADO". Nunca inventar un resultado positivo/negativo antes de que ocurra.
+  let _pubOK = !!_ro;
+  try {
+    const _di = ev._dayIdx || ev.dayIdx;
+    if (typeof PORTIV_NEWS !== 'undefined' && _di) _pubOK = PORTIV_NEWS._isPublished({ time: ev.time }, _di) || !!_ro;
+  } catch(e){}
+
   const sb = $('nmSentBadge');
   if (sb) {
-    if (_cachedEvResult && _cachedEvResult.ocurrio === false) {
+    if (!_pubOK) {
+      // Aún no se publica → NUNCA sentimiento/resultado. Sólo "PROGRAMADO".
+      sb.className = 'nm-sent-badge su';
+      sb.textContent = 'PROGRAMADO · AÚN NO PUBLICADO';
+    } else if (_cachedEvResult && _cachedEvResult.ocurrio === false) {
       // IA ya confirmó que no ocurrió → badge "PROGRAMADO" desde el inicio
       sb.className = 'nm-sent-badge su';
       sb.textContent = 'PROGRAMADO · AÚN NO PUBLICADO';
@@ -10050,7 +10062,7 @@ function _openOutlookEvent(evKey, outlookKey) {
 
   // Si hay resultado cacheado, pre-poblar Market Context antes de que el modal abra
   // (evita el parpadeo de contenido determinista → contenido AI)
-  if (_cachedEvResult) {
+  if (_cachedEvResult && (_pubOK || _cachedEvResult.ocurrio !== true)) {
     const mkt = document.getElementById('nmMktBody');
     if (mkt) _renderEventResult(mkt, _cachedEvResult);
     if (_cachedEvResult.ocurrio === false) {
@@ -11124,7 +11136,10 @@ const SharedNews = (function(){
   // calendario ET. El chequeo por fecha es clave los fines de semana: sin él, las noticias del
   // viernes (con timestamp <6h tras el refresh diario) se veían "frescas" y nunca se regeneraban
   // para el sábado/domingo → quedaban congeladas en las del viernes.
-  function _staleToday(o){ return !o || !Array.isArray(o.today) || !o.today.length || (o.lang||'es')!==_curLang() || (o.day && o.day!==_todayET()) || (Date.now()-(o.ts_today||0)) > TTL_TODAY; }
+  // Dos slots diarios: am (00:00–11:59) y pm (12:00–23:59). "Hoy" se regenera al cambiar de
+  // slot → EXACTAMENTE 2 veces al día, gane quien gane el trigger (scheduler, tab, boot).
+  function _slot(){ let mins=0; try{ const p=PORTIV_NEWS.nyParts(); mins=p.h*60+p.mi; }catch(e){ const d=new Date(); mins=d.getHours()*60+d.getMinutes(); } return _todayET() + (mins >= 720 ? '#pm' : '#am'); }
+  function _staleToday(o){ return !o || !Array.isArray(o.today) || !o.today.length || (o.lang||'es')!==_curLang() || (o.slot||'') !== _slot(); }
   function hasFresh(){ return !_staleToday(_local()); }
   // ¿Hay CUALQUIER noticia cacheada, aunque sea de un día anterior? En feriados / días sin
   // noticias nuevas, mostrar las anteriores es mejor que un error.
@@ -11289,9 +11304,15 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
       // conserva el `day` anterior → _staleToday seguirá true (día distinto) y reintentará,
       // en vez de congelar contenido viejo con la fecha de hoy.
       const _gotNew = !!(fresh && Array.isArray(fresh.today) && fresh.today.length);
-      o = { today:_newToday, thisWeek:_newWeek,
-            nextWeek:(fresh && fresh.nextWeek && fresh.nextWeek.length)?fresh.nextWeek:((o&&o.nextWeek)||[]),
-            ts_today:now, ts_week:(o&&o.ts_week && (now-o.ts_week)<TTL_WEEK)?o.ts_week:now, lang:_curLang(),
+      // Fin de semana: "esta/próxima semana" NO se actualizan (se congela lo del viernes); sólo
+      // rueda "hoy". Lun-vie: las semanas se refrescan con la generación.
+      const _wdSave = (function(){ try{ return PORTIV_NEWS.nyParts().wd; }catch(e){ return new Date().getDay(); } })();
+      const _freezeWeek = (_wdSave===0 || _wdSave===6) && o && Array.isArray(o.thisWeek) && o.thisWeek.length;
+      o = { today:_newToday,
+            thisWeek: _freezeWeek ? o.thisWeek : _newWeek,
+            nextWeek: _freezeWeek ? (o.nextWeek||[]) : ((fresh && fresh.nextWeek && fresh.nextWeek.length)?fresh.nextWeek:((o&&o.nextWeek)||[])),
+            ts_today:now, ts_week: _freezeWeek ? ((o&&o.ts_week)||now) : now, lang:_curLang(),
+            slot: _gotNew ? _slot() : ((o&&o.slot)||''),
             day:_gotNew ? _todayET() : ((o&&o.day)||'') };
       _saveLocal(o); apply();
       // Solo sube a la nube si de verdad hay contenido → no pisar la copia global con vacío.
@@ -11308,7 +11329,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
   // sin gastar) y solo genera si la copia global también está vieja. Así "hoy · esta semana ·
   // PRÓXIMA semana" ruedan cada día, cloud-shared (1× global, no por usuario).
   async function forceRefresh(){
-    try{ const o=_local(); if(o){ o.ts_today=0; _saveLocal(o); } }catch(e){}
+    try{ const o=_local(); if(o){ o.slot=''; o.ts_today=0; _saveLocal(o); } }catch(e){}
     try{ return await ensureFresh(); }catch(e){}
   }
 
@@ -12492,7 +12513,17 @@ const PORTIV_CHART = {
     const _daysToNow = _lastReal
       ? Math.round((new Date(today+'T00:00:00') - new Date(_lastReal+'T00:00:00'))/86400000)
       : 99999;
-    const _coversNow = merged.length>=3 && _daysToNow<=4;
+    // ── COBERTURA DEL INICIO ── No basta con llegar a HOY: la serie también debe ARRANCAR
+    //    cerca del inicio de la ventana (_fromWin). Si hay un HUECO (p.ej. PERF_MASTER termina
+    //    en Jun-6 y los snapshots diarios empiezan Jul-14), 1W/2W/1M solo tenían los últimos
+    //    días y colapsaban a la MISMA franja → % idéntico al cambio del día. Exigir cobertura
+    //    del inicio fuerza la reconstrucción real (Yahoo) que rellena el hueco por período.
+    const _firstReal = merged.length ? merged[0].date : null;
+    const _daysFromStart = (_firstReal && _fromWin)
+      ? Math.round((new Date(_firstReal+'T00:00:00') - new Date(_fromWin+'T00:00:00'))/86400000)
+      : 0;
+    const _coversStart = !_fromWin || _daysFromStart <= 4;
+    const _coversNow = merged.length>=3 && _daysToNow<=4 && _coversStart;
     // ── RECONSTRUCCIÓN REAL (garantía anti-fechas-viejas) ── Σ qty×cierre real (Yahoo) + efectivo
     //    → serie diaria continua que SIEMPRE llega al último día de mercado. Rellena el hueco hasta
     //    hoy con datos REALES, así el eje muestra el período pedido con fechas correctas para
@@ -12512,7 +12543,7 @@ const PORTIV_CHART = {
     // ── RED DE SEGURIDAD ── Si aún así la ventana no tiene ≥2 puntos (reconstrucción no lista y
     //    hueco de datos), NO se reutilizan fechas viejas fuera de ventana. Se arma la ventana con
     //    fechas CORRECTAS [_fromWin → hoy] interpolando el valor en _fromWin desde la serie real.
-    if(_fromWin && merged.length<2){
+    if(_fromWin && (merged.length<2 || !_coversStart)){
       const _all={};
       brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
       this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
@@ -21051,29 +21082,31 @@ function scheduleDailyOutlookRefresh() {
   const tick = () => {
     try {
       const P = (typeof PORTIV_NEWS !== 'undefined') ? PORTIV_NEWS : null;
-      const p = P ? P.nyParts() : (() => {
-        const x = {}; new Intl.DateTimeFormat('en-CA', { timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit' })
-          .formatToParts(new Date()).forEach(o => x[o.type] = o.value);
-        return { y:+x.year, mo:+x.month, d:+x.day };
-      })();
+      if (!P) return;                                    // el scheduler reintenta cada minuto
+      const p = P.nyParts();
       const etDay = `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
-      const dayKey = 'outlook_daily_' + etDay;
-      if (localStorage.getItem(dayKey)) return;          // ya se refrescó hoy (ET)
-      localStorage.setItem(dayKey, '1');
-      try { Object.keys(localStorage).filter(k => k.startsWith('outlook_daily_') && k !== dayKey).forEach(k => localStorage.removeItem(k)); } catch(e) {}
-      console.log('[Outlook] Refresh diario (00:00 ET) →', etDay);
-      // Refresh DIARIO cloud-shared: regenera hoy · esta semana · PRÓXIMA semana vía SharedNews
-      // (1× global, lock + nube). Reemplaza a refreshNextWeekOutlook (desactivado). Así las
-      // noticias de la próxima semana SÍ ruedan cada día. Fallback al viejo si SharedNews falta.
-      try {
-        if (window.SharedNews && typeof SharedNews.forceRefresh === 'function') SharedNews.forceRefresh();
-        else refreshNextWeekOutlook(true);
-      } catch(e) { try { refreshNextWeekOutlook(true); } catch(_){} }
-      // Outlook semanal CLOUD-SHARED (esta + próxima semana): la IA genera 1× al día de forma
-      // global, se sube a Supabase y todos leen la misma copia. Corre tras SharedNews para que
-      // DAILY_NEWS ya esté poblado como contexto de la narrativa. forceRefresh (no refresh) fuerza
-      // la regeneración al cruzar medianoche ET → la PRÓXIMA semana deja de quedarse pegada 2 días.
-      try { if (window.SharedOutlook) setTimeout(() => { try { (SharedOutlook.forceRefresh||SharedOutlook.refresh)(); } catch(_){} }, 4000); } catch(e) {}
+      const mins = p.h*60 + p.mi;
+      const slot = mins >= 720 ? 'pm' : 'am';            // 720 = 12:00 ET (2 slots/día)
+      const isWeekend = (p.wd === 0 || p.wd === 6);
+      // 1) NOTICIAS DE HOY → 2×/día (00:00 y 12:00 ET), TODOS los días (incl. fin de semana).
+      const todayKey = `news_today_${etDay}_${slot}`;
+      if (!localStorage.getItem(todayKey)) {
+        localStorage.setItem(todayKey, '1');
+        try { Object.keys(localStorage).filter(k => k.startsWith('news_today_') && k !== todayKey).forEach(k => localStorage.removeItem(k)); } catch(e) {}
+        console.log('[News] Refresh "hoy" (slot ' + slot + ' ET) →', etDay);
+        try { if (window.SharedNews && SharedNews.forceRefresh) SharedNews.forceRefresh(); else if (typeof refreshNextWeekOutlook === 'function') refreshNextWeekOutlook(true); } catch(e) {}
+      }
+      // 2) ESTA/PRÓXIMA SEMANA + outlook narrativo → SÓLO lun-vie, 1×/día. Fin de semana: NO.
+      if (!isWeekend) {
+        const weekKey = `news_weeks_${etDay}`;
+        if (!localStorage.getItem(weekKey)) {
+          localStorage.setItem(weekKey, '1');
+          try { Object.keys(localStorage).filter(k => k.startsWith('news_weeks_') && k !== weekKey).forEach(k => localStorage.removeItem(k)); } catch(e) {}
+          console.log('[News] Refresh semanas (lun-vie) →', etDay);
+          try { if (window.SharedOutlook) setTimeout(() => { try { (SharedOutlook.forceRefresh||SharedOutlook.refresh)(); } catch(_){} }, 4000); } catch(e) {}
+          try { if (typeof PORTIV_NEWS !== 'undefined') PORTIV_NEWS.refresh('daily'); } catch(e) {}
+        }
+      }
     } catch(e) {}
   };
   tick();                          // al abrir la app: corre si el día ET aún no se refrescó
@@ -23010,7 +23043,7 @@ const PORTIV_NEWS = {
   _eventTimeMin(timeStr){
     if (!timeStr) return null;
     const s = String(timeStr).trim(); const low = s.toLowerCase();
-    if (/cierre de mercado|market close|al cierre/.test(low)) return 16*60;        // 4:00 PM ET
+    if (/tras el cierre|after (the )?close|\bamc\b|cierre de mercado|market close|al cierre/.test(low)) return 16*60;  // 4:00 PM ET (incl. resultados "tras el cierre")
     if (/apertura|market open|pre-?market|premarket/.test(low)) return 9*60+30;     // 9:30 AM ET
     const m = s.match(/(\d{1,2}):(\d{2})\s*(a\.?m\.?|p\.?m\.?|am|pm)?/i);
     if (!m) return null;
@@ -23032,6 +23065,10 @@ const PORTIV_NEWS = {
       const evDay = new Date(evd.getFullYear(), evd.getMonth(), evd.getDate());
       if (evDay < todayET) return true;
       if (evDay > todayET) return false;
+      // Resultados "tras el cierre" (amc): el mercado sólo reacciona al día SIGUIENTE → NO
+      // publicado el mismo día (jamás marcar un resultado antes de que exista).
+      const _amc = String((ev && ev.time) || '').toLowerCase();
+      if (/tras el cierre|after (the )?close|\bamc\b/.test(_amc)) return false;
       const em = this._eventTimeMin(ev && ev.time);
       // Hoy sin hora agendada → es una noticia/artículo ya publicado, no un evento futuro.
       if (em == null) return true;
@@ -23695,7 +23732,7 @@ const PORTIV_NEWS = {
       window._outlookEvents[okey][ekey] = {
         title: ev.title, time: ev.time, impact: ev.impact, category: ev.category,
         description: ev.summary || ev.marketImpact || '', tickers_affected: ev.tickers || [],
-        realized: ev.realized || null, _dayIdx: ev._dayIdx || null,
+        realized: ev.realized || null, _dayIdx: ev._dayIdx || ev.dayIdx || null,
       };
       try { return _openOutlookEvent(ekey, okey); } catch(e){}
     }
