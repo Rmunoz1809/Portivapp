@@ -6332,9 +6332,11 @@ let TX_LOG = [];
 // Override manual del cambio (%) por período: { '1M':2.5, '3M':8, '6M':..., '1Y':..., '3Y':... }
 // Si un período tiene override, la gráfica y el encabezado usan ese % en vez de calcularlo
 // desde la serie. Editable desde el editor de portafolio (pestaña Personalizar).
-// Cambios por período REALES de Schwab (capturas 07/14/2026): 1-Month −0.29%, 3-Month +1.25%.
-// 6M/1Y/3Y/ALL heredan el 3M (el override más largo dado por el broker).
-let PERIOD_CHANGE_OVERRIDE = { '1M': -0.29, '3M': 1.25 };
+// Cambios por período REALES de Schwab (capturas 07/16/2026): 1-Month −1.21%, 3-Month +0.55%.
+// 6M/1Y/3Y/ALL heredan el 3M (el override más largo dado por el broker). El analizador de fotos
+// REEMPLAZA estos valores al importar (aiPortApply → PERIOD_CHANGE_OVERRIDE), y ahora SÍ se usan
+// (ver _effectiveOverridePct) → el % que lee el analizador = el % que se muestra.
+let PERIOD_CHANGE_OVERRIDE = { '1M': -1.21, '3M': 0.55 };
 const _PERIOD_MONTHS = {'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
 function _periodMonthsOf(p){ return _PERIOD_MONTHS[p] || 0; }
 function _periodOverridePct(p){
@@ -6359,11 +6361,20 @@ function _maxOverride(){
 // override más largo del broker, hereda ese valor (regla: el dato más largo dado se
 // usa para todos los períodos más largos — 6M/1Y/3Y/ALL = el 3M que dio el broker).
 function _effectiveOverridePct(period){
-  // BROKER REAL: los porcentajes de cada período (1M/3M/YTD/…) se CALCULAN del historial
-  // real acumulado del portafolio (valor de hoy vs. valor al inicio del período), NO de los
-  // % importados por OCR de Schwab. Devolvemos null siempre → generate() y setPeriodData
-  // derivan el % desde la serie de valores reales. Así los números son los del broker de verdad
-  // y se vuelven más precisos a medida que se acumulan cierres diarios reales.
+  // BROKER AUTORITATIVO: el analizador lee el % EXACTO de cada botón (1M/3M/…) del broker; ese
+  // valor MANDA sobre la serie. Antes se devolvía null y el % se derivaba de una RECONSTRUCCIÓN
+  // (posiciones actuales × precios históricos + efectivo), que NO refleja el historial real de la
+  // cuenta (aportes, trades pasados) → daba períodos erróneos y NO deterministas (p.ej. 3M salía
+  // −1.19% cuando el broker mostraba +0.55%). Ahora el % del broker se usa VERBATIM.
+  //   • 1M/3M → el override directo (leído/semilla).
+  //   • 6M/1Y/2Y/3Y/ALL → heredan el override MÁS LARGO (cartera joven: períodos largos ≈ desde
+  //     inicio ≈ 3M). Ver _maxOverride.
+  //   • 1W/2W (sin override) → null → salen de la serie real acumulada, fiel en ventanas cortas y
+  //     que rueda día a día.
+  const direct = _periodOverridePct(period);
+  if (direct != null) return direct;
+  const mx = _maxOverride();
+  if (mx && _periodSpanMonths(period) > mx.months) return mx.pct;
   return null;
 }
 // Base ANCLADA del override: el % del broker se interpreta como el cambio hasta el
@@ -12598,6 +12609,15 @@ const PORTIV_CHART = {
       changePct=+(+_ovr).toFixed(2);
       const _base=last2/(1+_ovr/100);
       change=(_base>0)?+(last2-_base).toFixed(2):change;
+      // ── ANCLA DE LA LÍNEA ── Reescalado afín [first,last]→[_base,last2]: fija el INICIO (=_base,
+      // derivado del % del broker) y el FIN (=total en vivo) al dato real, preservando la FORMA
+      // (picos/valles) de la serie. Sin esto, si la serie venía de una reconstrucción imperfecta
+      // (inicio erróneo), la CURVA podía contradecir el badge (badge +0.55% con línea que baja).
+      if(_base>0 && vals.length>=2 && isFinite(first) && Math.abs(last2-first)>1e-6){
+        const _oldFirst=first, _denom=(last2-_oldFirst), _num=(last2-_base);
+        for(let i=0;i<vals.length;i++){ vals[i]=+(_base+(vals[i]-_oldFirst)*_num/_denom).toFixed(2); }
+        vals[0]=+_base.toFixed(2); vals[vals.length-1]=+last2.toFixed(2);
+      }
     }
     const _raw={labels:lbls,dates,values:vals,change,changePct,since:lbls[0]||''};
     // Densificado DIARIO profesional: rellena entre las anclas reales con puente browniano
