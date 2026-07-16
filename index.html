@@ -13,13 +13,10 @@
   html.app-locked body { visibility:hidden !important; }
   html.app-locked #authOverlay { visibility:visible !important; }
 </style>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Portafolio — Plataforma de Inversión</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&icon_names=account_balance_wallet,add,analytics,arrow_downward,arrow_upward,auto_awesome,balance,bookmark_add,check_circle,dark_mode,download,error,event,help,hub,info,insights,key,light_mode,logout,monitoring,neurology,newspaper,notifications,pie_chart,progress_activity,refresh,remove,rocket_launch,save,savings,schedule,search,settings,shield,smart_toy,trending_up,verified,visibility,visibility_off,warning,warning_amber&display=swap" rel="stylesheet">
+<!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
+<link rel="stylesheet" href="fonts/fonts.css">
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <!-- Config local (NO versionada): define window.LOCAL_CONFIG con secretos como la API key de Finnhub.
      Copia config.local.example.js a config.local.js y pon tu key. Si falta, la app corre sin key
@@ -552,7 +549,7 @@
   /* ── News Modal — Editorial Layout ── */
   .nm-overlay { position:fixed;inset:0;background:#f8f9fc;z-index:500;opacity:0;pointer-events:none;transition:opacity .2s;overflow-y:auto; }
   .nm-overlay.open { opacity:1;pointer-events:all; }
-  .nm-topbar { position:sticky;top:0;background:#fff;padding:14px 28px;display:flex;align-items:center;gap:14px;z-index:10; }
+  .nm-topbar { position:sticky;top:0;background:#fff;padding:calc(env(safe-area-inset-top, 0px) + 14px) 28px 14px;display:flex;align-items:center;gap:14px;z-index:10; }
   .nm-close { display:inline-flex;align-items:center;gap:6px;background:#04162c;border:none;color:#fff;border-radius:12px;padding:10px 18px;font-size:13px;font-weight:700;cursor:pointer;transition:opacity .15s;box-shadow:0 4px 14px rgba(4,22,44,.25); }
   .nm-close:hover { opacity:.9; }
   /* wrapper */
@@ -1774,7 +1771,7 @@
   .nm-topbar {
     background: rgba(247,248,250,0.85);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    padding: 14px 28px;
+    padding: calc(env(safe-area-inset-top, 0px) + 14px) 28px 14px;
   }
   .nm-close {
     background: #04162c; border: none;
@@ -2650,7 +2647,7 @@
   /* ── Top bar móvil ── */
   .m-topbar {
     display: flex !important; align-items: center; justify-content: space-between;
-    gap: 10px; padding: 12px 16px 10px; background: #F8F9FF;
+    gap: 10px; padding: calc(env(safe-area-inset-top, 0px) + 10px) 16px 10px; background: #F8F9FF;
     position: sticky; top: 0; z-index: 500; border-bottom: 1px solid #EFF4FF;
   }
   .m-tb-brand { display: flex; align-items: center; gap: 10px; }
@@ -2659,14 +2656,15 @@
   .m-tb-icons { display: flex; align-items: center; gap: 6px; }
   .m-tb-btn {
     background: none; border: none; color: #44474D; padding: 6px;
+    min-width: 44px; min-height: 44px;
     display: flex; align-items: center; justify-content: center; cursor: pointer;
   }
 
   /* ── Padding de páginas edge-to-edge + espacio para el nav ── */
   #tab-portfolio, #tab-noticias, #tab-watchlist, #tab-analizar, #tab-settings, #tab-aianalyst {
-    margin-left: 0 !important; padding: 6px 16px 86px !important; min-height: auto;
+    margin-left: 0 !important; padding: 6px 16px calc(86px + env(safe-area-inset-bottom, 0px)) !important; min-height: auto;
   }
-  .stitch-layout { display: block !important; padding: 6px 0 86px !important; gap: 0 !important; }
+  .stitch-layout { display: block !important; padding: 6px 0 calc(86px + env(safe-area-inset-bottom, 0px)) !important; gap: 0 !important; }
   .stitch-sidebar { display: block !important; }
 
   /* ── Hero navy (valor total) ── */
@@ -2697,9 +2695,18 @@
   }
   .period-btn {
     flex-shrink: 0 !important; border-radius: 999px !important; background: #EFF4FF !important;
-    border: none !important; padding: 6px 13px !important; font-size: 12px !important; color: #44474D !important;
+    border: none !important; padding: 7px 4px !important; font-size: 12px !important; color: #44474D !important; white-space: nowrap !important;
   }
   .period-btn.active { background: #04162C !important; color: #fff !important; }
+  /* FIX iOS: el :hover táctil se queda "pegado" tras el tap y su fondo claro tapaba el
+     pill activo. El chip ACTIVO debe verse navy SIEMPRE (hover/focus/active incluidos). */
+  .period-btn.active:hover, .period-btn.active:focus, .period-btn.active:active,
+  .ppill.active:hover, .ppill.active:focus, .ppill.active:active { background: #04162C !important; color: #fff !important; }
+  @media (hover: none) {
+    /* Touch real: el hover no cambia nada (evita el estado "pegado"). */
+    .period-btn:hover, .ppill:hover { background: #EFF4FF !important; color: #44474D !important; border-color: transparent !important; }
+    .period-btn.active:hover, .ppill.active:hover { background: #04162C !important; color: #fff !important; }
+  }
 
   /* ── Cards blancas redondeadas full-width ── */
   .stitch-card, .holdings-card, .summary-box, .card, .perf-card, .dist-card {
@@ -2711,7 +2718,7 @@
   /* ── Bottom nav estilo preview ── */
   .bottom-tabs {
     position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important;
-    height: 64px !important; background: #fff !important; border-top: 1px solid #E5EEFF !important;
+    height: calc(64px + env(safe-area-inset-bottom, 0px)) !important; padding-bottom: env(safe-area-inset-bottom, 0px) !important; background: #fff !important; border-top: 1px solid #E5EEFF !important;
     box-shadow: 0 -2px 16px rgba(11,28,48,.08) !important; z-index: 9000 !important;
     justify-content: space-around !important; align-items: stretch !important;
   }
@@ -2840,11 +2847,14 @@
   /* ── Portiv IA: chat a pantalla completa ── */
   #tab-aianalyst { padding: 0 !important; }
   .ai-chat-page { height: calc(100dvh - 146px) !important; min-height: 0 !important; background: #F8F9FF !important; }
-  .ai-chat-inputarea { padding: 12px 14px 14px !important; }
+  .ai-chat-inputarea { padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px)) !important; }
+  /* Transición profesional de entrada de pestañas (solo móvil; no afecta escritorio). */
+  .page.pv-tab-in { animation: pvTabIn .30s cubic-bezier(.22,.61,.36,1) both; }
+  @keyframes pvTabIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }
   /* En el chat: ocultar la topbar de marca y que el perfil de la IA quede hasta arriba,
      ocupando toda la pantalla (solo resta el bottom-nav). */
   body.chat-active .m-topbar { display: none !important; }
-  body.chat-active .ai-chat-page { height: calc(100dvh - 62px) !important; }
+  body.chat-active .ai-chat-page { height: calc(100dvh - (64px + env(safe-area-inset-bottom, 0px))) !important; }
   body.chat-active .ai-chat-header { position: sticky; top: 0; z-index: 20; padding-top: max(18px, env(safe-area-inset-top)) !important; }
 
   /* ── Watchlist: cards compactas, todo cabe sin desbordar ── */
@@ -12133,6 +12143,22 @@ function showTab(name) {
   {
     const pg = $('tab-'+name);
     pg.classList.add('active');
+    // La pestaña nueva SIEMPRE abre desde arriba (no hereda el scroll anterior).
+    try { window.scrollTo(0,0); pg.scrollTop = 0; var _sc = pg.querySelector('.stitch-layout, .ai-chat-body, .nm-overlay'); if(_sc) _sc.scrollTop = 0; } catch(e){}
+    // Reproduce la animación de entrada (retrigger) y re-liga la delegación de chips
+    // (el portafolio puede reemplazar #periodBtns al re-renderizar).
+    // Transición de entrada robusta (Web Animations API). En iOS el retrigger por clase
+    // se cancelaba al añadir .visible (`.page.active.visible{animation:none}`) → se veía
+    // instantánea. animate() no depende de la propiedad CSS `animation`: siempre corre.
+    try {
+      pg.classList.remove('pv-tab-in');
+      if (pg.animate && window.matchMedia('(max-width:700px)').matches && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        pg.animate([{opacity:0, transform:'translateY(14px)'},{opacity:1, transform:'none'}],
+                   {duration:340, easing:'cubic-bezier(.22,.61,.36,1)'});
+      }
+    } catch(e){}
+    try { if (typeof bindPeriodBtns==='function') bindPeriodBtns(); } catch(e){}
+    try { if (typeof _pvSyncActivePeriod==='function') requestAnimationFrame(_pvSyncActivePeriod); } catch(e){}
     requestAnimationFrame(() => pg.classList.add('visible'));
     if(name==='noticias')  renderNewsTab();
     if(name==='watchlist') {
@@ -13075,8 +13101,9 @@ function _applyPerfYScale(){
 // Redibuja la línea de la gráfica para el período activo (tras cambiar los datos).
 function _redrawActiveChart() {
   if (!perfChart) return;
-  const btn = document.querySelector('.period-btn.active') || document.querySelector('[data-period="1M"]');
-  if (btn) setPeriod(btn.dataset.period || '1M', btn);
+  var p = (typeof activePeriod !== 'undefined' && activePeriod) ? activePeriod : '1M';
+  var btn = document.querySelector('.period-btn[data-period="' + p + '"]');
+  setPeriod(p, btn || undefined);
 }
 
 // ── Expansión intradía: convierte 1 valor diario en N puntos con micro-volatilidad ──
@@ -13680,7 +13707,37 @@ function setPeriod(period, btn) {
 
   // KPIs del header (total + cambio del día) + mini-% del período activo.
   try { _updatePerfTotals(period, ds); } catch(e) {}
+  try { requestAnimationFrame(_pvSyncActivePeriod); } catch(e) {}
 }
+
+// Delegación: cualquier chip de período tocado se vuelve el activo (blindado).
+// Cubre los chips que unlockPeriods() agrega dinámicamente, sin depender del onclick inline.
+function bindPeriodBtns(){
+  var wrap = document.getElementById('periodBtns');
+  if (!wrap || wrap._pvBound) return;
+  wrap._pvBound = true;
+  wrap.addEventListener('click', function(ev){
+    var b = ev.target.closest('.period-btn');
+    if (!b || !wrap.contains(b)) return;
+    ev.preventDefault();
+    setPeriod(b.dataset.period, b);   // mueve .active + redibuja
+  });
+}
+try { bindPeriodBtns(); } catch(e){}
+document.addEventListener('DOMContentLoaded', function(){ try { bindPeriodBtns(); } catch(e){} });
+// Marca el chip del período activo de forma idempotente. Se llama tras cada setPeriod
+// (rAF) y ante cualquier reconstrucción del contenedor (MutationObserver) para que el
+// azul NUNCA desaparezca al cambiar de fecha o al re-renderizar el portafolio.
+function _pvSyncActivePeriod(){
+  var wrap = document.getElementById('periodBtns'); if(!wrap) return;
+  var p = (typeof activePeriod!=='undefined' && activePeriod) ? activePeriod : '1M';
+  wrap.querySelectorAll('.period-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.period===p); });
+}
+(function _pvObservePeriodBtns(){
+  var wrap = document.getElementById('periodBtns'); if(!wrap || wrap._pvObs) return;
+  wrap._pvObs = true;
+  try { new MutationObserver(function(){ _pvSyncActivePeriod(); }).observe(wrap, {childList:true}); } catch(e){}
+})();
 
 // KPIs del header (valor total + cambio del día) — independientes del timeframe.
 // El cambio del período activo (mini-%) usa el MISMO dataset que la gráfica.
@@ -16740,8 +16797,9 @@ async function _peerMetric(tk){
   } catch(e){ return null; }
 }
 // Filas ya ensambladas de la comparación (cacheadas por ticker) → re-abrir es instantáneo.
-const _PEERS_ROWS_LS = 'portiv_peers_rows_v1';
+const _PEERS_ROWS_LS = 'portiv_peers_rows_v2';   // v2: purga peers viejos derivados del nicho amplio (p.ej. MU→NVDA/AMD/TSM, equivocados) → se re-derivan con _PEER_OVERRIDE
 const _PEERS_ROWS_TTL = 7 * 24 * 60 * 60 * 1000;
+try { localStorage.removeItem('portiv_peers_rows_v1'); } catch(e){}   // borra el caché viejo de competidores de TODAS las empresas
 function _peersRowsLoad(){ try { return JSON.parse(localStorage.getItem(_PEERS_ROWS_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _peersRowsGet(tk){ const c=_peersRowsLoad()[(tk||'').toUpperCase()]; if(!c||!Array.isArray(c.rows)) return null; if(Date.now()-(c.at||0)>_PEERS_ROWS_TTL) return null; return c.rows; }
 function _peersRowsSet(tk, rows){ try { const c=_peersRowsLoad(); c[(tk||'').toUpperCase()]={rows, at:Date.now()}; localStorage.setItem(_PEERS_ROWS_LS, JSON.stringify(c)); } catch(e){} }
@@ -16766,9 +16824,37 @@ const _PEER_UNIVERSE = {
   'Consumer':        ['AMZN','COST','WMT','MCD','SBUX','NKE','HD','LOW','TGT','BKNG','UBER'],
   'Industrial':      ['CAT','DE','GE','HON','RTX','LMT','NOC','GD','BA','MMM'],
 };
-// Deriva hasta 4 competidores reales del MISMO nicho (vía wlNiche). Sin red (solo listas).
+// Competidores REALES por ticker (sub-sector exacto). Prevalece sobre el universo por nicho:
+// el nicho amplio (p.ej. "Semiconductores") mezcla memoria, lógica, foundry y equipos, que NO
+// compiten entre sí. Aquí cada empresa apunta a sus verdaderos rivales cotizados en EEUU.
+const _PEER_OVERRIDE = {
+  // Memoria y almacenamiento (DRAM/NAND/HDD) — Samsung y SK Hynix no cotizan en EEUU (van en el párrafo).
+  'MU':  ['WDC','STX','SNDK'],  'WDC': ['STX','MU','SNDK'],  'STX': ['WDC','MU','SNDK'],  'SNDK':['MU','WDC','STX'],
+  // GPU / aceleradores de cómputo
+  'NVDA':['AMD','AVGO','INTC','MRVL'],  'AMD': ['NVDA','INTC','AVGO','MRVL'],
+  // Foundry / lógica
+  'TSM': ['INTC','GFS','UMC','ASX'],  'INTC':['AMD','TSM','QCOM','MU'],
+  // Equipos de fabricación de chips
+  'ASML':['AMAT','LRCX','KLAC','TER'],  'AMAT':['LRCX','KLAC','ASML','TER'],
+  'LRCX':['AMAT','KLAC','ASML','TER'],  'KLAC':['AMAT','LRCX','ASML','TER'],
+  // Analógicos / conectividad
+  'AVGO':['QCOM','TXN','NXPI','MRVL'],  'QCOM':['AVGO','NXPI','MRVL','TXN'],  'MRVL':['AVGO','QCOM','NXPI','MU'],
+  // Redes de pago (no mezclar Visa/MA con neobancos)
+  'V':   ['MA','AXP','PYPL','FI'],  'MA':  ['V','AXP','PYPL','FI'],  'AXP': ['V','MA','COF','DFS'],
+  // Bancos grandes vs brokers de inversión
+  'JPM': ['BAC','WFC','C','USB'],  'BAC': ['JPM','WFC','C','USB'],  'WFC': ['JPM','BAC','C','USB'],
+  'GS':  ['MS','JPM','C','BAC'],   'MS':  ['GS','JPM','SCHW','C'],
+};
+// Deriva hasta 4 competidores reales. 1º override exacto por ticker; si no, universo por nicho (wlNiche).
 function _derivePeers(ticker, info){
   ticker = (ticker||'').toUpperCase();
+  // 1) Override explícito de rivales reales del mismo sub-sector — máxima prioridad.
+  if (_PEER_OVERRIDE[ticker]){
+    const seenO={[ticker]:1}, outO=[];
+    for (const t of _PEER_OVERRIDE[ticker]){ const u=(t||'').toUpperCase(); if (u && !seenO[u]){ seenO[u]=1; outO.push(u); if (outO.length>=4) break; } }
+    if (outO.length) return outO;
+  }
+  // 2) Fallback: universo por nicho (clasificador wlNiche).
   let niche = '';
   try { if (typeof wlNiche==='function') niche = wlNiche(ticker, info||{}).niche || ''; } catch(e){}
   let pool = _PEER_UNIVERSE[niche] || [];
@@ -16796,6 +16882,67 @@ async function _peersCompData(ticker, selfMetrics, peerTickers){
   return { rows:[selfRow].concat(peerRows), note:'Comparada con sus rivales del sector usando datos financieros reales (TTM). "—" = dato no disponible.' };
 }
 
+// Posición de mercado por ticker: cuota aprox. + estructura (monopolio/oligopolio/fragmentado) + líderes.
+// Hechos de industria reales y estables, redactados como aproximación (~). NO son métricas inventadas del app.
+const _MARKET_POSITION = {
+  'MU':  'En DRAM es el nº3 mundial (~20-25% de cuota), detrás de Samsung (~40%) y SK Hynix (~35%); en NAND ronda el ~10-13%. Es un oligopolio de 3 grandes, no un monopolio: sus márgenes suben y bajan con fuerza según el ciclo de oferta/demanda de memoria.',
+  'WDC': 'En discos duros (HDD) forma un duopolio con Seagate (~40-45% cada uno); en NAND compite vía su alianza con Kioxia. Sector concentrado y muy cíclico.',
+  'STX': 'En discos duros forma un duopolio con Western Digital (~40-45% cada uno) y lidera en capacidad para centros de datos. No hace memoria flash, así que evita ese ciclo.',
+  'SNDK':'Escindida de Western Digital en 2025, es uno de los grandes de almacenamiento flash/NAND (~10% del mercado). Compite con Samsung, SK Hynix/Solidigm, Micron y Kioxia en un sector fragmentado.',
+  'NVDA':'Domina los aceleradores de IA para centros de datos con ~80-90% de cuota: un cuasi-monopolio de facto. AMD e Intel están muy por detrás; su verdadero foso es el software (CUDA), no solo el chip.',
+  'AMD': 'En CPU x86 forma un duopolio con Intel y le va ganando cuota (~35-40% y subiendo). En GPU de IA es el claro nº2, aún lejos de Nvidia.',
+  'INTC':'Aún líder en CPU x86 para PC pero perdiendo cuota ante AMD año tras año. Su apuesta de foundry (fabricar para terceros) arranca muy por detrás de TSMC.',
+  'TSM': 'Mayor foundry del mundo (~60-65% del mercado) y fabrica >90% de los chips más avanzados. Es un cuasi-monopolio en la fabricación de vanguardia: Nvidia, Apple y AMD dependen de él.',
+  'ASML':'Único fabricante del planeta de litografía EUV, imprescindible para los chips avanzados: monopolio absoluto en esa tecnología. Su mayor riesgo es geopolítico, no competitivo.',
+  'AMAT':'Nº1 en equipos de fabricación de semiconductores por ingresos. Oligopolio con Lam Research, KLA y ASML; cada uno domina su especialidad.',
+  'LRCX':'Líder en equipos de grabado y deposición para chips. Oligopolio de equipos junto a Applied Materials y Tokyo Electron.',
+  'KLAC':'Cuasi-monopolio en inspección y metrología de obleas (>50% de cuota): revisa que los chips salgan sin defectos. Pocos rivales creíbles.',
+  'AVGO':'Líder en varios nichos de chips de red y conectividad, con poder de fijar precios casi monopólico en algunos ASICs; sumó software con VMware. Muy diversificado.',
+  'QCOM':'Líder en modems y chips para móviles premium (fuera de Apple, que ya diseña los suyos). Cobra regalías por patentes clave de comunicaciones.',
+  'MRVL':'Chips de infraestructura y centros de datos. Es un retador en crecimiento, no el líder; compite con Broadcom en redes y ASICs a medida.',
+  'AAPL':'Tiene ~18-20% de los smartphones por unidades pero se queda con la mayor parte del beneficio de todo el sector. Domina la gama alta y su foso es el ecosistema (iOS + servicios).',
+  'GOOGL':'Controla ~90% de las búsquedas del mundo: un cuasi-monopolio. Android domina el móvil y YouTube lidera el vídeo; su riesgo mayor es regulatorio.',
+  'META': 'Dueña de las mayores redes sociales del mundo (~4.000 millones de usuarios entre sus apps). Con Google forma el duopolio de la publicidad digital.',
+  'AMZN': 'Nº1 del comercio electrónico en EEUU (~38%) y líder de la nube con AWS (~30%). Dos negocios dominantes bajo el mismo techo.',
+  'MSFT': 'Windows está en ~70%+ de los PC, Office domina la productividad y Azure es el nº2 en nube (~23%). Cuasi-monopolio en software empresarial.',
+  'NFLX': 'La mayor plataforma de streaming por suscriptores e ingresos, aunque el sector se llenó de rivales (Disney+, Amazon, etc.). Lidera pero ya no está sola.',
+  'V':    'Mayor red de pagos del mundo; con Mastercard forma un duopolio (juntas >50% del pago con tarjeta fuera de China). Negocio de peaje con márgenes altísimos.',
+  'MA':   'Segunda mayor red de pagos; duopolio con Visa. Cobra una pequeña comisión por cada transacción a escala global: márgenes muy altos.',
+  'AXP':  'Red de pagos cerrada y premium, enfocada en clientes de alto gasto. Es más pequeña que Visa/Mastercard pero controla toda su cadena (red + banco).',
+  'JPM':  'El mayor banco de EEUU por activos y muy diversificado, pero la banca está fragmentada: no hay monopolio y compite con miles de bancos.',
+  'BAC':  'Segundo mayor banco de EEUU por activos. Sector fragmentado y sensible a los tipos de interés; sin dominio absoluto.',
+  'WFC':  'Uno de los cuatro grandes bancos de EEUU, fuerte en banca minorista e hipotecas. Sector fragmentado, sin monopolio.',
+  'GS':   'Líder en banca de inversión y trading; oligopolio con Morgan Stanley y JPMorgan. Negocio cíclico ligado a los mercados.',
+  'MS':   'Líder en gestión de patrimonio y banca de inversión; oligopolio con Goldman Sachs. Su giro a comisiones de patrimonio lo hace más estable.',
+  'LLY':  'Líder en fármacos GLP-1 para diabetes y obesidad, en un duopolio con Novo Nordisk sobre un mercado enorme y en plena expansión.',
+  'UNH':  'La mayor aseguradora de salud de EEUU y muy integrada (seguros + servicios). Sector concentrado en pocos gigantes pero competido.',
+  'PLTR': 'Software de análisis de datos e IA para gobierno y grandes empresas. Nicho con pocos rivales directos; su foso es lo pegado que queda a la operación del cliente.',
+  'CRWD': 'Líder en seguridad de dispositivos (EDR) desde la nube. Mercado en crecimiento pero muy disputado con Microsoft, SentinelOne y Palo Alto.',
+  'PANW': 'Líder en ciberseguridad de red y plataforma integrada. Sector fragmentado en el que gana terreno consolidando varias herramientas en una.',
+  'COST': 'Club de membresía líder junto a Sam’s Club. Su foso es la lealtad y la cuota de socios; retail muy competido pero con márgenes defendidos por volumen.',
+  'TSLA': 'Pionero y líder en vehículos eléctricos, aunque pierde cuota frente a los fabricantes chinos y tradicionales. Su apuesta real es software, conducción autónoma y energía.',
+  'UBER': 'Líder en movilidad compartida en EEUU (~70%+) y fuerte en reparto. Duopolios regionales con Lyft (movilidad) y DoorDash (comida).',
+};
+// Frase de BRECHA vs rivales derivada de los datos REALES de la tabla (P/E vs mediana + liderazgo margen/ROE).
+function _peerGapText(ticker, rows){
+  if (!Array.isArray(rows) || rows.length < 2) return '';
+  const self = rows[0]; const peers = rows.slice(1);
+  const nums = key => peers.map(r=>r[key]).filter(v=>typeof v==='number'&&isFinite(v));
+  const median = key => { const xs=nums(key).slice().sort((a,b)=>a-b); if(!xs.length) return null; const m=Math.floor(xs.length/2); return xs.length%2?xs[m]:(xs[m-1]+xs[m])/2; };
+  const maxOf  = key => { const xs=nums(key); return xs.length?Math.max(...xs):null; };
+  const parts = [];
+  const peM = median('pe');
+  if (typeof self.pe==='number' && isFinite(self.pe) && self.pe>0 && peM!=null && peM>0){
+    parts.push(`cotiza a ${self.pe.toFixed(1)}x P/E, ${self.pe<peM?'más barata que':'con prima sobre'} la mediana de sus rivales (${peM.toFixed(1)}x)`);
+  }
+  const leads = [];
+  const nMax=maxOf('netM'); if (typeof self.netM==='number'&&isFinite(self.netM)&&nMax!=null&&self.netM>=nMax) leads.push('margen neto');
+  const rMax=maxOf('roe');  if (typeof self.roe ==='number'&&isFinite(self.roe )&&rMax!=null&&self.roe >=rMax) leads.push('ROE');
+  let s = parts.length ? `${ticker} ${parts.join(' y ')}.` : '';
+  if (leads.length) s += ` Encabeza a su grupo en ${leads.join(' y ')}.`;
+  return s.trim();
+}
+
 // Pinta la tabla de competidores dentro de un contenedor (host). rows = [{ticker,self,pe,revG,netM,roe}].
 function _renderPeersInto(host, ticker, rows){
   if (!host) return;
@@ -16803,12 +16950,21 @@ function _renderPeersInto(host, ticker, rows){
   if (!Array.isArray(rows) || rows.length < 2){ host.innerHTML=''; return; }   // sin rivales → nada (no tabla solitaria)
   const fx = v => (v==null||!isFinite(v)) ? '—' : `${v.toFixed(1)}x`;
   const fp = v => (v==null||!isFinite(v)) ? '—' : `${v.toFixed(1)}%`;
+  // Párrafo bajo la tabla: brecha real (de los datos) + posición de mercado curada (cuota/monopolio).
+  const _gap = _peerGapText(ticker, rows);
+  const _pos = _MARKET_POSITION[(ticker||'').toUpperCase()] || '';
+  let _posBlock = '';
+  if (_gap || _pos){
+    const _body = [_gap, _pos].filter(Boolean).join(' ');
+    _posBlock = `<div class="px-mktpos" style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--px-green,#0A7A52);background:var(--px-green-soft,rgba(10,122,82,.06));border-radius:8px;font-size:13.5px;line-height:1.65;color:var(--px-ink-soft,#3a4a44)"><b style="color:var(--px-green-text,#0A7A52)">Posición de mercado.</b> ${esc(_body)}</div>`;
+  }
   host.innerHTML = `<div class="px-card"><h2 class="px-sec-title">Comparación con competidores</h2>
     <p class="px-intro">La misma acción se ve distinta al lado de sus rivales. Aquí ${esc(ticker)} contra sus competidores del sector.</p>
     <div class="px-cmp-wrap"><table class="px-cmp">
       <thead><tr><th>Empresa</th><th>P/E</th><th>Crec. ingresos</th><th>Margen neto</th><th>ROE</th></tr></thead>
       <tbody>${rows.map(r=>`<tr class="${r.self?'self':''}"><td class="tk">${esc(r.ticker)}</td><td>${fx(r.pe)}</td><td>${fp(r.revG)}</td><td>${fp(r.netM)}</td><td>${fp(r.roe)}</td></tr>`).join('')}</tbody>
     </table></div>
+    ${_posBlock}
     <div class="px-hint">Comparada con sus rivales del sector usando datos financieros reales (TTM). "—" = dato no disponible.</div></div>`;
 }
 
@@ -24343,7 +24499,9 @@ function init() {
     // Extended hours → cada 5min (pre/after-market, movimientos lentos)
     // Market closed  → solo carga inicial (precio no cambia, 0 llamadas extras)
     // EOD snapshot   → se detecta automáticamente en fetchLivePrices vía _justClosed()
-    fetchLivePrices();
+    // ARRANQUE: el primer frame se pinta desde caché local; recotizar precios NO debe
+    // bloquear el primer paint del portafolio → se difiere tras pintar (doble rAF).
+    requestAnimationFrame(() => requestAnimationFrame(() => { try { fetchLivePrices(); } catch(e){} }));
     let _priceTickCount = 0;
     // Arranque desincronizado (0–15s) para que los ~1000 clientes no golpeen el proveedor de
     // precios en el mismo instante exacto cada 30s (solo desfasa el arranque; el tick sigue igual).
