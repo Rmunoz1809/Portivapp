@@ -18831,14 +18831,21 @@ function _updateChangeDisplay(chgAbs, chgPct, label) {
 }
 
 function _applyChartPeriodChange(chartData, rangeKey) {
+  // FUENTE ÚNICA DEL % DE "HOY": el header (#r-change) muestra SIEMPRE el cambio del DÍA canónico
+  // (Finnhub dp, idéntico a watchlist y al precio grande), en TODOS los períodos. Antes, al cambiar
+  // de pestaña se recalculaba first→last de la serie y se pisaba el header: en 1D con la serie
+  // intradía de Yahoo (open/cierre-previo distinto → % divergente, bug CPA 1D −2.48% vs −3.66%) y en
+  // los demás con el retorno del período. Resultado: el % de "hoy" cambiaba al tocar las pestañas.
+  // Ahora es una sola verdad: HOY = HOY, en toda vista, período y acción — sin bug.
+  if (_researchCurPrice > 0 && isFinite(_researchDayChgPct)) {
+    _updateChangeDisplay(_researchDayChg, _researchDayChgPct, 'hoy');
+    return;
+  }
+  // Fallback SOLO si la cotización canónica aún no cargó (evita header vacío): usa la serie.
   const cl = (chartData?.closes || []).filter(c => c != null);
   if (cl.length >= 2) {
-    const first   = cl[0];
-    const last    = cl[cl.length - 1];
-    const chgAbs  = last - first;
-    const chgPct  = (chgAbs / first) * 100;
-    const label   = (rangeKey === '1d') ? 'hoy' : `en ${_periodLabel[rangeKey] || rangeKey}`;
-    _updateChangeDisplay(chgAbs, chgPct, label);
+    const first = cl[0], last = cl[cl.length - 1];
+    _updateChangeDisplay(last - first, ((last - first) / first) * 100, 'hoy');
   }
 }
 
