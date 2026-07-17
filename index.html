@@ -11473,7 +11473,10 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
       body: JSON.stringify({ model:'claude-haiku-4-5', max_tokens:3200,
         system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
         prompt: PROMPT, allowed_tools:['WebSearch','WebFetch'],
-        tools:[{ type:'web_search_20250305', name:'web_search', max_uses:2 }] }) }, true);
+        // COSTO: 1 búsqueda amplia ("top US market news today") basta para 8 titulares; el
+        // prompt ya completa con lo más relevante si viene corta. Antes max_uses:2 → duplicaba
+        // la inyección de resultados (~10-30K tok/búsqueda), el grueso del gasto de entrada.
+        tools:[{ type:'web_search_20250305', name:'web_search', max_uses:1 }] }) }, true);
     if(!res.ok) throw new Error('SharedNews gen '+res.status);
     const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','news'); }catch(e){}
     const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedNews sin JSON');
@@ -20880,7 +20883,10 @@ key_themes = exactamente 3 temas clave.`;
     const res = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ model:AI_MODELS.narrative, max_tokens:1400,
         system:'Eres un estratega de mercado. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
-        prompt: PROMPT, allowed_tools:['websearch'] }) }, true);   // essential:true → permitido en el path de pago (cloud-shared, 1× global). websearch → _anthropicDirect topea en max_uses:1.
+        // COSTO: web_search SOLO para "esta semana" (off 0), que sí gana con verificación de
+        // contexto vivo. "Próxima semana" (off 1) es prospectiva y se arma del calendario Finnhub
+        // (determinista) → sin búsqueda web ahorra ~1 búsqueda/día (10-30K tok) del modelo caro.
+        prompt: PROMPT, ...(off === 0 ? { allowed_tools:['websearch'] } : {}) }) }, true);   // essential:true → path de pago (cloud-shared, 1× global). websearch (solo esta semana) → _anthropicDirect topea en max_uses:1.
     if(!res.ok) throw new Error('SharedOutlook gen ' + res.status);
     const j = await res.json();
     try{ if(typeof _tokAdd === 'function') _tokAdd(j.usage, AI_MODELS.narrative, 'outlook'); }catch(e){}
