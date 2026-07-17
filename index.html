@@ -6337,6 +6337,16 @@ let TX_LOG = [];
 // REEMPLAZA estos valores al importar (aiPortApply → PERIOD_CHANGE_OVERRIDE), y ahora SÍ se usan
 // (ver _effectiveOverridePct) → el % que lee el analizador = el % que se muestra.
 let PERIOD_CHANGE_OVERRIDE = { '1M': -1.21, '3M': 0.55 };
+// ── AGING DEL OVERRIDE (broker profesional) ──────────────────────────────────
+// El % por período que da el broker/foto es un snapshot "a fecha de captura". Un broker real
+// NO congela ese %: recalcula el retorno del período CADA día = NAV_hoy / NAV_inicio_ventana − 1.
+// Aquí anclamos el % del broker a su fecha de captura (_OVERRIDE_ASOF) y le COMPONEMOS el retorno
+// REAL del portafolio desde ese cierre (liveTotal / capNAV) → 1M/3M se mueven con el day change
+// todos los días, SIN reinventar la base histórica (la reconstrucción la calculaba mal). En la
+// fecha de captura, o con broker en vivo (cuyo % ya incluye hoy), se muestra verbatim (no
+// doble-cuenta el día ya contenido). Schwab capturó estos %s el 2026-07-16 (ver arriba).
+let _OVERRIDE_ASOF = '2026-07-16';
+let _OVERRIDE_CAP_NAV = null;   // valor $ del portafolio al cierre de _OVERRIDE_ASOF (memo/persistido)
 const _PERIOD_MONTHS = {'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
 function _periodMonthsOf(p){ return _PERIOD_MONTHS[p] || 0; }
 function _periodOverridePct(p){
@@ -6409,6 +6419,50 @@ function _synthOverrideSeries(period){
   return { label, labels, dates, values, change: +(T - base).toFixed(2), changePct: base>0?+((T-base)/base*100).toFixed(2):+pct.toFixed(2), since: labels[0] };
 }
 
+// Valor $ del portafolio al cierre de la fecha de captura del override (_OVERRIDE_ASOF).
+// Capas: (1) memo/persistido → (2) snapshot diario guardado en esa fecha exacta → (3) si hoy es
+// 1–3 días después, el cierre previo del portafolio = ese valor. Devuelve 0 si no se puede
+// determinar con datos reales (el llamador cae a mostrar el % del broker verbatim, sin envejecer).
+function _overrideCaptureNAV(){
+  if (typeof _OVERRIDE_CAP_NAV === 'number' && _OVERRIDE_CAP_NAV > 0) return _OVERRIDE_CAP_NAV;
+  const asof = (typeof _OVERRIDE_ASOF !== 'undefined') ? _OVERRIDE_ASOF : null;
+  if (!asof) return 0;
+  try {
+    const snap = PORTIV_CHART.loadDaily(asof).find(p => p.date === asof);
+    if (snap && snap.value > 0){ _OVERRIDE_CAP_NAV = +snap.value; return _OVERRIDE_CAP_NAV; }
+  } catch(e){}
+  try {
+    const today = PORTIV_CHART._todayET();
+    const dd = Math.round((new Date(today+'T00:00:00') - new Date(asof+'T00:00:00'))/86400000);
+    if (dd >= 1 && dd <= 3){
+      const pc = +_calcPreviousDayPortfolioClose();
+      if (pc > 0){ _OVERRIDE_CAP_NAV = pc; return _OVERRIDE_CAP_NAV; }
+    }
+  } catch(e){}
+  return 0;
+}
+// % del período "en vivo" estilo broker: el % del broker (anclado a su fecha de captura) COMPUESTO
+// con el retorno real del portafolio desde esa captura (liveTotal / capNAV). Así 1M/3M ruedan con
+// el day change cada día. Verbatim cuando: broker en vivo (su % ya incluye hoy), en/antes de la
+// captura, o si no se puede anclar el valor de captura con datos reales. Devuelve null si el
+// período no tiene override (→ el llamador usa la serie real).
+function _liveOverridePct(period){
+  const pct = (typeof _effectiveOverridePct === 'function') ? _effectiveOverridePct(period) : null;
+  if (pct == null || !isFinite(pct)) return null;
+  if (typeof window !== 'undefined' && window._BROKER_LIVE) return pct;   // broker real → su % manda
+  const asof = (typeof _OVERRIDE_ASOF !== 'undefined') ? _OVERRIDE_ASOF : null;
+  let today = null;
+  try { today = PORTIV_CHART._todayET(); } catch(e){}
+  if (!asof || !today || today <= asof) return pct;   // captura (o antes) → verbatim, sin doble conteo
+  const capNAV = _overrideCaptureNAV();
+  if (!(capNAV > 0)) return pct;                       // sin ancla real → verbatim (degradación segura)
+  let live = 0;
+  try { live = +calcTotals().total.toFixed(2); } catch(e){}
+  if (!(live > 0)) return pct;
+  const sinceFactor = live / capNAV;                  // retorno REAL del portafolio desde la captura
+  return +(((1 + pct/100) * sinceFactor - 1) * 100).toFixed(2);
+}
+
 // ─── Portfolio persistence ───────────────────────────────────────────────────
 // Precios semilla del archivo (snapshot inmutable) — red de seguridad permanente.
 // Si un precio se corrompe (0/NaN) en cualquier punto, se restaura desde aquí.
@@ -6447,6 +6501,8 @@ function savePortfolio() {
       dayRef:   _OVERRIDE_DAY_REF,
       txLog:    TX_LOG,
       periodOverride: PERIOD_CHANGE_OVERRIDE,
+      overrideAsof: (typeof _OVERRIDE_ASOF !== 'undefined') ? _OVERRIDE_ASOF : undefined,
+      overrideCapNav: (typeof _OVERRIDE_CAP_NAV === 'number' && _OVERRIDE_CAP_NAV > 0) ? _OVERRIDE_CAP_NAV : undefined,
       perfMaster: (typeof _CHART_IMPORTED !== 'undefined' && _CHART_IMPORTED && typeof PERF_MASTER !== 'undefined') ? PERF_MASTER : undefined,
       perfYScale: (typeof PERF_YSCALE !== 'undefined' && PERF_YSCALE) ? PERF_YSCALE : undefined,
     });
@@ -6489,10 +6545,12 @@ function savePortfolio() {
     if (typeof s.totalOverride === 'number' && isFinite(s.totalOverride) && s.totalOverride > 0) TOTAL_OVERRIDE = s.totalOverride;
     if (typeof s.dayRef === 'number' && isFinite(s.dayRef)) { _OVERRIDE_DAY_REF = s.dayRef; window._PF_HAS_DAYREF = true; }
     if (s.periodOverride && typeof s.periodOverride === 'object') PERIOD_CHANGE_OVERRIDE = s.periodOverride;
+    if (typeof s.overrideAsof === 'string' && s.overrideAsof) _OVERRIDE_ASOF = s.overrideAsof;
+    if (typeof s.overrideCapNav === 'number' && isFinite(s.overrideCapNav) && s.overrideCapNav > 0) _OVERRIDE_CAP_NAV = s.overrideCapNav;
     // Serie de la gráfica importada: se guarda aquí y se aplica en init() (PERF_MASTER aún no existe).
     if (s.perfMaster && Array.isArray(s.perfMaster.values) && s.perfMaster.values.length >= 2) window._SAVED_PERF_MASTER = s.perfMaster;
     if (s.perfYScale && typeof s.perfYScale.min === 'number' && typeof s.perfYScale.max === 'number') window._SAVED_PERF_YSCALE = s.perfYScale;
-    if (s.empty) { HOLDINGS.length = 0; CASH = 0; MONEY_MARKET = 0; INITIAL_CAPITAL = 0; TOTAL_OVERRIDE = null; PERIOD_CHANGE_OVERRIDE = {}; window._SAVED_PERF_MASTER = null; }
+    if (s.empty) { HOLDINGS.length = 0; CASH = 0; MONEY_MARKET = 0; INITIAL_CAPITAL = 0; TOTAL_OVERRIDE = null; PERIOD_CHANGE_OVERRIDE = {}; _OVERRIDE_ASOF = null; _OVERRIDE_CAP_NAV = null; window._SAVED_PERF_MASTER = null; }
     if (Array.isArray(s.txLog))     TX_LOG = s.txLog;
     sanitizeHoldings();
   } catch(e) { reportError('Portafolio · cargar estado (localStorage)', e, { userMsg: 'No se pudo cargar el portafolio guardado: ' + e.message }); }
@@ -7124,6 +7182,49 @@ function _isEtfTicker(ticker, info) {
   return qt === 'ETF' || qt === 'MUTUALFUND';
 }
 
+// ── TAXONOMÍA SECTORIAL CANÓNICA (universal, cualquier ticker) ────────────────
+// Clasifica CUALQUIER holding en un sector fijo y consistente — no solo los ~11
+// hardcodeados. Prioridad: mapa fino curado (TICKER_SECTOR) → ETF → industria del
+// API (finnhubIndustry) mapeada → "Sin clasificar". Nunca bucketea mal en silencio.
+// TECH_SECTORS = claves canónicas que cuentan como tech (para techWeight robusto).
+const TECH_SECTORS = new Set([
+  'Tech · Semiconductores', 'Tech · Hardware', 'Tech · Software/Cloud',
+  'Tech · Internet/Ads', 'Tech · Adtech',
+]);
+// Sectores considerados "defensivos" (para pros/contras condicionales).
+const DEFENSIVE_SECTORS = new Set(['Salud', 'Consumo Básico', 'Utilities']);
+// Industria cruda del API (finnhubIndustry, tipo "Semiconductors") → sector canónico.
+const _INDUSTRY_TO_SECTOR = [
+  [/semiconduct/i,                                                    'Tech · Semiconductores'],
+  [/technology hardware|computer hardware|electronic equipment|hardware/i, 'Tech · Hardware'],
+  [/software|it services|information technolog|cloud/i,               'Tech · Software/Cloud'],
+  [/advertis|interactive media/i,                                     'Tech · Adtech'],
+  [/communication|media|internet|entertainment|telecom/i,            'Tech · Internet/Ads'],
+  [/insurance/i,                                                      'Financiero'],
+  [/bank|financ|capital markets|payment|credit services/i,           'Financiero'],
+  [/health ?care|pharmaceutical|biotechnolog|medical|life sciences|drug/i, 'Salud'],
+  [/consumer staples|food|beverage|household|personal product|tobacco/i, 'Consumo Básico'],
+  [/consumer discretionary|retail|apparel|automobil|auto |leisure|hotel|restaurant|travel/i, 'Consumo Discrecional'],
+  [/energy|oil|gas|petroleum|coal/i,                                  'Energía'],
+  [/industrial|aerospace|defense|machinery|transportation|airline|construction|engineering/i, 'Industriales'],
+  [/utilit|electric|water/i,                                          'Utilities'],
+  [/real estate|reit/i,                                               'Bienes Raíces'],
+  [/material|chemical|metal|mining|steel|paper|forest/i,             'Materiales'],
+];
+// Devuelve el sector canónico de un ticker (fuente única para TODO el análisis).
+function _canonicalSector(ticker){
+  const t = (ticker || '').toUpperCase();
+  if (TICKER_SECTOR[t]) return TICKER_SECTOR[t];          // 1) clasificación fina curada
+  const ci = _INFO_CACHE[t] || null;
+  if (_isEtfTicker(t, ci)) return 'ETF · Índice';         // 2) ETF (curado o quoteType)
+  const ind = (ci && ci.sector) ? String(ci.sector) : '';  // 3) industria real del API
+  if (ind){
+    for (const [re, canon] of _INDUSTRY_TO_SECTOR) if (re.test(ind)) return canon;
+    return ind;   // industria real pero sin regla → mostrarla cruda (mejor que "Otro")
+  }
+  return 'Sin clasificar';                                 // 4) sin dato real → no inventar
+}
+
 // ── FUENTE ÚNICA de retorno esperado por ticker ──────────────────────────────
 // La usan TANTO el análisis individual de cada acción (_renderProjections) COMO
 // el panel "Retorno Esperado" del portafolio, para que los porcentajes y el
@@ -7136,9 +7237,25 @@ function _cacheInfo(ticker, info){
   if (!ticker || !info) return;
   _INFO_CACHE[ticker.toUpperCase()] = info;
 }
-// Devuelve {growth, gAnnual, divYield, total, gSrc, divSrc, known} para un ticker.
-//   gAnnual = crecimiento capeado a [-35%, +40%] (mismo cap del análisis individual)
-//   total   = gAnnual + divYield  = "Retorno total esperado anual" del activo
+// Ancla de retorno de LARGO PLAZO por sector canónico (retorno histórico de la clase
+// de activo). Se mezcla 50/50 con el crecimiento capeado para una apreciación defendible
+// que no sobrepromete "+35%/año" extrapolando el crecimiento de EPS al precio.
+const _SECTOR_ANCHOR = {
+  'Tech · Semiconductores':0.105, 'Tech · Hardware':0.09,  'Tech · Software/Cloud':0.10,
+  'Tech · Internet/Ads':0.095,    'Tech · Adtech':0.10,
+  'Financiero':0.08, 'Salud':0.08, 'Consumo Básico':0.065, 'Consumo Discrecional':0.085,
+  'Energía':0.06,    'Industriales':0.08, 'Utilities':0.055, 'Bienes Raíces':0.07, 'Materiales':0.065,
+  'ETF · Índice':0.087,
+};
+function _sectorAnchor(tk){
+  if (ETF_DB[tk] && typeof ETF_DB[tk].expReturn === 'number') return ETF_DB[tk].expReturn;  // clase de activo real
+  const sec = _canonicalSector(tk);
+  return _SECTOR_ANCHOR[sec] != null ? _SECTOR_ANCHOR[sec] : 0.085;   // equity genérico
+}
+// Devuelve {growth, gAnnual, apprec, anchor, divYield, total, gSrc, divSrc, known} para un ticker.
+//   gAnnual = crecimiento capeado a [-35%, +40%] (proxy crudo; ya no es el retorno)
+//   apprec  = apreciación esperada DEFENDIBLE = mezcla 50/50 (gAnnual, ancla sector), cap [-10%,+18%]
+//   total   = apprec + divYield  = "Retorno total esperado anual" del activo (sobrio)
 function _expReturn(ticker){
   const tk = (ticker || '').toUpperCase();
   const ci = _INFO_CACHE[tk] || null;
@@ -7156,22 +7273,44 @@ function _expReturn(ticker){
   let divYield = 0, divSrc = '';
   if (TICKER_DIV_YIELD[tk] != null) { divYield = TICKER_DIV_YIELD[tk]; divSrc = 'dividend yield actual'; }
   else if (ci) { divYield = ci.dividendYield || 0; divSrc = 'dividend yield reportado'; }
-  return { growth, gAnnual, divYield, total: gAnnual + divYield, gSrc, divSrc, known };
+  // Apreciación defendible: ETF = retorno de su clase de activo; acción = mezcla del
+  // crecimiento capeado con el ancla del sector, luego capeada a un rango sobrio.
+  const anchor = _sectorAnchor(tk);
+  const isEtf  = _isEtfTicker(tk, ci);
+  const apprec = isEtf
+    ? Math.max(-0.10, Math.min(0.18, anchor))
+    : Math.max(-0.10, Math.min(0.18, 0.5*gAnnual + 0.5*anchor));
+  return { growth, gAnnual, apprec, anchor, divYield, total: apprec + divYield, gSrc, divSrc, known };
 }
 
 function _portfolioMetrics(T) {
   const items = HOLDINGS.map(h => {
     const c = calcH(h);
     const weight = T.mkt > 0 ? c.mktVal / T.mkt : 0;
+    const tk = (h.ticker || '').toUpperCase();
+    const ci = _INFO_CACHE[tk] || null;
     const er = _expReturn(h.ticker);
+    const sector = _canonicalSector(h.ticker);
+    // Beta universal: mapa curado → beta real del API (clamp [0.2,3]) → 1.0 estimada.
+    let beta = null, betaReal = false;
+    if (TICKER_BETA[tk] != null)                                        { beta = TICKER_BETA[tk]; betaReal = true; }
+    else if (ETF_DB[tk] && typeof ETF_DB[tk].beta === 'number')         { beta = ETF_DB[tk].beta; betaReal = true; }   // beta curada del ETF
+    else if (ci && typeof ci.beta === 'number' && isFinite(ci.beta))    { beta = Math.max(0.2, Math.min(3, ci.beta)); betaReal = true; }
+    const betaEff = beta != null ? beta : 1.0;   // 1.0 solo alimenta el promedio; se marca estimada
+    // Calidad de datos por posición (real vs estimado) → aviso honesto en la UI.
+    const dataQuality = { betaReal, sectorReal: sector !== 'Sin clasificar', returnReal: er.known };
     return {
       ticker: h.ticker, name: h.name, weight,
       mktVal: c.mktVal,
-      sector: TICKER_SECTOR[h.ticker] || 'Otro',
+      price: (typeof h.price === 'number' ? h.price : +h.price) || 0,
+      sector,
       divYield: er.divYield,
-      growth: er.gAnnual,        // capeado [-35%,+40%] = idéntico al análisis individual
-      expTotal: er.total,        // retorno total anual esperado del activo
-      beta: TICKER_BETA[h.ticker] || 1,
+      growth: er.apprec,         // apreciación DEFENDIBLE (mezcla capada [-10%,+18%])
+      expTotal: er.total,        // retorno total anual esperado del activo (apprec + div)
+      beta: betaEff,
+      betaEstimated: !betaReal,
+      estimated: !er.known,      // retorno con estimación genérica (sin consenso)
+      dataQuality,
       gl: c.gl, glPct: c.glPct,
     };
   });
@@ -7179,6 +7318,14 @@ function _portfolioMetrics(T) {
   // Agregar por sector
   const bySector = {};
   items.forEach(i => { bySector[i.sector] = (bySector[i.sector] || 0) + i.weight; });
+
+  // Resumen de calidad de datos: cuántas posiciones usan datos reales vs estimados.
+  const dataQuality = {
+    n: items.length,
+    betaReal:   items.filter(i => i.dataQuality.betaReal).length,
+    sectorReal: items.filter(i => i.dataQuality.sectorReal).length,
+    returnReal: items.filter(i => i.dataQuality.returnReal).length,
+  };
 
   // Métricas ponderadas
   const wAvg = key => items.reduce((s,i) => s + i.weight * i[key], 0);
@@ -7191,17 +7338,29 @@ function _portfolioMetrics(T) {
   const sorted = [...items].sort((a,b) => b.weight - a.weight);
   const top3W = sorted.slice(0,3).reduce((s,i)=>s+i.weight,0);
 
-  return { items, bySector, expGrowth, expDiv, expTotal, portBeta, top3W, sorted };
+  return { items, bySector, expGrowth, expDiv, expTotal, portBeta, top3W, sorted, dataQuality };
 }
 
 // ── Portfolio Health Score: agrega riesgo, concentración, volatilidad, momentum y retorno en un score 1-100 ──
-function _portfolioHealthScore(m, techWeight, sectorCount){
+function _portfolioHealthScore(m, techWeight, sectorCount, T){
   const items = m.items || [];
   const clamp = (v,lo,hi)=>Math.max(lo,Math.min(hi,v));
   const pct = v => ((v||0)*100).toFixed(0) + '%';
 
-  // Momentum: rendimiento total acumulado ponderado por peso (glPct viene en %)
+  // Momentum: retorno acumulado ponderado (glPct en %), ANUALIZADO por el tiempo desde
+  // inception → una cartera con historial largo y ganancia enorme deja de saturar el score.
   const wMomentum = items.reduce((s,i)=> s + (i.weight||0) * ((i.glPct||0)/100), 0);
+  let yrsHeld = 1;
+  try {
+    const _inc = (typeof INCEPTION_DATE !== 'undefined' && INCEPTION_DATE) ? INCEPTION_DATE : null;
+    if (_inc && _inc.getTime) yrsHeld = Math.max(0.5, (Date.now() - _inc.getTime())/(365.25*864e5));
+  } catch(e){}
+  const annMom = (wMomentum > -0.99) ? (Math.pow(1 + wMomentum, 1/yrsHeld) - 1) : wMomentum;   // anualizado
+
+  // Liquidez / dry-powder: premia algo de pólvora seca (~10% ideal), penaliza 0% y también
+  // ~100% cash (capital ocioso). cash+money market como % del valor total.
+  const cashRatio = (T && T.total > 0) ? (((T.cash||0)+(T.mm||0)) / T.total) : 0;
+  const liqScore  = clamp(100 - Math.abs(cashRatio - 0.10)*450, 0, 100);
 
   // ── Sub-factores (0-100) ──
   const divScore    = clamp((Math.min(sectorCount,6)/6)*55 + (Math.min(items.length,12)/12)*45, 0, 100);      // diversificación: sectores + nº posiciones
@@ -7209,11 +7368,12 @@ function _portfolioHealthScore(m, techWeight, sectorCount){
   const betaDist    = Math.abs((m.portBeta||1) - 1.05);
   const volScore    = clamp(100 - betaDist*95, 0, 100);                                                       // volatilidad: beta óptima ~1.05
   const sectorScore = clamp(100 - Math.max(0, techWeight - 0.40)*190, 0, 100);                                // balance sectorial (penaliza tilt tech >40%)
-  const momScore    = clamp(50 + wMomentum*230, 0, 100);                                                      // momentum: +/- retorno acumulado
-  const retScore    = clamp((m.expTotal||0)*640, 0, 100);                                                     // retorno esperado anual
+  const momScore    = clamp(50 + annMom*230, 0, 100);                                                         // momentum ANUALIZADO
+  const retScore    = clamp((m.expTotal||0)*560, 0, 100);                                                     // retorno esperado SOBRIO (no satura a ~10%)
 
-  const W = { div:.15, conc:.20, vol:.20, sector:.15, mom:.15, ret:.15 };
-  const raw = divScore*W.div + concScore*W.conc + volScore*W.vol + sectorScore*W.sector + momScore*W.mom + retScore*W.ret;
+  // 7 factores → pesos que suman 1 (se añadió Liquidez).
+  const W = { div:.14, conc:.18, vol:.18, sector:.13, mom:.12, ret:.13, liq:.12 };
+  const raw = divScore*W.div + concScore*W.conc + volScore*W.vol + sectorScore*W.sector + momScore*W.mom + retScore*W.ret + liqScore*W.liq;
   const score = clamp(Math.round(raw), 1, 100);
 
   const colFor = v => v>=70 ? '#006c49' : v>=45 ? '#a16207' : '#ba1a1a';
@@ -7229,11 +7389,16 @@ function _portfolioHealthScore(m, techWeight, sectorCount){
     { name:'Concentración',   detail:`Top 3 = ${pct(m.top3W)}`,                               val:Math.round(concScore) },
     { name:'Volatilidad',     detail:`Beta ${(m.portBeta||1).toFixed(2)}`,                    val:Math.round(volScore) },
     { name:'Balance sector',  detail:`Tech ${pct(techWeight)}`,                               val:Math.round(sectorScore) },
-    { name:'Momentum',        detail:`${wMomentum>=0?'+':''}${(wMomentum*100).toFixed(1)}% acum.`, val:Math.round(momScore) },
+    { name:'Momentum',        detail:`${annMom>=0?'+':''}${(annMom*100).toFixed(1)}% / año`,  val:Math.round(momScore) },
     { name:'Retorno esperado',detail:`${((m.expTotal||0)*100).toFixed(1)}% / año`,            val:Math.round(retScore) },
+    { name:'Liquidez',        detail:`Cash ${pct(cashRatio)}`,                                val:Math.round(liqScore) },
   ].map(f => ({ ...f, col:colFor(f.val) }));
 
-  return { score, grade, factors, scoreCol: colFor(score) };
+  // Calidad de datos: cuántas posiciones son 100% datos reales (beta+sector+retorno).
+  const _fullReal = items.filter(i => i.dataQuality && i.dataQuality.betaReal && i.dataQuality.sectorReal && i.dataQuality.returnReal).length;
+  const dataNote  = items.length ? `${_fullReal} de ${items.length} posiciones con datos de mercado reales${_fullReal < items.length ? '; el resto usa estimaciones' : ''}.` : '';
+
+  return { score, grade, factors, scoreCol: colFor(score), dataNote };
 }
 
 // ── Asesor financiero personalizado: compara el portafolio con el perfil del usuario ──
@@ -7255,13 +7420,18 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   const [bLo, bHi] = p.betaTarget;
   const recs = [];
   let flags = 0;
+  // Exposición defensiva / ETF amplio YA presente → no sugerir "añade lo que ya tienes".
+  const _defW = (m.items||[]).reduce((s,i)=> s + (DEFENSIVE_SECTORS.has(i.sector) ? i.weight : 0), 0);
+  const _hasBroadEtf = (m.items||[]).some(i => i.sector === 'ETF · Índice');
 
   // 1) Beta / nivel de riesgo
   let betaTxt;
   if (beta > bHi + 0.05) {
     flags++;
     betaTxt = `Tu portafolio tiene una beta de <strong>${beta.toFixed(2)}</strong>, <strong>más agresiva</strong> que el rango ${bLo.toFixed(2)}–${bHi.toFixed(2)} que corresponde a tu perfil <strong>${p.riskLabel.toLowerCase()}</strong>. En una caída del 20% del mercado, perderías ~${(beta*20).toFixed(0)}% — más de lo que tu tolerancia indica.`;
-    recs.push({i:'shield', t:`Baja la beta: añade una posición defensiva o de baja volatilidad (un ETF amplio como VOO, salud o consumo básico) para suavizar las caídas.`});
+    recs.push({i:'shield', t: (_hasBroadEtf || _defW >= 0.12)
+      ? `Baja la beta: aumenta la asignación a los activos defensivos / ETF amplios que ya tienes para amortiguar las caídas.`
+      : `Baja la beta: añade una posición defensiva o de baja volatilidad (un ETF amplio como VOO, salud o consumo básico) para suavizar las caídas.`});
   } else if (beta < bLo - 0.05) {
     flags++;
     betaTxt = `Tu beta es <strong>${beta.toFixed(2)}</strong>, <strong>más defensiva</strong> que el rango ${bLo.toFixed(2)}–${bHi.toFixed(2)} de tu perfil. Dado tu horizonte ${p.horizon === 'largo' ? 'de largo plazo' : ''}, estás dejando crecimiento sobre la mesa.`;
@@ -7302,8 +7472,8 @@ function _pvAdvisorBlock(m, techWeight, perfil){
 
   return `<div class="pv-advisor">
     <div class="pv-advisor-head">
-      <span class="material-symbols-outlined">neurology</span>
-      <span class="pv-advisor-title">Portiv Intelligence</span>
+      <span class="material-symbols-outlined">bolt</span>
+      <span class="pv-advisor-title">Diagnóstico rápido</span>
     </div>
     <div class="pv-advisor-profile">Perfil: <b>${p.label}</b> · ${p.horizonLabel} · Riesgo ${p.riskLabel}</div>
     <div class="pv-advisor-body">
@@ -7313,6 +7483,7 @@ function _pvAdvisorBlock(m, techWeight, perfil){
         ${recs.map(r=>`<li><span class="material-symbols-outlined">${r.i}</span><span>${r.t}</span></li>`).join('')}
       </ul>
       <div class="pv-advisor-verdict ${verdict.cls}"><span class="material-symbols-outlined" style="font-size:16px">${verdict.icon}</span>${verdict.txt}</div>
+      <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.5">Lectura instantánea por reglas. El <b>Análisis del asesor</b> (más abajo) la amplía con IA y sigue la misma dirección.</div>
     </div>
   </div>`;
 }
@@ -7569,11 +7740,9 @@ const PV_AI = {
     try { if (typeof window.savePortfolio === 'function') window.savePortfolio(); } catch(e){}  // cloudPush
   },
 
-  // Suma de pesos de los sub-sectores tech (idéntico al cálculo de renderDeepPortfolioAnalysis).
+  // Suma de pesos de los sectores tech canónicos (idéntico a renderDeepPortfolioAnalysis).
   _techWeight(m){
-    return (m.bySector['Tech · Semiconductores']||0) + (m.bySector['Tech · Hardware']||0)
-         + (m.bySector['Tech · Software/Cloud']||0) + (m.bySector['Tech · Internet/Ads']||0)
-         + (m.bySector['Tech · Adtech']||0);
+    return (m.items||[]).reduce((s,i)=> s + (TECH_SECTORS.has(i.sector) ? i.weight : 0), 0);
   },
 
   // Inyecta al modelo: subscores + perfil + desajustes + portafolio REAL con métricas YA calculadas.
@@ -7793,6 +7962,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       : `<p>${cached.text.replace(/\n/g,'<br>')}</p>`;
     host.innerHTML = `
       <div class="pv-ai-head">
+        <div class="pv-ai-title" style="font-weight:800;font-size:13px;color:var(--text);margin-bottom:2px">Análisis del asesor</div>
         <div class="pv-ai-profile">Perfil: <b>${p.label}</b> · Capacidad ${p.capLabel} · Disposición ${p.dispLabel}</div>
       </div>
       <div class="wo-narrative pv-ai-body">${bodyHtml}</div>
@@ -7854,7 +8024,7 @@ function renderDeepPortfolioAnalysis(T) {
       </div>`;
     const _emptyAdvisor = (typeof getInvestorProfile==='function' && getInvestorProfile())
       ? `<div class="pv-advisor">
-          <div class="pv-advisor-head"><span class="material-symbols-outlined">neurology</span><span class="pv-advisor-title">Portiv Intelligence</span></div>
+          <div class="pv-advisor-head"><span class="material-symbols-outlined">bolt</span><span class="pv-advisor-title">Diagnóstico rápido</span></div>
           <div class="pv-advisor-profile">Perfil: <b>${getInvestorProfile().label}</b> · ${getInvestorProfile().horizonLabel} · Riesgo ${getInvestorProfile().riskLabel}</div>
           <div class="pv-advisor-body"><p>Ya conozco tu perfil. En cuanto agregues posiciones, compararé tu cartera con tu horizonte y tolerancia al riesgo y te daré recomendaciones a medida.</p></div></div>`
       : `<div class="pv-profile-cta"><div class="pv-profile-cta-txt">Define tu perfil de inversionista<span>10 preguntas rápidas para personalizar todo tu análisis.</span></div><button class="pv-profile-cta-btn" onclick="openProfileQuiz()">Empezar →</button></div>`;
@@ -7892,11 +8062,8 @@ function renderDeepPortfolioAnalysis(T) {
       </div>`;
   }).join('');
 
-  const techWeight = (m.bySector['Tech · Semiconductores']||0) +
-                     (m.bySector['Tech · Hardware']||0) +
-                     (m.bySector['Tech · Software/Cloud']||0) +
-                     (m.bySector['Tech · Internet/Ads']||0) +
-                     (m.bySector['Tech · Adtech']||0);
+  // techWeight robusto: suma pesos de sectores tech canónicos (no strings literales a mano).
+  const techWeight = m.items.reduce((s,i)=> s + (TECH_SECTORS.has(i.sector) ? i.weight : 0), 0);
   const sectorCount = Object.keys(m.bySector).length;
 
   let perfil;
@@ -7912,6 +8079,43 @@ function renderDeepPortfolioAnalysis(T) {
 
   // ── ASESOR PERSONALIZADO (según el perfil del cuestionario) ──
   const _advisorHTML = _pvAdvisorBlock(m, techWeight, perfil);
+
+  // ── Look-through de ETFs: exposición EFECTIVA por acción (directa + parte dentro de cada ETF).
+  // Insight diferenciador: "tu exposición real a NVDA es ~19%, no 14%, porque VOO también la tiene".
+  const _lookThrough = (() => {
+    const eff = {};
+    m.items.forEach(i => {
+      const t = (i.ticker||'').toUpperCase();
+      const db = ETF_DB[t];
+      if (db && Array.isArray(db.holdings)) {                       // ETF → reparte su peso entre sus holdings
+        db.holdings.forEach(h => {
+          const ht = (h.t||'').toUpperCase();
+          if (!ht || ht === '—' || h.w == null) return;
+          (eff[ht] = eff[ht] || { direct:0, viaEtf:0, name:h.n||ht }).viaEtf += i.weight * (h.w/100);
+        });
+      } else {                                                      // acción directa
+        (eff[t] = eff[t] || { direct:0, viaEtf:0, name:i.name||t }).direct += i.weight;
+      }
+    });
+    return Object.entries(eff)
+      .map(([t,e]) => ({ t, name:e.name, direct:e.direct, viaEtf:e.viaEtf, total:e.direct + e.viaEtf }))
+      .filter(r => r.viaEtf > 0.01 && r.total >= 0.05 && (r.total - r.direct) >= 0.02)   // solapamiento material
+      .sort((a,b) => b.total - a.total).slice(0, 5);
+  })();
+  const _lookThroughHTML = _lookThrough.length ? `
+    <div style="margin-top:16px;border:1px solid var(--border);border-radius:var(--pa-radius,12px);overflow:hidden;background:var(--surface)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px">
+        <span class="material-symbols-outlined" style="font-size:18px">layers</span>Exposición real (look-through de ETFs)
+      </div>
+      <div style="padding:8px 16px 12px">
+        <div style="font-size:10px;color:var(--text3);line-height:1.5;margin:4px 0 8px">Tus ETFs también contienen estas acciones. Tu exposición REAL suma la tenencia directa más la parte dentro de cada fondo — puede ser bastante mayor de lo que parece.</div>
+        ${_lookThrough.map(r => `
+          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-top:1px solid var(--border)">
+            <div style="font-size:12px;color:var(--text)"><b>${r.t}</b> <span style="color:var(--st-primary,#04162c);font-weight:700">real ${pct(r.total)}</span></div>
+            <div style="font-size:11px;color:var(--text3);text-align:right">directa ${pct(r.direct)} + vía ETF ${pct(r.viaEtf)}</div>
+          </div>`).join('')}
+      </div>
+    </div>` : '';
 
   document.getElementById('port-deep-analysis').innerHTML = _advisorHTML + `
     <div class="pda-metrics">
@@ -7943,7 +8147,7 @@ function renderDeepPortfolioAnalysis(T) {
         ${sectorRows}
       </div>
       ${(() => {
-        const hs = _portfolioHealthScore(m, techWeight, sectorCount);
+        const hs = _portfolioHealthScore(m, techWeight, sectorCount, T);
         const C = 326.7;                                   // circunferencia (r=52)
         const off = C * (1 - hs.score/100);
         return `
@@ -7973,9 +8177,11 @@ function renderDeepPortfolioAnalysis(T) {
             <div class="phc-fval" style="color:${f.col}">${f.val}</div>
           </div>`).join('')}
         </div>
+        ${hs.dataNote ? `<div style="font-size:10px;color:var(--text3);padding:9px 2px 0;line-height:1.5;border-top:1px solid var(--border);margin-top:8px">${hs.dataNote}</div>` : ''}
       </div>`;
       })()}
     </div>
+    ${_lookThroughHTML}
   `;
 
   // ── 2) RECOMENDACIONES DE REBALANCEO ──────────────────────────────────────
@@ -7996,6 +8202,14 @@ function renderDeepPortfolioAnalysis(T) {
     const st  = _actionStyle[pr.action] || _actionStyle.MANTENER;
     const action = { label: pr.action, cls: st.cls, icon: st.icon };
     const note = noteEntry?.note || aiEntry?.note || _genericRebalReason(i);
+    // Delta accionable en dinero y en acciones (los pesos son sobre el valor de mercado T.mkt).
+    const _deltaUSD = (sug - i.weight) * (T.mkt || 0);
+    const _px = i.price || 0;
+    const _sh = _px > 0 ? _deltaUSD / _px : 0;
+    const _sign = _deltaUSD >= 0 ? '+' : '−';
+    const _deltaTxt = (pr.action === 'MANTENER' || Math.abs(_deltaUSD) < 1)
+      ? ''
+      : `<div class="rbl-delta" style="font-size:10px;color:var(--text3);margin-top:3px;font-variant-numeric:tabular-nums">${_sign}${Math.abs(_sh).toFixed(Math.abs(_sh)<10?2:1)} acc · ${_sign}$${Math.abs(Math.round(_deltaUSD)).toLocaleString('en-US')}</div>`;
     return `
       <tr>
         <td>
@@ -8005,7 +8219,7 @@ function renderDeepPortfolioAnalysis(T) {
         <td>
           <span class="rbl-action ${action.cls}"><span class="material-symbols-outlined">${action.icon}</span>${action.label}</span>
         </td>
-        <td><span class="rbl-rebal">${pct(i.weight)} → <strong>${pct(sug)}</strong></span></td>
+        <td><span class="rbl-rebal">${pct(i.weight)} → <strong>${pct(sug)}</strong></span>${_deltaTxt}</td>
         <td><div class="rbl-note"><span class="rbl-note-full">${note}</span><span class="rbl-note-short">${(function(t){ var m=String(t).match(/^[\s\S]*?[.!?](?=\s|$)/); return (m?m[0]:String(t)).trim(); })(note)}</span></div></td>
       </tr>`;
   }).join('');
@@ -8015,7 +8229,7 @@ function renderDeepPortfolioAnalysis(T) {
   document.getElementById('port-rebal-recs').innerHTML = `
     <div class="rbl-sub">
       Las sugerencias combinan: rating fundamental del ticker (P/E, ROE, crecimiento), beta del portafolio,
-      concentración actual, y ${_perfilTxt}.
+      concentración actual, y ${_perfilTxt}. Vender posiciones ganadoras puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
     </div>
     <div class="rbl-card">
       <table class="rbl-table">
@@ -8045,14 +8259,33 @@ function renderDeepPortfolioAnalysis(T) {
   if (payTickers.length) pros.push(`${payTickers.join(', ')} añade un negocio asset-light, defensivo, con pricing power y crecimiento secular en pagos digitales.`);
   pros.push('Costos: tenencia directa sin comisiones de gestión (a diferencia de fondos activos que cobran 0.5-2%/año).');
 
-  // Cons (críticas honestas)
-  if (m.top3W >= 0.45) cons.push(`Concentración: top 3 holdings = ${pct(m.top3W)} del portafolio. Un mal earnings de NVDA o VOO afecta material.`);
-  if (techWeight >= 0.55) cons.push(`Sobreexposición a tech (${pct(techWeight)}): en rotación sectorial o subida de tasas, drawdown puede ser 25-40%.`);
+  // ── Exposiciones REALES para condicionar los contras (BLOQUE 3) — nada de contras falsos ──
+  const _defWeight = m.items.reduce((s,i)=> s + (DEFENSIVE_SECTORS.has(i.sector) ? i.weight : 0), 0);
+  const _INTL_TICKERS = new Set(['VXUS','VEA','VWO','IEFA','IEMG','EFA','EEM','VEU','VT','VTIAX','SCHF','SPDW','IXUS','ACWX','BNDX','VYMI','VIGI']);
+  const _hasIntl = m.items.some(i => {
+    const t = (i.ticker||'').toUpperCase();
+    if (_INTL_TICKERS.has(t)) return true;
+    const c = _INFO_CACHE[t]; const ctry = (c && c.country) ? String(c.country).toUpperCase() : '';
+    return ctry && !['US','USA','UNITED STATES',''].includes(ctry);
+  });
+  const _BOND_TICKERS = new Set(['BND','AGG','TLT','IEF','SHY','BNDX','LQD','HYG','VCIT','VCSH','MUB','TIP','GOVT','VGIT','VGSH','BIL','SGOV']);
+  const _bondWeight = m.items.reduce((s,i)=>{
+    const t = (i.ticker||'').toUpperCase();
+    const isBond = _BOND_TICKERS.has(t) || (ETF_DB[t] && ETF_DB[t].assetClass === 'bond');
+    return s + (isBond ? i.weight : 0);
+  }, 0);
+  const _cashPct = (T.total > 0) ? (T.cash + T.mm) / T.total : 0;
+  const _cushion = _bondWeight + _cashPct;   // renta fija + efectivo
+  const _topTk = (m.sorted[0] && m.sorted[0].ticker) || 'tu mayor posición';
+
+  // Cons (críticas honestas — SOLO cuando aplican a las tenencias reales)
+  if (m.top3W >= 0.45) cons.push(`Concentración: top 3 holdings = ${pct(m.top3W)} del portafolio. Un mal trimestre de ${_topTk} mueve material toda la cartera.`);
+  if (techWeight >= 0.55) cons.push(`Sobreexposición a tech (${pct(techWeight)}): en rotación sectorial o subida de tasas, el drawdown puede ser 25-40%.`);
   if (m.portBeta >= 1.30) cons.push(`Beta alta (${m.portBeta.toFixed(2)}): en una caída del mercado del 20%, este portafolio cae ~${(m.portBeta*20).toFixed(0)}%.`);
-  cons.push('Sin exposición a sectores defensivos (salud, consumer staples, utilities) — vulnerable en recesión.');
-  cons.push('Cero exposición internacional (Europa, emerging markets) — riesgo de "home bias" si el dólar pierde primacía.');
+  if (_defWeight < 0.08) cons.push('Sin exposición a sectores defensivos (salud, consumo básico, utilities) — más vulnerable en recesión.');
+  if (!_hasIntl) cons.push('Cero exposición internacional (Europa, emergentes) — riesgo de "home bias" si el dólar pierde primacía.');
   if (m.expDiv < 0.015) cons.push(`Dividend yield bajo (${pct(m.expDiv)}): el portafolio depende casi 100% de apreciación; en mercado lateral genera poco ingreso.`);
-  cons.push('Sin renta fija ni cash significativo — sin dry powder para comprar en caídas fuertes.');
+  if (_cushion < 0.05) cons.push('Sin renta fija ni cash significativo — sin dry powder para comprar en caídas fuertes.');
 
   document.getElementById('port-pros-cons').innerHTML = `
     <div class="pa-prosbox">
@@ -8066,38 +8299,25 @@ function renderDeepPortfolioAnalysis(T) {
       </div>
     </div>
   `;
-  // ── 4) RETORNO ESPERADO TOTAL — AÑO CALENDARIO (1 ENE – 31 DIC) ───────────
-  // Combina: retorno realizado YTD (desde 1 ene o inception, lo que sea más tarde)
-  // + retorno esperado prorrateado de hoy a 31 dic.
+  // ── 4) RETORNO ESPERADO ANUAL (forward 12M) ──────────────────────────────
+  // Tasa anual esperada de la cartera (apreciación sobria + dividendos). Ya NO se compone
+  // con un "YTD realizado": ese número era retorno-desde-costo (no año calendario) y con un
+  // broker de historial largo mentía. La proyección puntual de cierre con veredicto
+  // "On Track / Below Target" se eliminó por riesgo App Store (parecía promesa de resultado).
   const expAnnual = m.expGrowth + m.expDiv;  // tasa anual esperada (forward 12M)
   const today    = new Date();
   const year     = today.getFullYear();
-  // (el label del año se setea aquí, ya con `year` declarado — antes estaba antes de la
-  //  declaración y lanzaba un TDZ que dejaba en blanco Retorno Esperado y Detalle de Activos)
   const _yl = document.getElementById('pa-year-label');
   if (_yl) _yl.textContent = year;
-  const janFirst = new Date(year, 0, 1);
-  const decLast  = new Date(year, 11, 31);
-  const ytdStart = INCEPTION_DATE > janFirst ? INCEPTION_DATE : janFirst;
-  const msYear   = decLast.getTime() - janFirst.getTime();
-  const msToGo   = Math.max(0, decLast.getTime() - today.getTime());
-  const fracToGo = msToGo / msYear;  // fracción del año que queda
 
-  // Retorno realizado desde inicio (proxy del YTD real del portafolio)
-  const realizedYTD = (T.total > 0 && INITIAL_CAPITAL > 0)
-    ? (T.total / INITIAL_CAPITAL) - 1
-    : 0;
-  // Proyección lo que queda del año
-  const projRemaining = expAnnual * fracToGo;
-  // Compuesto: (1+realizado)*(1+proj) - 1
-  const expBase = (1 + realizedYTD) * (1 + projRemaining) - 1;
-
-  // Escenarios: Base = retorno anual esperado directo de _expReturn() (idéntico al análisis individual).
-  // Bear = estrés: crecimiento al 40% de lo esperado menos 8pp.
-  const base = expAnnual;  // m.expTotal — coincide exactamente con el análisis por acción
-  const bear = Math.max(-0.30, expAnnual * 0.4 - 0.08);
-
-  const fmtRange = `${janFirst.toLocaleDateString('es-MX',{day:'numeric',month:'short'})} – ${decLast.toLocaleDateString('es-MX',{day:'numeric',month:'short',year:'numeric'})}`;
+  // Escenarios: Base = retorno anual esperado (apreciación sobria + dividendos), mostrado
+  // como RANGO (±3pp) para no fingir precisión de punto. Bear = estrés basado en la BETA
+  // REAL de la cartera ante una corrección de mercado de ~20% (mismo lenguaje que el resto
+  // de la app: "en una caída del 20% pierdes beta×20%"), no un número desconectado del riesgo.
+  const base    = expAnnual;                 // m.expTotal — coincide con el análisis por acción
+  const baseLo  = base - 0.03, baseHi = base + 0.03;
+  const mktDrop = 0.20;
+  const bear    = -((m.portBeta || 1) * mktDrop);
 
   // % con signo
   const pr = v => (v>=0?'+':'') + (v*100).toFixed(1) + '%';
@@ -8144,7 +8364,7 @@ function renderDeepPortfolioAnalysis(T) {
         </tfoot>
       </table>
       <div style="padding:10px 16px;font-size:10px;color:var(--text3);line-height:1.5;border-top:1px solid var(--border)">
-        El "Retorno anual" de cada activo es idéntico al "Retorno total esperado anual" que aparece al analizar esa acción (apreciación capeada a ±40% + dividendos). El promedio ponderado por el peso de cada posición es la tasa anualizada implícita del portafolio (${pr(m.expTotal)}).
+        La "Apreciación" de cada activo es una estimación sobria: mezcla su crecimiento esperado con el retorno histórico de largo plazo de su sector, capeada a un rango razonable (hasta ~18%). El "Retorno anual" añade el dividendo y coincide con el análisis individual de esa acción. El promedio ponderado por peso es la tasa anualizada implícita del portafolio (${pr(m.expTotal)}). Estimación, no promesa.
       </div>
     </div>`;
 
@@ -8153,47 +8373,51 @@ function renderDeepPortfolioAnalysis(T) {
     <div class="pa-scen-grid">
       <div class="pa-scen bear">
         <div class="pa-scen-label">Escenario Bear</div>
-        <div class="pa-scen-val neg">${bear>=0?'+':''}${(bear*100).toFixed(1)}%</div>
-        <div class="pa-scen-desc">Recesión global o corrección severa del sector tecnológico.</div>
+        <div class="pa-scen-val neg">${(bear*100).toFixed(1)}%</div>
+        <div class="pa-scen-desc">En una corrección del mercado de ~20%, tu cartera (beta ${(m.portBeta||1).toFixed(2)}) caería alrededor de esto.</div>
       </div>
       <div class="pa-scen base">
         <div class="pa-scen-badge">Retorno Esperado</div>
         <div class="pa-scen-label">Escenario Base</div>
-        <div class="pa-scen-val ${base>=0?'pos':'neg'}">${base>=0?'+':''}${(base*100).toFixed(1)}%</div>
-        <div class="pa-scen-desc">Promedio ponderado del retorno anual esperado por acción (apreciación + dividendos).</div>
+        <div class="pa-scen-val ${base>=0?'pos':'neg'}">${pr(baseLo)} a ${pr(baseHi)}</div>
+        <div class="pa-scen-desc">Rango del retorno anual esperado (apreciación sobria + dividendos), no una promesa. Estimación basada en consenso.</div>
       </div>
     </div>
     ${breakdownTable}
   `;
 
-  // KPI bar — 4 métricas clave en fila
-  const _top3conc = m.sorted.slice(0,3).reduce((s,i)=>s+i.weight,0);
-  const _concTag = _top3conc > 0.60 ? 'red' : _top3conc > 0.45 ? 'amber' : 'green';
-  const _concLbl = _top3conc > 0.60 ? 'Alta' : _top3conc > 0.45 ? 'Media' : 'Baja';
-  const _trackTag = realizedYTD >= expAnnual * (1 - fracToGo) * 0.7 ? 'green' : 'amber';
-  const _trackLbl = realizedYTD >= expAnnual * (1 - fracToGo) * 0.7 ? 'On Track' : 'Below Target';
+  // KPI bar — sin duplicar Concentración (ya está en el grid superior + Health Score) ni la
+  // proyección puntual con veredicto "On Track" (eliminada por riesgo App Store). Estas
+  // cifras REFERENCIAN el retorno esperado, no lo recalculan (la tabla de desglose es la
+  // fuente autoritativa). Añade el ingreso por dividendos en $ (BLOQUE 7.2).
+  const _divIncome = m.items.reduce((s,i)=> s + (i.divYield||0) * (i.mktVal||0), 0);   // $/año en dividendos
+  // Métrica ajustada por riesgo: retorno esperado por unidad de beta, comparado con VOO
+  // (β 1.0, ER ~8.7%). Responde "¿el riesgo extra está pagando?".
+  const _vooER   = (ETF_DB.VOO && ETF_DB.VOO.expReturn) || 0.087;
+  const _riskAdj = (m.portBeta > 0) ? (expAnnual / m.portBeta) : 0;
+  const _beatsVoo = _riskAdj >= _vooER;
   const _kpiBar = document.getElementById('port-kpi-bar');
   if (_kpiBar) _kpiBar.innerHTML = `
     <div class="pa-kpi-bar">
-      <div class="pa-kpi">
-        <div class="pa-kpi-label">Concentración Top 3</div>
-        <div class="pa-kpi-val">${((_top3conc)*100).toFixed(1)}%<span class="pa-kpi-tag ${_concTag}">${_concLbl}</span></div>
-      </div>
       <div class="pa-kpi">
         <div class="pa-kpi-label">Dividend Yield</div>
         <div class="pa-kpi-val">${(m.expDiv*100).toFixed(1)}%<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> Anual</span></div>
       </div>
       <div class="pa-kpi">
-        <div class="pa-kpi-label">Proyección Cierre ${year}</div>
-        <div class="pa-kpi-val green">${base>=0?'+':''}${(base*100).toFixed(1)}%<span class="pa-kpi-tag ${_trackTag}"> ${_trackLbl}</span></div>
+        <div class="pa-kpi-label">Ingreso por Dividendos</div>
+        <div class="pa-kpi-val">~$${Math.round(_divIncome).toLocaleString('en-US')}<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> / año</span></div>
       </div>
       <div class="pa-kpi">
-        <div class="pa-kpi-label">Tasa Anualizada Implícita</div>
-        <div class="pa-kpi-val">${(expAnnual*100).toFixed(1)}%</div>
+        <div class="pa-kpi-label">Retorno Anual Esperado</div>
+        <div class="pa-kpi-val">${pr(expAnnual)}<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> estimado</span></div>
+      </div>
+      <div class="pa-kpi">
+        <div class="pa-kpi-label">Retorno / Riesgo <span style="color:var(--text3);font-weight:400">vs VOO</span></div>
+        <div class="pa-kpi-val">${(_riskAdj*100).toFixed(1)}%<span class="pa-kpi-tag ${_beatsVoo?'green':'amber'}"> ${_beatsVoo?'paga el riesgo':'≤ VOO'}</span></div>
       </div>
     </div>
     <div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.55">
-      Tasas de crecimiento y dividendos consistentes con el panel de "Retorno Esperado del Portafolio" — el mismo ticker aporta el mismo retorno en ambos análisis. Consenso Buy/Hold/Sell de analistas reales (arriba). No es asesoría financiera.
+      Estimación basada en consenso de analistas — no es una meta ni una promesa de rendimiento. El retorno esperado es el mismo del panel superior y del desglose por activo. No es asesoría financiera.
     </div>
   `;
 
@@ -8206,25 +8430,12 @@ function renderAssetDetailTable(T) {
   if (!el) return;
   if (!HOLDINGS.length) { el.innerHTML = '<div style="padding:26px 16px;text-align:center;font-size:12px;color:var(--text3)">Sin activos en el portafolio.</div>'; return; }
 
-  // Sparkline decorativo, determinista por ticker (tendencia visual, sin datos inventados)
-  const spark = (seed, up) => {
-    let s = 0; for (let k=0;k<seed.length;k++) s = (s*31 + seed.charCodeAt(k)) >>> 0;
-    const rnd = () => { s = (s*1103515245 + 12345) & 0x7fffffff; return (s/0x7fffffff); };
-    const n = 14, w = 96, h = 34, pad = 3;
-    const ys = []; let y = 0.5;
-    for (let k=0;k<n;k++){ y += (rnd()-0.5)*0.32 + (up?0.02:-0.02); y = Math.max(0.12, Math.min(0.88, y)); ys.push(y); }
-    const pts = ys.map((v,k)=>[pad + k*((w-2*pad)/(n-1)), pad + (1-v)*(h-2*pad)]);
-    const d = pts.map((p,k)=> (k? 'L':'M') + p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
-    const area = `M${pts[0][0].toFixed(1)} ${(h-pad).toFixed(1)} ` + pts.map(p=>'L'+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ') + ` L${pts[n-1][0].toFixed(1)} ${(h-pad).toFixed(1)} Z`;
-    return `<svg class="pa-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
-      <path d="${area}" fill="rgba(11,28,48,0.07)"/>
-      <path d="${d}" fill="none" stroke="rgba(11,28,48,0.28)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
-    </svg>`;
-  };
-
+  // (Se eliminó la columna "Tendencia": su sparkline era ruido determinista sin dato real.
+  //  Portiv no muestra gráficos inventados — mejor omitir la tendencia que fabricarla.)
   const rows = HOLDINGS.map((h, i) => {
     const color = (typeof CHART_COLORS!=='undefined' && CHART_COLORS[i]) ? CHART_COLORS[i] : '#04162c';
-    const sector = (typeof TICKER_SECTOR!=='undefined' && TICKER_SECTOR[h.ticker]) ? TICKER_SECTOR[h.ticker] : '';
+    let sector = (typeof _canonicalSector === 'function') ? _canonicalSector(h.ticker) : ((typeof TICKER_SECTOR!=='undefined' && TICKER_SECTOR[h.ticker]) ? TICKER_SECTOR[h.ticker] : '');
+    if (sector === 'Sin clasificar') sector = '';   // no ensuciar cada fila con "Sin clasificar"
     const chg = +h.dayChgPct || 0, up = chg >= 0;
     const c = (typeof calcH === 'function') ? calcH(h) : { mktVal: h.qty * h.price };
     // Peso relativo al total del portafolio (misma base que la tabla de posiciones)
@@ -8243,14 +8454,13 @@ function renderAssetDetailTable(T) {
         <td class="r"><span class="pa-aprice">$${(+h.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></td>
         <td class="r"><span class="pa-achg ${up?'pos':'neg'}"><span class="material-symbols-outlined">${up?'arrow_upward':'arrow_downward'}</span>${Math.abs(chg).toFixed(2)}%</span></td>
         <td class="r" style="font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums">${allocPct.toFixed(2)}%</td>
-        <td class="r">${spark(h.ticker, up)}</td>
       </tr>`;
   }).join('');
 
   el.innerHTML = `
     <table class="pa-atable">
       <thead>
-        <tr><th>Activo</th><th class="r">Precio</th><th class="r">Cambio 24h</th><th class="r">% Cartera</th><th class="r">Tendencia</th></tr>
+        <tr><th>Activo</th><th class="r">Precio</th><th class="r">Cambio 24h</th><th class="r">% Cartera</th></tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>`;
@@ -12599,7 +12809,7 @@ const PORTIV_CHART = {
     // cálculo de la serie: PERF_MASTER puede no abarcar todo el rango (p.ej. solo 3M de
     // historial), lo que haría que 3M y ALL salieran idénticos. Si el broker dio el % de
     // este período (o uno más largo a heredar), úsalo exacto. ALL nunca hereda → usa el real.
-    const _ovr=(typeof _effectiveOverridePct==='function')?_effectiveOverridePct(period):null;
+    const _ovr=(typeof _liveOverridePct==='function')?_liveOverridePct(period):null;
     if(_ovr!=null&&isFinite(_ovr)){
       // El % ETIQUETADO por el broker (extraído del botón 1M/3M/… por el OCR) se muestra
       // VERBATIM: lo que el analizador leyó = lo que se ve. Antes se "driftaba" anclando al
@@ -13817,7 +14027,7 @@ function setPeriodData(period, ds) {
       ds.values[ds.values.length - 1] = _liveT;
       // Re-derivar change/%: si hay override del broker se respeta su %, si no se recalcula.
       const _first = ds.values[0] || 0;
-      const _ovr = (typeof _effectiveOverridePct === 'function') ? _effectiveOverridePct(period) : null;
+      const _ovr = (typeof _liveOverridePct === 'function') ? _liveOverridePct(period) : null;
       if (_ovr != null && isFinite(_ovr)) {
         ds.changePct = +(+_ovr).toFixed(2);
         const _b = _liveT / (1 + _ovr / 100);
@@ -13828,7 +14038,14 @@ function setPeriodData(period, ds) {
       }
     }
   } catch(e) {}
-  const isPos = ds.change >= 0;
+  // El color del 1D debe seguir el cambio REAL del día (vs cierre previo = número "HOY"),
+  // no el intradía desde la apertura (que puede subir aunque el día esté en rojo). Los demás
+  // períodos siguen usando ds.change (last − primer punto de la serie).
+  let _colorChange = ds.change;
+  if (period === '1D' && typeof _calcRealDayChange === 'function') {
+    try { const _rd = _calcRealDayChange(); if (_rd && isFinite(_rd.day)) _colorChange = _rd.day; } catch(e) {}
+  }
+  const isPos = _colorChange >= 0;
   const col   = isPos ? '#0e8c5c' : '#ba1a1a';
   const ctx   = document.getElementById('perfChart')?.getContext('2d');
   perfChart.data.labels = ds.labels;
@@ -14284,6 +14501,23 @@ function _mergeNews(primary, secondary, limit){
   return all.slice(0, limit || 12);
 }
 
+// ── FUENTE ÚNICA de precio + cambio del día por ticker (watchlist Y detalle) ──────────────
+// Evita que dos pantallas muestren % distintos para la MISMA acción: ambas leen/escriben aquí.
+// El último fetch (de cualquier pantalla) manda → precio y % SIEMPRE del mismo instante y del
+// mismo proveedor. Sesión-only (no se persiste): en cada carga se repuebla con datos frescos.
+const _QUOTE_CACHE = {};   // ticker → { price, change, pct, ts, src }
+function _quoteCachePut(ticker, price, change, pct, src){
+  const t = (ticker||'').toUpperCase(); if (!t) return;
+  if (typeof price !== 'number' || !isFinite(price) || price <= 0) return;
+  _QUOTE_CACHE[t] = {
+    price: +price,
+    change: (typeof change === 'number' && isFinite(change)) ? +change : 0,
+    pct:    (typeof pct    === 'number' && isFinite(pct))    ? +pct    : 0,
+    ts: Date.now(), src: src || ''
+  };
+}
+function _quoteCacheGet(ticker){ const t=(ticker||'').toUpperCase(); const q=_QUOTE_CACHE[t]; return (q && q.price>0) ? q : null; }
+
 async function apiCall(params, timeoutMs = 15000) {
   const { action, ticker, tickers, period, from, to } = params;
 
@@ -14297,6 +14531,7 @@ async function apiCall(params, timeoutMs = 15000) {
       try {
         const d = await fhFetch(`/quote?symbol=${sym}`, timeoutMs);
         if (d && typeof d.c === 'number' && d.c > 0) {
+          try { _quoteCachePut(sym, d.c, d.d || 0, d.dp || 0, 'fh'); } catch(e){}
           return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0 };
         }
       } catch(e) { /* respaldo Yahoo */ }
@@ -14308,6 +14543,7 @@ async function apiCall(params, timeoutMs = 15000) {
                      : (typeof m.previousClose === 'number' && m.previousClose > 0) ? m.previousClose : null;
           const chg = prev != null ? m.regularMarketPrice - prev : 0;
           const pct = (prev != null && prev > 0) ? chg / prev * 100 : 0;
+          try { _quoteCachePut(sym, m.regularMarketPrice, chg, pct, 'yh'); } catch(e){}
           return { symbol: sym, regularMarketPrice: m.regularMarketPrice, regularMarketChange: chg, regularMarketChangePercent: pct };
         }
       } catch(e) {}
@@ -14356,8 +14592,23 @@ async function apiCall(params, timeoutMs = 15000) {
     }
     var _yPrev = (_yMeta && typeof _yMeta.chartPreviousClose === 'number' && _yMeta.chartPreviousClose > 0) ? _yMeta.chartPreviousClose : null;
     var _dChg, _dPct;
-    if (_yPrice && _yPrev) { _dChg = _yPrice - _yPrev; _dPct = _dChg / _yPrev * 100; }
-    else { _dChg = (_q2 && _q2.d) || 0; _dPct = (_q2 && _q2.dp) || 0; }
+    // ── CAMBIO DEL DÍA: FUENTE ÚNICA (concuerda con el watchlist) ──────────────────────────────
+    // El watchlist (apiCall action:'quote'), el refresco en vivo (_refreshResearchPrice) y el
+    // alta de watchlist usan Finnhub dp. El detalle usaba Yahoo (chartPreviousClose) → % DISTINTO
+    // para la misma acción (p.ej. NFLX −7.26% en watchlist vs +2.93% en el detalle). Se unifica:
+    // Finnhub dp PRIMERO (mismo proveedor que el resto), Yahoo de respaldo. El $ del día se deriva
+    // del % contra el precio MOSTRADO (_px) → % y $ siempre consistentes con el precio en pantalla.
+    const _fhOk = _q2 && typeof _q2.c === 'number' && _q2.c > 0;
+    if (_fhOk) {
+      _dPct = (typeof _q2.dp === 'number' && isFinite(_q2.dp)) ? _q2.dp : 0;
+      _dChg = (_dPct !== 0) ? +(_px - _px / (1 + _dPct / 100)).toFixed(2)
+             : ((typeof _q2.d === 'number' && isFinite(_q2.d)) ? _q2.d : 0);
+    } else if (_yPrice && _yPrev) {
+      _dChg = _yPrice - _yPrev; _dPct = _dChg / _yPrev * 100;
+    } else {
+      _dChg = 0; _dPct = 0;
+    }
+    try { _quoteCachePut(ticker, _px, _dChg, _dPct, _fhOk ? 'fh' : 'yh'); } catch(e){}
     // Si el perfil no cargó (proxy lento/429), NO etiquetar como "ETF" — eso era un
     // mislabel: una acción normal aparecía como ETF. Dejar sector vacío; el tipo real ETF
     // se detecta por la lista de tickers conocidos más abajo (quoteType).
@@ -15528,6 +15779,7 @@ async function _refreshResearchPrice(ticker){
     if (ticker !== (_currentResearchTicker||'').toUpperCase()) return;   // cambió de acción durante el fetch
     const price = q.c, chg = (typeof q.d === 'number' ? q.d : 0), pct = (typeof q.dp === 'number' ? q.dp : 0);
     _researchCurPrice = price; _researchDayChg = chg; _researchDayChgPct = pct;
+    try { _quoteCachePut(ticker, price, chg, pct, 'fh'); } catch(e){}
     const pEl = document.getElementById('r-price');
     if (pEl) pEl.textContent = `$${price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
     if (typeof _updateChangeDisplay === 'function') _updateChangeDisplay(chg, pct, 'hoy');
@@ -19528,8 +19780,12 @@ function renderWatchlist() {
     tickers.forEach(t => {
       const cache = WATCHLIST_CACHE[t] || {};
       const info  = cache.info || {};
-      const price = cache.price;
-      const pct   = cache.dayChgPct;
+      // Fuente ÚNICA: si hay cotización viva en el cache compartido (la escribió el refresco del
+      // watchlist O la pantalla de la acción), esa MANDA → la card y el detalle muestran EL MISMO
+      // precio y % del día. Si aún no hubo fetch esta sesión, cae al cache persistido.
+      const _cq   = (typeof _quoteCacheGet === 'function') ? _quoteCacheGet(t) : null;
+      const price = _cq ? _cq.price : cache.price;
+      const pct   = _cq ? _cq.pct   : cache.dayChgPct;
       const name  = info.longName || info.shortName
         || (STOCK_DB.find(s => s[0] === t)?.[1]) || t;
       const av = _wlAvatarColor(t);
@@ -24632,6 +24888,8 @@ async function aiPortApply(){
     INITIAL_CAPITAL = (capv != null && capv > 0) ? capv : startBal;
     TOTAL_OVERRIDE = null;                          // el total se calcula del efectivo + money market
     PERIOD_CHANGE_OVERRIDE = _aiReadPeriodOverrides();
+    try { _OVERRIDE_ASOF = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : _OVERRIDE_ASOF; } catch(e){}
+    _OVERRIDE_CAP_NAV = null;   // % importado = a fecha de hoy → re-ancla el aging (rueda desde mañana)
     if (donutChart) { donutChart.destroy(); donutChart = null; }
     _aiSyncPerfSeries();
     unlockPeriods();
@@ -24678,6 +24936,8 @@ async function aiPortApply(){
   // Ancla importada emparejada con su cambio del día → el total parte del valor de la foto y sigue moviéndose en vivo.
   _OVERRIDE_DAY_REF = _dayChangeNow();
   PERIOD_CHANGE_OVERRIDE = _aiReadPeriodOverrides();
+  try { _OVERRIDE_ASOF = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : _OVERRIDE_ASOF; } catch(e){}
+  _OVERRIDE_CAP_NAV = null;   // % importado = a fecha de hoy → re-ancla el aging (rueda desde mañana)
   if (donutChart) { donutChart.destroy(); donutChart = null; }
   _aiSyncPerfSeries();
   unlockPeriods();
