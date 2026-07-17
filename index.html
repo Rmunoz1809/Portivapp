@@ -12996,7 +12996,9 @@ window.PORTIV_BROKER = {
 //  (y setPeriodData lo re-ancla exacto). Carga en 2º plano y redibuja al terminar.
 const PORTIV_HIST = {
   data: {},            // ticker → { 'YYYY-MM-DD': close }
-  _ready: false, _loading: false, _at: 0,
+  _ready: false, _loading: false, _at: 0, _hydrated: false,
+  _LS_DAILY: 'portiv_hist_daily_v1', _LS_INTRA: 'portiv_hist_intra_v1',
+  _DAILY_TTL: 86400000, _INTRA_TTL: 300000,   // daily fresco 24h · intradía 5min (Fase 2/3)
   ready(){ return this._ready; },
   _tickers(){
     try { return [...new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : [])
@@ -13005,18 +13007,28 @@ const PORTIV_HIST = {
   },
   async ensureAsync(){
     if (this._loading) return;
-    if (this._ready && (Date.now() - this._at) < 600000) return;   // refresco máx 1×/10min
+    try { this._hydrate(); } catch(e){}
     const tks = this._tickers();
     if (!tks.length) return;
+    const haveAll = tks.every(t => this.data[t]);
+    // Cache LS/memoria fresco (24h) y con TODAS las posiciones → NO refetch (Fase 2).
+    if (haveAll && (Date.now() - this._at) < this._DAILY_TTL) { this._ready = true; return; }
     this._loading = true;
     try {
       const q = tks.slice();
       const one = async (tk) => {
         try {
           if (typeof _yhChart !== 'function') return;
-          const y = await _yhChart(tk, '2y', '1d', 7000);   // 2 años cubre 1W..1Y
+          // Incremental: si ya hay historia reciente, baja solo la cola (5d) y mergea;
+          // si no hay o el hueco es grande, baja 2y completo (Fase 2).
+          const existing = this.data[tk];
+          const lastISO = existing ? Object.keys(existing).sort().pop() : null;
+          let range = '2y';
+          if (lastISO){ const gap = Math.floor((Date.now() - Date.parse(lastISO+'T00:00:00Z'))/86400000);
+            if (gap >= 0 && gap <= 5) range = '5d'; }
+          const y = await _yhChart(tk, range, '1d', 7000);   // 2y cubre 1W..1Y; 5d = cola incremental
           if (y && Array.isArray(y.timestamps) && y.timestamps.length && Array.isArray(y.closes)) {
-            const m = {};
+            const m = (range === '5d' && existing) ? existing : {};   // 5d mergea sobre lo cacheado
             for (let i = 0; i < y.timestamps.length; i++) {
               const c = y.closes[i]; if (c == null) continue;
               m[new Date(y.timestamps[i] * 1000).toISOString().slice(0, 10)] = c;
@@ -13032,6 +13044,7 @@ const PORTIV_HIST = {
       await Promise.all(workers);
       this._ready = this._tickers().every(t => this.data[t]);   // listo solo si TODAS las posiciones tienen data
       this._at = Date.now();
+      this._persistDaily();                                     // re-persistir tras refetch (Fase 2)
     } catch(e){}
     this._loading = false;
     // Redibuja el período activo ya con la línea real.
@@ -13082,7 +13095,8 @@ const PORTIV_HIST = {
   },
   async ensureIntradayAsync(){
     if (this._intraLoading) return;
-    if (this._intraReady && (Date.now()-this._intraAt) < 90000) return;   // refresco máx 1×/90s
+    try { this._hydrate(); } catch(e){}
+    if (this._intraReady && (Date.now()-this._intraAt) < this._INTRA_TTL) return;   // Fase 3: throttle 90s → 5min
     const tks = this._tickers();
     if (!tks.length) return;
     this._intraLoading = true;
@@ -13113,6 +13127,7 @@ const PORTIV_HIST = {
       await Promise.all(workers);
       this._intraReady = this._tickers().every(t => this.intra[t] && Object.keys(this.intra[t]).length);
       this._intraAt = Date.now();
+      this._persistIntra();                                   // persistir intradía de HOY (Fase 2)
     } catch(e){}
     this._intraLoading = false;
     // Redibuja 1D ya con la curva real si es el período activo.
@@ -13153,9 +13168,33 @@ const PORTIV_HIST = {
         since: 'apertura',
       };
     } catch(e){ return null; }
+  },
+
+  // ── Persistencia en localStorage (Fase 2: evita re-bajar todo en cada recarga) ──
+  _todayETsafe(){
+    try { if (typeof PORTIV_CHART!=='undefined' && PORTIV_CHART._todayET) return PORTIV_CHART._todayET(); } catch(e){}
+    try { return new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date()); } catch(e){ return null; }
+  },
+  _persistDaily(){ try { const s=JSON.stringify({at:this._at,data:this.data});
+    (typeof _lsSet==='function'?_lsSet(this._LS_DAILY,s):localStorage.setItem(this._LS_DAILY,s)); } catch(e){} },
+  _persistIntra(){ try { const s=JSON.stringify({at:this._intraAt,day:this._todayETsafe(),intra:this.intra});
+    (typeof _lsSet==='function'?_lsSet(this._LS_INTRA,s):localStorage.setItem(this._LS_INTRA,s)); } catch(e){} },
+  // Hidrata data/intra desde LS una sola vez (antes del primer render → recarga en frío sin refetch).
+  _hydrate(){
+    if (this._hydrated) return; this._hydrated = true;
+    try { const raw = localStorage.getItem(this._LS_DAILY);
+      if (raw){ const o = JSON.parse(raw);
+        if (o && o.data && typeof o.data==='object'){ this.data = o.data; this._at = +o.at||0;
+          const tks=this._tickers(); this._ready = tks.length>0 && tks.every(t => this.data[t]); } } } catch(e){}
+    try { const raw = localStorage.getItem(this._LS_INTRA);
+      if (raw){ const o = JSON.parse(raw); const today = this._todayETsafe();
+        if (o && o.intra && typeof o.intra==='object' && o.day && today && o.day===today){
+          this.intra = o.intra; this._intraAt = +o.at||0;
+          const tks=this._tickers(); this._intraReady = tks.length>0 && tks.every(t => this.intra[t] && Object.keys(this.intra[t]).length); } } } catch(e){}
   }
 };
 window.PORTIV_HIST = PORTIV_HIST;
+try { PORTIV_HIST._hydrate(); } catch(e){}   // hidratar antes del primer render (Fase 2)
 
 // ══════════════════════════════════════════════════════════
 //  HISTORIAL DIARIO AUTOMÁTICO (legacy — sigue activo para compatibilidad)
@@ -25107,15 +25146,26 @@ function init() {
     // bloquear el primer paint del portafolio → se difiere tras pintar (doble rAF).
     requestAnimationFrame(() => requestAnimationFrame(() => { try { fetchLivePrices(); } catch(e){} }));
     let _priceTickCount = 0;
+    // Backoff por inactividad (Fase 3.3): si el usuario no interactúa en >10min (aunque la
+    // pestaña siga visible), duplicamos los intervalos de red (mitad de cotizaciones) hasta
+    // que vuelva a interactuar. Cualquier gesto lo resetea.
+    let _lastInteractAt = Date.now();
+    const _bumpInteract = () => { _lastInteractAt = Date.now(); };
+    ['pointerdown','keydown','touchstart','wheel','click'].forEach(ev =>
+      window.addEventListener(ev, _bumpInteract, { passive: true }));
+    const _netIdle = () => (Date.now() - _lastInteractAt) > 600000;   // >10min sin interacción
     // Arranque desincronizado (0–15s) para que los ~1000 clientes no golpeen el proveedor de
     // precios en el mismo instante exacto cada 30s (solo desfasa el arranque; el tick sigue igual).
     setTimeout(() => { setInterval(() => {
       if (document.hidden) return;
       _priceTickCount++;
+      const idle = _netIdle();
       if (isMarketOpen()) {
-        fetchLivePrices();                           // cada 30s en horario regular
-      } else if (isExtendedHours() && _priceTickCount % 10 === 0) {
-        fetchLivePrices();                           // cada ~5min en extended hours
+        // regular: cada 30s; inactivo >10min → cada 60s (1 de cada 2 ticks).
+        if (!idle || _priceTickCount % 2 === 0) fetchLivePrices();
+      } else if (isExtendedHours()) {
+        // extended: cada ~5min; inactivo >10min → cada ~10min.
+        if (_priceTickCount % (idle ? 20 : 10) === 0) fetchLivePrices();
       }
     }, 30 * 1000); }, Math.floor(Math.random()*15000));
 
@@ -25124,13 +25174,13 @@ function init() {
     //    hace nada con el mercado cerrado → el total y el chart se congelaban. Esto
     //    re-cotiza (si hay sesión activa) y SIEMPRE repinta el monto + la gráfica
     //    del período activo cada 60s, esté el mercado abierto o cerrado.
-    setInterval(async () => {
+    setInterval(() => {
       if (document.hidden) return;
       try {
-        if (isMarketOpen() || isExtendedHours()) {
-          await fetchLivePrices();   // re-cotiza; re-renderiza solo si hubo cambio
-        }
-        // Repintado visible aunque el precio no cambie (mercado cerrado / sin cambios).
+        // Fase 3.2: este loop YA NO re-cotiza. El loop de 30s (Price Sync Engine) es el ÚNICO
+        // que llama fetchLivePrices en market/extended hours → se elimina la cotización doble.
+        // Aquí SOLO se repinta el monto + la gráfica del período activo cada 60s (sin red),
+        // esté el mercado abierto o cerrado.
         if (typeof renderAll === 'function') renderAll();
         if (typeof activePeriod !== 'undefined' && activePeriod === '1D' && typeof PORTIV_CHART !== 'undefined') {
           try { PORTIV_CHART.refresh('1D'); } catch(e) {}
