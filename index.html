@@ -13802,12 +13802,16 @@ let _chartYMin = null, _chartYMax = null;
 // no "cambia de tamaño" tras el primer render. Los cambios REALES de identidad
 // (posiciones, import de foto, reset de semilla) ponen _chartYRefit=true para re-encajar.
 let _chartYFrozen = null, _chartYRefit = false;
-function _calcGlobalYBounds() {
+function _calcGlobalYBounds(extraVals) {
   // Siempre usa PERF_MASTER (rango completo) + valor en vivo.
   const allVals = (PERF_MASTER && PERF_MASTER.values && PERF_MASTER.values.length)
     ? PERF_MASTER.values.filter(v => v > 0) : [];
   const liveTotal = +calcTotals().total.toFixed(2);
-  const combinedVals = allVals.length ? [...allVals, liveTotal] : [liveTotal];
+  // extraVals = la serie que se va a DIBUJAR en este mismo frame (p.ej. la 1M inicial).
+  // Se incluye para que la banda del PRIMER paint ya cubra la línea → nunca hay un frame
+  // que autoescale antes de tener bounds.
+  const _extra = Array.isArray(extraVals) ? extraVals.filter(v => v > 0 && isFinite(v)) : [];
+  const combinedVals = [...allVals, liveTotal, ..._extra];
   const dataMin = Math.min(...combinedVals);
   const dataMax = Math.max(...combinedVals);
   if (!isFinite(dataMin) || !isFinite(dataMax) || dataMin <= 0) return;
@@ -13961,6 +13965,10 @@ function initPerfChart() {
     };
   }
 
+  // ESCALA Y DESDE EL FRAME 0: calcula y CONGELA la banda ANTES de crear el chart, usando
+  // la serie que se va a dibujar (d.values). Así el config ya lleva min/max finitos y el
+  // primer paint del constructor NO autoescala (elimina el "resize" al cargar).
+  try { _calcGlobalYBounds(d && d.values ? d.values : null); } catch(e) {}
   perfChart = new Chart(ctx, {
     type: 'line',
     plugins: [portivCrosshair],
@@ -14035,6 +14043,10 @@ function initPerfChart() {
         },
         y: {
           position: 'right',
+          // Bounds congelados YA en la creación → primer frame sin autoescala (sin "resize").
+          // _applyChartYBounds()/setPeriodData los re-aplican (expand-only) en cada refresh.
+          min: (typeof _chartYMin === 'number' ? _chartYMin : undefined),
+          max: (typeof _chartYMax === 'number' ? _chartYMax : undefined),
           display: !_PERF_MOB(),
           grid: { display: !_PERF_MOB(), color: document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6', drawBorder: false },
           border: { display: false, dash: [3,3] },
@@ -15839,7 +15851,17 @@ async function _refreshResearchPrice(ticker){
     try { _quoteCachePut(ticker, price, chg, pct, 'fh'); } catch(e){}
     const pEl = document.getElementById('r-price');
     if (pEl) pEl.textContent = `$${price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-    if (typeof _updateChangeDisplay === 'function') _updateChangeDisplay(chg, pct, 'hoy');
+    // El header (#r-change) respeta el PERÍODO ACTIVO: 1D → cambio del día; el resto →
+    // retorno del período (recalculado desde su serie). Antes esto forzaba SIEMPRE 'hoy' y,
+    // al refrescar el precio tras abrir (período por defecto 1M), pisaba el % del período →
+    // el header se quedaba en el % de HOY. Ahora se re-aplica el % del período activo.
+    if (typeof _applyChartPeriodChange === 'function') {
+      const _ar = (typeof _activeResearchRange !== 'undefined' && _activeResearchRange) ? _activeResearchRange : '1mo';
+      const _ad = (typeof researchChartCache !== 'undefined' && researchChartCache) ? researchChartCache[_ar] : null;
+      _applyChartPeriodChange(_ad || {}, _ar);
+    } else if (typeof _updateChangeDisplay === 'function') {
+      _updateChangeDisplay(chg, pct, 'hoy');
+    }
     if (_currentResearchInfo) { _currentResearchInfo.regularMarketPrice = price; _currentResearchInfo.regularMarketChange = chg; _currentResearchInfo.regularMarketChangePercent = pct; }
     const snap = _researchSnapCache[ticker];
     if (snap && snap.info) {
