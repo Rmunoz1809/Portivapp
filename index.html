@@ -14133,8 +14133,11 @@ function setPeriodData(period, ds) {
       ? function(value) { return this.getLabelForValue(value); }
       : function(value) { const l = this.getLabelForValue(value); return /\d{2}:\d{2}/.test(l) ? '' : l; };
   } catch(e) {}
-  // Auto-escala por timeframe: limpia cualquier min/max fijado previamente.
-  try { if (perfChart.options && perfChart.options.scales && perfChart.options.scales.y) { perfChart.options.scales.y.min = undefined; perfChart.options.scales.y.max = undefined; } } catch(e){}
+  // Escala Y CONSISTENTE entre periodos: re-aplica la banda Y congelada (expand-only)
+  // en vez de auto-escalar por timeframe. Antes esto limpiaba min/max a undefined, lo
+  // que hacía que Chart.js re-autoescalara a los datos del periodo → la gráfica cambiaba
+  // de "tamaño" tras el primer frame (bug del resize). Ahora se mantiene la misma banda.
+  try { _applyChartYBounds(); } catch(e){}
   perfChart.update('periodChange');
   // CACHÉ ANTI-FLASH: guarda el ÚLTIMO dataset dibujado de 1M/1D (sellado con el día ET). Como
   // la reconstrucción REAL redibuja DESPUÉS del arranque, la caché acaba conteniendo la curva
@@ -18887,16 +18890,28 @@ function _applyChartPeriodChange(chartData, rangeKey) {
   // de pestaña se recalculaba first→last de la serie y se pisaba el header: en 1D con la serie
   // intradía de Yahoo (open/cierre-previo distinto → % divergente, bug CPA 1D −2.48% vs −3.66%) y en
   // los demás con el retorno del período. Resultado: el % de "hoy" cambiaba al tocar las pestañas.
-  // Ahora es una sola verdad: HOY = HOY, en toda vista, período y acción — sin bug.
-  if (_researchCurPrice > 0 && isFinite(_researchDayChgPct)) {
-    _updateChangeDisplay(_researchDayChg, _researchDayChgPct, 'hoy');
+  // ACTUALIZADO: cada período muestra SU PROPIO cambio. 1D = cambio canónico del DÍA
+  // (idéntico al precio grande / watchlist). El resto (1W/1M/3M/6M/1A/YTD/5A) = retorno
+  // del PERÍODO (primer→último punto de la serie), para que el % cambie al tocar cada pill.
+  const cl = (chartData?.closes || []).filter(c => c != null);
+  const lbl = _periodLabel[rangeKey] || rangeKey;
+  if (rangeKey === '1d') {
+    if (_researchCurPrice > 0 && isFinite(_researchDayChgPct)) {
+      _updateChangeDisplay(_researchDayChg, _researchDayChgPct, 'hoy');
+      return;
+    }
+    if (cl.length >= 2) {
+      const first = cl[0], last = cl[cl.length - 1];
+      _updateChangeDisplay(last - first, first ? ((last - first) / first) * 100 : 0, 'hoy');
+    }
     return;
   }
-  // Fallback SOLO si la cotización canónica aún no cargó (evita header vacío): usa la serie.
-  const cl = (chartData?.closes || []).filter(c => c != null);
   if (cl.length >= 2) {
     const first = cl[0], last = cl[cl.length - 1];
-    _updateChangeDisplay(last - first, ((last - first) / first) * 100, 'hoy');
+    _updateChangeDisplay(last - first, first ? ((last - first) / first) * 100 : 0, lbl);
+  } else if (_researchCurPrice > 0 && isFinite(_researchDayChgPct)) {
+    // Sin serie válida todavía → no dejar el header vacío mientras carga la data real.
+    _updateChangeDisplay(_researchDayChg, _researchDayChgPct, 'hoy');
   }
 }
 
