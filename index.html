@@ -9223,7 +9223,7 @@ function refreshPortfolioUI() {
   renderAll();
   renderTxLog();
   updatePerfHeader();
-  _chartYMin = null;           // fuerza recálculo de escala Y tras cambio de posiciones
+  _chartYMin = null; _chartYRefit = true;  // cambio de posiciones → re-encaje real de la banda
   _refreshChartYBounds();
 }
 
@@ -12962,7 +12962,7 @@ window.PORTIV_BROKER = {
         PERF_MASTER = { dates: ds, values: vs, labels: lbls };
         _CHART_IMPORTED = true;                                  // dibujar FIEL, respetar cobertura
         if (typeof _buildPerfData === 'function') PERF_DATA = _buildPerfData(PERF_MASTER);
-        try { if (typeof _chartYMin !== 'undefined') { _chartYMin = null; _chartYMax = null; } } catch(e) {}
+        try { if (typeof _chartYMin !== 'undefined') { _chartYMin = null; _chartYMax = null; _chartYRefit = true; } } catch(e) {}
       }
       // ── % POR PERÍODO ETIQUETADOS POR EL BROKER (autoritativos) ──
       if (data.periodChanges && typeof data.periodChanges === 'object') {
@@ -13420,7 +13420,7 @@ function _applyValueChart(points, pre) {
   };
   PERF_DATA = _buildPerfData(PERF_MASTER);
   _CHART_IMPORTED = true;   // gráfica de la foto → dibujar fiel (sin ruido)
-  _chartYMin = null;        // forzar recálculo de bounds con los nuevos datos
+  _chartYMin = null; _chartYRefit = true;  // import de foto → re-encaje a la escala del broker
   return true;
 }
 
@@ -13797,6 +13797,11 @@ let activePeriod = '1M';
 // Bounds calculados UNA VEZ desde todo el historial — NO desde el periodo activo.
 // Se cachean y reusan en cada cambio de periodo para que la escala sea IDÉNTICA en 1W, 1M, ALL, etc.
 let _chartYMin = null, _chartYMax = null;
+// Congela la banda Y de la PRIMERA pintura. Refrescos posteriores (reconstrucción
+// PORTIV_HIST, precios en vivo) solo pueden EXPANDIRLA, nunca encogerla → la gráfica
+// no "cambia de tamaño" tras el primer render. Los cambios REALES de identidad
+// (posiciones, import de foto, reset de semilla) ponen _chartYRefit=true para re-encajar.
+let _chartYFrozen = null, _chartYRefit = false;
 function _calcGlobalYBounds() {
   // Siempre usa PERF_MASTER (rango completo) + valor en vivo.
   const allVals = (PERF_MASTER && PERF_MASTER.values && PERF_MASTER.values.length)
@@ -13813,6 +13818,14 @@ function _calcGlobalYBounds() {
   _chartYMin = Math.floor((dataMin - step * 0.5) / step) * step;
   _chartYMax = Math.ceil((dataMax  + step * 0.5) / step) * step;
   _chartYMin = Math.max(0, _chartYMin);
+  // Expandir-solo: si ya hay banda congelada y NO es un re-encaje explícito,
+  // une con la congelada (nunca encoge). Así el refresh real no achica la escala.
+  if (_chartYFrozen && !_chartYRefit) {
+    _chartYMin = Math.min(_chartYMin, _chartYFrozen.min);
+    _chartYMax = Math.max(_chartYMax, _chartYFrozen.max);
+  }
+  _chartYFrozen = { min: _chartYMin, max: _chartYMax };
+  _chartYRefit = false;
 }
 function _applyChartYBounds() {
   if (!perfChart) return;
@@ -25057,7 +25070,7 @@ function _brokerClearSeed(){
   try { TOTAL_OVERRIDE = null; } catch(e){}            // el total se recalcula desde las posiciones/serie reales
   try { INITIAL_CAPITAL = 0; } catch(e){}              // lo fija el broker (capital/primer punto real); 0 = sin semilla
   try { window._SAVED_PERF_MASTER = null; } catch(e){} // no re-sembrar desde snapshot guardado
-  try { _chartYMin = null; if (typeof _chartYMax !== 'undefined') _chartYMax = null; } catch(e){}
+  try { _chartYMin = null; if (typeof _chartYMax !== 'undefined') _chartYMax = null; _chartYRefit = true; } catch(e){}
   try { window._SEED_CLEARED = true; } catch(e){}
   return true;
 }
