@@ -20926,7 +20926,7 @@ Devuelve SOLO JSON válido, sin bloques de código:
 {"theme":"1 frase con el tema central de la semana","market_context":"3 a 5 frases de contexto de mercado","key_themes":[{"title":"título corto del tema","detail":"2-3 frases"}]}
 key_themes = exactamente 3 temas clave.`;
     const res = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model:AI_MODELS.narrative, max_tokens:1400,
+      body: JSON.stringify({ model:AI_MODELS.reasoning, max_tokens:1400,   // Outlook semanal: Haiku (misma info, más barato/rápido)
         system:'Eres un estratega de mercado. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
         // COSTO: web_search SOLO para "esta semana" (off 0), que sí gana con verificación de
         // contexto vivo. "Próxima semana" (off 1) es prospectiva y se arma del calendario Finnhub
@@ -20934,7 +20934,7 @@ key_themes = exactamente 3 temas clave.`;
         prompt: PROMPT, ...(off === 0 ? { allowed_tools:['websearch'] } : {}) }) }, true);   // essential:true → path de pago (cloud-shared, 1× global). websearch (solo esta semana) → _anthropicDirect topea en max_uses:1.
     if(!res.ok) throw new Error('SharedOutlook gen ' + res.status);
     const j = await res.json();
-    try{ if(typeof _tokAdd === 'function') _tokAdd(j.usage, AI_MODELS.narrative, 'outlook'); }catch(e){}
+    try{ if(typeof _tokAdd === 'function') _tokAdd(j.usage, AI_MODELS.reasoning, 'outlook'); }catch(e){}
     const t = (j.text||'').trim(); const m = t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedOutlook sin JSON');
     const raw = JSON.parse(m[0]);
     return { theme: raw.theme||'', market_context: raw.market_context||'', key_themes: Array.isArray(raw.key_themes)?raw.key_themes:[], sources: Array.isArray(j.sources)?j.sources:[] };
@@ -25463,9 +25463,8 @@ if (document.readyState === 'loading') {
   </div>
 
   <div class="av-foot">
-    <span onclick="window.open('/terminos.html','_blank')">Términos</span>
-    <span onclick="window.open('/privacidad.html','_blank')">Privacidad</span>
-    <span onclick="window.open('/reembolsos.html','_blank')">Reembolsos</span>
+    <span>Términos</span>
+    <span>Privacidad</span>
     <span>Seguridad</span>
   </div>
  </div>
@@ -26408,12 +26407,6 @@ document.addEventListener('DOMContentLoaded', function(){
         <button class="pw-btn" onclick="_pvConfirmTrial()">Comenzar ahora</button>
         <div class="pw-price"><b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b></div>
         <div class="pw-fine">Cancela cuando quieras · Sin compromisos</div>
-        <div class="pw-legal" style="margin-top:10px;font-size:11px;text-align:center;opacity:.7;line-height:1.6;">
-          Al continuar aceptas nuestros
-          <a href="/terminos.html" target="_blank" style="color:inherit;text-decoration:underline;">Términos</a>,
-          <a href="/privacidad.html" target="_blank" style="color:inherit;text-decoration:underline;">Privacidad</a> y
-          <a href="/reembolsos.html" target="_blank" style="color:inherit;text-decoration:underline;">Reembolsos</a>.
-        </div>
       </div>
     </div>
   </div>
