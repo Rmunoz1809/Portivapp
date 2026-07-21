@@ -5143,6 +5143,16 @@ function _trCacheGet(){ try { return JSON.parse(localStorage.getItem(_TR_CACHE_K
 function _trCacheSet(map){ try { localStorage.setItem(_TR_CACHE_KEY, JSON.stringify(map)); } catch(e){} }
 window._trTranslatedNodes = window._trTranslatedNodes || new WeakSet();
 
+// ══════════════════════════════════════════════════════════════════════════════
+// AISLAMIENTO — POR QUÉ `shared_analysis` ES COMPARTIDA A PROPÓSITO (diseño, no descuido):
+// Es un caché GLOBAL de datos de MERCADO/UI, nunca de portafolios de usuarios. Su clave
+// primaria es `ticker` (símbolo público, p.ej. 'AAPL') o una clave global fija
+// (`__NEWS_GENERAL__` = feed de noticias, `__I18N_EN__` = diccionario de traducción es→en).
+// NO hay ninguna clave por-usuario ni dato de cartera aquí: se genera una vez y todos leen.
+// Por eso su RLS permite lectura pública (using true) sin filtrar datos entre cuentas. Los
+// datos privados (portafolio, watchlist, cachés IA) viven en `profiles` / `profile_caches`,
+// aislados por `auth.uid()`. Ref: supabase/migrations/20260702120000_shared_analysis.sql.
+// ══════════════════════════════════════════════════════════════════════════════
 // ── CACHÉ DE TRADUCCIÓN COMPARTIDA EN LA NUBE (para TODOS los usuarios) ──────────
 // Reutiliza la tabla `shared_analysis` (columna ticker = clave, data = JSON) como un
 // diccionario global es→en. El PRIMER usuario que ve una frase en inglés la traduce con
@@ -6281,36 +6291,19 @@ window._aiQualityModel = _aiQualityModel;
 // ═══════════════════════════════════════════════════
 //  DATA
 // ═══════════════════════════════════════════════════
-let CASH = 2.61;
+let CASH = 0;
 let MONEY_MARKET = 0;             // Saldo en money market (editable desde AI Portfolio)
-let INITIAL_CAPITAL = 10146.02;   // Capital invertido / base de inception — total cost basis Schwab 14-Jul-2026
-let TOTAL_OVERRIDE    = 10225.89; // Valor real del broker (ancla) — Schwab Total Value 14-Jul-2026
+let INITIAL_CAPITAL = 0;          // Sin semilla — lo fija el broker / la fila en la nube (0 = vacío)
+let TOTAL_OVERRIDE    = null;     // El total se calcula desde las posiciones reales o se carga de la nube
 let _OVERRIDE_DAY_REF = 0;        // Cambio del día en el momento de anclar — para que el total se mueva con el mercado
 
-// Snapshot Schwab — 14 Jul 2026 04:56 PM ET (Positions Details).
-// qty/price/costBasis exactos de la pantalla Positions de Charles Schwab.
-// dayChgPct = Day Chng % del día (Schwab). Σ(qty×price)=$10,223.28 + cash $2.61 = $10,225.89.
-// G/L total: +$77.26 (+0.76%). Day change: +$103.79 (+1.03%).
-// ── Verdad de Schwab (capturas 07/14/2026, Positions Details). qty + costBasis son los
-//    anclas estables; price/dayChgPct son valores de arranque que el fetch en vivo refresca.
-//    Σ(qty·price) = $10,223.28 (mkt) · +cash $2.61 = $10,225.89 (total). cost $10,146.02.
-let HOLDINGS = [
-  { ticker:'MU',    name:'Micron Technology',      type:'stock', qty:0.4615,  price:983.12,   dayChgPct:4.92,  costBasis:499.99  },
-  { ticker:'SNDK',  name:'SanDisk Corp.',           type:'stock', qty:0.1354,  price:1757.82,  dayChgPct:5.01,  costBasis:271.84  },
-  { ticker:'TSM',   name:'Taiwan Semiconductor',    type:'stock', qty:2.289,   price:420.39,   dayChgPct:-0.28, costBasis:999.97  },
-  { ticker:'AAPL',  name:'Apple Inc.',              type:'stock', qty:1.702,   price:314.86,   dayChgPct:-0.77, costBasis:500.00  },
-  { ticker:'AMZN',  name:'Amazon.com Inc.',         type:'stock', qty:1.9379,  price:247.49,   dayChgPct:0.07,  costBasis:478.19  },
-  { ticker:'MSFT',  name:'Microsoft Corp.',         type:'stock', qty:1.2652,  price:384.93,   dayChgPct:-1.55, costBasis:500.75  },
-  { ticker:'META',  name:'Meta Platforms',          type:'stock', qty:1.7,     price:661.04,   dayChgPct:0.66,  costBasis:999.97  },
-  { ticker:'APP',   name:'AppLovin Corp.',          type:'stock', qty:0.9682,  price:448.98,   dayChgPct:1.39,  costBasis:499.95  },
-  { ticker:'NVDA',  name:'NVIDIA Corp.',            type:'stock', qty:4.7613,  price:211.80,   dayChgPct:4.06,  costBasis:1000.90 },
-  { ticker:'GOOGL', name:'Alphabet Inc.',           type:'stock', qty:2.1672,  price:359.51,   dayChgPct:1.99,  costBasis:799.98  },
-  { ticker:'AVGO',  name:'Broadcom Inc.',           type:'stock', qty:0.9971,  price:389.11,   dayChgPct:1.32,  costBasis:400.00  },
-  { ticker:'VOO',   name:'Vanguard S&P 500 ETF',   type:'etf',   qty:4.8224,  price:691.10,   dayChgPct:0.38,  costBasis:3194.48 },
-];
+// ── SIN SNAPSHOT HARDCODEADO ─────────────────────────────────────────────────
+// El portafolio arranca VACÍO para TODAS las cuentas (incluida la del propietario).
+// Los datos reales se cargan exclusivamente desde Supabase (profiles.portfolio) o
+// desde el broker/analizador. Nunca se hardcodea una cartera personal en el fuente.
+let HOLDINGS = [];
 
-// Colores por ticker, en el MISMO orden que HOLDINGS:
-// MU, SNDK, TSM, AAPL, AMZN, MSFT, META, APP, NVDA, GOOGL, AVGO, VOO
+// Paleta de colores para posiciones (se asigna por índice a HOLDINGS en runtime).
 const CHART_COLORS = [
   '#38bdf8', // MU    — azul cielo Micron
   '#e11d48', // SNDK  — rojo SanDisk
@@ -6332,11 +6325,11 @@ let TX_LOG = [];
 // Override manual del cambio (%) por período: { '1M':2.5, '3M':8, '6M':..., '1Y':..., '3Y':... }
 // Si un período tiene override, la gráfica y el encabezado usan ese % en vez de calcularlo
 // desde la serie. Editable desde el editor de portafolio (pestaña Personalizar).
-// Cambios por período REALES de Schwab (capturas 07/16/2026): 1-Month −1.21%, 3-Month +0.55%.
+// El override por período arranca vacío ({}) — sin valores personales hardcodeados.
 // 6M/1Y/3Y/ALL heredan el 3M (el override más largo dado por el broker). El analizador de fotos
 // REEMPLAZA estos valores al importar (aiPortApply → PERIOD_CHANGE_OVERRIDE), y ahora SÍ se usan
 // (ver _effectiveOverridePct) → el % que lee el analizador = el % que se muestra.
-let PERIOD_CHANGE_OVERRIDE = { '1M': -1.21, '3M': 0.55 };
+let PERIOD_CHANGE_OVERRIDE = {};
 // ── AGING DEL OVERRIDE (broker profesional) ──────────────────────────────────
 // El % por período que da el broker/foto es un snapshot "a fecha de captura". Un broker real
 // NO congela ese %: recalcula el retorno del período CADA día = NAV_hoy / NAV_inicio_ventana − 1.
@@ -6345,7 +6338,7 @@ let PERIOD_CHANGE_OVERRIDE = { '1M': -1.21, '3M': 0.55 };
 // todos los días, SIN reinventar la base histórica (la reconstrucción la calculaba mal). En la
 // fecha de captura, o con broker en vivo (cuyo % ya incluye hoy), se muestra verbatim (no
 // doble-cuenta el día ya contenido). Schwab capturó estos %s el 2026-07-16 (ver arriba).
-let _OVERRIDE_ASOF = '2026-07-16';
+let _OVERRIDE_ASOF = null;
 let _OVERRIDE_CAP_NAV = null;   // valor $ del portafolio al cierre de _OVERRIDE_ASOF (memo/persistido)
 const _PERIOD_MONTHS = {'1M':1,'3M':3,'6M':6,'1Y':12,'2Y':24,'3Y':36};
 function _periodMonthsOf(p){ return _PERIOD_MONTHS[p] || 0; }
@@ -7352,7 +7345,7 @@ function _portfolioHealthScore(m, techWeight, sectorCount, T){
   const wMomentum = items.reduce((s,i)=> s + (i.weight||0) * ((i.glPct||0)/100), 0);
   let yrsHeld = 1;
   try {
-    const _inc = (typeof INCEPTION_DATE !== 'undefined' && INCEPTION_DATE) ? INCEPTION_DATE : null;
+    const _inc = _inceptionDate();
     if (_inc && _inc.getTime) yrsHeld = Math.max(0.5, (Date.now() - _inc.getTime())/(365.25*864e5));
   } catch(e){}
   const annMom = (wMomentum > -0.99) ? (Math.pow(1 + wMomentum, 1/yrsHeld) - 1) : wMomentum;   // anualizado
@@ -8573,7 +8566,12 @@ function renderHeader(T) {
 }
 
 // Fecha de inicio del portafolio (capital inicial)
-const INCEPTION_DATE = new Date('2026-04-24');
+// Inception REAL = primer punto de la serie del broker (PERF_MASTER). Única fuente DERIVADA —
+// sin constante duplicada ni fecha hardcodeada. Si aún no hay serie (cartera nueva), cae a hoy.
+function _inceptionDate(){
+  try { const ds = PERF_MASTER.dates; if (ds && ds[0]) return new Date(ds[0] + 'T12:00:00'); } catch(e){}
+  return new Date();
+}
 
 // Busca el valor base para un período en meses.
 // Si el portafolio es MÁS JOVEN que ese período → usa INITIAL_CAPITAL (inception).
@@ -12447,18 +12445,14 @@ function updateCash() {
 // ═══════════════════════════════════════════════════
 //  PERFORMANCE CHART
 // ═══════════════════════════════════════════════════
-// Fecha exacta de inicio del portafolio (debe coincidir con INCEPTION_DATE y el primer punto de PERF_MASTER)
-const INCEPTION = new Date('2026-04-24');
 
-// ── SERIE MAESTRA DIARIA — réplica de la gráfica del broker (24 Abr → 1 Jun) ──
-// Es la fuente única de verdad. 1W/2W/1M/ALL se derivan cortando esta serie.
-// El analizador de portafolio (AI) puede reemplazarla leyendo una foto de la gráfica.
+// ── SERIE MAESTRA DIARIA — vacía por defecto ─────────────────────────────────
+// Sin serie hardcodeada. Se llena exclusivamente desde el broker (SnapTrade) o el
+// analizador de portafolio (AI). 1W/2W/1M/ALL se derivan cortando esta serie.
 let PERF_MASTER = {
-  labels: ['24 Abr','25 Abr','26 Abr','27 Abr','28 Abr','29 Abr','30 Abr','1 May','2 May','3 May','4 May','5 May','6 May','7 May','8 May','9 May','10 May','11 May','12 May','13 May','14 May','15 May','16 May','17 May','18 May','19 May','20 May','21 May','22 May','23 May','24 May','25 May','26 May','27 May','28 May','29 May','30 May','31 May','1 Jun','2 Jun','3 Jun','4 Jun','5 Jun','6 Jun'],
-  dates:  ['2026-04-24','2026-04-25','2026-04-26','2026-04-27','2026-04-28','2026-04-29','2026-04-30','2026-05-01','2026-05-02','2026-05-03','2026-05-04','2026-05-05','2026-05-06','2026-05-07','2026-05-08','2026-05-09','2026-05-10','2026-05-11','2026-05-12','2026-05-13','2026-05-14','2026-05-15','2026-05-16','2026-05-17','2026-05-18','2026-05-19','2026-05-20','2026-05-21','2026-05-22','2026-05-23','2026-05-24','2026-05-25','2026-05-26','2026-05-27','2026-05-28','2026-05-29','2026-05-30','2026-05-31','2026-06-01','2026-06-02','2026-06-03','2026-06-04','2026-06-05','2026-06-06'],
-  // Valores Schwab hasta Jun 1, extendidos con movimiento real Jun 2–6.
-  // El último punto (Jun 6) se sobrescribe en vivo con el total real del portafolio.
-  values: [10100,10103,10118,10135,10150,10125,10098,10126,10130,10138,10182,10370,10560,10595,10610,10600,10600,10615,10635,10685,10720,10690,10650,10590,10545,10515,10520,10550,10580,10600,10605,10615,10625,10800,10955,10985,11000,10980,10917.01,10940,10968,10985,11046.33,11046.33],
+  labels: [],
+  dates:  [],
+  values: [],
 };
 
 // Construye el objeto PERF_DATA (1W/2W/1M/ALL) cortando la serie maestra por fecha.
@@ -12706,7 +12700,7 @@ const PORTIV_CHART = {
       const cut=_wAnchor(); cut.setDate(cut.getDate()-daysMap[period]);
       fromISO=cut.toISOString().slice(0,10);
     }
-    const _fromWin=fromISO;   // ventana REAL pedida (sin el clamp de la foto) → reconstrucción real
+    let _fromWin=fromISO;   // ventana REAL pedida (sin el clamp de la foto) → reconstrucción real
     // ALL: sin límite de tiempo
     // Combinar PERF_MASTER (base histórica del broker) con el historial diario de localStorage
     const masterDates=(typeof PERF_MASTER!=='undefined'?PERF_MASTER.dates:[]) || [];
@@ -12714,6 +12708,16 @@ const PORTIV_CHART = {
     const masterLabels=(typeof PERF_MASTER!=='undefined'?PERF_MASTER.labels:[]) || [];
     // Puntos del broker
     const brokerPts=masterDates.map((d,i)=>({date:d,value:masterVals[i],label:masterLabels[i]}));
+    // ── BROKER JOVEN (cuenta recién conectada) ── Con serie REAL densa del broker (_BROKER_LIVE),
+    //    esa serie ES la verdad completa desde la inception: no existe nada antes. Si la ventana
+    //    abre ANTES del primer punto real, se recorta a él → el eje arranca en tu PRIMER DÍA y NO
+    //    se extrapola una fecha/valor pre-inception (antes 3M/6M/1Y colapsaban a 2 puntos planos en
+    //    cuentas jóvenes). En la FOTO (no _BROKER_LIVE) se conserva la ventana real para que la
+    //    reconstrucción PORTIV_HIST la rellene con datos reales de Yahoo.
+    if(window._BROKER_LIVE && masterDates.length){
+      const _mStart0=masterDates[0];
+      if(_mStart0 && _fromWin && _fromWin < _mStart0){ _fromWin=_mStart0; fromISO=_mStart0; }
+    }
     // ── CLAMP A LA FOTO ── Si la gráfica proviene de una foto/transcripción del broker
     //    (_CHART_IMPORTED), NUNCA se extiende la ventana más allá de lo que la foto realmente
     //    cubre. Un período más largo que el historial de la foto (p.ej. 1Y/YTD/ALL cuando la
@@ -12811,7 +12815,11 @@ const PORTIV_CHART = {
     // cálculo de la serie: PERF_MASTER puede no abarcar todo el rango (p.ej. solo 3M de
     // historial), lo que haría que 3M y ALL salieran idénticos. Si el broker dio el % de
     // este período (o uno más largo a heredar), úsalo exacto. ALL nunca hereda → usa el real.
-    const _ovr=(typeof _liveOverridePct==='function')?_liveOverridePct(period):null;
+    // BROKER EN VIVO: el % y el $ salen SIEMPRE de la serie real dibujada — (last−first)/first
+    // sobre los valores reales. El override verbatim + reescalado afín queda SOLO para el camino de
+    // la FOTO (OCR), que no activa _BROKER_LIVE. Así con broker conectado la línea y el badge NUNCA
+    // se contradicen (no hay número que venga de otra parte que no sean los puntos dibujados).
+    const _ovr=(!window._BROKER_LIVE && typeof _liveOverridePct==='function')?_liveOverridePct(period):null;
     if(_ovr!=null&&isFinite(_ovr)){
       // El % ETIQUETADO por el broker (extraído del botón 1M/3M/… por el OCR) se muestra
       // VERBATIM: lo que el analizador leyó = lo que se ve. Antes se "driftaba" anclando al
@@ -12842,20 +12850,11 @@ const PORTIV_CHART = {
       }
     }
     const _raw={labels:lbls,dates,values:vals,change,changePct,since:lbls[0]||''};
-    // Densificado DIARIO profesional: rellena entre las anclas reales con puente browniano
-    // determinista → la línea tiene movimiento tipo broker sin alterar montos ni %.
-    // (change/changePct/since se conservan del cálculo con las anclas exactas.)
-    // BROKER EN VIVO: la serie ya viene densa y REAL del broker → se dibuja TAL CUAL, sin
-    // rellenar con puente browniano (no inventar movimiento entre cierres reales).
-    try {
-      if(!window._BROKER_LIVE && typeof _densifyDaily==='function'){
-        const _dense=_densifyDaily(_raw);
-        if(_dense&&_dense.values&&_dense.values.length>=_raw.values.length){
-          _dense.change=_raw.change; _dense.changePct=_raw.changePct; _dense.since=_raw.since;
-          return _dense;
-        }
-      }
-    } catch(e){}
+    // SIN MOVIMIENTO INVENTADO: se dibujan los cierres REALES conectados por líneas rectas
+    // (interpolación lineal — el dataset usa tension:0). Se RETIRÓ el puente browniano determinista
+    // (_densifyDaily): NUNCA se inventa micro-movimiento entre cierres que el broker (o la
+    // reconstrucción PORTIV_HIST/Yahoo) no reportaron. change/changePct/since ya salen de las
+    // anclas reales de arriba, coherentes con los extremos de la línea por construcción.
     return _raw;
   },
 
@@ -13677,7 +13676,7 @@ const PERIOD_MILESTONES = [
 function _baseForYTD(){
   const ALL = PERF_DATA['ALL'];
   const jan1 = new Date(new Date().getFullYear(), 0, 1); jan1.setHours(0,0,0,0);
-  if (jan1 <= INCEPTION_DATE) return INITIAL_CAPITAL;
+  if (jan1 <= _inceptionDate()) return INITIAL_CAPITAL;
   if (!ALL || !ALL.dates || !ALL.dates.length) return INITIAL_CAPITAL;
   let bestIdx = 0, bestDiff = Infinity; const t = jan1.getTime();
   for (let i=0;i<ALL.dates.length;i++){ const d=new Date(ALL.dates[i]).getTime(); const diff=Math.abs(d-t); if(diff<bestDiff){bestDiff=diff;bestIdx=i;} }
@@ -13740,7 +13739,7 @@ function _brokerSpanDays() {
 // (nunca se dibuja una gráfica inventada/extrapolada). Se habilita cuando:
 //   (a) el broker/foto trae una serie que abarca ese período,
 //   (b) el broker etiquetó el % de ese período (nos dio ese dato), o
-//   (c) ya transcurrió ese tiempo REAL desde que empezaste a invertir (INCEPTION_DATE)
+//   (c) ya transcurrió ese tiempo REAL desde que empezaste a invertir (_inceptionDate())
 //       → los cierres diarios acumulados llenan la ventana.
 // 1D (intradía), YTD y ALL (desde el inicio) siempre son reales → siempre disponibles.
 function _periodAvailable(key) {
@@ -13751,7 +13750,7 @@ function _periodAvailable(key) {
   if (_brokerSpanDays() >= days * margin) return true;           // (a) serie del broker lo cubre
   if (_periodOverridePct(key) != null) return true;              // (b) broker etiquetó ese período
   let ageDays = 0;
-  try { ageDays = (Date.now() - INCEPTION_DATE.getTime()) / 86400000; } catch(e) {}
+  try { ageDays = (Date.now() - _inceptionDate().getTime()) / 86400000; } catch(e) {}
   if (ageDays >= days * margin) return true;                     // (c) ya pasó ese tiempo real
   return false;                                                  // sin datos → NO dibujar
 }
@@ -13980,8 +13979,8 @@ function initPerfChart() {
         borderWidth: 2,
         backgroundColor: _perfFill(ctx, isPos0),
         fill: 'origin',
-        tension: 0.3,
-        cubicInterpolationMode: 'monotone',
+        tension: 0,                        // líneas RECTAS entre cierres reales — sin curva que insinúe valores no reportados
+        cubicInterpolationMode: 'default', // 'monotone' curvaba entre puntos (ignora tension); 'default'+tension:0 = segmentos rectos
         pointRadius: 0,
         pointHoverRadius: 0,
       }]
@@ -25097,8 +25096,8 @@ function _aiSyncPerfSeries(){
 // / −1.21% / +0.55% ni fechas de abril-2026 ajenas. Idempotente (flag window._SEED_CLEARED) para
 // no re-borrar en refrescos. El modo demo / sin-conectar NO se toca: solo se limpia con una
 // conexión de broker activa. La inception efectiva de la gráfica pasa a ser el PRIMER punto real
-// de la serie del broker (PERF_MASTER); INCEPTION/INCEPTION_DATE son const → no reasignables, así
-// que no se usan como semilla una vez que hay serie real.
+// de la serie del broker (PERF_MASTER): _inceptionDate() la DERIVA del primer punto real de la
+// serie, sin constantes de fecha hardcodeadas ni duplicadas.
 function _brokerClearSeed(){
   try { if (typeof window !== 'undefined' && window._SEED_CLEARED) return true; } catch(e){}
   try { PERF_MASTER = { dates:[], values:[], labels:[] }; } catch(e){}
@@ -25141,8 +25140,8 @@ function init() {
     // (cuenta propietaria sin datos en la nube todavía). Las cuentas con estado
     // guardado — incluidas las vacías — conservan sus propios valores.
     if (!window._PF_FROM_SAVE) {
-      TOTAL_OVERRIDE    = 10493.47;   // Schwab Total Value (Σ posiciones + cash)
-      INITIAL_CAPITAL   = 10100;       // base de inception (capital depositado)
+      TOTAL_OVERRIDE    = null;   // sin ancla hardcodeada; el total se calcula de posiciones/nube
+      INITIAL_CAPITAL   = 0;      // sin semilla; lo fija el broker / la fila en la nube
     }
     // Cuenta vacía (no propietaria): sin historial en la gráfica de rendimiento.
     if (window._PF_EMPTY) {
@@ -25550,12 +25549,11 @@ if (document.readyState === 'loading') {
   var SUPABASE_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co';
   var SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
   var LS_KEY = 'portfolio_state_v4';
-  // Solo esta cuenta ve el portafolio real; cualquier otra arranca vacía.
-  var OWNER_EMAIL = 'rafaelmunozanselmi@icloud.com';
+  // Estado vacío puro: TODAS las cuentas (incluida la del propietario) arrancan aquí.
+  // El portafolio real se carga únicamente desde la fila de Supabase de cada cuenta.
   var EMPTY_STATE = { holdings: [], colors: [], cash: 0, mm: 0, capital: 0, totalOverride: null, txLog: [], empty: true };
 
-  // ── Watchlist: solo se conserva en la cuenta del propietario (se sincroniza con su perfil). ──
-  function _isOwnerSession(){ return ((session && session.user && session.user.email) || '').toLowerCase() === OWNER_EMAIL; }
+  // ── Watchlist: por cuenta (se sincroniza con la fila de cada usuario en profile_caches). ──
   function _wlGather(){
     try { return { tickers: JSON.parse(localStorage.getItem('wl_tickers') || '[]'), cache: JSON.parse(localStorage.getItem('wl_cache') || '{}') }; }
     catch(e){ return { tickers: [], cache: {} }; }
@@ -25862,7 +25860,6 @@ if (document.readyState === 'loading') {
     } catch(e){}
     showOverlay();
     var em = ((s.user && s.user.email) || '').toLowerCase();
-    var isOwner = (em === OWNER_EMAIL);
     var APPLIED = '_applied_' + ((s.user && s.user.id) || ''); // marcador por usuario (evita fugas al cambiar de cuenta)
     // Limpia restos de OTRA cuenta en este navegador (no toca la nube; se restaura abajo desde su fila).
     _wlClearLocal(); _newsClearLocal();
@@ -25954,26 +25951,11 @@ if (document.readyState === 'loading') {
           // BUG 2: la copia local ahora ES la de la nube → marcar sincronizado (no pendiente).
           try { localStorage.setItem('pv_port_synced', '1'); if (cloudUpdatedAt) localStorage.setItem('pv_port_saved_at', cloudUpdatedAt); } catch(e){}
         }
-      } else if (isOwner) {
-        // Propietario sin nube → sembrar su portafolio REAL (hardcodeado en el archivo).
-        var ownLocal = null; try { ownLocal = JSON.parse(localRaw || 'null'); } catch(e){}
-        if ((ownLocal && ownLocal.empty) && !sessionStorage.getItem(APPLIED)) {
-          localStorage.removeItem(LS_KEY);
-          sessionStorage.setItem(APPLIED, '1');
-          location.reload();
-          return;
-        }
-        try { if (typeof window.savePortfolio === 'function') window.savePortfolio(); } catch(e){}
-        var ownObj = JSON.parse(localStorage.getItem(LS_KEY) || 'null') || {};
-        var _ownStamp = new Date().toISOString();
-        var _ownRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: ownObj, updated_at: _ownStamp });
-        if (!_ownRes || !_ownRes.error) {
-          _lastPortHash = _pvBundleHash(ownObj);
-          try { localStorage.setItem('pv_port_synced', '1'); localStorage.setItem('pv_port_saved_at', _ownStamp); } catch(e){}  // BUG 2: local == nube
-        }
-        _cachesPush();   // siembra watchlist + cachés IA en profile_caches (debounce lento + hash-gate)
       } else {
-        // Usuario NUEVO (no propietario) sin nube → empieza VACÍO (jamás siembra datos del owner).
+        // Cuenta SIN fila en la nube (incluida la del propietario) → empieza VACÍO.
+        // No existe ningún camino especial de "propietario": nadie siembra datos hardcodeados.
+        // El propietario carga su cartera exclusivamente desde su propia fila de Supabase,
+        // igual que cualquier otro usuario (rama `if (cloud)` de arriba).
         var emptyRaw = JSON.stringify(EMPTY_STATE);
         if (localRaw !== emptyRaw && !sessionStorage.getItem(APPLIED)) {
           localStorage.setItem(LS_KEY, emptyRaw);
@@ -26931,7 +26913,7 @@ document.addEventListener('DOMContentLoaded', function(){
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
         try{
           // Bloque 2.2: serie REAL y densa del broker → dibujar TAL CUAL, sin puente browniano.
-          // El flag ANTES de aplicar/redibujar hace que generate() salte _densifyDaily.
+          // generate() dibuja los cierres reales conectados por líneas rectas (sin browniano).
           window._BROKER_LIVE = true;
           _applyValueChart(pts);
           // Bloque 2.4: fija el período automáticamente SOLO la 1ª vez de la sesión. En refrescos
