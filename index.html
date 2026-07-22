@@ -13734,6 +13734,17 @@ function _brokerSpanDays() {
   } catch(e) {}
   return 0;
 }
+// Días de historial REAL en la serie RECONSTRUÍDA (PERF_DATA['ALL'] — la que dibuja la
+// gráfica, armada con precios reales de Yahoo hasta tu primera transacción). _brokerSpanDays
+// mira PERF_MASTER, que está VACÍO en cuentas de broker → por eso ocultaba 1M/3M/6M/1Y
+// aunque sí hay ~90 días de datos reales. Esta mira la serie que de verdad se grafica.
+function _histSpanDays() {
+  try {
+    const A = (typeof PERF_DATA !== 'undefined' && PERF_DATA['ALL'] && PERF_DATA['ALL'].dates) || [];
+    if (A.length >= 2) return (new Date(A[A.length-1]) - new Date(A[0])) / 86400000;
+  } catch(e) {}
+  return 0;
+}
 // ── ¿HAY datos REALES para dibujar este período? — regla ANTI-INVENTO ──
 // Un período solo está disponible si existe historial real que lo cubra. Si no, se OCULTA
 // (nunca se dibuja una gráfica inventada/extrapolada). Se habilita cuando:
@@ -13748,6 +13759,11 @@ function _periodAvailable(key) {
   if (!days) return true;
   const margin = 0.9;                                             // 10% de tolerancia de lectura
   if (_brokerSpanDays() >= days * margin) return true;           // (a) serie del broker lo cubre
+  if (_histSpanDays() >= days * margin) return true;             // (a') serie reconstruida (Yahoo) lo cubre
+  // El dueño quiere 1M/3M/6M/1Y visibles siempre que exista historial REAL. sliceFromAll
+  // recorta a lo disponible (NUNCA inventa): si el período excede los datos, muestra el
+  // rango real completo (igual que ALL). Habilita esas 4 ventanas en cuanto haya serie real.
+  if ((key === '1M' || key === '3M' || key === '6M' || key === '1Y') && _histSpanDays() > 0) return true;
   if (_periodOverridePct(key) != null) return true;              // (b) broker etiquetó ese período
   let ageDays = 0;
   try { ageDays = (Date.now() - _inceptionDate().getTime()) / 86400000; } catch(e) {}
