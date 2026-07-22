@@ -26990,8 +26990,9 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     if(state==='syncing'){
       return '<h3>Sincronizando tu cuenta…</h3>'
-        +'<p class="snap-sub">Tu broker se conectó. Estamos importando tus posiciones — puede tardar 1–2 minutos. Esta pantalla se actualiza sola.</p>'
-        +'<div class="snap-status"><span class="snap-spin" style="border-color:rgba(4,22,44,.25);border-top-color:#04162c"></span>Importando posiciones desde tu broker…</div>';
+        +'<p class="snap-sub">Tu broker se conectó. Estamos importando tus posiciones — puede tardar unos minutos la primera vez. Esta pantalla se actualiza sola.</p>'
+        +'<div class="snap-status"><span class="snap-spin" style="border-color:rgba(4,22,44,.25);border-top-color:#04162c"></span>Importando posiciones desde tu broker…</div>'
+        +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" onclick="snapRefresh()">↻ Actualizar ahora</button></div>';
     }
     if(state==='broken'){
       return '<h3>Reconecta tu broker</h3><p class="snap-sub">La conexión se interrumpió. Reconéctala para seguir viendo tus posiciones.</p>'
@@ -27032,17 +27033,22 @@ document.addEventListener('DOMContentLoaded', function(){
     var url = location.search || '';
     var returned = pending || /snaptrade|success|brokerage/i.test(url);
     try{ localStorage.removeItem('pv_snap_pending'); }catch(e){}
-    // Poll while SnapTrade finishes its async initial sync. getAllUserHoldings comes back
-    // empty for ~1–2 min right after CONNECTION_ADDED; without this the app fetched once,
-    // got nothing, and sat at $0. Re-fetch every 6 s (up to ~2 min) until real holdings land.
-    var _syncTries=0, _SYNC_MAX=20, _syncToasted=false;
+    // Poll while SnapTrade finishes its async initial sync. Right after CONNECTION_ADDED
+    // holdings can be empty for several minutes (the server now also rebuilds them
+    // per-account to surface data ASAP). Keep polling up to ~14 min: 6 s for the first
+    // 4 min, then 12 s. If it STILL hasn't landed, stop the loop and tell the user they
+    // can retry manually — never leave a silent, frozen spinner.
+    var _syncTries=0, _SYNC_MAX=100, _syncToasted=false;
     function go(){ if(!window.sbClient){ return setTimeout(go, 400); }
       snapRefresh({silent:true}).then(function(j){
         if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
         if(returned && j && j.connected && j.syncing && !_syncToasted){
-          _syncToasted=true; toast('Conectado. Sincronizando tus posiciones con el broker… puede tardar 1–2 min.');
+          _syncToasted=true; toast('Conectado. Importando tus posiciones desde el broker… puede tardar unos minutos.');
         }
-        if(j && j.connected && j.syncing && _syncTries++ < _SYNC_MAX){ setTimeout(go, 6000); }
+        if(j && j.connected && j.syncing){
+          if(_syncTries++ < _SYNC_MAX){ setTimeout(go, _syncTries<40?6000:12000); }
+          else { try{ toast('Tu broker sigue sincronizando. Pulsa "Actualizar" en unos minutos para ver tus posiciones.'); }catch(e){} }
+        }
       }); }
     go();
   }
