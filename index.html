@@ -12858,7 +12858,11 @@ const PORTIV_CHART = {
     // ── RED DE SEGURIDAD ── Si aún así la ventana no tiene ≥2 puntos (reconstrucción no lista y
     //    hueco de datos), NO se reutilizan fechas viejas fuera de ventana. Se arma la ventana con
     //    fechas CORRECTAS [_fromWin → hoy] interpolando el valor en _fromWin desde la serie real.
-    if(_fromWin && (merged.length<2 || !_coversStart) && !window._BROKER_HISTORY_PENDING){
+    // Broker conectado sin serie real aún aplicada → NUNCA fabricar la recta de 2 puntos (era el
+    // "flash" de línea plana / ALL +0.00% al entrar). Se deja el lienzo limpio hasta que llegue la
+    // serie real densa (snapHistory) o la reconstrucción Yahoo real — solo datos reales, sin placeholder.
+    var _brkConnNoLive=false; try{ _brkConnNoLive = localStorage.getItem('pv_broker_connected')==='1' && !window._BROKER_LIVE; }catch(e){}
+    if(_fromWin && (merged.length<2 || !_coversStart) && !window._BROKER_HISTORY_PENDING && !_brkConnNoLive){
       const _all={};
       brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
       this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
@@ -25168,8 +25172,12 @@ async function aiPortApply(){
     _eb.classList.remove('open');
     document.getElementById('aiEditorChevron').classList.remove('open');
   }
-  showTab('portfolio');
-  showToast('Portafolio actualizado desde AI Portfolio', 'var(--green)');
+  // Silencioso cuando lo dispara la sincronización del broker (poll cada 2 min): no saltes de
+  // pestaña ni muestres el toast "AI Portfolio" — el estado del broker ya se ve en su tarjeta.
+  if(!window._BROKER_APPLYING){
+    showTab('portfolio');
+    showToast('Portafolio actualizado desde AI Portfolio', 'var(--green)');
+  }
 }
 
 // Siembra la serie de rendimiento DESDE HOY cuando el portafolio empieza de cero
@@ -25183,6 +25191,10 @@ function _seedPerfFromNow(){
     // dejaría un frame de línea recta hasta que snapHistory aplique la serie real. Se deja la
     // serie vacía → generate() devuelve null → el chart conserva lo que ya había (sin flash).
     if (window._BROKER_HISTORY_PENDING) return false;
+    // Broker conectado (con o sin historial): NUNCA sembrar la recta plana provisional. Si hay
+    // serie real llega por snapHistory; si no, la reconstrucción Yahoo real llena la gráfica. La
+    // semilla plana solo aplica a portafolios manuales/foto sin broker.
+    try{ if(localStorage.getItem('pv_broker_connected')==='1') return false; }catch(e){}
     if (PERF_MASTER && Array.isArray(PERF_MASTER.values) && PERF_MASTER.values.length >= 2) return false;
     const total = +calcTotals().total.toFixed(2);
     if (!(total > 0)) return false;                       // sin valor todavía → no sembrar
@@ -27081,7 +27093,13 @@ document.addEventListener('DOMContentLoaded', function(){
           // sincronizando — esa era la causa del "portafolio en cero" al conectar.
           try { if (typeof window._brokerClearSeed==='function') window._brokerClearSeed(); }catch(e){}
           if(typeof aiPortImportData==='function') aiPortImportData(data);
-          if(typeof aiPortApply==='function') return Promise.resolve(aiPortApply())
+          // Broker path: aplica en SILENCIO (sin toast "AI Portfolio" ni salto de pestaña en cada
+          // poll de 2 min). El estado del broker ya se refleja en _render('connected'). El flag se
+          // pone ANTES de aiPortApply() (síncrono → el toast lee el flag) y se limpia justo después.
+          if(typeof aiPortApply==='function'){
+            try{ window._BROKER_APPLYING=true; }catch(e){}
+            var _apRes; try{ _apRes=aiPortApply(); } finally { try{ window._BROKER_APPLYING=false; }catch(e){} }
+            return Promise.resolve(_apRes)
             // Bloque 2.1: SnapTrade no trae cierre previo → snapMapHoldings deja day_change_pct=0
             // y el badge del día salía $0.00. Tras aplicar, refresca precios en vivo (fetchLivePrices
             // captura regularMarketPreviousClose → h._prevClose, justo lo que _calcRealDayChange
@@ -27093,6 +27111,7 @@ document.addEventListener('DOMContentLoaded', function(){
               return j;
             })
             .catch(function(){ return j; });
+          }
         }
       }catch(e){ console.warn('[snaptrade] apply failed', e); }
       return j;
