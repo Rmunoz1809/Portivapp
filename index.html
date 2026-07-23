@@ -12797,7 +12797,7 @@ const PORTIV_CHART = {
     //    CUALQUIER usuario con posiciones. Si aún no está en caché, se carga en 2º plano y refresca
     //    la gráfica al terminar (ensureAsync → PORTIV_CHART.refresh). Usa la ventana REAL (_fromWin),
     //    no la recortada por el clamp de la foto.
-    if(!_coversNow && !window._BROKER_LIVE && typeof PORTIV_HIST!=='undefined'){
+    if(!_coversNow && !window._BROKER_LIVE && !window._BROKER_HISTORY_PENDING && typeof PORTIV_HIST!=='undefined'){
       try{
         if(PORTIV_HIST.ready && PORTIV_HIST.ready()){
           const _rs=PORTIV_HIST.series(_fromWin||null);
@@ -13984,6 +13984,12 @@ const portivCrosshair = {
 // sin números del eje Y ni fechas del eje X, y sin cuadrícula → la línea ocupa todo.
 function _PERF_MOB(){ return (window.innerWidth || document.documentElement.clientWidth || 999) <= 700; }
 function initPerfChart() {
+  // ── ANTI-FLASH (arranque en frío) ── Si en una sesión previa el usuario tenía un broker
+  //    conectado (flag persistido), la serie REAL densa llegará por snapHistory en ~1s. Marca
+  //    PENDING ANTES del primer pintado para que generate() NO dibuje la reconstrucción Yahoo
+  //    (~$9,500) ni la recta de 2 puntos mientras tanto → el 1er frame ya es la serie real
+  //    (cache pv_perf_snap_1M) o un lienzo limpio, nunca una curva/%. equivocada que luego salta.
+  try{ if(localStorage.getItem('pv_broker_connected')==='1') window._BROKER_HISTORY_PENDING=true; }catch(e){}
   // Arrancar YA con la serie "normal" (diaria real, suave) — la MISMA que genera
   // setPeriod('1M') después. Evita el flash de la versión intradía "robusta" (jagged).
   let d = null;
@@ -25125,6 +25131,10 @@ async function aiPortApply(){
 // Devuelve true si sembró la serie.
 function _seedPerfFromNow(){
   try {
+    // Broker conectado con historial REAL en camino → NO sembrar una recta plana provisional;
+    // dejaría un frame de línea recta hasta que snapHistory aplique la serie real. Se deja la
+    // serie vacía → generate() devuelve null → el chart conserva lo que ya había (sin flash).
+    if (window._BROKER_HISTORY_PENDING) return false;
     if (PERF_MASTER && Array.isArray(PERF_MASTER.values) && PERF_MASTER.values.length >= 2) return false;
     const total = +calcTotals().total.toFixed(2);
     if (!(total > 0)) return false;                       // sin valor todavía → no sembrar
@@ -26926,13 +26936,13 @@ document.addEventListener('DOMContentLoaded', function(){
     opts=opts||{};
     if(_busy) return Promise.resolve(null); _busy=true; _setRefreshBtn(true);
     return stCall('snaptrade-refresh', {}).then(function(j){
-      if(!j || !j.connected){ _render('disconnected'); return j; }
+      if(!j || !j.connected){ try{ localStorage.removeItem('pv_broker_connected'); window._BROKER_HISTORY_PENDING=false; }catch(e){} _render('disconnected'); return j; }
       // Inception real del broker (1ª transacción) → la reconstrucción Yahoo NO se proyecta
       // antes de que tuvieras la cuenta. Elimina el flash de "+34% / eje de 1 año" al entrar.
       try{ if(j.inceptionDate){ var _iso=String(j.inceptionDate).slice(0,10); window._BROKER_INCEPTION=_iso; try{ localStorage.setItem('pv_broker_inception', _iso); }catch(e){} } }catch(e){}
       // Historial denso aún por llegar (snapHistory) → marca pendiente para NO pintar la recta
       // interpolada de 2 puntos [inception→hoy] mientras tanto. snapHistory lo limpia al resolver.
-      try{ if(j.connected && !j.syncing) window._BROKER_HISTORY_PENDING=true; }catch(e){}
+      try{ if(j.connected && !j.syncing){ window._BROKER_HISTORY_PENDING=true; localStorage.setItem('pv_broker_connected','1'); } }catch(e){}
       if(j.broken){ _render('broken'); }
       // Bloque 4: conexión de broker REAL confirmada → borra la semilla personal del dueño ANTES
       // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
@@ -26979,8 +26989,15 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // ── History → feed the EXISTING premium perf chart via _applyValueChart ──
   var _snapHistoryFirstApply = false;   // Bloque 2.4: solo la 1ª vez fijamos el período; luego respetamos la selección del usuario
+  var _snapHistoryForced = false;       // 1ª carga de la sesión: fuerza historial FRESCO (ignora caché diaria)
   function snapHistory(){
-    return stCall('snaptrade-history', {}).then(function(j){
+    // La caché diaria de snaptrade-history puede haber quedado con available:false de un momento
+    // en que el endpoint aún no respondía → dejaría la gráfica clavada en la reconstrucción Yahoo
+    // (~$9,500, +6% falso) TODO el día. La 1ª llamada de la sesión pide force:true → serie REAL
+    // fresca del broker → _BROKER_LIVE=true → % y curva coinciden con el broker. Sin coste extra
+    // relevante (getAccountBalanceHistory es una lectura incluida, 1 vez por sesión).
+    var _force = !_snapHistoryForced; _snapHistoryForced = true;
+    return stCall('snaptrade-history', _force ? {force:true} : {}).then(function(j){
       try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
