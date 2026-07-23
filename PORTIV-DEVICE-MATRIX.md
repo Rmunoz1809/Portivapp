@@ -51,10 +51,10 @@ Repo: `audit/fix-20-egress-hash`. Commits device-matrix: #4 `96b66ff`(desktop)/`
 | 4 | 1 | 🔴 | Banda 761–899px: `.bottom-tabs`/`#tab-*` sin safe-area (solo ≤760 la tenía). iPad vertical 820/834 tapado por home indicator. | 2568/2560 vs 2735/2679 | ✅ **FIXED** `96b66ff`+`77ce0fa` |
 | 5 | 1 | 🔴 | JS usa 700px (`_PERF_MOB`, `showTab`) vs CSS 899/900. iPad vertical = desktop-JS + móvil-CSS. | 14098, 12479 | ✅ **FIXED** `ca334c2`+`17c459c` |
 | 3 | 1 | 🟠 | Mapear 24→consolidar a set chico. Mapa hecho (16 anchos). Consolidación CSS = riesgo visible, pendiente. | (46 @media) | ⏳ mapeado; consolidación pendiente |
-| 6 | 2 | 🔴 | 0 listeners resize/orientationchange. Rotar cruza breakpoints y nada re-renderiza. | n/a | ⬜ TODO |
-| 7 | 2 | 🟠 | Split View / Slide Over: ancho cambia sin rotar. | n/a | ⬜ TODO |
-| 8 | 2 | 🟠 | Stage Manager: resize continuo → thrashing. | n/a | ⬜ TODO |
-| 9 | 2 | 🟠 | Gráfica: escala/periodo/eje Y deben sobrevivir a rotación. | n/a | ⬜ TODO |
+| 6 | 2 | 🔴 | 0 listeners resize/orientationchange. Rotar cruza breakpoints y nada re-renderiza. | 14284 | ✅ **FIXED** `5b18b93`+`93d3a8c` |
+| 7 | 2 | 🟠 | Split View / Slide Over: ancho cambia sin rotar. | n/a | ✅ cubierto por handler #6 (resize→resize()); verif device |
+| 8 | 2 | 🟠 | Stage Manager: resize continuo → thrashing. | n/a | ✅ cubierto por debounce de #6 (ráfaga 50→1); verif device |
+| 9 | 2 | 🟠 | Gráfica: escala/periodo/eje Y deben sobrevivir a rotación. | n/a | ✅ cubierto por #6 (resize() no regenera datos); verif device |
 | 10 | 3 | 🟠 | Safe-area lateral (left/right) nunca usada; horizontal con notch mete contenido bajo el recorte. | 11 usos | ⬜ TODO |
 | 11 | 3 | 🟠 | `.toast` z-index 999 < `.bottom-tabs` 9000 → toast tapado por el nav; nunca se ve en teléfono. | 374 vs 2569/2736 | ⬜ TODO |
 | 12 | 3 | 🟠 | `#acctMenu top:62px` sin `safe-area-inset-top`. | 25726 | ⬜ TODO |
@@ -94,6 +94,17 @@ iPad vertical (744/820/834) + teléfono horizontal (812/852) → gráfica **limp
 acorde al layout móvil. Desktop / tablet-landscape (≥900) sin cambio. Sintaxis 9/9.
 
 ---
+
+### #6 — Manejador único de rotación/resize (FIXED)
+UN `(function _pvInstallViewportHandler(){…})()` con debounce 160ms sobre `resize`+`orientationchange`
+que fuerza `perfChart.resize()` **solo si la gráfica está visible** (`offsetParent!=null`). Su `onResize`
+re-lee `_PERF_MOB()`/`PV_isMobile()` y repinta con los mismos datos → período y eje Y sobreviven.
+**Auditado (por qué es mínimo):** tabla de posiciones (`renderTable`) y análisis dependen del ancho
+solo por `@media` CSS → se adaptan solos, no necesitan JS. La única cosa dependiente del ancho
+construida por JS es la gráfica. **Medido:** listeners 0→1+1; el bloque **no** contiene ningún nombre
+de red/IA (`fetchLivePrices`/`_aiFetch`/`PV_AI`/`generate`/`renderAll`/`showTab`/`EPS.`/…); ráfaga de
+50 eventos → **1** `resize()` (0 durante la ráfaga = sin thrashing); gráfica oculta → 0; sintaxis 9/9.
+Cubre #7 (Split View), #8 (Stage Manager) y #9 (escala) por el mismo camino.
 
 ## Pendiente de verificación en device (usuario)
 Simulador iOS / devices: confirmar en las 8 pantallas × 2 orientaciones que (a) el nav no tapa
