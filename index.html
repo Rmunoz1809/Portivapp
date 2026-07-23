@@ -12476,7 +12476,7 @@ function showTab(name) {
     // instantánea. animate() no depende de la propiedad CSS `animation`: siempre corre.
     try {
       pg.classList.remove('pv-tab-in');
-      if (pg.animate && window.matchMedia('(max-width:700px)').matches && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (pg.animate && PV_isMobile() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
         pg.animate([{opacity:0, transform:'translateY(14px)'},{opacity:1, transform:'none'}],
                    {duration:340, easing:'cubic-bezier(.22,.61,.36,1)'});
       }
@@ -14093,9 +14093,18 @@ const portivCrosshair = {
   }
 };
 
-// En celular (≤700px, mismo breakpoint que el CSS) la gráfica se muestra LIMPIA:
-// sin números del eje Y ni fechas del eje X, y sin cuadrícula → la línea ocupa todo.
-function _PERF_MOB(){ return (window.innerWidth || document.documentElement.clientWidth || 999) <= 700; }
+// ─── FIX #5: fuente ÚNICA de breakpoints, compartida con el CSS ───
+// El CSS cambia el paradigma de layout (sidebar de escritorio ↔ bottom-nav móvil) en 900px
+// (@media (min-width:900px) = sidebar; (max-width:899px) = bottom-nav). Antes el JS usaba
+// 700px suelto (aquí y en la animación de showTab): el iPad vertical (744–834) era
+// "escritorio para el JS y móvil para el CSS" a la vez. Ahora ambos consumen estos helpers
+// nombrados (matchMedia con los MISMOS anchos que el CSS). Ningún innerWidth<=N suelto.
+function PV_isMobile(){ return window.matchMedia('(max-width:899px)').matches; }  /* ≤899 == bottom-nav del CSS */
+function PV_isPhone(){  return window.matchMedia('(max-width:760px)').matches; }  /* ≤760 == re-estilo teléfono v2 */
+// En móvil/tablet (≤899px) la gráfica se muestra LIMPIA: sin números del eje Y ni fechas del
+// eje X, y sin cuadrícula → la línea ocupa todo. El iPad vertical ahora entra aquí (antes
+// quedaba en modo escritorio con ejes, desalineado del bottom-nav del CSS).
+function _PERF_MOB(){ return PV_isMobile(); }
 function initPerfChart() {
   // ── ANTI-FLASH (arranque en frío) ── Si en una sesión previa el usuario tenía un broker
   //    conectado (flag persistido), la serie REAL densa llegará por snapHistory en ~1s. Marca
