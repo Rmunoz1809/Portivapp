@@ -56,8 +56,8 @@ Repo: `audit/fix-20-egress-hash`. Commits device-matrix: #4 `96b66ff`(desktop)/`
 | 8 | 2 | 🟠 | Stage Manager: resize continuo → thrashing. | n/a | ✅ cubierto por debounce de #6 (ráfaga 50→1); verif device |
 | 9 | 2 | 🟠 | Gráfica: escala/periodo/eje Y deben sobrevivir a rotación. | n/a | ✅ cubierto por #6 (resize() no regenera datos); verif device |
 | 10 | 3 | 🟠 | Safe-area lateral (left/right) nunca usada; horizontal con notch mete contenido bajo el recorte. | 11 usos | ⬜ TODO |
-| 11 | 3 | 🟠 | `.toast` z-index 999 < `.bottom-tabs` 9000 → toast tapado por el nav; nunca se ve en teléfono. | 374 vs 2569/2736 | ⬜ TODO |
-| 12 | 3 | 🟠 | `#acctMenu top:62px` sin `safe-area-inset-top`. | 25726 | ⬜ TODO |
+| 11 | 3 | 🟠 | `.toast` z-index 999 < `.bottom-tabs` 9000 → toast tapado por el nav; nunca se ve en teléfono. | 374 | ✅ **FIXED** `57fe6ab`+`c9e3238` |
+| 12 | 3 | 🟠 | `#acctMenu top:62px` sin `safe-area-inset-top`. | 25786 | ✅ **FIXED** `57fe6ab`+`c9e3238` |
 | 13 | 3 | 🟠 | Modales (noticias/búsqueda/paywall/auth/trade): safe-areas en las 8 pantallas. | varios fixed | ⬜ TODO |
 | 14 | 4 | 🟠 | 7×`100vh` (iOS ≠ área visible) → migrar a `dvh`/`-webkit-fill-available`. Chat IA + overlays. | 90,709,830,980,2442,2502,4221 | ⬜ TODO |
 | 15 | 4 | 🟡 | `overscroll-behavior` ausente → scroll-chain al body / rubber-band. | 0 usos | ⬜ TODO |
@@ -105,6 +105,15 @@ construida por JS es la gráfica. **Medido:** listeners 0→1+1; el bloque **no*
 de red/IA (`fetchLivePrices`/`_aiFetch`/`PV_AI`/`generate`/`renderAll`/`showTab`/`EPS.`/…); ráfaga de
 50 eventos → **1** `resize()` (0 durante la ráfaga = sin thrashing); gráfica oculta → 0; sintaxis 9/9.
 Cubre #7 (Split View), #8 (Stage Manager) y #9 (escala) por el mismo camino.
+
+### #11 / #12 — Toast sobre el nav + acctMenu con safe-area-top (FIXED)
+**#11:** el toast (`bottom:24px; z-index:999`) quedaba detrás del bottom-nav (`z-index:9000`) y a
+`bottom:24px` caía sobre él → nunca visible en teléfono. Fix **solo móvil (≤899)**: `z-index:9500`
+(sobre el nav) + `bottom: calc(var(--pv-nav-total) + 12px)`. Con `*{box-sizing:border-box}` (L89)
+el nav ocupa exactamente `--pv-nav-total` → el toast queda 12px por encima, sin solapar. Desktop
+intacto (regla base `bottom:24px/z-index:999` sigue; la de móvil no aplica). **#12:** `#acctMenu`
+`top:62px` → `calc(62px + env(safe-area-inset-top))`; desktop (inset 0) sigue en 62px. **Medido:**
+z-index 9500>9000, bottom libera el box del nav, acctMenu inset-aware, desktop sin cambio, sintaxis 9/9.
 
 ## Pendiente de verificación en device (usuario)
 Simulador iOS / devices: confirmar en las 8 pantallas × 2 orientaciones que (a) el nav no tapa
