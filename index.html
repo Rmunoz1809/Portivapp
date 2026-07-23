@@ -12781,7 +12781,7 @@ const PORTIV_CHART = {
     // ── RED DE SEGURIDAD ── Si aún así la ventana no tiene ≥2 puntos (reconstrucción no lista y
     //    hueco de datos), NO se reutilizan fechas viejas fuera de ventana. Se arma la ventana con
     //    fechas CORRECTAS [_fromWin → hoy] interpolando el valor en _fromWin desde la serie real.
-    if(_fromWin && (merged.length<2 || !_coversStart)){
+    if(_fromWin && (merged.length<2 || !_coversStart) && !window._BROKER_HISTORY_PENDING){
       const _all={};
       brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
       this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
@@ -26901,6 +26901,9 @@ document.addEventListener('DOMContentLoaded', function(){
       // Inception real del broker (1ª transacción) → la reconstrucción Yahoo NO se proyecta
       // antes de que tuvieras la cuenta. Elimina el flash de "+34% / eje de 1 año" al entrar.
       try{ if(j.inceptionDate){ var _iso=String(j.inceptionDate).slice(0,10); window._BROKER_INCEPTION=_iso; try{ localStorage.setItem('pv_broker_inception', _iso); }catch(e){} } }catch(e){}
+      // Historial denso aún por llegar (snapHistory) → marca pendiente para NO pintar la recta
+      // interpolada de 2 puntos [inception→hoy] mientras tanto. snapHistory lo limpia al resolver.
+      try{ if(j.connected && !j.syncing) window._BROKER_HISTORY_PENDING=true; }catch(e){}
       if(j.broken){ _render('broken'); }
       // Bloque 4: conexión de broker REAL confirmada → borra la semilla personal del dueño ANTES
       // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
@@ -26949,6 +26952,7 @@ document.addEventListener('DOMContentLoaded', function(){
   var _snapHistoryFirstApply = false;   // Bloque 2.4: solo la 1ª vez fijamos el período; luego respetamos la selección del usuario
   function snapHistory(){
     return stCall('snaptrade-history', {}).then(function(j){
+      try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
         try{
@@ -26970,7 +26974,7 @@ document.addEventListener('DOMContentLoaded', function(){
         window._BROKER_LIVE = false;
         _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
       }
-    }).catch(function(){ _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); });
+    }).catch(function(){ try{ window._BROKER_HISTORY_PENDING=false; }catch(e){} _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.'); });
   }
 
   // ── Value / Performance header toggle (chart stays the premium value chart) ──
