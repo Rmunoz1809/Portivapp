@@ -2890,6 +2890,54 @@
 </style>
 <!-- Supabase Auth (login por email + código) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!-- Paddle.js (billing / suscripción Portiv Pro) -->
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   PADDLE BILLING — inicialización (SANDBOX)
+   ───────────────────────────────────────────────────────────────
+   TODO(live): al pasar a producción:
+     1) BORRAR la línea Paddle.Environment.set('sandbox') (o dejarla
+        solo tras detectar entorno de pruebas).
+     2) Reemplazar el token de abajo por el CLIENT-SIDE TOKEN LIVE.
+     3) Reemplazar los priceId sandbox en PADDLE_PRICES por los LIVE.
+   El eventCallback centraliza el post-pago: SOLO tras checkout.completed
+   se cierra el paywall y se llama snapConnect() (no antes).
+═══════════════════════════════════════════════════════════════ */
+window.PADDLE_PRICES = {
+  // Sandbox — Portiv Pro (pro_01ky1he03d82dsd7jygnw92gkt)
+  monthly: 'pri_01ky1he07d68khj66569hd0hjg', // USD 4.99/mes · prueba gratis 30 días
+  annual:  'pri_01ky1he0a5dr99pa7jr2f9h7v3'  // USD 49.99/año · sin prueba
+  // TODO(live): sustituir ambos priceId por los del catálogo LIVE.
+};
+// DEV-ONLY TESTING — REMOVE BEFORE DEPLOY
+// Bandera de Pro SIMULADO. Solo se pone en true dentro de checkout.completed y SOLO en localhost
+// (ver más abajo). En prod/iOS queda inerte en false → no altera el path real de entitlement.
+window.__pvDevPro = false;
+(function(){
+  function initPaddle(){
+    if (!window.Paddle || !window.Paddle.Environment) { return setTimeout(initPaddle, 60); }
+    // SANDBOX ONLY — ver TODO(live) arriba.
+    Paddle.Environment.set('sandbox');
+    Paddle.Initialize({
+      token: 'test_3c9a0fa251a22ce22645e35a21f', // TODO(live): token client-side LIVE
+      eventCallback: function(ev){
+        if (!ev || ev.name !== 'checkout.completed') return;
+        // Cierre "silencioso" del paywall (igual que el comportamiento original:
+        // NO forzamos showTab aquí; _analyzeOnboarding lo hace al terminar).
+        try { var o = document.getElementById('portivPaywall'); if (o) o.classList.remove('open'); document.body.style.overflow = ''; } catch(e){}
+        // DEV-ONLY TESTING — REMOVE BEFORE DEPLOY
+        // Simula lo que hará el webhook real (aún no construido): marca al usuario como Pro localmente.
+        // SOLO localhost → en prod/iOS esta línea es inerte y el entitlement real no se toca.
+        try { if (location.hostname === 'localhost') window.__pvDevPro = true; } catch(e){}
+        // Tras marcar Pro, conecta automáticamente (una sola vez) para que el flujo abra sin 2º clic.
+        try { window.snapConnect && window.snapConnect(); } catch(e){}
+      }
+    });
+  }
+  initPaddle();
+})();
+</script>
 </head>
 <body>
 <!-- Aplica el tema guardado ANTES del primer render para evitar parpadeo (FOUC) -->
@@ -25694,6 +25742,54 @@ if (document.readyState === 'loading') {
   });
   window.sbClient = sb;
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // ⚠ TEMPORARY DEV-ONLY LOGIN BYPASS — SOLO para pruebas en localhost.
+  //   El botón "Continuar con Apple" siempre redirige a apple.com y vuelve a
+  //   https://portivapp.com, así que en localhost:8765 nunca te quedas para
+  //   probar el checkout de Paddle. Esto te deja fijar una sesión falsa
+  //   (email + user id de prueba) directamente en el estado del app, sin OAuth.
+  //   NO-OP fuera de localhost. ⚠ QUITAR ANTES DE PUBLICAR / COMPILAR iOS.
+  // ══════════════════════════════════════════════════════════════════════════
+  (function _devLoginBypass(){
+    if (location.hostname !== 'localhost') return;   // jamás activo en prod ni nativo
+    var DEV_EMAIL = 'dev@localhost.test';
+    var DEV_UID   = '00000000-0000-4000-8000-000000000001';   // forma UUID v4 por si algo lo espera
+    // Fija una sesión "logueada" falsa SIN pasar por Apple/Supabase: revela el app
+    // y rellena los mismos globales que lee el resto del código (session, __pvUserId…).
+    // No toca sbClient.auth (evita onAuthStateChange → bind-purge → reload loop).
+    window._devFakeLogin = function(email, uid){
+      if (location.hostname !== 'localhost') { console.warn('[dev] _devFakeLogin ignorado: no es localhost'); return; }
+      email = (email || DEV_EMAIL).toLowerCase();
+      uid   = uid || DEV_UID;
+      var fake = {
+        access_token: 'dev-fake-token', token_type: 'bearer', expires_at: 9999999999,
+        user: { id: uid, email: email, user_metadata: { username: 'devtester', display_name: 'Dev Tester' } }
+      };
+      session = fake;                                  // var interna del IIFE de auth (closure)
+      try { window.__pvUserId = uid; } catch(e){}
+      window._pvAuthReady = true;
+      try {
+        var a  = document.getElementById('navAvatar'); if (a)  a.textContent  = email.slice(0,2).toUpperCase();
+        var ae = document.getElementById('acctEmail'); if (ae) ae.textContent = email;
+      } catch(e){}
+      try { revealApp(); } catch(e){}                  // quita app-locked + desvanece overlay
+      console.log('[dev] sesión falsa activa →', email, uid, '| session global lista; sbClient SIN token real (escrituras a la nube fallarán RLS, esperado)');
+      return fake;
+    };
+    // Botón visible en el overlay de login (solo localhost).
+    try {
+      var apple = document.getElementById('appleSignInBtn');
+      if (apple && apple.parentNode) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.textContent = '🔧 DEV: entrar sin Apple (localhost)';
+        b.style.cssText = 'margin-top:12px;width:100%;padding:12px;border:1px dashed #b4487a;border-radius:12px;background:#fff4fb;color:#a03d73;font-weight:700;cursor:pointer;font-size:13px;font-family:inherit;';
+        b.onclick = function(){ window._devFakeLogin(); };
+        apple.parentNode.insertBefore(b, apple.nextSibling);
+      }
+    } catch(e){}
+  })();
+
   function replay(el){ el.classList.remove('pv-form'); void el.offsetWidth; el.classList.add('pv-form'); }
 
   function setMode(m){
@@ -26532,11 +26628,36 @@ document.addEventListener('DOMContentLoaded', function(){
   // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
   // overlay sin cambiar de tab — _analyzeOnboarding() hace showTab('portfolio') solo
   // cuando el análisis realmente termina.
-  window._pvConfirmTrial = function(){
-    var o = document.getElementById('portivPaywall');
-    if(o) o.classList.remove('open');
-    document.body.style.overflow = '';
-    try { window.snapConnect(); } catch(e){}
+  // "Comenzar ahora": abre Paddle Checkout (SANDBOX). El paywall NO se cierra
+  // ni se llama snapConnect() aquí — eso ocurre SOLO tras checkout.completed
+  // (ver eventCallback en la init de Paddle en <head>).
+  // Sin toggle mensual/anual en la UI todavía → por defecto precio MENSUAL.
+  // Para ofrecer anual: pasar window.PADDLE_PRICES.annual como priceId.
+  window._pvConfirmTrial = async function(){
+    if (!window.Paddle || !window.Paddle.Checkout) {
+      try { alert('El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.'); } catch(e){}
+      return;
+    }
+    // Usuario Supabase autenticado (email + id para customData del webhook futuro).
+    var email = null, uid = null;
+    try {
+      var sb = window.sbClient;
+      if (sb && sb.auth) { var r = await sb.auth.getUser(); if (r && r.data && r.data.user) { email = r.data.user.email; uid = r.data.user.id; } }
+    } catch(e){}
+    if ((!email || !uid) && typeof session !== 'undefined' && session && session.user) {
+      email = email || session.user.email; uid = uid || session.user.id;
+    }
+    var priceId = (window.PADDLE_PRICES && window.PADDLE_PRICES.monthly) || 'pri_01ky1he07d68khj66569hd0hjg';
+    var opts = {
+      items: [{ priceId: priceId, quantity: 1 }],
+      customData: uid ? { supabase_user_id: uid } : undefined
+    };
+    if (email) opts.customer = { email: email };
+    try {
+      Paddle.Checkout.open(opts);
+    } catch(e){
+      try { alert('No se pudo abrir el pago. Inténtalo de nuevo.'); } catch(_){}
+    }
   };
 </script>
 
@@ -26771,6 +26892,12 @@ document.addEventListener('DOMContentLoaded', function(){
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     document.getElementById('pqFinish').onclick = ()=>{
+      // DEV-ONLY TESTING — REMOVE BEFORE DEPLOY
+      // Pro simulado en localhost → conecta directo (NO reabrir paywall/checkout). Prod/iOS: inerte.
+      if(location.hostname === 'localhost' && window.__pvDevPro === true){
+        try{ window.snapConnect(); }catch(e){} return;
+      }
+      // ── Real (prod/iOS): comportamiento original, sin cambios. ──
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
       try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
     };
