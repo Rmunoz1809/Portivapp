@@ -12749,6 +12749,8 @@ const PORTIV_CHART = {
       fromISO=cut.toISOString().slice(0,10);
     }
     let _fromWin=fromISO;   // ventana REAL pedida (sin el clamp de la foto) → reconstrucción real
+    // Broker conectado (flag persistido). Con serie real densa aplicada window._BROKER_LIVE=true.
+    var _brkConn=false; try{ _brkConn = localStorage.getItem('pv_broker_connected')==='1'; }catch(e){}
     // ALL: sin límite de tiempo
     // Combinar PERF_MASTER (base histórica del broker) con el historial diario de localStorage
     const masterDates=(typeof PERF_MASTER!=='undefined'?PERF_MASTER.dates:[]) || [];
@@ -12790,7 +12792,10 @@ const PORTIV_CHART = {
     // Fusionar: el historial local prevalece (datos en vivo más recientes)
     const byDate={};
     brokerPts.forEach(p=>{if(!fromISO||p.date>=fromISO)byDate[p.date]={date:p.date,value:p.value,label:p.label};});
-    localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
+    // Broker conectado SIN serie real densa aún (_BROKER_LIVE=false) → NO mezclar los snapshots
+    // locales (loadDaily): sus 2 puntos [ayer→hoy] son la recta que se veía al entrar. Sin ellos
+    // merged queda vacío → null → lienzo limpio hasta que llegue la serie real (rehidratación/snapHistory).
+    if(!(_brkConn && !window._BROKER_LIVE)) localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
     // ── ANCLA DE INICIO DE VENTANA (BROKER PRO) ── El % de un período de un broker profesional =
     //    (valor HOY − valor EN la fecha de inicio)/valor inicio, tomando el valor EN la fecha exacta
@@ -12861,7 +12866,7 @@ const PORTIV_CHART = {
     // Broker conectado sin serie real aún aplicada → NUNCA fabricar la recta de 2 puntos (era el
     // "flash" de línea plana / ALL +0.00% al entrar). Se deja el lienzo limpio hasta que llegue la
     // serie real densa (snapHistory) o la reconstrucción Yahoo real — solo datos reales, sin placeholder.
-    var _brkConnNoLive=false; try{ _brkConnNoLive = localStorage.getItem('pv_broker_connected')==='1' && !window._BROKER_LIVE; }catch(e){}
+    var _brkConnNoLive = _brkConn && !window._BROKER_LIVE;
     if(_fromWin && (merged.length<2 || !_coversStart) && !window._BROKER_HISTORY_PENDING && !_brkConnNoLive){
       const _all={};
       brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
@@ -14041,7 +14046,21 @@ function initPerfChart() {
   //    PENDING ANTES del primer pintado para que generate() NO dibuje la reconstrucción Yahoo
   //    (~$9,500) ni la recta de 2 puntos mientras tanto → el 1er frame ya es la serie real
   //    (cache pv_perf_snap_1M) o un lienzo limpio, nunca una curva/%. equivocada que luego salta.
-  try{ if(localStorage.getItem('pv_broker_connected')==='1') window._BROKER_HISTORY_PENDING=true; }catch(e){}
+  // ── REHIDRATACIÓN (mata el flash de raíz) ── Si en una sesión previa se aplicó la serie REAL del
+  //    broker, quedó en localStorage (pv_broker_series). Rehidrátala AHORA, antes del 1er pintado →
+  //    el primer frame ya es la curva real densa con _BROKER_LIVE=true (sin recta de 2 puntos, sin
+  //    reconstrucción Yahoo, sin +0.00%). snapHistory la reconfirma en ~1s sin cambio visible. Sin
+  //    cache (1ª conexión) → PENDING para dejar el lienzo limpio hasta que llegue la serie, nunca placeholder.
+  try{
+    if(localStorage.getItem('pv_broker_connected')==='1'){
+      var _bs=null; try{ _bs=JSON.parse(localStorage.getItem('pv_broker_series')||'null'); }catch(e){}
+      if(_bs && Array.isArray(_bs.pts) && _bs.pts.length>1 && typeof _applyValueChart==='function' && _applyValueChart(_bs.pts)){
+        window._BROKER_LIVE=true; window._BROKER_HISTORY_PENDING=false;
+      } else {
+        window._BROKER_HISTORY_PENDING=true;
+      }
+    }
+  }catch(e){}
   // Arrancar YA con la serie "normal" (diaria real, suave) — la MISMA que genera
   // setPeriod('1M') después. Evita el flash de la versión intradía "robusta" (jagged).
   let d = null;
@@ -25232,6 +25251,10 @@ function _aiSyncPerfSeries(){
 // serie, sin constantes de fecha hardcodeadas ni duplicadas.
 function _brokerClearSeed(){
   try { if (typeof window !== 'undefined' && window._SEED_CLEARED) return true; } catch(e){}
+  // Serie REAL del broker ya cargada (rehidratada del cache al arrancar, o aplicada por snapHistory)
+  // → NO vaciar PERF_MASTER: ya ES la verdad del broker, no la semilla del dueño. Solo marca limpiada
+  // para no reintroducir el hueco (era la causa de que la recta de 2 puntos reapareciera en cada carga).
+  try { if (typeof window !== 'undefined' && window._BROKER_LIVE) { window._SEED_CLEARED = true; return true; } } catch(e){}
   try { PERF_MASTER = { dates:[], values:[], labels:[] }; } catch(e){}
   try { if (typeof _buildPerfData === 'function') PERF_DATA = _buildPerfData(PERF_MASTER); } catch(e){}
   try { PERIOD_CHANGE_OVERRIDE = {}; } catch(e){}
@@ -27075,7 +27098,7 @@ document.addEventListener('DOMContentLoaded', function(){
     opts=opts||{};
     if(_busy) return Promise.resolve(null); _busy=true; _setRefreshBtn(true);
     return stCall('snaptrade-refresh', {}).then(function(j){
-      if(!j || !j.connected){ try{ localStorage.removeItem('pv_broker_connected'); window._BROKER_HISTORY_PENDING=false; }catch(e){} _render('disconnected'); return j; }
+      if(!j || !j.connected){ try{ localStorage.removeItem('pv_broker_connected'); localStorage.removeItem('pv_broker_series'); window._BROKER_HISTORY_PENDING=false; window._BROKER_LIVE=false; }catch(e){} _render('disconnected'); return j; }
       // Inception real del broker (1ª transacción) → la reconstrucción Yahoo NO se proyecta
       // antes de que tuvieras la cuenta. Elimina el flash de "+34% / eje de 1 año" al entrar.
       try{ if(j.inceptionDate){ var _iso=String(j.inceptionDate).slice(0,10); window._BROKER_INCEPTION=_iso; try{ localStorage.setItem('pv_broker_inception', _iso); }catch(e){} } }catch(e){}
@@ -27152,6 +27175,9 @@ document.addEventListener('DOMContentLoaded', function(){
           // generate() dibuja los cierres reales conectados por líneas rectas (sin browniano).
           window._BROKER_LIVE = true;
           _applyValueChart(pts);
+          // Persistir la serie REAL densa → en el próximo arranque se rehidrata al instante (initPerfChart),
+          // el 1er frame ya es la curva real y _brokerClearSeed no la borra. Mata el flash de raíz.
+          try{ localStorage.setItem('pv_broker_series', JSON.stringify({ day:(typeof _todayISO==='function'?_todayISO():new Date().toISOString().slice(0,10)), pts:pts })); }catch(e){}
           // Bloque 2.4: fija el período automáticamente SOLO la 1ª vez de la sesión. En refrescos
           // posteriores conserva el timeframe que el usuario tenía y solo redibuja (no lo pisa).
           if(!_snapHistoryFirstApply){
