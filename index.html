@@ -12744,6 +12744,35 @@ const PORTIV_CHART = {
     brokerPts.forEach(p=>{if(!fromISO||p.date>=fromISO)byDate[p.date]={date:p.date,value:p.value,label:p.label};});
     localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
+    // ── ANCLA DE INICIO DE VENTANA (BROKER PRO) ── El % de un período de un broker profesional =
+    //    (valor HOY − valor EN la fecha de inicio)/valor inicio, tomando el valor EN la fecha exacta
+    //    de inicio (interpolado entre los cierres que la rodean si ese día no cotizó). La serie REAL
+    //    de SnapTrade es dispersa (~cada 2 días); si la ventana abre en un HUECO justo tras un
+    //    movimiento fuerte, usar el primer punto DENTRO de la ventana como base ancla a un día
+    //    equivocado. Caso real: 1M abría el 23-jun (sin dato), el 1er punto era el 24-jun=$9,855
+    //    (mínimo tras la caída del 22→24) → 1M salía +0.46% cuando el broker daba −0.27% (¡signo
+    //    invertido!). Anteponemos un ancla en _fromWin con el valor interpolado de la serie real →
+    //    la base = valor del día de inicio, como lo calcula el broker.
+    if(window._BROKER_LIVE && _fromWin && merged.length && merged[0].date > _fromWin){
+      const _src={};
+      brokerPts.forEach(p=>{ if(p&&p.date&&isFinite(p.value)) _src[p.date]={date:p.date,value:p.value}; });
+      this.loadDaily().forEach(p=>{ if(p&&p.date&&isFinite(p.value)) _src[p.date]={date:p.date,value:p.value}; });
+      const _arr=Object.values(_src).sort((a,b)=>a.date.localeCompare(b.date));
+      if(_arr.length && _arr[0].date <= _fromWin){   // necesita un punto ≤ inicio para interpolar
+        let _bef=null,_aft=null;
+        for(const p of _arr){ if(p.date<=_fromWin)_bef=p; if(p.date>=_fromWin && !_aft)_aft=p; }
+        let _baseV=null;
+        if(_bef && _aft && _bef.date!==_aft.date){
+          const _t0=new Date(_bef.date+'T00:00:00').getTime();
+          const _t1=new Date(_aft.date+'T00:00:00').getTime();
+          const _ti=new Date(_fromWin+'T00:00:00').getTime();
+          _baseV=+(_bef.value+(_aft.value-_bef.value)*((_ti-_t0)/(_t1-_t0))).toFixed(2);
+        } else if(_bef){ _baseV=_bef.value; }
+        if(_baseV!=null && isFinite(_baseV) && _baseV>0){
+          merged.unshift({date:_fromWin,value:_baseV,label:fmtDate(_fromWin)});
+        }
+      }
+    }
     // ── ¿LA SERIE GUARDADA YA LLEGA A HOY? ── Si cubre la ventana con ≥3 puntos y su último dato
     //    está a ≤4 días de hoy, es la fuente más fiel → se usa tal cual. Si termina ANTES (hueco),
     //    sus fechas NO corresponden al período pedido → hay que rellenar con datos reales.
@@ -12768,7 +12797,7 @@ const PORTIV_CHART = {
     //    CUALQUIER usuario con posiciones. Si aún no está en caché, se carga en 2º plano y refresca
     //    la gráfica al terminar (ensureAsync → PORTIV_CHART.refresh). Usa la ventana REAL (_fromWin),
     //    no la recortada por el clamp de la foto.
-    if(!_coversNow && typeof PORTIV_HIST!=='undefined'){
+    if(!_coversNow && !window._BROKER_LIVE && typeof PORTIV_HIST!=='undefined'){
       try{
         if(PORTIV_HIST.ready && PORTIV_HIST.ready()){
           const _rs=PORTIV_HIST.series(_fromWin||null);
