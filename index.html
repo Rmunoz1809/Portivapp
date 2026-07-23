@@ -26194,7 +26194,7 @@ if (document.readyState === 'loading') {
             return;
           }
           localStorage.setItem(LS_KEY, cloudRaw);
-          _lastPortHash = _pvBundleHash(portfolioOnly);   // ya sincronizado con la nube → no re-subir igual
+          _lastPortHash = _pvPortHash(portfolioOnly);   // ya sincronizado con la nube → no re-subir igual
           // BUG 2: la copia local ahora ES la de la nube → marcar sincronizado (no pendiente).
           try { localStorage.setItem('pv_port_synced', '1'); if (cloudUpdatedAt) localStorage.setItem('pv_port_saved_at', cloudUpdatedAt); } catch(e){}
         }
@@ -26215,7 +26215,7 @@ if (document.readyState === 'loading') {
           var _newStamp = new Date().toISOString();
           var _newRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: EMPTY_STATE, updated_at: _newStamp });
           if (!_newRes || !_newRes.error) {
-            _lastPortHash = _pvBundleHash(EMPTY_STATE);
+            _lastPortHash = _pvPortHash(EMPTY_STATE);
             try { localStorage.setItem('pv_port_synced', '1'); localStorage.setItem('pv_port_saved_at', _newStamp); } catch(e){}  // BUG 2: local == nube (vacío)
           }
         } catch(e){ _pvLogError('cloudLoadAndGate new-user upsert', e); }
@@ -26244,7 +26244,25 @@ if (document.readyState === 'loading') {
   // Hash sobre la forma CANÓNICA (no JSON.stringify crudo) → estados semánticamente iguales
   // producen el mismo hash aunque cambie el orden de llaves (elimina reescrituras espurias).
   function _pvBundleHash(o){ try{ var s=_pvCanon(o)||''; var h=5381,i=s.length; while(i) h=(h*33)^s.charCodeAt(--i); return (h>>>0).toString(36); }catch(e){ return String(Date.now()); } }
-  var _lastPortHash = null;     // last portfolio blob pushed to profiles
+  // FIX #20 (egress): los campos de precio por-holding cambian en cada tick de mercado. Se excluyen
+  // SOLO del hash de dedupe del PORTAFOLIO (no del blob guardado, que conserva los precios) para que
+  // los upsert a `profiles` se disparen por cambios de estado real (posiciones/cash/txLog/perfil),
+  // no por ruido de precio. Antes: ~1 upsert/tick (~120/h/sesión). Ver PORTIV-AUDIT-fase0.md #20.
+  var _PV_VOLATILE_KEYS = ['price','dayChgPct','_prevClose','_stale'];
+  function _pvPortHash(o){
+    try{
+      if(!o || typeof o!=='object' || !Array.isArray(o.holdings)) return _pvBundleHash(o);
+      var clone = Object.assign({}, o);
+      clone.holdings = o.holdings.map(function(h){
+        if(!h || typeof h!=='object') return h;
+        var c = Object.assign({}, h);
+        for(var i=0;i<_PV_VOLATILE_KEYS.length;i++) delete c[_PV_VOLATILE_KEYS[i]];
+        return c;
+      });
+      return _pvBundleHash(clone);
+    }catch(e){ return _pvBundleHash(o); }
+  }
+  var _lastPortHash = null;     // last portfolio blob pushed to profiles (hash estable, sin precios)
   var _lastBundleHash = null;   // last {__app,__wl} bundle pushed to profile_caches
   var _cachesTimer = null;
   // Cold path: sync AI caches + watchlist to profile_caches, slow debounce, hash-gated.
@@ -26275,8 +26293,8 @@ if (document.readyState === 'loading') {
       // (profile_caches, ver _cachesPush) en un debounce lento y solo si cambian.
       var raw = localStorage.getItem(LS_KEY);
       var obj = raw ? JSON.parse(raw) : {};
-      var _ph = _pvBundleHash(obj);
-      if (_ph === _lastPortHash) return;                    // nada cambió → no reescribir
+      var _ph = _pvPortHash(obj);
+      if (_ph === _lastPortHash) return;                    // nada cambió (ignorando precio) → no reescribir
       var _stamp = new Date().toISOString();
       var _res = await sb.from('profiles').upsert({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: _stamp });
       if (!_res || !_res.error) {
@@ -26341,7 +26359,7 @@ if (document.readyState === 'loading') {
       try {
         var raw = localStorage.getItem(LS_KEY);
         var obj = raw ? JSON.parse(raw) : null;
-        if (obj && _pvBundleHash(obj) !== _lastPortHash) _beaconPush(obj);
+        if (obj && _pvPortHash(obj) !== _lastPortHash) _beaconPush(obj);
       } catch(e){}
       _cloudPushCore();     // subida asíncrona normal del portafolio (self-gated por _lastPortHash)
       _cachesPushCore();    // cachés frías + watchlist (self-gated por _lastBundleHash)
