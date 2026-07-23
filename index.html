@@ -12718,6 +12718,16 @@ const PORTIV_CHART = {
       const _mStart0=masterDates[0];
       if(_mStart0 && _fromWin && _fromWin < _mStart0){ _fromWin=_mStart0; fromISO=_mStart0; }
     }
+    // ── CLAMP POR INCEPTION DEL BROKER ── Aunque la serie densa aún no cargó, si el broker nos
+    //    dio tu 1ª transacción (window._BROKER_INCEPTION), la reconstrucción Yahoo NUNCA arranca
+    //    antes de esa fecha: no tenías esas acciones antes. Sin esto, ALL (_fromWin=null) reconstruía
+    //    ~1 año con las shares de hoy → un +34% falso en el primer render. Aplica a TODA ventana,
+    //    incluido ALL (que pasa a arrancar en tu inception real, como debe ser).
+    var _inc=window._BROKER_INCEPTION;
+    if(!_inc){ try{ _inc=localStorage.getItem('pv_broker_inception')||null; }catch(e){} if(_inc) window._BROKER_INCEPTION=_inc; }
+    if(_inc){
+      if(!_fromWin || _fromWin < _inc){ _fromWin=_inc; fromISO=_inc; }
+    }
     // ── CLAMP A LA FOTO ── Si la gráfica proviene de una foto/transcripción del broker
     //    (_CHART_IMPORTED), NUNCA se extiende la ventana más allá de lo que la foto realmente
     //    cubre. Un período más largo que el historial de la foto (p.ej. 1Y/YTD/ALL cuando la
@@ -13423,6 +13433,10 @@ function _applyValueChart(points, pre) {
   // Recalcula qué botones de período mostrar en cuanto llega la serie real del broker
   // (1M/3M/6M/1Y quedaban ocultos si unlockPeriods no se re-ejecutaba tras aplicar la serie).
   try { if (typeof unlockPeriods === 'function') unlockPeriods(); } catch(e) {}
+  // El 1er punto de la serie real ES tu inception → recuérdalo (localStorage) para que en el
+  // próximo arranque la reconstrucción ya nazca acotada y NO haya flash de "+34% / 1 año".
+  try { var _d0 = PERF_MASTER.dates && PERF_MASTER.dates[0];
+        if (_d0){ window._BROKER_INCEPTION = _d0; localStorage.setItem('pv_broker_inception', _d0); } } catch(e) {}
   return true;
 }
 
@@ -26884,6 +26898,9 @@ document.addEventListener('DOMContentLoaded', function(){
     if(_busy) return Promise.resolve(null); _busy=true; _setRefreshBtn(true);
     return stCall('snaptrade-refresh', {}).then(function(j){
       if(!j || !j.connected){ _render('disconnected'); return j; }
+      // Inception real del broker (1ª transacción) → la reconstrucción Yahoo NO se proyecta
+      // antes de que tuvieras la cuenta. Elimina el flash de "+34% / eje de 1 año" al entrar.
+      try{ if(j.inceptionDate){ var _iso=String(j.inceptionDate).slice(0,10); window._BROKER_INCEPTION=_iso; try{ localStorage.setItem('pv_broker_inception', _iso); }catch(e){} } }catch(e){}
       if(j.broken){ _render('broken'); }
       // Bloque 4: conexión de broker REAL confirmada → borra la semilla personal del dueño ANTES
       // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
