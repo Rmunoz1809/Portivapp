@@ -12806,10 +12806,40 @@ const PORTIV_CHART = {
     // Fusionar: el historial local prevalece (datos en vivo más recientes)
     const byDate={};
     brokerPts.forEach(p=>{if(!fromISO||p.date>=fromISO)byDate[p.date]={date:p.date,value:p.value,label:p.label};});
-    // Broker conectado SIN serie real densa aún (_BROKER_LIVE=false) → NO mezclar los snapshots
-    // locales (loadDaily): sus 2 puntos [ayer→hoy] son la recta que se veía al entrar. Sin ellos
-    // merged queda vacío → null → lienzo limpio hasta que llegue la serie real (rehidratación/snapHistory).
-    if(!(_brkConn && !window._BROKER_LIVE)) localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
+    // ── DIARIO POR PUNTOS REALES DE LA APP ──────────────────────────────
+    //   La serie del broker (SnapTrade) es dispersa (~cada 2 días). Rellenamos los HUECOS entre
+    //   sus anclas con las lecturas DIARIAS REALES que la app graba (loadDaily = total en vivo del
+    //   día, ya calculado desde las posiciones del broker), re-ancladas a la BASE del broker para
+    //   que no salten (misma cuenta ⇒ k≈1; corrige un placeholder viejo con otra escala). Se
+    //   conservan las anclas del broker como verdad (no se pisan); los puntos de la app solo llenan
+    //   días que el broker no reporta. NUNCA se inyectan snapshots ANTERIORES al 1er dato real del
+    //   broker (evita la recta placeholder [ayer→hoy] de antes de conectar → lienzo limpio hasta que
+    //   llegue la serie). Resultado: gráfica DIARIA en todos los períodos, con datos reales.
+    if(!_brkConn){
+      // Usuario sin broker: el historial local ES la fuente (comportamiento original).
+      localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
+    } else if(brokerPts.length || window._BROKER_LIVE){
+      (function _fillDailyFromApp(){
+        if(!localPts.length) return;
+        var _bByDate={}, _bDates=[];
+        brokerPts.forEach(p=>{ if(p&&p.date&&isFinite(p.value)){ _bByDate[p.date]=p.value; _bDates.push(p.date); } });
+        _bDates.sort();
+        var _bFirst=_bDates.length?_bDates[0]:null;
+        var _lo=fromISO||_bFirst||null;
+        if(_bFirst && (!_lo || _bFirst>_lo)) _lo=_bFirst;   // nunca antes del 1er dato real del broker
+        // Re-ancla: k = valor_broker / valor_app en la fecha COMÚN más reciente (banda sana 0.5–2).
+        var _k=1, _common=localPts.filter(p=>p&&_bByDate[p.date]!=null && p.value>0).sort((a,b)=>a.date.localeCompare(b.date));
+        if(_common.length){ var _c=_common[_common.length-1], _kk=_bByDate[_c.date]/_c.value; if(isFinite(_kk)&&_kk>0.5&&_kk<2)_k=_kk; }
+        localPts.forEach(p=>{
+          if(!p||!p.date||!isFinite(p.value)||p.value<=0) return;
+          if(_lo && p.date<_lo) return;      // no antes del 1er dato real del broker
+          if(p.date>today) return;
+          if(byDate[p.date]) return;         // no pisar el ancla autoritativa del broker
+          byDate[p.date]={date:p.date,value:+(p.value*_k).toFixed(2),label:fmtDate(p.date)};
+        });
+      })();
+    }
+    // else (broker conectado sin serie real aún): lienzo limpio — no mezclar placeholders.
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
     // ── ANCLA DE INICIO DE VENTANA (BROKER PRO) ── El % de un período de un broker profesional =
     //    (valor HOY − valor EN la fecha de inicio)/valor inicio, tomando el valor EN la fecha exacta
