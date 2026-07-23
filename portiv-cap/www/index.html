@@ -14253,6 +14253,37 @@ function initPerfChart() {
   _applyPerfYScale();   // eje Y a la escala de la foto del broker desde el inicio
 }
 
+// ─── FIX #6: rotación / redimensionado (FASE 2) — UN solo manejador, con debounce ───
+// Antes: 0 listeners de resize/orientationchange en todo el archivo. Rotar un iPad cruza el
+// breakpoint 899 (820↔1180) y la lógica dependiente del ancho no se re-ejecutaba de forma
+// fiable. Auditado: la tabla de posiciones y el layout de análisis dependen del ancho SOLO
+// vía @media CSS (se adaptan solos, no necesitan JS). La ÚNICA cosa dependiente del ancho
+// construida por JS es la gráfica de rendimiento (ejes/grid según _PERF_MOB()=PV_isMobile()).
+// Chart.js la re-mide con su propio ResizeObserver, PERO en iOS el orientationchange puede
+// reportar el tamaño tarde, o no dispararse si el canvas estaba en un tab oculto al rotar.
+// Este manejador fuerza perfChart.resize(): su onResize re-lee el breakpoint y repinta con
+// los MISMOS datos → el período activo y el rango del eje Y sobreviven. NO llama a red ni IA.
+// El debounce (160ms) colapsa ráfagas (Stage Manager arrastrando el borde, Split View) en un
+// solo redibujo → sin thrashing. Cubre #6, #7 (Split View), #8 (Stage Manager) y #9 (escala).
+(function _pvInstallViewportHandler(){
+  var _pvRzT = null;
+  function _pvOnViewportChange(){
+    if (_pvRzT) { clearTimeout(_pvRzT); }
+    _pvRzT = setTimeout(function(){
+      _pvRzT = null;
+      try {
+        // Solo si la gráfica existe y está VISIBLE (offsetParent!=null). Si su tab está oculto,
+        // Chart.js la re-mide sola al volver a mostrarse → no la forzamos a tamaño 0.
+        if (perfChart && perfChart.canvas && perfChart.canvas.offsetParent !== null) {
+          perfChart.resize(); // re-evalúa _PERF_MOB() en onResize; repinta sin regenerar datos
+        }
+      } catch(e){}
+    }, 160);
+  }
+  window.addEventListener('resize', _pvOnViewportChange, { passive: true });
+  window.addEventListener('orientationchange', _pvOnViewportChange, { passive: true });
+})();
+
 // Permite que PORTIV_CHART inyecte un dataset directamente (sin pasar por setPeriod).
 function setPeriodData(period, ds) {
   if (!perfChart || !ds || !ds.values || !ds.values.length) return;
