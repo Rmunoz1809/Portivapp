@@ -2564,6 +2564,18 @@
   }
 }
 
+/* ─── FIX #4: fuente única de geometría del bottom-nav (usa safe-area SIEMPRE).
+   Antes: la banda 761–899px (iPad 10ª/Air11 820, Pro11 834 vertical) recibía
+   height:62px y padding-bottom:76px SIN env(safe-area-inset-bottom); solo ≤760
+   tenía la versión con safe-area. Ahora ambos bloques derivan de estas vars, así
+   que no hay dos fuentes de verdad y el nav respeta el home indicator en TODO iPad.
+   Escritorio (≥900) no consume estas vars → sin cambios. Ver device-matrix #4. */
+:root{
+  --pv-safe-b: env(safe-area-inset-bottom, 0px);
+  --pv-nav-h: 64px;                                          /* alto real del contenido del nav */
+  --pv-nav-total: calc(var(--pv-nav-h) + var(--pv-safe-b));  /* alto que ocupa el nav */
+  --pv-page-pad-b: calc(86px + var(--pv-safe-b));            /* padding inferior de página que libera el nav */
+}
 /* ─── MOBILE: bottom navigation bar ─── */
 @media (max-width: 899px) {
   body { background: #eef0f5 !important; }
@@ -2571,14 +2583,14 @@
 
   /* Padding bottom para el bottom nav */
   #tab-portfolio, #tab-noticias, #tab-watchlist, #tab-analizar, #tab-settings, #tab-aianalyst {
-    padding-bottom: 76px !important;
+    padding-bottom: var(--pv-page-pad-b) !important;
   }
 
   /* Bottom nav */
   .bottom-tabs {
     display: flex !important; position: fixed !important;
     bottom: 0 !important; left: 0 !important; right: 0 !important;
-    height: 62px !important; background: #fff !important;
+    height: var(--pv-nav-total) !important; padding-bottom: var(--pv-safe-b) !important; background: #fff !important;
     border-top: 1px solid #e8ecf2 !important; z-index: 9000 !important;
     align-items: stretch !important; justify-content: space-around !important;
     box-shadow: 0 -2px 16px rgba(11,28,48,0.09) !important;
@@ -2689,9 +2701,9 @@
 
   /* ── Padding de páginas edge-to-edge + espacio para el nav ── */
   #tab-portfolio, #tab-noticias, #tab-watchlist, #tab-analizar, #tab-settings, #tab-aianalyst {
-    margin-left: 0 !important; padding: 6px 16px calc(86px + env(safe-area-inset-bottom, 0px)) !important; min-height: auto;
+    margin-left: 0 !important; padding: 6px 16px var(--pv-page-pad-b) !important; min-height: auto;
   }
-  .stitch-layout { display: block !important; padding: 6px 0 calc(86px + env(safe-area-inset-bottom, 0px)) !important; gap: 0 !important; }
+  .stitch-layout { display: block !important; padding: 6px 0 var(--pv-page-pad-b) !important; gap: 0 !important; }
   .stitch-sidebar { display: block !important; }
 
   /* ── Hero navy (valor total) ── */
@@ -2745,7 +2757,7 @@
   /* ── Bottom nav estilo preview ── */
   .bottom-tabs {
     position: fixed !important; bottom: 0 !important; left: 0 !important; right: 0 !important;
-    height: calc(64px + env(safe-area-inset-bottom, 0px)) !important; padding-bottom: env(safe-area-inset-bottom, 0px) !important; background: #fff !important; border-top: 1px solid #E5EEFF !important;
+    height: var(--pv-nav-total) !important; padding-bottom: var(--pv-safe-b) !important; background: #fff !important; border-top: 1px solid #E5EEFF !important;
     box-shadow: 0 -2px 16px rgba(11,28,48,.08) !important; z-index: 9000 !important;
     justify-content: space-around !important; align-items: stretch !important;
   }
