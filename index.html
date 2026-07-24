@@ -14498,52 +14498,14 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
   }
 }
 
-// ── Helpers Yahoo Finance (vía yh-proxy de Supabase) — fuente primaria de precio/histórico ──
-async function _yhFetch(url, timeoutMs){
-  // Primario: yh-proxy (Edge Function propia en Supabase, passthrough server-side sin CORS).
-  const localFirst = [];
-  // PRIMARIO Y ÚNICO: yh-proxy (Edge Function propia en Supabase). Passthrough server-side
-  // a Yahoo, sin CORS y con User-Agent de navegador → fiable y rápido (~0.4s). Sin proxies
-  // públicos de terceros (App Review: no enrutar datos por proxies no licenciados).
-  const YH_PROXY = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/yh-proxy?url=' + encodeURIComponent(url);
-  const pub = [
-    YH_PROXY,
-  ];
-  const proxies = localFirst.concat(pub);
-  const t = timeoutMs || 6000;
-  const attempts = proxies.map(px => (async () => {
-    const ctrl = new AbortController();
-    const tid = setTimeout(() => ctrl.abort(), t);
-    try {
-      const r = await fetch(px, { signal: ctrl.signal, cache: 'no-store' });
-      if (!r.ok) throw new Error('status ' + r.status);
-      // No limpiar el timeout antes de leer el body: algunos proxies dan headers OK
-      // pero el stream se cuelga → r.json() esperaría para siempre. El abort activo
-      // también corta una lectura colgada.
-      const j = await r.json();
-      if (!j || j.error) throw new Error('respuesta vacía');
-      return j;
-    } finally { clearTimeout(tid); }
-  })());
-  try {
-    return await Promise.any(attempts);
-  } catch(e) {
-    reportQuiet('Datos · Yahoo vía proxy (todos fallaron)', e);
-    return null;
-  }
-}
-async function _yhChart(ticker, range, interval, timeoutMs){
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=${range}&interval=${interval}&includeAdjustedClose=true`;
-  const j = await _yhFetch(url, timeoutMs);
-  const res = j && j.chart && j.chart.result && j.chart.result[0];
-  if (!res) return null;
-  const meta = res.meta || {};
-  const timestamps = res.timestamp || [];
-  const ind = res.indicators || {};
-  const closes = (ind.adjclose && ind.adjclose[0] && ind.adjclose[0].adjclose)
-              || (ind.quote && ind.quote[0] && ind.quote[0].close) || [];
-  return { meta, timestamps, closes: closes.map(v => v==null ? null : Math.round(v*10000)/10000) };
-}
+// ── Yahoo Finance RETIRADO (App Review 5C) — fuente sin licencia ──────────────────────────
+// Se eliminaron el fetch a yh-proxy (passthrough a Yahoo) y sus URLs de Yahoo Finance. _yhChart
+// queda como stub que devuelve null: TODOS sus consumidores (PORTIV_HIST diario/intradía,
+// cotización de respaldo, gráfica de research/5Y, perf spans) ya manejan null y caen a su
+// fuente LICENCIADA — Finnhub free (/quote, métricas, /stock/candle si algún día hay plan),
+// SnapTrade (broker) o snapshots propios. Reactivar velas: reimplementar aquí contra una
+// fuente con licencia comercial (nunca Yahoo).
+async function _yhChart(ticker, range, interval, timeoutMs){ return null; }
 
 // Yahoo Finance noticias: RETIRADO (App Review 5C) — fuente sin licencia. Las noticias van solo
 // por Finnhub (company-news / news), licenciado. _yhNews eliminado; sus llamadas devuelven [].
