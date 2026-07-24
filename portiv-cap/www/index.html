@@ -14521,23 +14521,8 @@ async function _yhChart(ticker, range, interval, timeoutMs){
   return { meta, timestamps, closes: closes.map(v => v==null ? null : Math.round(v*10000)/10000) };
 }
 
-// ── Yahoo Finance noticias (vía search) — fuente secundaria: recencia, amplitud,
-//    tickers relacionados, imagen y CORROBORACIÓN cruzada con Finnhub. No trae resumen. ──
-async function _yhNews(query, timeoutMs){
-  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&newsCount=12&quotesCount=0&enableFuzzyQuery=false`;
-  const j = await _yhFetch(url, timeoutMs);
-  const arr = (j && Array.isArray(j.news)) ? j.news : [];
-  return arr.map(a => ({
-    title: a.title || '',
-    publisher: a.publisher || '',
-    link: a.link || '',
-    summary: a.summary || '',
-    image: (a.thumbnail && a.thumbnail.resolutions && a.thumbnail.resolutions[0] && a.thumbnail.resolutions[0].url) || '',
-    providerPublishTime: a.providerPublishTime || 0,
-    related: Array.isArray(a.relatedTickers) ? a.relatedTickers : [],
-    _src: 'yahoo',
-  }));
-}
+// Yahoo Finance noticias: RETIRADO (App Review 5C) — fuente sin licencia. Las noticias van solo
+// por Finnhub (company-news / news), licenciado. _yhNews eliminado; sus llamadas devuelven [].
 
 // Clave de título para deduplicar/corroborar entre fuentes (palabras significativas).
 function _newsTitleKey(t){
@@ -14801,11 +14786,10 @@ async function apiCall(params, timeoutMs = 15000) {
   if (action === 'news') {
     const toDate   = new Date().toISOString().split('T')[0];
     const fromDate = new Date(Date.now() - 14*24*60*60*1000).toISOString().split('T')[0];
-    // Combina Finnhub (contexto/resumen) + Yahoo (recencia/amplitud). En paralelo y
-    // tolerante a fallos: si una fuente cae, se usa la otra.
+    // Solo Finnhub (licenciado). Yahoo retirado — App Review 5C.
     const [fhR, yhR] = await Promise.allSettled([
       fhFetch(`/company-news?symbol=${ticker}&from=${fromDate}&to=${toDate}`, timeoutMs),
-      _yhNews(ticker, timeoutMs),
+      Promise.resolve([]),
     ]);
     const fhArr = (fhR.status==='fulfilled' && Array.isArray(fhR.value) ? fhR.value : []).slice(0, 14).map(a => ({
       title: a.headline || '', publisher: a.source || '', link: a.url || '', summary: a.summary || '',
@@ -14819,7 +14803,7 @@ async function apiCall(params, timeoutMs = 15000) {
   if (action === 'generalNews') {
     const [fhR, yhR] = await Promise.allSettled([
       fhFetch(`/news?category=general`, timeoutMs),
-      _yhNews('stock market', timeoutMs),
+      Promise.resolve([]),   // Yahoo retirado — App Review 5C
     ]);
     const fhArr = (fhR.status==='fulfilled' && Array.isArray(fhR.value) ? fhR.value : []).slice(0, 16).map(a => ({
       title: a.headline || '', publisher: a.source || '', link: a.url || '', summary: a.summary || '',
