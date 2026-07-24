@@ -5183,7 +5183,7 @@ function _rerenderForLang(){
 //  activo es inglés. En vez de reescribir a mano cada string generado por JS
 //  (miles de líneas repartidas en renderPortfolio/renderNewsTab/_generateAnalysis/
 //  COMPANY_BIOS/etc.), se traduce el DOM ya renderizado con IA (gratis vía la
-//  suscripción local en serve.py) y se cachea cada frase EXACTA en localStorage,
+//  suscripción del servicio de IA) y se cachea cada frase EXACTA en localStorage,
 //  así la 2ª vez que aparece (mismo ticker, mismo número) sale instantánea sin
 //  llamar a la IA de nuevo. NO toca la navegación (sidebar/tabs inferiores):
 //  esos labels ya están fijos en inglés vía data-i18n, tal como se pidió.
@@ -5300,11 +5300,11 @@ let _trRescan = false;   // se pidió traducir mientras corría un lote → re-e
 // para poder correr varios lotes EN PARALELO (antes era estrictamente secuencial a ~8s cada
 // uno → una página grande tardaba minutos).
 async function _trTranslateChunk(texts){
-  const res = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
+  const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
     model: 'claude-haiku-4-5', max_tokens: 4000,
     system: 'You are a professional financial UI translator. Translate each numbered line from Spanish to natural, concise English suited for a finance app. Keep tickers, company names, numbers, currency symbols and % unchanged. Reply with ONLY the same numbered list, one translation per line, exact same count and order, no extra commentary.',
     prompt: texts.map((t, idx) => `${idx+1}. ${t}`).join('\n')
-  }) }, true);   // essential:true → corre también en el sitio desplegado (sin serve.py), como el chat.
+  }) }, true);   // essential:true → corre también en el sitio desplegado, como el chat.
   if (!res.ok) return null;
   const data = await res.json();
   const raw = (data && data.text) || '';
@@ -6006,17 +6006,14 @@ async function renderSettings(){
 
 <script>
 // ═══════════════════════════════════════════════════
-//  ROUTING DE IA — local (serve.py) vs producción (Netlify Function)
+//  ROUTING DE IA — proxy server-side (Supabase Edge Function)
 // ═══════════════════════════════════════════════════
-// Enrutamiento de llamadas a IA:
-//  - Si serve.py corre en localhost:8765 (incluso cuando la página viene de Netlify)
-//    → todo análisis va a localhost:8765/claude-cli (SUSCRIPCIÓN PERSONAL de Claude, sin API key).
-//  - Si serve.py NO está disponible → fallback a Netlify Function (API key en entorno Netlify).
-//  - El analizador de imágenes (vision) SIEMPRE usa la Netlify Function / API key.
-// Capacitor (iOS/Android) corre en capacitor://localhost: NO es un proxy de desarrollo local
-// (no hay serve.py en el teléfono) → la IA debe usar el proxy Supabase, como el sitio desplegado.
+// Todas las llamadas de IA (texto y visión) van al proxy anthropic-proxy de Supabase,
+// con la key guardada como secreto server-side. Sin claves ni proxies en el cliente.
+// ── Logging de desarrollo: no-op en producción (window.DEBUG=false) ───────────
+window.DEBUG = false;
+window._pvLog = function(){ if (window.DEBUG) { try { console.log.apply(console, arguments); } catch(_){} } };
 const _PV_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-const _IS_LOCAL_PROXY = !_PV_NATIVE && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
 // Ruta a la función serverless de IA en el MISMO sitio (si algún día la despliegas en
 // netlify/functions/anthropic, funciona sin CORS). Si no existe (404) o falla, se cae
 // automáticamente a la llamada directa al navegador → Anthropic (abajo).
@@ -6026,8 +6023,7 @@ const _AI_FN_URL = '/.netlify/functions/anthropic';
 // ANTHROPIC_API_KEY (Edge Functions → Secrets). Mismo host/anon que finnhub-proxy.
 const _AI_SB_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/anthropic-proxy';
 const _AI_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
-function _aiSbOn(){ try { return _PV_NATIVE || (/^https?:$/.test(location.protocol) && !_IS_LOCAL_PROXY); } catch(e){ return false; } }
-let _localProxyLive = _IS_LOCAL_PROXY; // true = serve.py disponible (actualizado async al cargar)
+function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protocol); } catch(e){ return false; } }
 
 // ── FORZAR FACTURACIÓN A TU API KEY (a pedido explícito) ─────────────────────────
 // Ignora el proxy local (suscripción GRATIS de Claude) y la política "solo chat+visión
@@ -6047,14 +6043,6 @@ const _FORCE_API_KEY_BILLING = false;
 // por adelantado. La nube compartida sigue sirviendo gratis lo que otros ya generaron.
 const _CONSERVE_CLAUDE_QUOTA = true;
 
-// Detecta si serve.py está corriendo aunque la página venga de Netlify (Chrome 94+ permite
-// HTTPS→http://localhost como excepción al mixed-content). Se resuelve en <200ms.
-(function _detectLocalProxy() {
-  if (_IS_LOCAL_PROXY) return; // ya sabemos que estamos en local
-  fetch('http://localhost:8765/ping.gif', { mode: 'no-cors', cache: 'no-cache' })
-    .then(() => { _localProxyLive = true; console.log('[Portiv] serve.py detectado — usando suscripción personal de Claude'); })
-    .catch(() => { _localProxyLive = false; });
-})();
 
 // ── Tab leader lock (evita ráfaga duplicada con varias pestañas/ventanas abiertas) ──
 // Cada pestaña de Portiv dispara su propia ráfaga de pre-generación al arrancar/refrescar
@@ -6124,7 +6112,7 @@ async function _anthropicDirect(rawBody) {
   // Reenvía temperature si el cliente la fijó (visión usa 0 → determinista/anti-alucinación).
   if (b.temperature != null) out.temperature = b.temperature;
   if (b.system) {
-    // ── Prompt caching (SOLO este path de API directo; el de claude-cli no usa `out`) ──
+    // ── Prompt caching (SOLO este path de API directo; el path cli no usa `out`) ──
     // Si el system es largo (≥ ~4096 chars ≈ 1024 tokens) lo enviamos como bloque
     // cacheable efímero: Anthropic reutiliza el prefijo idéntico en llamadas siguientes
     // (cache_read ≈ 0.1x del precio de input, cache_write ≈ 1.25x). NO cambia el contenido;
@@ -6171,7 +6159,7 @@ async function _anthropicDirect(rawBody) {
     });
   });
   // Exponemos `usage` (input/output/cache + web_search) para que el rastreo de costo
-  // sea real en el path de API. El proxy claude-cli (suscripción) no devuelve usage → $0 (gratis).
+  // sea real en el path de API. El proxy de suscripción no devuelve usage → $0 (gratis).
   // `sources` viene vacío si no hubo búsqueda (el chat solo lo pinta cuando _needsWeb).
   return new Response(JSON.stringify({ text: text.trim(), usage: raw.usage || null, model: out.model, sources }), { status: 200, headers: { 'content-type': 'application/json' } });
 }
@@ -6188,7 +6176,7 @@ window._aiKeyAvailable = function(){
   return false;
 };
 
-// fetch con timeout duro: si el proxy local (serve.py) se cuelga (acepta la conexión
+// fetch con timeout duro: si el proxy se cuelga (acepta la conexión
 // pero nunca responde), abortamos y caemos al siguiente destino en vez de colgarnos.
 function _fetchTO(url, opts, ms){
   const ctrl = new AbortController();
@@ -6196,8 +6184,8 @@ function _fetchTO(url, opts, ms){
   return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(() => clearTimeout(tid));
 }
 
-// Enruta: serve.py local (suscripción) → función serverless del sitio → directo a Anthropic.
-async function _aiFetch(localPath, opts, essential) {
+// Enruta la IA de texto al proxy server-side de Supabase (anthropic-proxy).
+async function _aiFetch(opts, essential) {
   // ── IDIOMA DE SALIDA (punto único) ──────────────────────────────────────────
   // Fuerza que TODA respuesta de IA de texto (noticias, análisis, briefs, chat…) salga
   // en el idioma elegido, sin importar el idioma escrito en el prompt. La visión (OCR)
@@ -6212,46 +6200,10 @@ async function _aiFetch(localPath, opts, essential) {
       opts = Object.assign({}, opts, { body: JSON.stringify(_b) });
     }
   } catch(e){}
-  // PREFERENCIA DE COSTO: el proxy local (serve.py → suscripción personal de Claude, GRATIS)
-  // va PRIMERO. La API de PAGO queda como último recurso.
-  //
-  // POLÍTICA DE GASTO — solo el CHAT y la VISIÓN (essential:true) pueden usar la API de pago.
+  // POLÍTICA DE GASTO — solo el CHAT y la VISIÓN (essential:true) llaman al proxy de pago.
   // Las demás features (noticias, outlook, "por qué se movió", rebalanceo, resultado de
-  // eventos, análisis de perfil) son NO esenciales: corren GRATIS por tu suscripción cuando
-  // serve.py está vivo, y en el path de PAGO NO llaman a la API — devuelven un 503 sintético
-  // para que el caller caiga a su fallback determinista (contexto compuesto, sin costo). Así,
-  // en el sitio desplegado tu factura de API cubre ÚNICAMENTE visión + chat.
-  if (_localProxyLive && !_FORCE_API_KEY_BILLING) {
-    try {
-      // Adjunta la API key del navegador (localStorage) como header para que serve.py
-      // pueda usarla de RESPALDO si la suscripción OAuth del CLI falla (401). La key
-      // nunca se guarda en disco — solo viaja por localhost en este header.
-      let _o = opts;
-      try {
-        const _k = (localStorage.getItem('anthropic_key') || '').trim();
-        if (_k) _o = { ...opts, headers: { ...(opts && opts.headers), 'x-api-key': _k } };
-      } catch(e){}
-      // Sin timeout: claude-cli puede tardar hasta 240s; el timeout corto causaba
-      // que siempre cayera al fallback de Netlify/API key.
-      const r = await fetch('http://localhost:8765/' + localPath, _o);
-      if (r.ok) {
-        // serve.py devuelve 200 aunque la suscripción haya llegado a su tope de sesión
-        // ("You've hit your session limit..." viene como `text` normal, no como error).
-        // Lo detectamos aquí, en el punto único, para que NINGÚN caller (noticias,
-        // análisis, traductor de idioma...) lo trague como si fuera contenido real.
-        const _rc = r.clone();
-        const _j = await _rc.json().catch(() => null);
-        const _t = (_j && _j.text) || '';
-        if (_t && /session limit|rate limit|usage limit|límite de (sesión|uso)/i.test(_t)) {
-          return new Response(JSON.stringify({ error: { message: 'ai-outage: ' + _t } }), { status: 503, headers: { 'content-type': 'application/json' } });
-        }
-        return r;
-      }
-    } catch(e) {}
-  }
-  // Proxy local no disponible = estamos en el path de PAGO. Feature NO esencial → NO gastar:
-  // se devuelve error para que el caller use su fallback determinista (gratis). Solo chat y
-  // visión (essential:true) siguen al fallback de pago (Netlify / API directa) más abajo.
+  // eventos, análisis de perfil) son NO esenciales: devuelven un 503 sintético para que el
+  // caller caiga a su fallback determinista (contexto compuesto, sin costo).
   if (!essential && !_FORCE_API_KEY_BILLING) {
     return new Response(JSON.stringify({ error: { message: 'paid-skip: feature no esencial en path de pago (usa fallback determinista)' } }), { status: 503, headers: { 'content-type': 'application/json' } });
   }
@@ -6289,16 +6241,8 @@ async function _aiFetch(localPath, opts, essential) {
 }
 
 // ── Fetch de VISIÓN (analizador de fotos) ────────────────────────────────────
-// Preferencia de costo: proxy local (serve.py → /vision-cli, suscripción OAuth GRATIS)
-// PRIMERO; la Netlify Function / API key de pago quedan como último recurso.
+// La visión (OCR de portafolio) pasa por el MISMO proxy server-side que el resto de la IA.
 async function _aiFetchVision(opts) {
-  if (_localProxyLive) {
-    try {
-      // Sin timeout: la visión con OAuth también puede tardar bastante.
-      const r = await fetch('http://localhost:8765/vision-cli', opts);
-      if (r.ok) return r;
-    } catch(e) {}
-  }
   // PRODUCCIÓN: proxy Supabase (key server-side) ANTES que Netlify. En GitHub Pages / host
   // estático la Netlify Function no existe → daba 405 ("Error al importar: Error 405"). El
   // analizador de fotos debe pasar por el MISMO proxy que el resto de la IA (_aiFetch).
@@ -6329,7 +6273,7 @@ async function _aiFetchVision(opts) {
 }
 
 // ── Modelo adaptativo por COSTO ──────────────────────────────────────────────
-// Si hay suscripción personal (serve.py local /claude-cli) la IA es GRATIS → usa el
+// Si hay suscripción personal, la IA es GRATIS → usa el
 // modelo de máxima calidad (sonnet). En el sitio DESPLEGADO (Netlify) la IA pasa por la
 // API de pago → usa haiku (≈10-12× más barato) para análisis internos (perfil, rebalanceo).
 // Así: local = mejor calidad gratis · Netlify = costo mínimo. La calidad de haiku es
@@ -7892,8 +7836,8 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
     if (this._busy) return;
     const host = document.getElementById('port-ai-analysis');
     if (location.protocol === 'file:' && !window._aiKeyAvailable()){
-      if (typeof showToast === 'function') showToast('Abre la app en http://localhost:8765 para usar la IA','var(--red)');
-      this.render('Necesitas abrir la app en http://localhost:8765 (no con doble-clic) para generar el análisis con IA.');
+      if (typeof showToast === 'function') showToast('No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.','var(--red)');
+      this.render('No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.');
       return;
     }
     const p = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
@@ -7907,7 +7851,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       // essential:true → se genera SOLO también en el sitio de pago (no lo omite el paid-skip).
       // Es el análisis central "Portiv Intelligence"; se cachea por hash del portafolio → 1 sola
       // generación por usuario hasta que su cartera/perfil cambie (no por cada vista).
-      const res = await _aiFetch('claude-cli', {
+      const res = await _aiFetch( {
         method:'POST', headers:{ 'content-type':'application/json' },
         body: JSON.stringify({ model:_aiQualityModel(this.MODEL), max_tokens:1200, system:this.SYSTEM, prompt:ctx })
       }, true);
@@ -7916,7 +7860,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
         const _msg = (e.error && e.error.message) || ('Error '+res.status);
         // paid-skip (503): feature NO esencial omitida a propósito en el path de pago (no es un
         // error). NO mostrar toast ni "No se pudo generar" — se rinde en silencio con un estado
-        // neutral. El análisis con IA corre GRATIS al abrir la app localmente (serve.py).
+        // neutral. El análisis con IA corre GRATIS al abrir la app localmente.
         if (res.status === 503 || /paid-skip/i.test(_msg)) {
           this._busy = false;
           this.render();   // estado neutral (CTA / cacheado si existe) — sin alarma
@@ -7938,7 +7882,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       this.save({ text, at: Date.now(), ver: this._VER, profileAt: p.takenAt || null, portfolioHash: (typeof portfolioHash === 'function' ? portfolioHash() : null), rebalSig: planSig || '' });
       this.render();
     } catch(e){
-      if (typeof reportError === 'function') reportError('IA · análisis de perfil (suscripción claude-cli)', e, { toast:true });
+      if (typeof reportError === 'function') reportError('IA · análisis de perfil', e, { toast:true });
       this.render('No se pudo generar el análisis: ' + e.message);
     } finally {
       this._busy = false;
@@ -7996,7 +7940,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
     if (!cached || !cached.text){
       // SIN BOTÓN: el análisis se genera SOLO. Muestra el estado de carga y dispara la
       // generación (si no está ya en curso). El guard interno evita bucles: al fallar cae al
-      // estado de error con "Regenerar", y en file:// sin IA muestra el aviso de localhost.
+      // estado de error con "Regenerar", y en file:// sin IA muestra el aviso de conexión.
       host.innerHTML = `<div class="pv-ai-loading"><span class="pv-ai-spin"></span>Generando tu análisis con IA…</div>`;
       if (!this._busy){ this._autoKey = null; this.generate(true); }
       return;
@@ -8576,7 +8520,7 @@ Responde SOLO con JSON: {"sug":<entero 0-25, peso objetivo en % respecto al tota
 
   try {
     if (typeof _aiFetch !== 'function') { _rebalAIPending.delete(item.ticker); return; }
-    const res = await _aiFetch('claude-cli', {
+    const res = await _aiFetch( {
       method: 'POST', headers: {'content-type': 'application/json'},
       // Right-sizing → Haiku basta aquí: la salida es JSON corto y muy acotado (sug entero +
       // "note" de EXACTAMENTE 3 oraciones / ≤55 palabras), es extracción/formato siguiendo un
@@ -9932,7 +9876,7 @@ ${jsonSpec}`;
     try{
       const body={ model:'claude-haiku-4-5', max_tokens:600, system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.', prompt:PROMPT };
       if(!localCtx){ body.allowed_tools=['WebSearch','WebFetch']; body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:1}]; }   // solo busca si NO hay contexto local (1 vez)
-      const res=await _aiFetch('claude-cli',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+      const res=await _aiFetch({ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
       if(!res.ok) throw new Error('ai');
       const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','intel'); }catch(e){}
       const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/);
@@ -9963,7 +9907,7 @@ ${jsonSpec}`;
     // el sitio DESPLEGADO (API de pago) NO se pre-genera especulativamente: el "por qué" se
     // arma ON-DEMAND al abrir el detalle del mover (PORTIV_WHY.gen) → misma calidad, cero
     // gasto en movers que el usuario nunca abre.
-    try { if ((typeof _localProxyLive!=='undefined' && !_localProxyLive) || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
+    try { if (true || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
     const c=this._load();
     let movers=holdings.filter(h=>Math.abs(h.dayChgPct||0)>=1.5).slice(0,5)
                          .filter(h=> !(c[this._key(h.ticker)] && c[this._key(h.ticker)].contexto));  // omite los ya cacheados en local
@@ -10012,7 +9956,7 @@ Responde en español.`;
     try{
       const body={ model:'claude-haiku-4-5', max_tokens:Math.min(2048, 300+movers.length*300), system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.', prompt:PROMPT };
       if(needWeb){ body.allowed_tools=['WebSearch','WebFetch']; body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:2}]; }   // batch multi-ticker: máx 2 búsquedas
-      const res=await _aiFetch('claude-cli',{ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
+      const res=await _aiFetch({ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
       if(!res.ok) throw new Error('ai');
       const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','intel'); }catch(e){}
       const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/);
@@ -10131,7 +10075,7 @@ async function _generateNewsSummary(n) {
   const PROMPT = _nmNewsAiPrompt(n, true);   // on-demand: incluye cláusula de eficiencia si no hay resumen
 
   try {
-    const res = await _aiFetch('claude-cli', {
+    const res = await _aiFetch( {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // Web search SOLO si la fuente (Finnhub) no entregó resumen del artículo. Con
@@ -10193,7 +10137,7 @@ async function _prefetchNewsAi(n) {
   } catch(e) {}
   const PROMPT = _nmNewsAiPrompt(n, false);   // prefetch en background: sin cláusula de eficiencia (idéntico a antes)
   try {
-    const res = await _aiFetch('claude-cli', {
+    const res = await _aiFetch( {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       // Web search SOLO si la fuente (Finnhub) no entregó resumen del artículo. Con
@@ -10407,7 +10351,7 @@ function closeNewsModal() {
 }
 
 // -- Resultado REAL de un evento del Outlook (FOMC, datos macro, earnings...) --------
-// Busca en la web (con la SUSCRIPCION personal de Claude via /claude-cli, NO la API) que
+// Busca en la web (con la SUSCRIPCION personal de Claude, NO la API directa) que
 // paso realmente con el evento y lo muestra en "Market Context". Si ya ocurrio, actualiza
 // el badge con el resultado real (positivo/negativo + impacto) en vez del estimado por precio.
 // Cachea en localStorage (TTL noticias, 6h) reutilizando _nmAiGet/_nmAiSet.
@@ -10603,7 +10547,7 @@ OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y
     allowed_tools: ['WebSearch', 'WebFetch'],
     // 1 sola búsqueda: el prompt obliga a la IA a buscar UNA vez (la más específica) y
     // completar con su conocimiento. Cada search inyecta 10-30K tokens → es el grueso del
-    // costo. El tope max_uses aplica en Netlify; en localhost el CLI obedece el prompt.
+    // costo. El tope max_uses aplica en el proxy server-side.
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }]
   };
   // Pide el resultado: 1º proxy CLI (suscripción), y si está LIMITADO o no da JSON útil,
@@ -10625,7 +10569,7 @@ OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y
       if (j && (j.error || j.type === 'error')) _directErr = (j.error && j.error.message) || 'error de API';
       return (j.text || '').trim();
     }
-    const r = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
+    const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
     if (!r.ok) throw new Error((j.error && j.error.message) || 'Error ' + r.status);
@@ -10635,9 +10579,9 @@ OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y
   let t = await _tryGetText(false);
   const _cliLimited = _looksLikeError(t);
   // Reintenta con la API key directa SOLO en el path de PAGO (sin proxy local). Con la suscripción
-  // local (serve.py) activa, TODO el gasto va a ESTA cuenta (suscripción), nunca a la API key
+  // de suscripción activa, TODO el gasto va a ESTA cuenta (suscripción), nunca a la API key
   // secundaria: si la suscripción está limitada, se queda el contexto determinista (no se cobra API).
-  const _apiKeyOK = !(typeof _localProxyLive!=='undefined' && _localProxyLive) && window._aiKeyAvailable && window._aiKeyAvailable();
+  const _apiKeyOK = window._aiKeyAvailable && window._aiKeyAvailable();
   if ((!t || _cliLimited) && _apiKeyOK) {
     const t2 = await _tryGetText(true).catch(()=> '');
     if (t2 && !_looksLikeError(t2)) t = t2;
@@ -10816,7 +10760,7 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
       try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
       return (j.text || '').trim();
     }
-    const r = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
+    const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
     if (!r.ok) return '';
@@ -10828,7 +10772,7 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
     // CLI limitado / vacío → reintenta con la API key directa SOLO en el path de pago (sin proxy
     // local). Con la suscripción local activa, el gasto se queda en ESTA cuenta (suscripción);
     // nunca cae a la API key secundaria. Si la suscripción está limitada, se muestra el determinista.
-    const _apiKeyOK = !(typeof _localProxyLive!=='undefined' && _localProxyLive) && window._aiKeyAvailable && window._aiKeyAvailable();
+    const _apiKeyOK = window._aiKeyAvailable && window._aiKeyAvailable();
     if ((!t || _looksLikeError(t)) && _apiKeyOK) {
       const t2 = await _tryGetText(true).catch(()=> '');
       if (t2 && !_looksLikeError(t2)) t = t2;
@@ -10942,10 +10886,10 @@ async function _prewarmOutlookEvents() {
   if (_prewarmRunning) return;
   if (location.protocol === 'file:' && (!window._aiKeyAvailable || !window._aiKeyAvailable())) return;
   // COSTO: el prewarm hace web_search ($) por evento en background. Con suscripción local
-  // (serve.py) es gratis → se permite. En el sitio DESPLEGADO (API de pago) NO pre-cargamos
+  // de suscripción es gratis → se permite. En el sitio DESPLEGADO (API de pago) NO pre-cargamos
   // en background: el contexto se genera SOLO cuando el usuario abre el evento (on-demand),
   // evitando gasto silencioso. No se pierde función, solo el primer click tarda un poco más.
-  try { if ((typeof _localProxyLive !== 'undefined' && !_localProxyLive) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
+  try { if (true || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
   // Tope semanal del bucket 'intel' → aunque sea el path local, si se llega al tope no se
   // sigue precalentando en background (protege el gasto en el path de pago si se usara).
   try { if (typeof _intelBlocked === 'function' && _intelBlocked()) return; } catch(e){}
@@ -10998,7 +10942,7 @@ async function _prewarmOutlookEvents() {
   // eventos (noticias/opinión + todos los impactos + futuros) para que "Cómo afecta al mercado"
   // ya esté listo sin que el usuario abra cada evento. Sin suscripción (API de pago) se conserva
   // el filtro conservador (solo alto impacto pasado/hoy) para no gastar en background.
-  const _subActive = (typeof _localProxyLive !== 'undefined' && _localProxyLive) && !(typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA);
+  const _subActive = false && !(typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA);
   const pending = all.filter(({ ev }) => {
     if (isNewsEv(ev)) {
       if (!_subActive) return false;                      // sin suscripción → brief bajo demanda
@@ -11077,7 +11021,7 @@ function _prefetchMarketContext(ev){
     if (location.protocol === 'file:' && (!window._aiKeyAvailable || !window._aiKeyAvailable())) return;
     // El prefetch por hover es especulativo: SOLO con proxy local (gratis) o bajo el tope de
     // 'intel'. En el path de pago el click abre el detalle y lo genera on-demand (misma calidad).
-    if ((typeof _localProxyLive!=='undefined' && !_localProxyLive) || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return;
+    if (true || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return;
     const isNews = (ev.category || '') === 'other';
     const key = isNews ? _briefCacheKey(ev) : _eventCacheKey(ev);
     if (_nmAiGet(key)) return;                  // ya cacheado → nada que hacer
@@ -11108,7 +11052,7 @@ window._prefetchOutlookEvent = _prefetchOutlookEvent;
 let _prewarmFeedRunning = false;
 async function _prewarmFeedNews(){
   if (_prewarmFeedRunning) return;
-  if (!(typeof _localProxyLive !== 'undefined' && _localProxyLive)) return;   // solo con suscripción (background gratis)
+  if (!false) return;   // solo con suscripción (background gratis)
   if (typeof _FORCE_API_KEY_BILLING !== 'undefined' && _FORCE_API_KEY_BILLING) return;   // facturación forzada a API key → no pre-generar en bulk, solo on-demand
   if (typeof _CONSERVE_CLAUDE_QUOTA !== 'undefined' && _CONSERVE_CLAUDE_QUOTA) return;   // conservar cuota del plan → no pre-generar en bulk, solo on-demand
   if (typeof _fetchEventBrief !== 'function' || typeof _newsAsEvent !== 'function') return;
@@ -11519,7 +11463,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     // CLOUD-SHARED (tabla shared_analysis, fila __NEWS_GENERAL__) con lock global + TTL 6h → se
     // genera 1× cada 6h para TODO el mundo y los demás la LEEN de la nube. Sin este flag el
     // _aiFetch devolvía un 503 paid-skip y la IA de noticias "se desconectaba" en file:///pago.
-    const res = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'},
+    const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ model:'claude-haiku-4-5', max_tokens:3200,
         system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
         prompt: PROMPT, allowed_tools:['WebSearch','WebFetch'],
@@ -11593,7 +11537,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
       // Solo sube a la nube si de verdad hay contenido → no pisar la copia global con vacío.
       const wrote = _newToday.length ? await _cloudSet(o) : false;
       _failed=false; _rerender();
-      try{ console.log('[SharedNews] generada y', wrote?'subida a la nube ✓':'NO subida (revisa RLS/sesión)'); }catch(_){}
+      try{ _pvLog('[SharedNews] generada y', wrote?'subida a la nube ✓':'NO subida (revisa RLS/sesión)'); }catch(_){}
     }catch(e){ _failed=true; try{ console.warn('SharedNews:', (e&&e.message)||e); }catch(_){} _rerender(); }
     finally{ _gen=false; _researched=true; await _releaseLock(); _rerender(); }   // ya se investigó → no dejar spinner eterno
   }
@@ -11900,7 +11844,7 @@ function renderTodayNews(){
   const cont = document.getElementById('todayNews');
   if (!cont) return;
   // Renderiza en cuanto haya CUALQUIER noticia (GENERAL_NEWS de la nube/IA, o el respaldo de
-  // Finnhub/ticker más abajo). Ya NO se gatea por el estado de la IA: sin serve.py / en feriado la
+  // Finnhub/ticker más abajo). Ya NO se gatea por el estado de la IA: en feriado la
   // IA no genera, pero Finnhub sí trae noticias reales → aquí se muestran. Sin noticias = spinner.
   const dc = {pos:'var(--green)',neg:'var(--red)',neu:'var(--text3)'};
   const sl = {pos:'Positivo',neg:'Negativo',neu:'Neutral'};
@@ -11976,7 +11920,7 @@ function renderNewsTab() {
   // + lock global → sigue siendo 1× global (lee la nube; solo regenera si está vencida y hay sesión).
   try { if (window.SharedOutlook && typeof SharedOutlook.sync === 'function') SharedOutlook.sync(); } catch(e){}
   // FALLBACK DETERMINISTA (sin IA, sin costo): si no hay noticias "de hoy" (IA/nube no disponible
-  // — p.ej. en file://, feriado, o serve.py apagado), trae las de mercado REALES de Finnhub vía el
+  // — p.ej. en file:// o feriado), trae las de mercado REALES de Finnhub vía el
   // proxy remoto (funciona en file://) y re-renderiza. Garantiza que "Most Important News of Today"
   // SIEMPRE muestre algo real en vez de un spinner infinito.
   try {
@@ -12017,7 +11961,7 @@ function renderNewsTab() {
     // muestra spinner (loading) o reintento (failed) — nunca una noticia genérica/seed.
     // Muestra la destacada en cuanto haya CUALQUIER noticia (GENERAL_NEWS de la nube/IA, o el
     // respaldo de Finnhub/ticker en _featPool). Solo spinner si de verdad no hay NADA todavía;
-    // nunca un error. Antes se gateaba por el estado de la IA → spinner infinito sin serve.py.
+    // nunca un error. Antes se gateaba por el estado de la IA → spinner infinito.
     if (!_featPool.length) {
       _currentFeaturedScore = -1; _currentFeaturedKey = ''; _currentFeaturedNews = null;
       _snFeaturedState('loading');
@@ -14599,7 +14543,7 @@ let FINNHUB_KEY = localStorage.getItem('fh_api_key')
 // 3 niveles, en orden de preferencia:
 //   1) Supabase Edge proxy (caché compartida, escala a muchos usuarios) — deploy-finnhub-proxy.sh
 //   2) Netlify Function /.netlify/functions/finnhub (key en env var del sitio) — sitio desplegado
-//   3) Directo a finnhub.io con la key de config.local.js — SOLO en tu Mac (localhost/file)
+//   3) Directo a finnhub.io con la key de config.local.js — SOLO en entorno local
 // En el sitio público (Netlify) se usa (1) si está, si no (2): así el visitante ve precios en
 // vivo SIN que la key viaje al navegador. config.local.js no se sube → no hay key embebida.
 const FH_PROXY_BASE = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/finnhub-proxy';
@@ -14607,7 +14551,7 @@ const FH_PROXY_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFz
 const FH_NETLIFY_FN = '/.netlify/functions/finnhub';
 let _fhProxyDead = false;   // Supabase proxy no desplegado/caído → no reintentar en esta sesión
 let _fhNetlifyDead = false; // Netlify function no desplegada/caída → no reintentar en esta sesión
-function _onRemoteDeploy() { return (typeof _PV_NATIVE!=='undefined' && _PV_NATIVE) || (/^https?:$/.test(location.protocol) && typeof _IS_LOCAL_PROXY !== 'undefined' && !_IS_LOCAL_PROXY); }
+function _onRemoteDeploy() { return (typeof _PV_NATIVE!=='undefined' && _PV_NATIVE) || /^https?:$/.test(location.protocol); }
 function _fhSupabaseOn() { return !!FH_PROXY_BASE && !_fhProxyDead && localStorage.getItem('fh_proxy_off') !== '1'; }
 function _fhNetlifyOn()  { return !_fhNetlifyDead && _onRemoteDeploy(); }
 // ¿Hay alguna vía para precios en vivo? (controla el banner "configura tu API key").
@@ -14688,15 +14632,10 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
   }
 }
 
-// ── Helpers Yahoo Finance (vía proxies CORS) — fuente primaria de precio/histórico ──
+// ── Helpers Yahoo Finance (vía yh-proxy de Supabase) — fuente primaria de precio/histórico ──
 async function _yhFetch(url, timeoutMs){
-  // ORDEN DE PREFERENCIA:
-  // 1) Proxy LOCAL de serve.py (/yh) — rápido y fiable, sin CORS. Solo en localhost.
-  // 2) Varios proxies CORS públicos, TODOS en carrera (Promise.any → gana el más rápido).
-  // Los proxies públicos suelen ser lentos/inestables (era la causa del "cargando" eterno):
-  // por eso se lanzan en paralelo y con timeout corto, y el local va primero.
-  const localFirst = (typeof _localProxyLive !== 'undefined' && _localProxyLive)
-    ? ['http://localhost:8765/yh?url=' + encodeURIComponent(url)] : [];
+  // Primario: yh-proxy (Edge Function propia en Supabase, passthrough server-side sin CORS).
+  const localFirst = [];
   // PRIMARIO: yh-proxy (Edge Function propia en Supabase). Passthrough server-side a Yahoo,
   // sin CORS y con User-Agent de navegador → fiable y rápido (~0.4s). Los proxies públicos
   // de abajo quedan SOLO como red de seguridad (hoy están todos muertos: 403 / cuelgues).
@@ -18107,7 +18046,7 @@ Sé concreto, honesto y directo. Sin relleno, sin disclaimers legales.`;
 Datos financieros: ${facts || '(limitados)'}
 Devuelve el JSON.`;
   try {
-    const res = await _aiFetch('claude-cli', {
+    const res = await _aiFetch( {
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: 1200, system: SYSTEM, prompt })
     }, true);
@@ -21201,7 +21140,7 @@ MERCADO GENERAL, NO CARTERA: escribe para el mercado de EE.UU. en general. Puede
 Devuelve SOLO JSON válido, sin bloques de código:
 {"theme":"1 frase con el tema central de la semana","market_context":"3 a 5 frases de contexto de mercado","key_themes":[{"title":"título corto del tema","detail":"2-3 frases"}]}
 key_themes = exactamente 3 temas clave.`;
-    const res = await _aiFetch('claude-cli', { method:'POST', headers:{'content-type':'application/json'},
+    const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({ model:AI_MODELS.reasoning, max_tokens:1400,   // Outlook semanal: Haiku (misma info, más barato/rápido)
         system:'Eres un estratega de mercado. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
         // COSTO: web_search SOLO para "esta semana" (off 0), que sí gana con verificación de
@@ -21500,7 +21439,7 @@ async function _buildWeeklyOutlook() {
       if (obj._weekKey && obj._weekKey === _weekKey(0)) {
         // Era próxima semana antes; ahora ES esta semana → limpiar y regenerar
         localStorage.removeItem(cacheKey);
-        console.log('[WeeklyOutlook] Cache stale (era próxima, ahora es esta semana) → regenerando');
+        _pvLog('[WeeklyOutlook] Cache stale (era próxima, ahora es esta semana) → regenerando');
       } else {
         _renderWeeklyOutlook(obj);
         return;
@@ -21635,7 +21574,7 @@ function _generateStaticNarrative(data) {
 // Genera el párrafo de análisis IA de la próxima semana (prompt de research institucional).
 // Cacheado dentro del objeto outlook (1 llamada/día máx). Usa web_search para datos reales.
 async function generateOutlookNarrative(data) {
-  // Usa la SUSCRIPCION personal de Claude (CLI local via /claude-cli), NO la API de pago. Analiza
+  // Usa la SUSCRIPCION de IA server-side (anthropic-proxy), NO la API de pago directa. Analiza
   // los eventos reales del calendario + titulares reales de Finnhub que ya tiene la app (sin busqueda web).
   if (location.protocol === 'file:' && !window._aiKeyAvailable()) return null;
   const mon = _mondayOf(1), fri = new Date(mon); fri.setDate(mon.getDate() + 4);
@@ -21685,7 +21624,7 @@ ${evtCtx}
 - Titulares recientes del mercado:
 ${newsCtx}`;
   try {
-    const res = await _aiFetch('claude-cli', {
+    const res = await _aiFetch( {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -21857,7 +21796,7 @@ function scheduleDailyOutlookRefresh() {
       if (!localStorage.getItem(todayKey)) {
         localStorage.setItem(todayKey, '1');
         try { Object.keys(localStorage).filter(k => k.startsWith('news_today_') && k !== todayKey).forEach(k => localStorage.removeItem(k)); } catch(e) {}
-        console.log('[News] Refresh "hoy" (slot ' + slot + ' ET) →', etDay);
+        _pvLog('[News] Refresh "hoy" (slot ' + slot + ' ET) →', etDay);
         try { if (window.SharedNews && SharedNews.forceRefresh) SharedNews.forceRefresh(); else if (typeof refreshNextWeekOutlook === 'function') refreshNextWeekOutlook(true); } catch(e) {}
       }
       // 2) ESTA/PRÓXIMA SEMANA + outlook narrativo → SÓLO lun-vie, 1×/día. Fin de semana: NO.
@@ -21866,7 +21805,7 @@ function scheduleDailyOutlookRefresh() {
         if (!localStorage.getItem(weekKey)) {
           localStorage.setItem(weekKey, '1');
           try { Object.keys(localStorage).filter(k => k.startsWith('news_weeks_') && k !== weekKey).forEach(k => localStorage.removeItem(k)); } catch(e) {}
-          console.log('[News] Refresh semanas (lun-vie) →', etDay);
+          _pvLog('[News] Refresh semanas (lun-vie) →', etDay);
           try { if (window.SharedOutlook) setTimeout(() => { try { (SharedOutlook.forceRefresh||SharedOutlook.refresh)(); } catch(_){} }, 4000); } catch(e) {}
           try { if (typeof PORTIV_NEWS !== 'undefined') PORTIV_NEWS.refresh('daily'); } catch(e) {}
         }
@@ -22086,10 +22025,10 @@ Reglas: "s" = sentimiento para el inversionista (pos/neg/neu). "iso_date" DEBE s
 
 EFICIENCIA: haz POCAS búsquedas AMPLIAS (máximo 3) que cubran varios tickers a la vez (ej: "NVDA TSM MSFT stock news this week"), NO una por ticker. Nunca más de 3 búsquedas.`;
 
-  // Timeout de seguridad: la búsqueda web puede tardar; si el backend (p.ej. serve.py
+  // Timeout de seguridad: la búsqueda web puede tardar; si el backend (p.ej. el proxy
   // local) se cuelga, no dejamos el botón "Actualizar" girando indefinidamente.
   const res = await Promise.race([
-    _aiFetch('claude-cli', {
+    _aiFetch( {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -22396,7 +22335,7 @@ async function autoUpdateNews(force) {
   //      (datos macro de media mañana 8:30/10:00 ET ya publicados) → al abrirlos, instantáneo.
   try { if (typeof _kickPrewarmIdle === 'function') _kickPrewarmIdle(); } catch(e){}
 
-  console.log(`[autoUpdateNews] Actualizado: ${TICKERS.length} tickers + mercado general, ${new Date().toLocaleTimeString()}`);
+  _pvLog(`[autoUpdateNews] Actualizado: ${TICKERS.length} tickers + mercado general, ${new Date().toLocaleTimeString()}`);
 }
 
 // ═══════════════════════════════════════════════════
@@ -22499,7 +22438,7 @@ let _AI_CHART_APPLIED = false;
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  ANALIZADOR DE FOTOS — OCR de screenshots del broker → importa posiciones.
-//  Restaurado (fue removido en 80fd00f). Backend: serve.py /vision-cli (OAuth,
+//  Restaurado (fue removido en 80fd00f). Backend: proxy de visión (OAuth,
 //  sin API key) local · Netlify Function en producción. Modelo: Sonnet 4.6 con
 //  fallback a Haiku. Flujo: subir imágenes → extraer (1º pase) → verificar celda
 //  por celda (2º pase, salteado si la 1ª lectura cuadra) → editor de revisión.
@@ -22642,7 +22581,7 @@ let _aiFiles = []; // [{base64, mediaType, name}]
 const _ocrCache = new Map(); // base64_key → parsed JSON result (TTL: session)
 
 // Llama a la API de Anthropic con soporte de imágenes (visión).
-// - Local: /vision-cli de serve.py (suscripción OAuth, sin API key)
+// - Visión: proxy server-side (anthropic-proxy), key como secreto
 // - Producción: Netlify Function (la key vive en el servidor; el visitante no la ve)
 async function _visionCall(messages, model = AI_MODELS.vision, max_tokens = 8000) {
   // temperature:0 → determinista, anti-alucinación: el modelo NO "redondea" ni "corrige"
@@ -22799,7 +22738,7 @@ function _cheapHash(s){
 
 async function aiPortExtract(){
   if (location.protocol === 'file:' && !window._aiKeyAvailable()) {
-    showToast('Abre la app en http://localhost:8765 (no con doble-clic) para usar la IA', 'var(--red)');
+    showToast('No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.', 'var(--red)');
     return;
   }
   if (!_aiFiles.length) { showToast('Sube un screenshot primero', 'var(--red)'); return; }
@@ -22956,14 +22895,14 @@ function _chatBlocked(){ return false; }   // Topes eliminados: chat ilimitado. 
 // Bloqueo del bucket 'intel' (por qué se movió / resultado real / cómo afecta). Independiente
 // del chat: al llegar al tope, ninguna llamada nueva de este bucket sale (ni foreground ni
 // background) hasta la semana siguiente.
-function _intelBlocked(){ return false; }  // Tope eliminado: intel ilimitado. El prewarm de fondo sigue gated por _localProxyLive → en vía de pago no se autodispara; solo gasta on-demand.
+function _intelBlocked(){ return false; }  // Tope eliminado: intel ilimitado. El prewarm de fondo está deshabilitado en producción; solo gasta on-demand.
 
 // Contabiliza el uso REAL de una llamada a la API de Anthropic.
 //   usage  = objeto response.usage de Anthropic (input_tokens, output_tokens,
 //            cache_creation_input_tokens, cache_read_input_tokens, server_tool_use.web_search_requests)
 //   model  = string del modelo usado (define el precio)
 //   bucket = categoría de gasto (ver _BUCKETS)
-// Si usage es null/undefined (p.ej. respuesta del proxy claude-cli, que es la SUSCRIPCIÓN
+// Si usage es null/undefined (p.ej. respuesta del proxy de suscripción, que es la SUSCRIPCIÓN
 // gratuita) no suma nada → correcto: esa vía no cuesta API.
 function _tokAdd(usage, model, bucket){
   if(!usage) return;
@@ -23167,7 +23106,7 @@ async function chatSend(){
   if(_chatBusy) return;
   if(Date.now()-_chatLastSent<_CHAT_COOLDOWN) return;
   if(location.protocol==='file:' && !window._aiKeyAvailable()){
-    _chatAddMsg('bot','Abre la app en **http://localhost:8765** para usar el asistente con IA.');
+    _chatAddMsg('bot','No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.');
     return;
   }
   const input=document.getElementById('chatInput');
@@ -23248,13 +23187,13 @@ CONTEXTO (datos ya cargados en la página):
 ${ctx}`;
     const histSlice=CHAT_HISTORY.slice(-4); // max 2 exchanges
     // Web search SOLO si la pregunta pide datos en vivo → la mayoría se resuelve con el contexto local (sin costo de búsqueda)
-    // Chat: usa claude-cli (suscripcion personal de Claude) via serve.py cuando esta disponible.
-    // Convierte el historial de mensajes a un prompt de texto (compatible con claude-cli).
+    // Chat: usa el proxy de IA server-side (anthropic-proxy).
+    // Convierte el historial de mensajes a un prompt de texto (formato cli).
     const convText = histSlice.map(m => (m.role==='user'?'Usuario':'Asistente')+': '+m.content).join('\n');
     const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (_anthropicDirect/proxy topan en max_uses:1)
     const body={model:_aiQualityModel(AI_MODELS.reasoning),max_tokens:1500,system,prompt:convText,allowed_tools:_needsWeb?['websearch']:undefined};
 
-    const res=await _aiFetch('claude-cli',{
+    const res=await _aiFetch({
       method:'POST',
       headers:{'content-type':'application/json'},
       body:JSON.stringify(body)
@@ -23277,7 +23216,7 @@ ${ctx}`;
     document.getElementById('chatTyping').classList.remove('show');
     _chatAddMsg('bot',answer,_needsWeb?data.sources:undefined);   // fuentes solo si hubo búsqueda; nunca inventadas
   } catch(e){
-    reportError('IA · chat asistente (proxy localhost:8765)', e, { toast: false });
+    reportError('IA · chat asistente', e, { toast: false });
     document.getElementById('chatTyping').classList.remove('show');
     _chatAddMsg('bot','Error: '+e.message);
   } finally {
@@ -23356,7 +23295,7 @@ async function aiChatSend(){
   if(_chatBusy) return;
   if(Date.now()-_chatLastSent<_CHAT_COOLDOWN) return;
   if(location.protocol==='file:' && !window._aiKeyAvailable()){
-    _aiChatAddMsg('bot','Abre la app en **http://localhost:8765** para usar el asistente con IA.');
+    _aiChatAddMsg('bot','No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.');
     return;
   }
   const input = document.getElementById('aiChatInput');
@@ -23434,12 +23373,12 @@ COHERENCIA (obligatorio — no te contradigas con lo que el usuario ve en la app
 CONTEXTO (datos ya cargados en la página):
 ${ctx}`;
     const histSlice = CHAT_HISTORY.slice(-4);
-    // Chat IA Analyst: usa claude-cli (suscripcion personal de Claude) via serve.py cuando esta disponible.
+    // Chat IA Analyst: usa el proxy de IA server-side (anthropic-proxy).
     const convText2 = histSlice.map(m => (m.role==='user'?'Usuario':'Asistente')+': '+m.content).join('\n');
     const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (_anthropicDirect/proxy topan en max_uses:1)
     const body = {model:_aiQualityModel(AI_MODELS.reasoning),max_tokens:1500,system,prompt:convText2,allowed_tools:_needsWeb?['websearch']:undefined};
 
-    const res = await _aiFetch('claude-cli',{
+    const res = await _aiFetch({
       method:'POST',
       headers:{'content-type':'application/json'},
       body:JSON.stringify(body)
@@ -23463,7 +23402,7 @@ ${ctx}`;
     _aiChatAddMsg('bot', answer, _needsWeb?data.sources:undefined);   // fuentes solo si hubo búsqueda; nunca inventadas
     _aiRenderTokenBadge();
   } catch(e){
-    reportError('IA · analista (proxy localhost:8765)', e, { toast: false });
+    reportError('IA · analista', e, { toast: false });
     if(_typing) _typing.classList.remove('show');
     _aiChatAddMsg('bot','Error: '+e.message);
   } finally {
@@ -23672,7 +23611,7 @@ const PORTIV_SYNC = {
     const rec={date:today,value:+T.total.toFixed(2),ts:Date.now()};
     try{localStorage.setItem(this.CLOSE_KEY,JSON.stringify(rec));}catch(e){}
     this._closeGuard=today;
-    console.log(`[PORTIV_SYNC] Close snapshot: ${today} $${rec.value}`);
+    _pvLog(`[PORTIV_SYNC] Close snapshot: ${today}`);
   },
 
   // Cierre del día anterior: {date, value} o null.
@@ -23709,7 +23648,7 @@ const PORTIV_SYNC = {
       if(nowOpen&&!this._wasOpen){
         this._wasOpen=true;
         this._lastFetch=0; // fuerza fetch en este mismo tick
-        console.log('[PORTIV_SYNC] Apertura de mercado — iniciando gráfica 1D');
+        _pvLog('[PORTIV_SYNC] Apertura de mercado — iniciando gráfica 1D');
       } else if(!nowOpen&&this._wasOpen){
         this._wasOpen=false;
       }
@@ -23728,7 +23667,7 @@ const PORTIV_SYNC = {
     this._lastFetch=0;
     this._wasOpen=this.isMarket(); // evita falso cruce al arrancar si ya está abierto
     this._tick();
-    console.log('[PORTIV_SYNC] Estado:',this.marketStatus());
+    _pvLog('[PORTIV_SYNC] Estado:',this.marketStatus());
   },
   stop(){this._running=false;if(this._timer){clearTimeout(this._timer);this._timer=null;}},
   status(){
@@ -24561,7 +24500,7 @@ const PORTIV_NEWS = {
       // 1) ROTACIÓN: lunes 08:00 ET → la semana cambió de id → regenerar todo.
       if (this._rotatedWeek !== curWeek && wd === 1 && mins >= this.CFG.rotationMin){
         this._rotatedWeek = curWeek;
-        console.log('[PORTIV_NEWS] Rotación semanal (lunes 08:00 ET) →', curWeek);
+        _pvLog('[PORTIV_NEWS] Rotación semanal (lunes 08:00 ET) →', curWeek);
         this.rotate();
         return;
       }
@@ -24574,7 +24513,7 @@ const PORTIV_NEWS = {
       if (this._rotatedDay == null) this._rotatedDay = curDay;
       else if (this._rotatedDay !== curDay){
         this._rotatedDay = curDay;
-        console.log('[PORTIV_NEWS] Día nuevo (00:00 ET) →', curDay);
+        _pvLog('[PORTIV_NEWS] Día nuevo (00:00 ET) →', curDay);
         this.refresh('daily');
         return;
       }
@@ -25363,9 +25302,9 @@ function _ensureApiKey(){
     const cfg = ((window.LOCAL_CONFIG && window.LOCAL_CONFIG.ANTHROPIC_API_KEY) || '').trim();
     if (/^sk-/.test(cfg)) return cfg;
   } catch(e){}
-  // 2) Sitio DESPLEGADO (http/https que no sea localhost): la key vive en la Netlify
+  // 2) Sitio DESPLEGADO (http/https): la key vive server-side (Edge Function)
   //    Function (variable de entorno). El visitante nunca la introduce → placeholder.
-  if (location.protocol !== 'file:' && typeof _IS_LOCAL_PROXY !== 'undefined' && !_IS_LOCAL_PROXY) return 'server';
+  if (location.protocol !== 'file:') return 'server';
   // 3) Local sin config: la pedimos una vez y se guarda solo en este navegador.
   let k = localStorage.getItem('anthropic_key');
   if(!k){
@@ -25569,7 +25508,7 @@ function init() {
       const key = 'news_monday_' + (P ? P.weekId(0) : new Date().toDateString());
       if (localStorage.getItem(key)) return;    // ya corrió esta semana
       localStorage.setItem(key, '1');
-      console.log('[News] Refresh lunes 08:00 ET disparado');
+      _pvLog('[News] Refresh lunes 08:00 ET disparado');
       _refreshNewsWeekDates();
       autoUpdateNews(true);   // lunes 08:00 ET (1×/semana, ya gated por flag) → fuerza feed nuevo
     }
@@ -25865,53 +25804,6 @@ if (document.readyState === 'loading') {
   });
   window.sbClient = sb;
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // ⚠ TEMPORARY DEV-ONLY LOGIN BYPASS — SOLO para pruebas en localhost.
-  //   El botón "Continuar con Apple" siempre redirige a apple.com y vuelve a
-  //   https://portivapp.com, así que en localhost:8765 nunca te quedas para
-  //   probar el checkout de Paddle. Esto te deja fijar una sesión falsa
-  //   (email + user id de prueba) directamente en el estado del app, sin OAuth.
-  //   NO-OP fuera de localhost. ⚠ QUITAR ANTES DE PUBLICAR / COMPILAR iOS.
-  // ══════════════════════════════════════════════════════════════════════════
-  (function _devLoginBypass(){
-    if (location.hostname !== 'localhost' || (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())) return;   // jamas activo en prod ni nativo (iOS/Capacitor)
-    var DEV_EMAIL = 'dev@localhost.test';
-    var DEV_UID   = '00000000-0000-4000-8000-000000000001';   // forma UUID v4 por si algo lo espera
-    // Fija una sesión "logueada" falsa SIN pasar por Apple/Supabase: revela el app
-    // y rellena los mismos globales que lee el resto del código (session, __pvUserId…).
-    // No toca sbClient.auth (evita onAuthStateChange → bind-purge → reload loop).
-    window._devFakeLogin = function(email, uid){
-      if (location.hostname !== 'localhost') { console.warn('[dev] _devFakeLogin ignorado: no es localhost'); return; }
-      email = (email || DEV_EMAIL).toLowerCase();
-      uid   = uid || DEV_UID;
-      var fake = {
-        access_token: 'dev-fake-token', token_type: 'bearer', expires_at: 9999999999,
-        user: { id: uid, email: email, user_metadata: { username: 'devtester', display_name: 'Dev Tester' } }
-      };
-      session = fake;                                  // var interna del IIFE de auth (closure)
-      try { window.__pvUserId = uid; } catch(e){}
-      window._pvAuthReady = true;
-      try {
-        var a  = document.getElementById('navAvatar'); if (a)  a.textContent  = email.slice(0,2).toUpperCase();
-        var ae = document.getElementById('acctEmail'); if (ae) ae.textContent = email;
-      } catch(e){}
-      try { revealApp(); } catch(e){}                  // quita app-locked + desvanece overlay
-      console.log('[dev] sesión falsa activa →', email, uid, '| session global lista; sbClient SIN token real (escrituras a la nube fallarán RLS, esperado)');
-      return fake;
-    };
-    // Botón visible en el overlay de login (solo localhost).
-    try {
-      var apple = document.getElementById('appleSignInBtn');
-      if (apple && apple.parentNode) {
-        var b = document.createElement('button');
-        b.type = 'button';
-        b.textContent = '🔧 DEV: entrar sin Apple (localhost)';
-        b.style.cssText = 'margin-top:12px;width:100%;padding:12px;border:1px dashed #b4487a;border-radius:12px;background:#fff4fb;color:#a03d73;font-weight:700;cursor:pointer;font-size:13px;font-family:inherit;';
-        b.onclick = function(){ window._devFakeLogin(); };
-        apple.parentNode.insertBefore(b, apple.nextSibling);
-      }
-    } catch(e){}
-  })();
 
   function replay(el){ el.classList.remove('pv-form'); void el.offsetWidth; el.classList.add('pv-form'); }
 
@@ -25996,11 +25888,11 @@ if (document.readyState === 'loading') {
         return;
       }
       // ── Web: OAuth por redirect (comportamiento original) ──
-      // redirectTo: en producción usa el origin real; si estás en localhost/127/file://
+      // redirectTo: en producción usa el origin real; si estás en un origen local (127/file://)
       // (donde el servidor puede estar apagado al volver de Apple → ERR_CONNECTION_REFUSED)
       // cae al dominio de producción para no aterrizar en una URL muerta.
       var _origin = window.location.origin || '';
-      var _isLocal = /^(https?:)?\/\/(localhost|127\.0\.0\.1|\[::1\])/.test(_origin) || window.location.protocol === 'file:';
+      var _isLocal = /^(https?:)?\/\/(127\.0\.0\.1|\[::1\])/.test(_origin) || window.location.protocol === 'file:';
       var _redirectTo = _isLocal ? 'https://portivapp.com/' : (_origin + window.location.pathname);
       var r = await sb.auth.signInWithOAuth({
         provider: 'apple',
@@ -27043,12 +26935,6 @@ document.addEventListener('DOMContentLoaded', function(){
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     document.getElementById('pqFinish').onclick = ()=>{
-      // DEV-ONLY TESTING — REMOVE BEFORE DEPLOY
-      // Pro simulado en localhost → conecta directo (NO reabrir paywall/checkout). Prod/iOS: inerte.
-      if(location.hostname === 'localhost' && window.__pvDevPro === true){
-        try{ window.snapConnect(); }catch(e){} return;
-      }
-      // ── Real (prod/iOS): comportamiento original, sin cambios. ──
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
       try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
     };
@@ -27160,7 +27046,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // ── toast (reuse app toast if present) ──
   function toast(msg){ try{ if(typeof window.toast==='function' && window.toast!==toast){ window.toast(msg); return; } }catch(e){}
-    try{ if(typeof showToast==='function'){ showToast(msg); return; } }catch(e){} console.log('[snaptrade]', msg); }
+    try{ if(typeof showToast==='function'){ showToast(msg); return; } }catch(e){} _pvLog('[snaptrade]', msg); }
 
   // ── Connect: open the SnapTrade portal ──
   function snapConnect(){
