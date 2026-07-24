@@ -25723,6 +25723,7 @@ if (document.readyState === 'loading') {
   </div>
   <div style="padding:6px;border-top:1px solid rgba(0,0,0,0.07);">
     <div class="acct-item acct-danger" onclick="_authLogout()">Cerrar sesión</div>
+    <div class="acct-item acct-danger" onclick="_acctDeleteAccount()">Eliminar mi cuenta</div>
   </div>
 </div>
 
@@ -26488,6 +26489,52 @@ if (document.readyState === 'loading') {
     _wlClearLocal();   // sin residuos de watchlist para la siguiente cuenta
     _newsClearLocal(); // sin residuos de noticias para la siguiente cuenta
     location.reload();
+  };
+
+  // Eliminar cuenta (Apple Guideline 5.1.1(v)). Doble confirmación: aviso + escribir ELIMINAR.
+  window._acctDeleteAccount = async function(){
+    var ok = window.confirm('¿Eliminar tu cuenta de Portiv?\n\nEs permanente: borra tu portafolio, la conexión con tu broker y todos tus datos. No se puede deshacer.');
+    if (!ok) return;
+    var typed = window.prompt('Para confirmar, escribe ELIMINAR (en mayúsculas):');
+    if (typed == null) return;
+    if (String(typed).trim() !== 'ELIMINAR') { try { alert('Texto incorrecto. Tu cuenta NO se eliminó.'); } catch(e){} return; }
+
+    try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
+
+    // 1) Desconectar el broker PRIMERO. Si falla, abortamos: borrar el perfil ahora
+    //    dejaría un usuario SnapTrade huérfano (sigue el cargo por usuario conectado).
+    try {
+      await window.stCall('snaptrade-disconnect', {});
+    } catch (e) {
+      try { alert('No pudimos desconectar tu broker. Intenta de nuevo en un momento.'); } catch(_){}
+      return;
+    }
+
+    // Cubrir la app (mismo patrón que cerrar sesión) mientras se completa el borrado.
+    try {
+      var _b = document.getElementById('authBoot'); if (_b) _b.style.display = 'flex';
+      var _bd = document.getElementById('authBody'); if (_bd) _bd.style.display = 'none';
+      showOverlay();
+    } catch(e){}
+
+    try {
+      // 2) id del usuario (desde la sesión; el server igual lo deriva del JWT, nunca del body).
+      var uid = null;
+      try { var gu = await sb.auth.getUser(); uid = (gu && gu.data && gu.data.user) ? gu.data.user.id : null; } catch(e){}
+      // 3) Borrar la fila de perfil (RLS: solo la propia).
+      if (uid) { try { await sb.from('profiles').delete().eq('id', uid); } catch(e){} }
+      // 4) Borrar la cuenta de auth server-side (valida el JWT, borra SOLO a su dueño).
+      await window.stCall('delete-account', {});
+      // 5) Limpiar TODO el estado local + cerrar sesión.
+      try { await sb.auth.signOut(); } catch(e){}
+      try { localStorage.clear(); } catch(e){}
+      try { sessionStorage.clear(); } catch(e){}
+      // 6) Volver al login, limpio.
+      location.reload();
+    } catch (e) {
+      try { alert('No se pudo completar la eliminación. Si el problema sigue, contáctanos.'); } catch(_){}
+      location.reload();
+    }
   };
 
   // Cerrar el menú al hacer clic fuera
