@@ -18,11 +18,6 @@
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
 <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<!-- Config local (NO versionada): define window.LOCAL_CONFIG con secretos como la API key de Finnhub.
-     Copia config.local.example.js a config.local.js y pon tu key. Si falta, la app corre sin key
-     (usa las Netlify Functions /.netlify/functions/anthropic y /.netlify/functions/finnhub, que leen
-     ANTHROPIC_API_KEY y FINNHUB_KEY de las Environment Variables del sitio en Netlify). -->
-<script src="config.local.js"></script>
 <style>
   :root {
     /* ══ Stitch design tokens (exact match) ══ */
@@ -6067,9 +6062,6 @@ function _amPrewarmLeader(){
 }
 setInterval(() => { try { _amPrewarmLeader(); } catch(e){} }, 7000);
 
-// ── Llamada DIRECTA navegador → API de Anthropic (sin backend) ──────────────────
-// Mecanismo oficial: header anthropic-dangerous-direct-browser-access. La key es la del
-// VISITANTE (se pide una vez y se guarda solo en su navegador, nunca en el código).
 const _ANTHROPIC_MODEL_MAP = {
   'claude-haiku-4-5':  'claude-haiku-4-5-20251001',
   'claude-sonnet-4-6': 'claude-sonnet-4-6',
@@ -6095,86 +6087,8 @@ const AI_MODELS = {
   // (qbio:v1:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
   narrative:  'claude-sonnet-5',
 };
-async function _anthropicDirect(rawBody) {
-  const key = (typeof _ensureApiKey === 'function') ? _ensureApiKey() : localStorage.getItem('anthropic_key');
-  if (!key || key === 'server') {
-    return new Response(JSON.stringify({ error: { message: 'Necesitas una API key de Anthropic para la IA aquí. Pégala en config.local.js (ANTHROPIC_API_KEY) o cuando se te pida.' } }), { status: 401, headers: { 'content-type': 'application/json' } });
-  }
-  let b; try { b = (typeof rawBody === 'string') ? JSON.parse(rawBody) : (rawBody || {}); } catch(e) { b = {}; }
-  // Estilo cli (prompt + allowed_tools) vs messages (visión/chat). Replicamos lo que
-  // hace la Netlify Function: cli → devolvemos { text }; messages → respuesta cruda.
-  const isCli = !Array.isArray(b.messages);
-  const out = {
-    model: _ANTHROPIC_MODEL_MAP[b.model] || b.model || 'claude-haiku-4-5-20251001',
-    max_tokens: b.max_tokens || 1024,
-    messages: isCli ? [{ role: 'user', content: String(b.prompt || '') }] : b.messages,
-  };
-  // Reenvía temperature si el cliente la fijó (visión usa 0 → determinista/anti-alucinación).
-  if (b.temperature != null) out.temperature = b.temperature;
-  if (b.system) {
-    // ── Prompt caching (SOLO este path de API directo; el path cli no usa `out`) ──
-    // Si el system es largo (≥ ~4096 chars ≈ 1024 tokens) lo enviamos como bloque
-    // cacheable efímero: Anthropic reutiliza el prefijo idéntico en llamadas siguientes
-    // (cache_read ≈ 0.1x del precio de input, cache_write ≈ 1.25x). NO cambia el contenido;
-    // si el system es corto se manda como string simple (no alcanzaría el mínimo cacheable).
-    out.system = (typeof b.system === 'string' && b.system.length >= 4096)
-      ? [{ type: 'text', text: b.system, cache_control: { type: 'ephemeral' } }]
-      : b.system;
-  }
-  // Búsqueda web: acepta el formato messages (b.tools) o cli (b.allowed_tools).
-  let useWeb = false;
-  if (Array.isArray(b.tools) && b.tools.length) {
-    out.tools = b.tools; useWeb = b.tools.some(t => t && /web_search/.test(t.type || ''));
-  } else if (Array.isArray(b.allowed_tools) && b.allowed_tools.some(t => /websearch|webfetch/i.test(String(t)))) {
-    // Default 1 búsqueda (antes 2): cada search inyecta 10-30K tokens → es el grueso del costo.
-    out.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }]; useWeb = true;
-  }
-  const _hdr = (web) => {
-    const h = { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' };
-    if (web) h['anthropic-beta'] = 'web-search-2025-03-05';
-    return h;
-  };
-  const _call = (body, web) => fetch('https://api.anthropic.com/v1/messages', { method: 'POST', headers: _hdr(web), body: JSON.stringify(body) });
 
-  let resp, raw;
-  try { resp = await _call(out, useWeb); raw = await resp.json().catch(() => ({})); }
-  catch (e) { return new Response(JSON.stringify({ error: { message: 'No se pudo conectar con la API de Anthropic: ' + ((e && e.message) || e) } }), { status: 502, headers: { 'content-type': 'application/json' } }); }
-
-  // Si la clave/plan no soporta búsqueda web, reintenta sin herramientas (el análisis sigue).
-  if (!resp.ok && useWeb && raw && raw.error && /(web.?search|tool|beta)/i.test(raw.error.message || '')) {
-    delete out.tools;
-    try { resp = await _call(out, false); raw = await resp.json().catch(() => ({})); } catch (e) {}
-  }
-
-  // messages (visión/chat) → respuesta cruda. cli (noticias/outlook/intel) → { text }.
-  if (!isCli) return new Response(JSON.stringify(raw), { status: resp.ok ? 200 : resp.status, headers: { 'content-type': 'application/json' } });
-  if (!resp.ok) return new Response(JSON.stringify(raw), { status: resp.status, headers: { 'content-type': 'application/json' } });
-  let text = ''; const sources = []; const _seenSrc = new Set();
-  (raw.content || []).forEach(blk => {
-    if (!blk || blk.type !== 'text') return;
-    text += blk.text;
-    // web_search_result_location trae url+title por cita; deduplicamos por url.
-    (blk.citations || []).forEach(c => {
-      if (c && c.url && !_seenSrc.has(c.url)) { _seenSrc.add(c.url); sources.push({ url: c.url, title: c.title || c.url }); }
-    });
-  });
-  // Exponemos `usage` (input/output/cache + web_search) para que el rastreo de costo
-  // sea real en el path de API. El proxy de suscripción no devuelve usage → $0 (gratis).
-  // `sources` viene vacío si no hubo búsqueda (el chat solo lo pinta cuando _needsWeb).
-  return new Response(JSON.stringify({ text: text.trim(), usage: raw.usage || null, model: out.model, sources }), { status: 200, headers: { 'content-type': 'application/json' } });
-}
-
-// ¿Hay una API key utilizable para llamadas directas (config.local.js o localStorage)?
-// Solo relevante en file:// (al abrir el archivo en tu Mac). En un sitio desplegado los
-// guards de file:// no aplican y la key vive en la Netlify Function.
-window._aiKeyAvailable = function(){
-  try {
-    const c = ((window.LOCAL_CONFIG && window.LOCAL_CONFIG.ANTHROPIC_API_KEY) || '').trim();
-    if (/^sk-/.test(c)) return true;
-    if (((localStorage.getItem('anthropic_key')) || '').trim()) return true;
-  } catch(e){}
-  return false;
-};
+window._aiKeyAvailable = function(){ return false; };   // key en cliente eliminada; IA solo via proxy server-side
 
 // fetch con timeout duro: si el proxy se cuelga (acepta la conexión
 // pero nunca responde), abortamos y caemos al siguiente destino en vez de colgarnos.
@@ -6235,9 +6149,9 @@ async function _aiFetch(opts, essential) {
     // La función respondió con ERROR (502 timeout, 400, etc.). Si NO hay key local para
     // reintentar directo, devolvemos ESE error real — no el genérico "necesitas API key"
     // (en un sitio desplegado el path directo nunca tendría key y ocultaría la causa real).
-    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return _sbErr || r;
-  } catch(e) { /* función inalcanzable → directo */ }
-  return _anthropicDirect(opts && opts.body);   // navegador → Anthropic (key del visitante)
+    return _sbErr || r;
+  } catch(e) { /* función inalcanzable → proxy caído */ }
+  return _sbErr || new Response(JSON.stringify({ error: { message: 'No se pudo conectar con el servicio de IA.' } }), { status: 502, headers: { 'content-type': 'application/json' } });
 }
 
 // ── Fetch de VISIÓN (analizador de fotos) ────────────────────────────────────
@@ -6267,9 +6181,9 @@ async function _aiFetchVision(opts) {
     if (r.ok) return r;
     // Función respondió con error y no hay key local de respaldo → devuelve el error real
     // (el de Supabase si lo hubo, para no ocultar la causa con un 405 del host estático).
-    if (!window._aiKeyAvailable || !window._aiKeyAvailable()) return _sbErr || r;
-  } catch(e) { /* función inalcanzable → directo */ }
-  return _anthropicDirect(opts && opts.body);
+    return _sbErr || r;
+  } catch(e) { /* función inalcanzable → proxy caído */ }
+  return _sbErr || new Response(JSON.stringify({ error: { message: 'No se pudo conectar con el servicio de IA.' } }), { status: 502, headers: { 'content-type': 'application/json' } });
 }
 
 // ── Modelo adaptativo por COSTO ──────────────────────────────────────────────
@@ -10554,21 +10468,6 @@ OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y
   // cae a la API key directa (config.local.js), que también hace web search.
   let _directErr = '';
   const _tryGetText = async (forceDirect) => {
-    if (forceDirect) {
-      // El fallback directo NO pasa por _aiFetch (ahí vive el punto único que fuerza el
-      // idioma de salida) → sin esto, si el proxy local fallaba y caía aquí, el resultado
-      // SIEMPRE salía en español para usuarios en inglés. Replica la misma directiva aquí.
-      const _dirBody = Object.assign({}, _body);
-      const _dir = (typeof getLang === 'function' && getLang() === 'en')
-        ? '\n\nOUTPUT LANGUAGE (MANDATORY): Write ALL output in ENGLISH, regardless of the language used in the instructions above. Any earlier instruction to answer in Spanish is overridden — respond only in English. JSON keys stay unchanged; only the text VALUES are in English.'
-        : '\n\nIDIOMA DE SALIDA (OBLIGATORIO): escribe TODA la salida en ESPAÑOL, sin importar el idioma de las instrucciones anteriores. Las claves del JSON no cambian; solo los VALORES de texto van en español.';
-      _dirBody.system = String(_dirBody.system || '') + _dir;
-      const r = await _anthropicDirect(JSON.stringify(_dirBody));
-      const j = await r.json().catch(()=>({}));
-      try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
-      if (j && (j.error || j.type === 'error')) _directErr = (j.error && j.error.message) || 'error de API';
-      return (j.text || '').trim();
-    }
     const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
@@ -10748,18 +10647,6 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
   // LIMITADO o no da JSON útil, cae a la API key directa (config.local.js). Sin esto, cuando la
   // suscripción da rate-limit, el brief devolvía null en silencio → se quedaba el texto genérico.
   const _tryGetText = async (forceDirect) => {
-    if (forceDirect) {
-      if (!(window._aiKeyAvailable && window._aiKeyAvailable())) return '';
-      const _dirBody = Object.assign({}, _body);
-      const _dir = (typeof getLang === 'function' && getLang() === 'en')
-        ? '\n\nOUTPUT LANGUAGE (MANDATORY): Write ALL text values in ENGLISH. JSON keys unchanged.'
-        : '\n\nIDIOMA DE SALIDA (OBLIGATORIO): escribe TODOS los valores de texto en ESPAÑOL. Las claves del JSON no cambian.';
-      _dirBody.system = String(_dirBody.system || '') + _dir;
-      const r = await _anthropicDirect(JSON.stringify(_dirBody));
-      const j = await r.json().catch(()=>({}));
-      try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
-      return (j.text || '').trim();
-    }
     const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
@@ -21146,7 +21033,7 @@ key_themes = exactamente 3 temas clave.`;
         // COSTO: web_search SOLO para "esta semana" (off 0), que sí gana con verificación de
         // contexto vivo. "Próxima semana" (off 1) es prospectiva y se arma del calendario Finnhub
         // (determinista) → sin búsqueda web ahorra ~1 búsqueda/día (10-30K tok) del modelo caro.
-        prompt: PROMPT, ...(off === 0 ? { allowed_tools:['websearch'] } : {}) }) }, true);   // essential:true → path de pago (cloud-shared, 1× global). websearch (solo esta semana) → _anthropicDirect topea en max_uses:1.
+        prompt: PROMPT, ...(off === 0 ? { allowed_tools:['websearch'] } : {}) }) }, true);   // essential:true → path de pago (cloud-shared, 1× global). websearch (solo esta semana) → el proxy topea en max_uses:1.
     if(!res.ok) throw new Error('SharedOutlook gen ' + res.status);
     const j = await res.json();
     try{ if(typeof _tokAdd === 'function') _tokAdd(j.usage, AI_MODELS.reasoning, 'outlook'); }catch(e){}
@@ -23190,7 +23077,7 @@ ${ctx}`;
     // Chat: usa el proxy de IA server-side (anthropic-proxy).
     // Convierte el historial de mensajes a un prompt de texto (formato cli).
     const convText = histSlice.map(m => (m.role==='user'?'Usuario':'Asistente')+': '+m.content).join('\n');
-    const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (_anthropicDirect/proxy topan en max_uses:1)
+    const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (el proxy topa en max_uses:1)
     const body={model:_aiQualityModel(AI_MODELS.reasoning),max_tokens:1500,system,prompt:convText,allowed_tools:_needsWeb?['websearch']:undefined};
 
     const res=await _aiFetch({
@@ -23375,7 +23262,7 @@ ${ctx}`;
     const histSlice = CHAT_HISTORY.slice(-4);
     // Chat IA Analyst: usa el proxy de IA server-side (anthropic-proxy).
     const convText2 = histSlice.map(m => (m.role==='user'?'Usuario':'Asistente')+': '+m.content).join('\n');
-    const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (_anthropicDirect/proxy topan en max_uses:1)
+    const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (el proxy topa en max_uses:1)
     const body = {model:_aiQualityModel(AI_MODELS.reasoning),max_tokens:1500,system,prompt:convText2,allowed_tools:_needsWeb?['websearch']:undefined};
 
     const res = await _aiFetch({
@@ -25294,25 +25181,8 @@ function _brokerClearSeed(){
 }
 try { if (typeof window !== 'undefined') window._brokerClearSeed = _brokerClearSeed; } catch(e){}
 
-// Devuelve la API key guardada en el navegador; si no existe, la pide una vez y la guarda.
-function _ensureApiKey(){
-  // 1) Key local en config.local.js (window.LOCAL_CONFIG.ANTHROPIC_API_KEY): es la que
-  //    usas al abrir index.html en tu Mac. NUNCA se sube a Netlify (deploy.sh la excluye).
-  try {
-    const cfg = ((window.LOCAL_CONFIG && window.LOCAL_CONFIG.ANTHROPIC_API_KEY) || '').trim();
-    if (/^sk-/.test(cfg)) return cfg;
-  } catch(e){}
-  // 2) Sitio DESPLEGADO (http/https): la key vive server-side (Edge Function)
-  //    Function (variable de entorno). El visitante nunca la introduce → placeholder.
-  if (location.protocol !== 'file:') return 'server';
-  // 3) Local sin config: la pedimos una vez y se guarda solo en este navegador.
-  let k = localStorage.getItem('anthropic_key');
-  if(!k){
-    k = (prompt('Pega tu Anthropic API key (se guarda solo en este navegador, no en el archivo):')||'').trim();
-    if(k) localStorage.setItem('anthropic_key', k);
-  }
-  return k;
-}
+// IA solo via proxy server-side (Supabase Edge Function). Sin key en el cliente.
+function _ensureApiKey(){ return 'server'; }
 
 function init() {
   try {
@@ -25997,7 +25867,7 @@ if (document.readyState === 'loading') {
   // preferencias de dispositivo (idioma/tema) y las API keys locales — no son datos de cuenta.
   function _pvNukeLocalAll(){
     try {
-      var KEEP = { portiv_lang:1, portiv_theme:1, anthropic_key:1, fh_api_key:1 };
+      var KEEP = { portiv_lang:1, portiv_theme:1, fh_api_key:1 };
       Object.keys(localStorage).forEach(function(k){
         if (KEEP[k]) return;
         if (/^(portiv_|pv_|news_|weekly_outlook_|outlook_|week_top_|wl_|portfolio_|shared_news_|fh_)/.test(k))
