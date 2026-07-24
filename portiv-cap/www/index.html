@@ -11567,8 +11567,6 @@ function _snCard(n, idx) {
     : '';
   const isHeld = !!_heldTk;
   const ticker = (_heldTk || n._ticker || (n.impact||'').split(',')[0]?.trim() || '').toUpperCase();
-  const imgSeed = encodeURIComponent((n.imgQ||ticker||'finance,market').split(',')[0]);
-  const imgUrl  = `https://source.unsplash.com/400x240/?${imgSeed}`;
   const sourceColors = {
     'Bloomberg':'#1A1A2E','Reuters':'#FF8000','WSJ':'#004799','CNBC':'#0099CF',
     'FT':'#FCD0B1','The Verge':'#FF3B30','Bloomberg Law':'#1A1A2E'
@@ -11595,56 +11593,35 @@ function _snCard(n, idx) {
   </div>`;
 }
 
-// Imagen profesional (Unsplash directo, URLs verificadas 200, estables) según ticker/sector/tema.
+// Placeholder LOCAL (data-URI SVG) — se usa SOLO cuando la noticia no trae imagen propia.
+// Sin hotlinking ni fuentes externas (App Review). Gradiente con la paleta de la app y un
+// tinte por tema/sentimiento para dar variedad. Firma intacta: devuelve un src usable en <img>.
 function _snFeatImageFor(n){
-  const U = id => `https://images.unsplash.com/${id}?w=900&q=80&auto=format&fit=crop`;
-  // Foto específica por ticker del portafolio
-  const BY_TICKER = {
-    NVDA:'photo-1518770660439-4636190af475', MU:'photo-1518770660439-4636190af475', TSM:'photo-1518770660439-4636190af475',
-    AAPL:'photo-1592434134753-a70baf7979d5', GOOGL:'photo-1573804633927-bfcbcd909acd', META:'photo-1611162617474-5b21e879e113',
-    MSFT:'photo-1451187580459-43490279c0fa', AMZN:'photo-1523474253046-8cd2748b5fd2', MA:'photo-1563986768609-322da13575f3',
-    VOO:'photo-1611974789855-9c2a0a7236a3', APP:'photo-1512941937669-90a1b58e7e9c'
-  };
   const t = (n._ticker || (n.impact||'').split(',')[0] || '').trim().toUpperCase();
-  if (BY_TICKER[t]) return U(BY_TICKER[t]);
   const txt = ((n.h||'')+' '+(n.imgQ||'')+' '+(n.impact||'')+' '+(n.detail||'')).toLowerCase();
-  // Energía / petróleo / gas / conducción / EV
-  if (/\benergy\b|energi|oil\b|gas\b|driving|gasoline|gasolina|petroleum|crude|refin|fuel|combustible|barrel|brent|opec/.test(txt)) return U('photo-1560958089-b8a1929cea89');
-  if (/\bev\b|electric.*car|electric.*vehicle|vehículo.*eléctrico|coche.*eléctrico|tesla|charging.*station|cargador/.test(txt)) return U('photo-1593941707882-a5bac6861d75');
-  // Semiconductores / chips / hardware
-  if (/chip|semicon|nvidia|micron|tsmc|hardware|soxx|wafer|fabless|foundry/.test(txt)) return U('photo-1518770660439-4636190af475');
-  // IA / modelos de lenguaje
-  if (/\bai\b|artificial intel|inteligencia.*artif|gemini|chatgpt|\bgpt\b|llm|machine learn|deep learn|neural/.test(txt)) return U('photo-1677442135703-1787eea5ce01');
-  // Macro / Fed / economía
-  if (/fed\b|federal reserve|reserva federal|tasa|interest rate|inflaci|cpi|pce|payroll|nonfarm|employment|empleo|ism|jobless|recession|recesi/.test(txt)) return U('photo-1611974789855-9c2a0a7236a3');
-  // Cloud / software / SaaS
-  if (/cloud|azure|aws|software|saas|platform|api\b|developer|código|code/.test(txt)) return U('photo-1451187580459-43490279c0fa');
-  // Pagos / fintech / bancos
-  if (/payment|pago|tarjeta|card|fintech|bank|banco|credit|interchange|visa|mastercard|lending|mortgage/.test(txt)) return U('photo-1563986768609-322da13575f3');
-  // Retail / e-commerce / consumo
-  if (/retail|consumo|ecommerce|e-commerce|shopping|tienda|store|marketplace|amazon|walmart/.test(txt)) return U('photo-1472851294608-062f824d29cc');
-  // Salud / farmacéutica / biotech
-  if (/health|salud|pharma|farmac|biotech|drug\b|medic|hospital|fda|clinical|trial/.test(txt)) return U('photo-1579154204601-01588f351e67');
-  // Autos / automotriz
-  if (/auto|car\b|vehicle|truck|ford|gm\b|toyota|volkswagen|driving|motor/.test(txt)) return U('photo-1494976388531-d1058494cdd8');
-  // Real estate / construcción
-  if (/real estate|housing|home|casa|construction|reit|property|mortgage|renta/.test(txt)) return U('photo-1560518883-ce09059eeffa');
-  // Earnings / resultados / ganancias
-  if (/earning|resultado|revenue|ingreso|profit|ganancia|quarterly|q[1-4]\b|guidance|outlook/.test(txt)) return U('photo-1460925895917-afdab827c52f');
-  // Geopolítica / regulación / gobierno
-  if (/china|tariff|arancel|sanction|geopolit|regulat|congress|senate|white house|biden|trump|doj|sec\b/.test(txt)) return U('photo-1529107386315-e1a2ed48a620');
-  // Mercados / bolsa / índices / default
-  return U('photo-1611974789855-9c2a0a7236a3');
+  let a='#0b1e3f', b='#0f766e';                                                       // default: navy → teal (marca)
+  if (/chip|semicon|nvidia|micron|tsmc|hardware|wafer|foundry|soxx/.test(txt))        { a='#111827'; b='#2563eb'; }
+  else if (/\bai\b|artificial intel|inteligencia|gemini|gpt|llm|neural/.test(txt))    { a='#1e1b4b'; b='#7c3aed'; }
+  else if (/payment|pago|tarjeta|card|fintech|bank|banco|visa|mastercard/.test(txt))  { a='#134e4a'; b='#0d9488'; }
+  else if (/china|tariff|arancel|sanction|geopolit|regulat|congress|doj/.test(txt))   { a='#3f1d1d'; b='#dc2626'; }
+  else if (n.s==='neg')                                                               { a='#3b1220'; b='#be123c'; }
+  else if (n.s==='pos')                                                               { a='#07321d'; b='#15803d'; }
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='900' height='500'>"
+    + "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
+    + "<stop offset='0' stop-color='"+a+"'/><stop offset='1' stop-color='"+b+"'/>"
+    + "</linearGradient></defs><rect width='900' height='500' fill='url(#g)'/>"
+    + "<text x='44' y='456' font-family='-apple-system,Segoe UI,Roboto,sans-serif' "
+    + "font-size='44' font-weight='800' fill='rgba(255,255,255,.13)'>"+(t||'PORTIV')+"</text></svg>";
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
 // ── Stitch Featured article builder ──────────────────────────────────
 function _snSetFeatured(n, idx) {
   if (!n) return;
-  const imgSeed = encodeURIComponent((n.imgQ||n.h||'finance,technology').split(',')[0]);
   const el = id => document.getElementById(id);
   if (el('snFeatImg')) {
     const fimg = el('snFeatImg');
-    const pro = _snFeatImageFor(n); // foto contextual verificada (Unsplash)
+    const pro = _snFeatImageFor(n); // placeholder local (data-URI SVG), sin fuentes externas
     // Descarta URLs que son logos de fuentes noticiosas (Yahoo, Reuters, AP, etc.):
     // - yimg.com → CDN de Yahoo Finance que sirve su propio logo/thumbnail de marca
     // - dimensiones pequeñas en la URL (logos ≤ 200px)
@@ -11658,7 +11635,7 @@ function _snSetFeatured(n, idx) {
     };
     const real = _newsImgCandidates(n).filter(u => !_junk(u));
     fimg.style.display = 'block';
-    // Cadena: imagen real del artículo (no-Yahoo) → foto contextual Unsplash (SIEMPRE carga).
+    // Cadena: imagen real del artículo (no-Yahoo) → placeholder local data-URI (SIEMPRE carga).
     fimg.onerror = function(){ this.onerror = null; this.src = pro; };
     // Evita el parpadeo: no reasignar `src` si es la misma URL (se llama varias veces seguidas
     // durante el flujo de SharedNews.ensureFresh) — reasignar el mismo src fuerza un re-fetch/decode.
