@@ -2900,7 +2900,7 @@
   body.chat-active .ai-chat-header { position: sticky; top: 0; z-index: 20; padding-top: max(18px, env(safe-area-inset-top)) !important; }
 
   /* ── Watchlist: cards compactas, todo cabe sin desbordar ── */
-  #tab-watchlist { padding: 6px 14px 86px !important; }
+  #tab-watchlist { padding: 6px 14px 86px !important; background: var(--surface) !important; }
   .wl2-sector { margin-bottom: 8px !important; gap: 8px !important; }
   .wl2-sector-name { font-size: 10px !important; }
   .wl2-sector-count { font-size: 10px !important; }
@@ -3960,7 +3960,7 @@
       .pvx .px-ptr-pt.avg .dot{background:var(--px-green)} .pvx .px-ptr-pt.high .dot{background:var(--px-green-strong)}
       /* return box + projection rows */
       .pvx .px-retbox{border:2px solid var(--px-navy);border-radius:14px;padding:18px 22px;margin:18px 0 6px;background:linear-gradient(180deg,#fbfdfc,#f4f9f6)}
-      .pvx .px-retbox .rl{font-size:11px;letter-spacing:.6px;color:var(--px-muted);font-weight:700;text-transform:uppercase}
+      .pvx .px-retbox .rl{font-size:11px;letter-spacing:.6px;color:var(--px-muted);font-weight:700;text-transform:uppercase;background:transparent;border:none}
       .pvx .px-retbox .rn{font-family:'Poppins','Manrope',sans-serif;font-size:34px;font-weight:800;line-height:1;margin:6px 0}
       .pvx .px-retbox .rd{font-size:12.5px;color:var(--px-ink-soft);line-height:1.5}
       .pvx .px-proj{display:flex;align-items:center;padding:13px 0;border-bottom:1px solid #f1f2f5}
@@ -4199,9 +4199,11 @@
   /* ── AI ANALYST TAB — Nuevo diseño editorial del chat ── */
   /* OJO: el display NO debe forzarse aquí — si no, el tab queda visible siempre como
      hermano flex del body y parte el ancho de TODAS las pestañas. Solo se muestra activo. */
-  #tab-aianalyst { padding:0 !important; background:#f4f6fb; flex-direction:column; }
+  #tab-aianalyst { padding:0 !important; background:#f4f6fb; flex-direction:column; overflow:hidden; }
   #tab-aianalyst.active { display:flex; }
-  .ai-chat-page { display:flex; flex-direction:column; height:100vh; background:#f4f6fb; font-family:'Manrope',sans-serif; }
+  .ai-chat-page { display:flex; flex-direction:column; height:var(--vvh, 100vh); background:#f4f6fb; font-family:'Manrope',sans-serif; }
+  /* Móvil: al abrir el teclado NO scrollear el documento — el chat queda quieto y el input visible. */
+  @media(max-width:760px){ body:has(#tab-aianalyst.active){ overflow:hidden; height:100vh; } }
   .ai-chat-header { padding:18px 24px; background:#fff; border-bottom:1px solid #e8eaf0; display:flex; align-items:center; gap:14px; flex-shrink:0; }
   .ai-chat-header-avatar { width:40px; height:40px; border-radius:50%; background:var(--blue); display:flex; align-items:center; justify-content:center; color:#fff; font-size:15px; font-weight:700; flex-shrink:0; line-height:1; }
   .ai-chat-header-info { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
@@ -9296,6 +9298,28 @@ function sellAsset(ticker, dollarAmount, priceOverride) {
 //  NEWS MODAL
 // ═══════════════════════════════════════════════════
 let _newsCache = [];
+// ── REGISTRO PERSISTENTE DE NOTICIAS ────────────────────────────────────────
+// _newsCache se RESETEA en cada render (renderNewsTab) y varios renders parciales
+// (SharedNews/Finnhub) reordenan sus índices. Los onclick de las cards horneaban un índice
+// numérico → tras un re-render ese índice apuntaba a otra entrada o a undefined → openNewsModal
+// hacía `return` silencioso = "el botón no hace nada". Este registro por ID estable NUNCA se
+// resetea: el click resuelve la noticia por su ID, no por su posición en el array.
+const _newsReg = new Map();
+let _newsRegSeq = 0;
+function _newsRegister(n){
+  if(!n || typeof n!=='object') return '';
+  if(!n.__nid) n.__nid = 'n' + (++_newsRegSeq);
+  _newsReg.set(n.__nid, n);
+  return n.__nid;
+}
+function openNewsByKey(key, src){
+  const n = key && _newsReg.get(key);
+  if(!n) return;
+  let i = _newsCache.indexOf(n);
+  if(i < 0) i = _newsCache.push(n) - 1;   // reinsertar si el cache fue reseteado
+  openNewsModal(i, src);
+}
+if(typeof window!=='undefined') window.openNewsByKey = openNewsByKey;
 
 // Construye una lista de URLs de imagen para una noticia: primero la imagen real
 // de la fuente (Finnhub: Yahoo Finance, Reuters, Bloomberg, MarketWatch), y luego
@@ -11495,7 +11519,7 @@ function renderWeekCatalysts(list, emptyMsg) {
       const tk = (n.impact||'').split(',').map(t=>t.trim()).filter(t => t && t.length <= 6 && /^[A-Z.]+$/.test(t)).slice(0,5);
       const ctx = _newsContextLine(n, tk[0]||'');
       const ctxShort = ctx.length > 140 ? ctx.slice(0,137)+'…' : ctx;
-      html += `<div class="swc-item" onclick="openNewsModal(${idx},'week')">
+      html += `<div class="swc-item" onclick="openNewsByKey('${_newsRegister(n)}','week')">
         <div class="swc-item-body">
           <div class="swc-item-title">${n.h}</div>
           <div class="swc-item-ctx">${ctxShort}</div>
@@ -11554,7 +11578,7 @@ function _snCard(n, idx) {
   const srcInitial = src.charAt(0).toUpperCase() || '•';
   // "2h"/"3d" → relativo (añade "ago"); "May 13" → fecha absoluta (tal cual); sin fecha → "Recent".
   const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : 'Recent';
-  return `<div class="sn-card" onclick="openNewsModal(${idx})">
+  return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
     <div class="sn-card-top">
       <span class="sn-card-time">${timeAgo}</span>
     </div>
@@ -27292,6 +27316,30 @@ document.addEventListener('DOMContentLoaded', function(){
       sk.style.display='flex';
     } else if(sk){ sk.style.display='none'; }
   };
+})();
+</script>
+<script>
+/* Chat IA — teclado iOS: ancla la altura del chat al viewport VISIBLE (visualViewport) para que
+   la pantalla no se desplace hacia arriba al abrir el teclado; el input queda siempre visible y
+   los mensajes scrollean internamente. Sin plugin nativo; no-op donde no exista visualViewport. */
+(function(){
+  var vv = window.visualViewport, root = document.documentElement;
+  function sync(){
+    if(!vv) return;
+    root.style.setProperty('--vvh', vv.height + 'px');
+    root.style.setProperty('--vv-top', (vv.offsetTop||0) + 'px');
+    var tab = document.getElementById('tab-aianalyst');
+    if(tab && tab.classList.contains('active')){ var m=document.getElementById('aiChatMessages'); if(m) m.scrollTop=m.scrollHeight; }
+  }
+  if(vv){ vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); }
+  window.addEventListener('load', sync);
+  document.addEventListener('focusin', function(e){
+    if(e.target && e.target.id === 'aiChatInput'){
+      setTimeout(function(){ try{ window.scrollTo(0,0); document.body.scrollTop=0; }catch(_){}
+        sync(); var m=document.getElementById('aiChatMessages'); if(m) m.scrollTop=m.scrollHeight; }, 60);
+    }
+  });
+  try{ sync(); }catch(_){}
 })();
 </script>
 </body>
