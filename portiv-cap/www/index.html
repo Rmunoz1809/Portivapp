@@ -10464,10 +10464,8 @@ OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y
     // costo. El tope max_uses aplica en el proxy server-side.
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }]
   };
-  // Pide el resultado: 1º proxy CLI (suscripción), y si está LIMITADO o no da JSON útil,
-  // cae a la API key directa (config.local.js), que también hace web search.
-  let _directErr = '';
-  const _tryGetText = async (forceDirect) => {
+  // Resultado vía proxy server-side (Supabase, key como secreto). Sin fallback de key en el cliente.
+  const _tryGetText = async () => {
     const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
@@ -10475,21 +10473,10 @@ OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y
     return (j.text || '').trim();
   };
 
-  let t = await _tryGetText(false);
-  const _cliLimited = _looksLikeError(t);
-  // Reintenta con la API key directa SOLO en el path de PAGO (sin proxy local). Con la suscripción
-  // de suscripción activa, TODO el gasto va a ESTA cuenta (suscripción), nunca a la API key
-  // secundaria: si la suscripción está limitada, se queda el contexto determinista (no se cobra API).
-  const _apiKeyOK = window._aiKeyAvailable && window._aiKeyAvailable();
-  if ((!t || _cliLimited) && _apiKeyOK) {
-    const t2 = await _tryGetText(true).catch(()=> '');
-    if (t2 && !_looksLikeError(t2)) t = t2;
-  }
-  // Ambas fuentes caídas: mensaje claro y accionable según la causa real.
+  let t = await _tryGetText();
+  // Fuente caída/limitada: mensaje claro y accionable.
   if (!t || _looksLikeError(t)) {
-    const sinCreditos = /credit balance|too low|billing|quota/i.test(_directErr);
-    if (sinCreditos) throw new Error('La API de Anthropic no tiene créditos (config.local.js). Agrega saldo en console.anthropic.com → Plans & Billing, o espera a que se restablezca tu suscripción de Claude.');
-    throw new Error('La IA no está disponible ahora (límite de uso de tu suscripción de Claude). Se restablece más tarde; o agrega créditos a tu API key.');
+    throw new Error('La IA no está disponible ahora (límite de uso). Se restablece más tarde.');
   }
   // Extracción robusta (maneja ```json, llaves balanceadas). Si el modelo respondió en
   // prosa (sin JSON pero con contenido real), la mostramos con los números que encontró.
@@ -10643,10 +10630,9 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
   // Texto que NO es análisis, sino un error/límite del proveedor (suscripción rate-limited, etc.).
   const _looksLikeError = t => /you'?ve hit your (session |usage )?limit|usage limit|rate.?limit|limit.*reset|resets? \d|too many requests|unauthorized|forbidden|invalid api key|quota/i.test(t || '');
 
-  // Igual patrón robusto que _fetchEventResultData: proxy CLI (suscripción) primero y, si está
-  // LIMITADO o no da JSON útil, cae a la API key directa (config.local.js). Sin esto, cuando la
-  // suscripción da rate-limit, el brief devolvía null en silencio → se quedaba el texto genérico.
-  const _tryGetText = async (forceDirect) => {
+  // Resultado vía proxy server-side (Supabase). Sin fallback de key en el cliente: si la
+  // suscripción da rate-limit, el brief devuelve null → se queda el texto determinista.
+  const _tryGetText = async () => {
     const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
@@ -10655,16 +10641,8 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
   };
 
   try {
-    let t = await _tryGetText(false);
-    // CLI limitado / vacío → reintenta con la API key directa SOLO en el path de pago (sin proxy
-    // local). Con la suscripción local activa, el gasto se queda en ESTA cuenta (suscripción);
-    // nunca cae a la API key secundaria. Si la suscripción está limitada, se muestra el determinista.
-    const _apiKeyOK = window._aiKeyAvailable && window._aiKeyAvailable();
-    if ((!t || _looksLikeError(t)) && _apiKeyOK) {
-      const t2 = await _tryGetText(true).catch(()=> '');
-      if (t2 && !_looksLikeError(t2)) t = t2;
-    }
-    if (!t || _looksLikeError(t)) return null;   // ambas fuentes caídas → se queda el determinista
+    let t = await _tryGetText();
+    if (!t || _looksLikeError(t)) return null;   // fuente caída → se queda el determinista
     const data = _aiExtractJson(t);
     if (!data || !data.resumen) return null;
     // Interpretación de un titular fijo → no cambia. Cache 30 días.
