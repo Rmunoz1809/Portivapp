@@ -3965,6 +3965,16 @@ window.PADDLE_PRICES = {
       .pvx .px-pr h4{font-family:'Poppins','Manrope',sans-serif;font-size:13px;font-weight:800;letter-spacing:.4px;margin:0 0 12px;text-transform:uppercase}
       .pvx .px-pr .pros h4{color:var(--px-green-text)} .pvx .px-pr .risks h4{color:var(--px-red)}
       .pvx .px-pr ul{margin:0;padding-left:18px} .pvx .px-pr li{margin:9px 0;color:var(--px-ink-soft);font-size:13px;line-height:1.5}
+      /* reacción a resultados (earnings) — mismo lenguaje visual que pros/risks + escenarios */
+      .pvx .px-eqr-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 14px}
+      .pvx .px-eqr-chip{font-size:11.5px;font-weight:700;letter-spacing:.3px;padding:3px 10px;border-radius:999px;background:var(--px-track);color:var(--px-ink-soft)}
+      .pvx .px-eqr-chip.beat{background:var(--px-green-soft);color:var(--px-green-text)}
+      .pvx .px-eqr-chip.miss{background:var(--px-red-soft);color:var(--px-red)}
+      .pvx .px-eqr-notes{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+      .pvx .px-eqr-note{background:var(--px-card);border:1px solid var(--px-line);border-radius:12px;padding:14px 16px}
+      .pvx .px-eqr-note .kk{font-size:11px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;color:var(--px-muted);margin-bottom:7px;font-family:'Poppins','Manrope',sans-serif}
+      .pvx .px-eqr-note .vv{font-size:13.5px;line-height:1.6;color:var(--px-ink-soft)}
+      .pvx .px-eqr-read{margin-top:14px;padding-top:14px;border-top:1px dashed #e4e7ec;font-size:14px;line-height:1.65;color:var(--px-ink-soft)}
       /* consensus */
       .pvx .px-cons-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
       .pvx .px-cons-top .lbl{font-size:11px;letter-spacing:.5px;color:var(--px-muted);font-weight:700;text-transform:uppercase}
@@ -4021,7 +4031,7 @@ window.PADDLE_PRICES = {
       .pvx .px-itx .iname{color:var(--px-ink)} .pvx .px-itx .iamt{margin-left:auto;color:var(--px-ink-soft);font-family:'Poppins','Manrope',sans-serif;font-weight:600}
       .pvx .px-disclaimer{font-size:11px;color:var(--px-muted);text-align:center;padding:6px 0 18px;line-height:1.6}
       @media(max-width:760px){
-        .pvx .px-hgrid,.pvx .px-scen,.pvx .px-pr{grid-template-columns:1fr}
+        .pvx .px-hgrid,.pvx .px-scen,.pvx .px-pr,.pvx .px-eqr-notes{grid-template-columns:1fr}
         .pvx .px-rating-card{gap:16px}
       }
       @media(prefers-reduced-motion:reduce){ .pvx *{transition:none!important;animation:none!important} }
@@ -17068,6 +17078,33 @@ function _renderQualAnalysis(a, el){
       <div class="px-hint">La columna del centro traduce cada múltiplo a lenguaje simple: si "23x" es barato, justo o premium <em>para esta empresa</em>.</div></div>`;
   }
 
+  // 5b) REACCIÓN AL ÚLTIMO REPORTE (IA, 1× global por earnings). Si no hay objeto → nada:
+  //     la sección desaparece entera, sin placeholders ni "cargando" colgado.
+  const eqr = a.earningsReaction;
+  if (eqr && ((eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length) || eqr.lectura_mercado)) {
+    const _fd = (() => { try { const d = new Date(String(eqr.reportDate) + 'T12:00:00');
+      return isNaN(d) ? '' : d.toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }); } catch(e){ return ''; } })();
+    const _num = v => (typeof v === 'number') ? '$' + v.toFixed(2) : null;
+    let chips = '';
+    if (eqr.periodLabel) chips += `<span class="px-eqr-chip">${esc(eqr.periodLabel)}</span>`;
+    if (_fd)             chips += `<span class="px-eqr-chip">Reportado el ${esc(_fd)}</span>`;
+    if (typeof eqr.beat === 'boolean' && _num(eqr.epsActual)) {
+      chips += `<span class="px-eqr-chip ${eqr.beat ? 'beat' : 'miss'}">EPS ${_num(eqr.epsActual)} vs. ${_num(eqr.epsEstimate) || '—'} · ${eqr.beat ? 'superó' : 'falló'}</span>`;
+    }
+    const _col = (title, cls, icon, arr) => (Array.isArray(arr) && arr.length)
+      ? `<div class="${cls}"><h4>${icon} ${title}</h4><ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+    const _cols = _col('QUÉ SALIÓ BIEN','pros','✓',eqr.bueno) + _col('QUÉ SALIÓ MAL','risks','⚠',eqr.malo);
+    const _note = (kk, vv) => vv ? `<div class="px-eqr-note"><div class="kk">${kk}</div><div class="vv">${esc(vv)}</div></div>` : '';
+    const _notes = _note('Lo que más creció', eqr.mas_crecio) + _note('Lo más destacado', eqr.destacado);
+    h += `<div class="px-card"><h2 class="px-sec-title">Reacción a resultados</h2>
+      <p class="px-intro">Qué dejó el último reporte y cómo lo está leyendo el mercado.</p>
+      ${chips ? `<div class="px-eqr-head" style="margin-top:14px">${chips}</div>` : ''}
+      ${_cols ? `<div class="px-pr">${_cols}</div>` : ''}
+      ${_notes ? `<div class="px-eqr-notes">${_notes}</div>` : ''}
+      ${eqr.lectura_mercado ? `<div class="px-eqr-read">${esc(eqr.lectura_mercado)}</div>` : ''}
+      <div class="px-hint">Cifras de EPS tomadas del reporte oficial; la lectura de mercado se genera una sola vez por trimestre y se comparte entre usuarios.</div></div>`;
+  }
+
   // 6) SALUD financiera (márgenes + FCF + apalancamiento + dividendo). Solo filas con dato.
   if (a.health && a.health.length){
     h += `<div class="px-card"><h2 class="px-sec-title">Salud financiera</h2>
@@ -17310,6 +17347,135 @@ async function _getStockNarrative(ticker, info, facts){
   try { return await _p; } finally { _narrInflight.delete(ticker); }
 }
 
+// ── Reacción a resultados (qué salió bien / mal / cómo lo lee el mercado) ────────
+// MISMO patrón "1× global" que la narrativa: local (invalidado por earningsKey) → nube
+// (eqr:v1:TICKER en shared_analysis) → generar 1 sola vez y subir. Diferencias con la
+// narrativa: se dispara SOLO cuando la empresa reportó algo nuevo (cambia la earningsKey),
+// y usa 2 búsquedas web dirigidas porque la reacción del mercado no está en Finnhub.
+// Costo por generación ≈ $0.047 (2 búsquedas + ~8K input + ~900-1.300 output, Sonnet 5).
+// No se pagan búsquedas para reconstruir cifras que YA tenemos: el EPS real vs. estimado
+// va en el prompt desde EPS._cache.
+const _EQR_LS = 'portiv_earnings_reaction_v1';
+function _eqrLoad(){ try { return JSON.parse(localStorage.getItem(_EQR_LS)||'{}')||{}; } catch(e){ return {}; } }
+// Sin TTL por tiempo: la única invalidación válida es un reporte NUEVO (eKey distinta).
+function _eqrGetLocal(tk, eKey){
+  const c = _eqrLoad()[tk];
+  if (!c || !c.obj) return null;
+  if (!eKey || eKey === 'na') return null;
+  if (c.eKey !== eKey) return null;          // reportó de nuevo → el análisis viejo ya no aplica
+  return c.obj;
+}
+function _eqrSaveLocal(tk, obj, eKey){
+  try { const c=_eqrLoad(); c[tk]={obj, eKey:eKey||'na', ts:Date.now()}; localStorage.setItem(_EQR_LS, JSON.stringify(c)); } catch(e){}
+}
+// Hechos del reporte que YA tenemos en local (EPS._cache) → el modelo no gasta búsquedas
+// en recuperarlos. Devuelve null si no hay ningún trimestre reportado.
+function _eqrFactsFor(ticker){
+  try {
+    const d = (typeof EPS !== 'undefined') ? EPS._cache[(ticker||'').toUpperCase()] : null;
+    if (!d || !Array.isArray(d.quarters)) return null;
+    const past = d.quarters.filter(q => !q.future && q.date && typeof q.actual === 'number');
+    if (!past.length) return null;
+    past.sort((a,b) => String(a.date).localeCompare(String(b.date)));
+    const last = past[past.length - 1];
+    const surp = (typeof last.estimate === 'number' && last.estimate !== 0)
+      ? ((last.actual - last.estimate) / Math.abs(last.estimate)) * 100 : null;
+    return {
+      date: last.date,
+      label: (last.q ? 'Q' + last.q : '') + (last.y ? ' ' + last.y : ''),
+      actual: last.actual,
+      estimate: (typeof last.estimate === 'number') ? last.estimate : null,
+      surprisePct: surp,
+      beat: (typeof last.estimate === 'number') ? (last.actual >= last.estimate) : null,
+      history: past.slice(-4).map(q => ({
+        label: (q.q ? 'Q' + q.q : '') + (q.y ? " '" + String(q.y).slice(-2) : ''),
+        actual: q.actual,
+        estimate: (typeof q.estimate === 'number') ? q.estimate : null,
+      })),
+    };
+  } catch(e){ return null; }
+}
+// 1 llamada Sonnet 5 con 2 búsquedas web dirigidas. null si falla o no hay forma de generar.
+async function _fetchEarningsReactionAI(ticker, info, epsFacts){
+  if (typeof _aiFetch !== 'function' || !epsFacts) return null;
+  const _canGen = (window._aiKeyAvailable && window._aiKeyAvailable())
+               || (typeof _aiSbOn === 'function' && _aiSbOn());
+  if (!_canGen) return null;
+  const name = (info && (info.longName || info.shortName)) || ticker;
+  const SYSTEM = `Eres un analista de inversiones. Respondes SOLO con un objeto JSON válido en ESPAÑOL, sin markdown ni texto extra. Esquema exacto:
+{"bueno":["2-3 puntos concretos con cifras"],"malo":["2-3 puntos concretos con cifras"],"mas_crecio":"1-2 frases: qué segmento o línea de negocio creció más y por qué","destacado":"1-2 frases: el dato o anuncio más relevante de la llamada de resultados","lectura_mercado":"2-3 frases: cómo se está leyendo el reporte, corto y mediano plazo"}
+Usa las cifras que ya te doy; no las contradigas. Si un dato no lo encuentras, omítelo en vez de inventarlo. Sé concreto y directo, sin relleno ni disclaimers legales.`;
+  const _n = v => (typeof v === 'number') ? v.toFixed(2) : '—';
+  const prompt = `Empresa: ${name} (${ticker})
+Último reporte (datos ya confirmados, NO los busques): ${epsFacts.label || epsFacts.date} — EPS real $${_n(epsFacts.actual)} vs. estimado $${_n(epsFacts.estimate)}${epsFacts.surprisePct != null ? ` (${epsFacts.surprisePct >= 0 ? '+' : ''}${epsFacts.surprisePct.toFixed(1)}% de sorpresa)` : ''}. Publicado el ${epsFacts.date}.
+Trimestres previos: ${(epsFacts.history||[]).map(q => `${q.label} real $${_n(q.actual)} vs. est. $${_n(q.estimate)}`).join(' · ') || '(sin histórico)'}
+Contexto financiero: ${(typeof _stockFactsForPrompt === 'function' ? (_stockFactsForPrompt(ticker, info) || '') : '') || '(limitado)'}
+
+Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a este reporte, (2) qué dijo la dirección sobre la guía hacia adelante. Con eso y las cifras de arriba, devuelve el JSON.`;
+  try {
+    const res = await _aiFetch({
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({
+        model: AI_MODELS.narrative, max_tokens: 900, system: SYSTEM, prompt,
+        allowed_tools: ['WebSearch','WebFetch'],
+        tools: [{ type:'web_search_20250305', name:'web_search', max_uses:2 }]
+      })
+    }, true);
+    if (!res.ok) return null;
+    const data = await res.json();
+    try { _tokAdd(data.usage, AI_MODELS.narrative, 'earnings_reaction'); } catch(e){}
+    const obj = _aiExtractJson(data.text || '');
+    if (!obj || typeof obj !== 'object') return null;
+    obj.bueno = Array.isArray(obj.bueno) ? obj.bueno.filter(Boolean).slice(0,3) : [];
+    obj.malo  = Array.isArray(obj.malo)  ? obj.malo.filter(Boolean).slice(0,3)  : [];
+    // Sin contenido útil → null (la sección se oculta entera, sin placeholders).
+    if (!obj.bueno.length && !obj.malo.length && !obj.lectura_mercado) return null;
+    return obj;
+  } catch(e){ return null; }
+}
+// Orquesta: local → nube → generar 1× y subir. GARANTÍA "1× global" idéntica a la narrativa.
+const _eqrInflight = new Map();   // TICKER → promesa en vuelo (2 aperturas ≠ 2 pagos)
+async function _getEarningsReaction(ticker, info){
+  ticker = (ticker||'').toUpperCase();
+  const eKey = _analysisEarningsKey(ticker);
+  if (!eKey || eKey === 'na') return null;              // sin reporte conocido → sin sección
+  const local = _eqrGetLocal(ticker, eKey);
+  if (local) {
+    // Ya la tenemos para ESTE reporte → cero API. Asegura de paso que esté en la nube.
+    try { _sharedAISet('eqr:v1:' + ticker, Object.assign({ earningsKey: eKey }, local)); } catch(e){}
+    return local;
+  }
+  if (_eqrInflight.has(ticker)) return _eqrInflight.get(ticker);
+  const _p = (async () => {
+    const key = 'eqr:v1:' + ticker;
+    // 1) NUBE: si otro usuario ya la generó para este mismo reporte, $0 para todos los demás.
+    try {
+      const cloud = await _sharedAIGet(key, null);
+      if (cloud && typeof cloud === 'object' && cloud.earningsKey === eKey &&
+          ((cloud.bueno && cloud.bueno.length) || cloud.lectura_mercado)) {
+        _eqrSaveLocal(ticker, cloud, eKey);
+        return cloud;
+      }
+    } catch(e){}
+    // 2) Nadie la ha generado para este reporte → este usuario es el 1º y paga 1 sola vez.
+    const facts = _eqrFactsFor(ticker);
+    if (!facts) return null;
+    const obj = await _fetchEarningsReactionAI(ticker, info, facts);
+    if (!obj) return null;
+    obj.earningsKey = eKey;
+    obj.reportDate  = facts.date;
+    obj.epsActual   = facts.actual;
+    obj.epsEstimate = facts.estimate;
+    obj.beat        = facts.beat;
+    obj.periodLabel = facts.label || '';
+    _eqrSaveLocal(ticker, obj, eKey);
+    try { _sharedAISet(key, obj); } catch(e){}          // …y queda gratis para el resto.
+    return obj;
+  })();
+  _eqrInflight.set(ticker, _p);
+  try { return await _p; } finally { _eqrInflight.delete(ticker); }
+}
+
 // ── Desglose de foso por dimensión (estructura del sector + evidencia financiera) ──
 // No se deriva de márgenes sueltos (eso da falsos positivos: una aerolínea con buen
 // margen NO tiene "efecto red"). Parte de qué ventajas son POSIBLES en ese negocio
@@ -17511,13 +17677,18 @@ function _qualSet(tk, a, eKey){
 // Devuelve null si no hay base (p.ej. la construcción falló). Sin efectos de UI.
 async function _assembleAnalysis(ticker, info){
   ticker = (ticker||'').toUpperCase();
-  let base=null, narr=null, insRaw=null;
+  let base=null, narr=null, insRaw=null, eqr=null;
   try {
     base = _buildQualAnalysis(ticker, info);
     const facts = _stockFactsForPrompt(ticker, info);
     const insP  = _fetchInsiders(ticker).catch(() => null);   // insiders en paralelo con la narrativa
+    // Reacción a resultados: en paralelo también. Se resuelve sola (local/nube) y solo
+    // llama a la IA si hay un reporte NUEVO que nadie ha analizado todavía.
+    const eqrP  = (typeof _getEarningsReaction === 'function')
+      ? _getEarningsReaction(ticker, info).catch(() => null) : Promise.resolve(null);
     narr = await _getStockNarrative(ticker, info, facts);
     insRaw = await insP;
+    try { eqr = await eqrP; } catch(e){ eqr = null; }
   } catch(e){ base = base || null; narr = narr || null; }
   if (!base) return null;
   const bio = [narr&&narr.que_es, narr&&narr.como_gana_dinero].filter(Boolean).join(' ');
@@ -17528,6 +17699,7 @@ async function _assembleAnalysis(ticker, info){
     valoracion_full: (base.valText||'') + ' ' + ((narr && narr.valoracion_text) ? narr.valoracion_text : _valVerdict(base.valLabel)),
     moatFactors: _moatFactorBreakdown(info, base.moat, (base.moat_bullets||[]).concat(bio||[])),
     insiders: _summarizeInsiders(insRaw),
+    earningsReaction: eqr || null,     // null → la sección no se pinta (sin placeholders)
   });
   try { Object.assign(a, await _pvxExtras(ticker, info)); } catch(e){}
   return a;
@@ -22078,8 +22250,8 @@ const _WEEKLY_LIMIT = 0.15;            // tope del CHATBOT
 // disparaba en BACKGROUND (prewarm automático al cargar la página / hover en eventos) sin que
 // el usuario abriera nada — sin este tope podía crecer sin límite en una sola sesión.
 const _INTEL_WEEKLY_LIMIT = 0.50;
-const _BUCKETS = ['photo','chat','outlook','news','rebalanceo','intel'];
-const _BUCKET_LABEL = { photo:'📷 Fotos', chat:'💬 Chat', outlook:'🗓️ Outlook', news:'📰 News', rebalanceo:'⚖️ Rebal', intel:'🔎 Intel' };
+const _BUCKETS = ['photo','chat','outlook','news','rebalanceo','intel','earnings_reaction'];
+const _BUCKET_LABEL = { photo:'📷 Fotos', chat:'💬 Chat', outlook:'🗓️ Outlook', news:'📰 News', rebalanceo:'⚖️ Rebal', intel:'🔎 Intel', earnings_reaction:'📊 Resultados' };
 const _lsKeyFor = b => (b==='photo' ? 'photo_week_cost' : b==='chat' ? 'chat_week_cost' : 'apicost_week_'+b);
 const _tok = {}; _BUCKETS.forEach(b => { _tok[b] = {in:0,out:0,calls:0}; });
 
@@ -24185,7 +24357,7 @@ function aiPortImportData(data){
     // DRIP: la foto del broker puede indicar "Reinvest"/"DRIP" por posición. true/false explícito;
     // si no se ve (null/undefined) → default activado (se resuelve en aiPortAddRow con !== false).
     const reinvest = (p.reinvest_dividends === true) ? true : (p.reinvest_dividends === false ? false : undefined);
-    return { ticker: p.ticker, shares, price, mv, cb, dayChgPct, reinvest,
+    return { ticker: p.ticker, type: p.type, shares, price, mv, cb, dayChgPct, reinvest,
              needsReview: !!p._needsReview, reasons: p._reviewReasons || [], confidence: _aiNum(p.confidence) };
   });
 
@@ -24207,7 +24379,9 @@ function aiPortImportData(data){
   // 3) Pinta las filas ya normalizadas/reconciliadas/validadas. Las filas con needs_review
   //    o confianza baja se resaltan para que el usuario las revise ANTES de aplicar.
   norm.forEach(p => {
-    aiPortAddRow({ ticker: p.ticker, shares: p.shares ?? '', price: p.price != null ? +p.price.toFixed(4) : '', cost_basis: p.cb != null ? +p.cb.toFixed(2) : '', day: p.dayChgPct ?? '', reinvest: p.reinvest,
+    // FIX 5 (cont.) — `type` se perdía aquí: aiPortAddRow caía a _aiIsETF(ticker) y la clasificación
+    // real que trae el broker (et/mf/oef/cef/crypto) nunca llegaba a la fila ni a HOLDINGS.
+    aiPortAddRow({ ticker: p.ticker, type: p.type, shares: p.shares ?? '', price: p.price != null ? +p.price.toFixed(4) : '', cost_basis: p.cb != null ? +p.cb.toFixed(2) : '', day: p.dayChgPct ?? '', reinvest: p.reinvest,
       needsReview: p.needsReview, reasons: p.reasons, confidence: p.confidence });
   });
   aiPortRecalc();
@@ -26860,9 +27034,15 @@ document.addEventListener('DOMContentLoaded', function(){
     // per-account to surface data ASAP). Keep polling up to ~14 min: 6 s for the first
     // 4 min, then 12 s. If it STILL hasn't landed, stop the loop and tell the user they
     // can retry manually — never leave a silent, frozen spinner.
-    var _syncTries=0, _SYNC_MAX=100, _syncToasted=false;
+    var _syncTries=0, _SYNC_MAX=100, _syncToasted=false, _authTries=0;
     function go(){ if(!window.sbClient){ return setTimeout(go, 400); }
       snapRefresh({silent:true}).then(function(j){
+        // FIX 12c — stCall exige sesión. Si el usuario acaba de registrarse o iniciar sesión EN ESTA
+        // MISMA carga, el primer refresh rechaza, el catch devuelve null y el loop moría sin
+        // reagendarse: broker ya conectado, pero "Conecta tu broker" y cero posiciones hasta
+        // recargar (en iOS/Capacitor no hay recarga natural). Ahora reintenta.
+        if(j==null){ if(_authTries++ < 10) setTimeout(go, 2000); return; }
+        _authTries=0;
         if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
         if(returned && j && j.connected && j.syncing && !_syncToasted){
           _syncToasted=true; toast('Conectado. Importando tus posiciones desde el broker… puede tardar unos minutos.');
@@ -26873,6 +27053,23 @@ document.addEventListener('DOMContentLoaded', function(){
         }
       }); }
     go();
+    // FIX 15 — No existía ningún refresco periódico: los comentarios hablaban de un "poll cada 2
+    // min" que no estaba en el código. Los precios sí se refrescaban (en vivo), pero una compra o
+    // venta hecha en el broker no aparecía hasta recargar la app. SnapTrade sirve de su caché → sin
+    // cargo. Nada corre con la app en segundo plano.
+    var _lastAuto = Date.now();
+    function _autoRefresh(){
+      if(document.hidden) return;
+      if(_state!=='connected' && _state!=='syncing') return;
+      _lastAuto = Date.now();
+      snapRefresh({silent:true});
+    }
+    setInterval(_autoRefresh, 20*60*1000);
+    document.addEventListener('visibilitychange', function(){
+      if(document.hidden) return;
+      if(Date.now() - _lastAuto < 10*60*1000) return;   // volver a la app tras >10 min → refresca
+      _autoRefresh();
+    });
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _boot); else _boot();
 })();

@@ -22613,9 +22613,14 @@ function aiPortAddRow(p){
   const _tip = (reasons.join(' · ') + (lowConf && p.confidence!=null ? ` · confianza ${p.confidence.toFixed(2)}` : '')).replace(/"/g,'&quot;') || 'Revisar: lectura dudosa';
   const warnIco = flag ? '<span class="ai-row-warn" title="'+_tip+'" style="color:#d99a00;font-weight:800;margin-right:5px;cursor:help">⚠</span>' : '';
   const reinvOn = (p.reinvest !== false);   // default: reinvertir dividendos activado
+  // FIX 5 (cont.) — El selector solo ofrecía Stock/ETF, así que un 'fund'/'crypto'/'bond' que sí
+  // clasificó snapMapHoldings volvía a colapsar a 'stock' al leer la fila. Se amplían las opciones.
+  const _TY_OPTS = [['stock','Stock'],['etf','ETF'],['fund','Fondo'],['crypto','Cripto'],['bond','Bono']];
+  const _tySel  = _TY_OPTS.some(o => o[0] === type) ? type : 'stock';
+  const _tyHtml = _TY_OPTS.map(o => '<option value="'+o[0]+'"'+(o[0]===_tySel?' selected':'')+'>'+o[1]+'</option>').join('');
   tr.innerHTML =
     '<td style="padding-left:14px;white-space:nowrap">'+warnIco+'<input class="pe-inp ai-t" style="min-width:70px" value="'+ticker+'" placeholder="NVDA" oninput="this.value=this.value.toUpperCase();aiPortRecalc()"></td>' +
-    '<td><select class="pe-sel ai-ty" onchange="aiPortRecalc()"><option value="stock"'+(type!=='etf'?' selected':'')+'>Stock</option><option value="etf"'+(type==='etf'?' selected':'')+'>ETF</option></select></td>' +
+    '<td><select class="pe-sel ai-ty" onchange="aiPortRecalc()">'+_tyHtml+'</select></td>' +
     '<td><input class="pe-inp ai-q" type="number" step="0.0001" style="min-width:80px" value="'+(p.shares??'')+'" oninput="aiPortRecalc()"></td>' +
     '<td><input class="pe-inp ai-p" type="number" step="0.01" style="min-width:80px" value="'+(p.price??'')+'" oninput="aiPortRecalc()"></td>' +
     '<td><input class="pe-inp ai-c" type="number" step="0.01" style="min-width:80px" value="'+(p.cost_basis??'')+'" oninput="aiPortRecalc()"></td>' +
@@ -22652,6 +22657,19 @@ function _aiReadPeriodOverrides(){
     if (v != null) map[k] = v;
   });
   return map;
+}
+
+// FIX 8 — Qué overrides de período usa aiPortApply, según la ruta.
+// Foto/manual: los inputs del editor (comportamiento de siempre).
+// Broker: SOLO lo que trajo data.period_changes. Releer el DOM aquí era lo que resucitaba los %
+// de una importación por foto vieja en CADA sync del broker — _brokerClearSeed limpiaba las
+// variables JS, pero los inputs seguían llenos y las volvían a llenar doce líneas después.
+function _aiPeriodOverridesForApply(){
+  if (window._BROKER_APPLYING) {
+    const pc = window._BROKER_PERIOD_CHANGES;
+    return (pc && typeof pc === 'object') ? Object.assign({}, pc) : {};
+  }
+  return _aiReadPeriodOverrides();
 }
 
 function aiPortRecalc(){
@@ -24002,8 +24020,22 @@ function aiPortImportData(data){
     const pc = data.period_changes;
     const map = { '1M':'aiChg1M', '3M':'aiChg3M', '6M':'aiChg6M', '1Y':'aiChg1Y', '3Y':'aiChg3Y' };
     Object.keys(map).forEach(k => { const v = _aiNum(pc[k]); if (v != null) { const el = document.getElementById(map[k]); if (el) el.value = v; } });
-    const ytd = _aiNum(pc['YTD']); if (ytd != null) { const el = document.getElementById('aiYearChg'); if (el) el.value = ytd; }
+    // FIX 10 — El YTD iba a #aiYearChg, que _aiReadPeriodOverrides NUNCA lee (lee #aiChgYTD) y que
+    // además aiPortRecalc interpreta como DÓLARES, no como %. El destino correcto es #aiChgYTD.
+    const ytd = _aiNum(pc['YTD']); if (ytd != null) { const el = document.getElementById('aiChgYTD'); if (el) el.value = ytd; }
   }
+  // FIX 8 — La ruta del broker NO puede releer los inputs del editor (son de la importación por
+  // foto: un % viejo resucita en cada sync). Dejamos el mapa CRUDO aquí para que aiPortApply lo use
+  // tal cual. Se reescribe SIEMPRE — también a null — para que un sync sin períodos no herede los
+  // de una importación anterior.
+  try {
+    window._BROKER_PERIOD_CHANGES = null;
+    if (data.period_changes && typeof data.period_changes === 'object') {
+      const _o = {};
+      ['1M','3M','6M','1Y','2Y','3Y','YTD'].forEach(k => { const v = _aiNum(data.period_changes[k]); if (v != null) _o[k] = v; });
+      if (Object.keys(_o).length) window._BROKER_PERIOD_CHANGES = _o;
+    }
+  } catch(e) {}
 
   // ── GRÁFICA ── Orden correcto: 1) escala del eje Y, 2) sanear+anclar la línea contra esa escala.
   // 1) Escala del eje Y EXCLUSIVAMENTE de la foto (chart_y_axis) → precios reales de la cuadrícula.
@@ -24075,7 +24107,11 @@ function aiPortImportData(data){
   // totales + tabla de holdings) como "summary" y eso DESCARTABA las posiciones reales
   // que sí transcribió. Regla correcta: si hay posiciones, se renderizan siempre — el
   // page_type no manda. Un screenshot solo-totales trae positions=[] → sigue siendo summary.
-  const isSummary = positions.length === 0;
+  // FIX 11 — Por la ruta del BROKER (conexión establecida, sin sync en curso y sin romper),
+  // positions:[] es un dato LEGÍTIMO: liquidaste todo o solo queda efectivo. Conservar las
+  // posiciones anteriores dejaba holdings fantasma actualizándose en vivo para siempre. La
+  // heurística de "resumen" sigue intacta para la importación por foto, donde [] = no se leyó nada.
+  const isSummary = positions.length === 0 && !window._BROKER_EMPTY_OK;
 
   // Página de RESUMEN/TOTAL → solo totales, conserva las posiciones actuales intactas
   if (isSummary) { aiPortRecalc(); return; }
@@ -24124,7 +24160,7 @@ function aiPortImportData(data){
     // DRIP: la foto del broker puede indicar "Reinvest"/"DRIP" por posición. true/false explícito;
     // si no se ve (null/undefined) → default activado (se resuelve en aiPortAddRow con !== false).
     const reinvest = (p.reinvest_dividends === true) ? true : (p.reinvest_dividends === false ? false : undefined);
-    return { ticker: p.ticker, shares, price, mv, cb, dayChgPct, reinvest,
+    return { ticker: p.ticker, type: p.type, shares, price, mv, cb, dayChgPct, reinvest,
              needsReview: !!p._needsReview, reasons: p._reviewReasons || [], confidence: _aiNum(p.confidence) };
   });
 
@@ -24146,7 +24182,9 @@ function aiPortImportData(data){
   // 3) Pinta las filas ya normalizadas/reconciliadas/validadas. Las filas con needs_review
   //    o confianza baja se resaltan para que el usuario las revise ANTES de aplicar.
   norm.forEach(p => {
-    aiPortAddRow({ ticker: p.ticker, shares: p.shares ?? '', price: p.price != null ? +p.price.toFixed(4) : '', cost_basis: p.cb != null ? +p.cb.toFixed(2) : '', day: p.dayChgPct ?? '', reinvest: p.reinvest,
+    // FIX 5 (cont.) — `type` se perdía aquí: aiPortAddRow caía a _aiIsETF(ticker) y la clasificación
+    // real que trae el broker (et/mf/oef/cef/crypto) nunca llegaba a la fila ni a HOLDINGS.
+    aiPortAddRow({ ticker: p.ticker, type: p.type, shares: p.shares ?? '', price: p.price != null ? +p.price.toFixed(4) : '', cost_basis: p.cb != null ? +p.cb.toFixed(2) : '', day: p.dayChgPct ?? '', reinvest: p.reinvest,
       needsReview: p.needsReview, reasons: p.reasons, confidence: p.confidence });
   });
   aiPortRecalc();
@@ -24293,7 +24331,8 @@ async function aiPortApply(){
   } catch(e) { console.warn('backfill precios import:', e); }
 
   // Validar que el total override cuadre con las posiciones antes de aplicar.
-  const _rows0 = _aiReadRows().filter(p => p.ticker && p.qty > 0 && p.price > 0);
+  // FIX 6: qty !== 0 (no > 0) — un short (units negativas de IBKR/Tastytrade) es una posición real.
+  const _rows0 = _aiReadRows().filter(p => p.ticker && p.qty !== 0 && p.price > 0);
   if (_rows0.length > 0) {
     const _totOv0 = _aiNum(document.getElementById('aiTotValOverride').value);
     const _cash0  = _aiNum(document.getElementById('aiCash').value) || 0;
@@ -24304,19 +24343,28 @@ async function aiPortApply(){
       const _diff0 = Math.abs(_totOv0 - _calc0);
       const _pct0  = _diff0 / _calc0 * 100;
       if (_pct0 > 2) {
-        const msg = _L(
-          'El Valor Total de la IA (' + usd(_totOv0) + ') difiere ' + _pct0.toFixed(1) + '% del calculado (' + usd(_calc0) + ').\n\nElige Aceptar para usar el total CALCULADO (recomendado), o Cancelar para mantener el de la IA.',
-          'The AI Total Value (' + usd(_totOv0) + ') differs by ' + _pct0.toFixed(1) + '% from the calculated one (' + usd(_calc0) + ').\n\nChoose OK to use the CALCULATED total (recommended), or Cancel to keep the AI one.'
-        );
-        if (confirm(msg)) {
-          document.getElementById('aiTotValOverride').value = +_calc0.toFixed(2);
-          aiPortRecalc();
+        // FIX 7 — NUNCA un confirm() nativo cuando esto lo dispara el sync del broker: el usuario
+        // abría la app y recibía un modal del sistema, hablando de "el Valor Total de la IA",
+        // encima de un portafolio a medio pintar. En la ruta broker el total del broker MANDA y el
+        // descuadre solo se registra en consola (suele venir de opciones o de multi-divisa).
+        if (window._BROKER_APPLYING) {
+          console.warn('[snaptrade] descuadre ' + _pct0.toFixed(1) + '%: total broker ' + _totOv0 + ' vs calculado ' + _calc0 + ' — se conserva el del broker.');
+        } else {
+          const msg = _L(
+            'El Valor Total de la IA (' + usd(_totOv0) + ') difiere ' + _pct0.toFixed(1) + '% del calculado (' + usd(_calc0) + ').\n\nElige Aceptar para usar el total CALCULADO (recomendado), o Cancelar para mantener el de la IA.',
+            'The AI Total Value (' + usd(_totOv0) + ') differs by ' + _pct0.toFixed(1) + '% from the calculated one (' + usd(_calc0) + ').\n\nChoose OK to use the CALCULATED total (recommended), or Cancel to keep the AI one.'
+          );
+          if (confirm(msg)) {
+            document.getElementById('aiTotValOverride').value = +_calc0.toFixed(2);
+            aiPortRecalc();
+          }
         }
       }
     }
   }
   const _allRows = _aiReadRows();
-  const rows = _allRows.filter(p => p.ticker && p.qty > 0 && p.price > 0);
+  // FIX 6: qty !== 0 — las posiciones cortas (qty negativa) son reales y ya no se descartan.
+  const rows = _allRows.filter(p => p.ticker && p.qty !== 0 && p.price > 0);
 
   // GUARDA ANTI-BORRADO: si hay filas CON ticker pero ninguna pasó el filtro (precio o
   // cantidad = 0), NO es una "cuenta vacía" — es una extracción/lectura incompleta. Borrar
@@ -24333,15 +24381,18 @@ async function aiPortApply(){
     const cashV = _aiNum(document.getElementById('aiCash').value);
     const mmV   = _aiNum(document.getElementById('aiMM').value) || 0;
     const startBal = (totOv != null && totOv > 0) ? totOv : (cashV != null && cashV > 0 ? cashV : null);
-    if (startBal == null) { showToast('Agrega una posición o un valor total para empezar', 'var(--red)'); return; }
+    // FIX 11 — Ruta broker con la conexión ya establecida: una cartera vacía (0 posiciones y saldo 0)
+    // es un dato REAL y debe vaciar HOLDINGS. Fuera de esa ruta, sigue siendo un error de captura.
+    if (startBal == null && !window._BROKER_EMPTY_OK) { showToast('Agrega una posición o un valor total para empezar', 'var(--red)'); return; }
+    const _bal = startBal || 0;
     HOLDINGS.length = 0;
     CHART_COLORS.length = 0;
     MONEY_MARKET = mmV;
-    CASH = Math.max(0, startBal - mmV);            // todo el saldo queda como efectivo disponible
+    CASH = Math.max(0, _bal - mmV);                // todo el saldo queda como efectivo disponible
     const capv = _aiNum(document.getElementById('aiCapital').value);
-    INITIAL_CAPITAL = (capv != null && capv > 0) ? capv : startBal;
+    INITIAL_CAPITAL = (capv != null && capv > 0) ? capv : _bal;
     TOTAL_OVERRIDE = null;                          // el total se calcula del efectivo + money market
-    PERIOD_CHANGE_OVERRIDE = _aiReadPeriodOverrides();
+    PERIOD_CHANGE_OVERRIDE = _aiPeriodOverridesForApply();   // FIX 8
     try { _OVERRIDE_ASOF = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : _OVERRIDE_ASOF; } catch(e){}
     _OVERRIDE_CAP_NAV = null;   // % importado = a fecha de hoy → re-ancla el aging (rueda desde mañana)
     if (donutChart) { donutChart.destroy(); donutChart = null; }
@@ -24354,8 +24405,11 @@ async function aiPortApply(){
     if (_AI_CHART_APPLIED) { _activateDetectedPeriod(); _AI_CHART_APPLIED = false; }
     const _eb0 = document.getElementById('aiEditorBody');
     if (_eb0 && _eb0.classList.contains('open')) { _eb0.classList.remove('open'); document.getElementById('aiEditorChevron').classList.remove('open'); }
-    showTab('portfolio');
-    showToast('Listo: ' + usd(startBal) + ' disponibles para empezar a tradear', 'var(--green)');
+    // FIX 11 — Silencioso en la ruta broker: sin salto de pestaña ni toast en cada sync.
+    if (!window._BROKER_APPLYING) {
+      showTab('portfolio');
+      showToast('Listo: ' + usd(_bal) + ' disponibles para empezar a tradear', 'var(--green)');
+    }
     return;
   }
 
@@ -24389,7 +24443,7 @@ async function aiPortApply(){
   }
   // Ancla importada emparejada con su cambio del día → el total parte del valor de la foto y sigue moviéndose en vivo.
   _OVERRIDE_DAY_REF = _dayChangeNow();
-  PERIOD_CHANGE_OVERRIDE = _aiReadPeriodOverrides();
+  PERIOD_CHANGE_OVERRIDE = _aiPeriodOverridesForApply();   // FIX 8
   try { _OVERRIDE_ASOF = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : _OVERRIDE_ASOF; } catch(e){}
   _OVERRIDE_CAP_NAV = null;   // % importado = a fecha de hoy → re-ancla el aging (rueda desde mañana)
   if (donutChart) { donutChart.destroy(); donutChart = null; }
@@ -24466,6 +24520,16 @@ function _aiSyncPerfSeries(){
 // serie, sin constantes de fecha hardcodeadas ni duplicadas.
 function _brokerClearSeed(){
   try { if (typeof window !== 'undefined' && window._SEED_CLEARED) return true; } catch(e){}
+  // FIX 9 — Limpiar solo las variables JS NO basta: PERIOD_CHANGE_OVERRIDE se reconstruye
+  // releyendo estos inputs, y aiMM / aiCapital / aiDayChg se releen igual en cada aplicar. Con los
+  // inputs llenos de una importación por foto previa, cada sync del broker resucitaba esos valores
+  // (MM viejo inflando el total, capital obsoleto mintiendo en modo Rendimiento, y un day change
+  // prorrateado a la fuerza sobre todas las posiciones del broker).
+  try {
+    ['aiChg1M','aiChg3M','aiChg6M','aiChg1Y','aiChg3Y','aiChgYTD','aiYearChg','aiMM','aiCapital','aiDayChg']
+      .forEach(function(id){ var el = document.getElementById(id); if (el) el.value = ''; });
+  } catch(e){}
+  try { MONEY_MARKET = 0; } catch(e){}   // el input ya está vacío → nadie lo reescribe; el saldo real llega del broker
   // Serie REAL del broker ya cargada (rehidratada del cache al arrancar, o aplicada por snapHistory)
   // → NO vaciar PERF_MASTER: ya ES la verdad del broker, no la semilla del dueño. Solo marca limpiada
   // para no reintroducir el hueco (era la causa de que la recta de 2 puntos reapareciera en cada carga).
@@ -25575,7 +25639,21 @@ if (document.readyState === 'loading') {
     // privado), la promesa nunca resuelve el .then() de arriba → el overlay "Cargando…" se queda
     // pegado para siempre (boot trap). Fallback seguro: reportar y mostrar login.
   }).catch(function(e){ try{ _pvLogError('boot getSession', e); }catch(_){} try{ showLogin(); }catch(_){} });
-  sb.auth.onAuthStateChange(function(_e, s){ if (s && !session) cloudLoadAndGate(s); else if (!s) showLogin(); });
+  sb.auth.onAuthStateChange(function(_e, s){
+    if (s && !session) cloudLoadAndGate(s); else if (!s) showLogin();
+    // FIX 12b — _boot() corre en DOMContentLoaded y su primer snapRefresh puede rechazar por "sin
+    // sesión" cuando el login/registro ocurre en esta misma carga. No había NADA que resincronizara
+    // al llegar la sesión: el usuario con broker conectado veía "Conecta tu broker" hasta recargar.
+    try {
+      if (s && typeof window.snapRefresh === 'function' && window._snapState !== 'connected') {
+        var _now = Date.now();
+        if (!window._snapAuthRefreshAt || _now - window._snapAuthRefreshAt > 30000) {
+          window._snapAuthRefreshAt = _now;              // TOKEN_REFRESHED dispara seguido: debounce
+          window.snapRefresh({ silent: true });
+        }
+      }
+    } catch(e){}
+  });
 
   window._authSignup = async function(){
     var username = val('suUser');
@@ -25677,8 +25755,16 @@ if (document.readyState === 'loading') {
     try {
       await window.stCall('snaptrade-disconnect', {});
     } catch (e) {
-      try { alert('No pudimos desconectar tu broker. Intenta de nuevo en un momento.'); } catch(_){}
-      return;
+      // FIX 17 — Un usuario que NUNCA conectó un broker no tiene registro en SnapTrade: la función
+      // responde 404 / "not found". Eso no puede bloquear el borrado de la cuenta — es un riesgo
+      // directo con Apple Guideline 5.1.1(v). Solo abortamos ante fallos de red/servidor reales.
+      var _dm = (e && e.message) || '', _ds = (e && e.status) || 0;
+      var _noUser = _ds === 404 || /not ?found|does not exist|no existe|no such user|sin usuario/i.test(_dm);
+      if (!_noUser) {
+        try { alert('No pudimos desconectar tu broker. Intenta de nuevo en un momento.'); } catch(_){}
+        return;
+      }
+      try { console.warn('[snaptrade] disconnect: sin usuario SnapTrade → se continúa con el borrado.', _dm); } catch(_){}
     }
 
     // Cubrir la app (mismo patrón que cerrar sesión) mientras se completa el borrado.
@@ -26257,7 +26343,11 @@ document.addEventListener('DOMContentLoaded', function(){
         headers:{ 'content-type':'application/json', 'apikey':_anon(), 'Authorization':'Bearer '+tok },
         body: JSON.stringify(body||{}) })
       .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
-        if(!r.ok) throw new Error(j.error || ('Error '+r.status)); return j; }); });
+        // FIX 13/17 — El status HTTP viaja en el error. Sin él, quien lo captura tenía que adivinar
+        // con un regex sobre el mensaje (y "status code 4"/"unauthor" matcheaban 401 de Supabase,
+        // pintando "tu conexión con el broker se interrumpió" ante un simple JWT vencido).
+        if(!r.ok){ var _e = new Error(j.error || ('Error '+r.status)); _e.status = r.status; _e.payload = j; throw _e; }
+        return j; }); });
     });
   }
   window.stCall = stCall;
@@ -26315,28 +26405,93 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // ── Map a SnapTrade holdings payload → the `data` shape aiPortImportData expects ──
   function _n(v){ if(v&&typeof v==='object'&&v.amount!=null) v=v.amount; var n=Number(v); return isFinite(n)?n:0; }
+  // FIX 5 — Clasificación de activo. SnapTrade entrega el tipo en `type.code` con códigos CORTOS
+  // (cs, ad, et, mf, oef, cef, crypto, bnd…). El /etf|fund/ anterior no matcheaba ninguno, así que
+  // TODO caía en 'stock' — incluidos SPY, VOO y los fondos mutuos de Schwab.
+  function _snapAssetType(so){
+    var t='';
+    try{ t = String((so && so.type && (so.type.code || so.type.description || so.type)) || (so && so.type_description) || '').toLowerCase().trim(); }catch(e){}
+    if(!t) return 'stock';
+    if(t==='et' || /\betf\b|exchange[ -]?traded/.test(t)) return 'etf';
+    if(t==='mf' || t==='oef' || t==='cef' || /mutual fund|\bfund\b/.test(t)) return 'fund';
+    if(t==='crypto' || /crypto|digital currency/.test(t)) return 'crypto';
+    if(t==='bnd' || /\bbond\b/.test(t)) return 'bond';
+    return 'stock';
+  }
   function snapMapHoldings(holdings){
     var accounts = Array.isArray(holdings)?holdings:((holdings&&holdings.accounts)||[]);
     var cash=0, total=0, positions=[];
+    // FIX 4 — El acumulado de account.balance.total solo es fiable si TODAS las cuentas lo aportan.
+    // En un setup mixto (una cuenta lo expone y otras no) el acumulado es PARCIAL y subvalúa el
+    // portafolio entero — y ese número va directo a TOTAL_OVERRIDE, que manda sobre las posiciones.
+    var _totalAccounts = 0;
+    // FIX 3 — Instrumentación de divisa. SnapTrade devuelve un balance por moneda y el precio en la
+    // moneda del símbolo. No convertimos todavía: registramos qué monedas aparecen para no mostrar
+    // cifras mezcladas (5,000 USD + 5,000 CAD = "10,000") sin saberlo.
+    var _ccys = {};
+    function _ccy(o){ try{ var c=o&&o.currency; c=(c&&(c.code||c))||null; if(c) _ccys[String(c).toUpperCase()]=1; }catch(e){} }
+    // FIX 2 — Las opciones viven en acc.option_positions, FUERA de acc.positions. No se mapean como
+    // filas todavía, pero sí se contabilizan para descontarlas del total del broker: si no, el total
+    // (que sí las incluye) nunca cuadra con la suma de filas y dispara el descuadre del total.
+    var _optValue=0, _optCount=0;
     accounts.forEach(function(acc){
       var bals = acc.balances || acc.balance || [];
-      if(Array.isArray(bals)) bals.forEach(function(b){ cash += _n(b.cash!=null?b.cash:b.amount); });
+      if(Array.isArray(bals)) bals.forEach(function(b){ _ccy(b); cash += _n(b.cash!=null?b.cash:b.amount); });
       var at = acc.account && acc.account.balance && acc.account.balance.total;
-      if(at!=null) total += _n(at);
+      if(at!=null){ total += _n(at); _totalAccounts++; }
       (acc.positions||[]).forEach(function(p){
         var so = (p.symbol && (p.symbol.symbol || p.symbol)) || {};
         var ticker = String(so.symbol || so.raw_symbol || so.ticker || '').toUpperCase();
         if(!ticker) return;
+        _ccy(so);
         var shares = _n(p.units!=null?p.units:p.fractional_units);
         var price  = _n(p.price);
         var avg    = _n(p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
         var mv     = (price&&shares)?price*shares:_n(p.market_value);
-        var isEtf  = /etf|fund/i.test(JSON.stringify(so.type||so.type_description||''));
         positions.push({ ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-                         market_value:mv, day_change_pct:0, type: isEtf?'etf':'stock' });
+                         market_value:mv, day_change_pct:0, type: _snapAssetType(so) });
+      });
+      var opts = acc.option_positions || acc.optionPositions || [];
+      if(Array.isArray(opts)) opts.forEach(function(o){
+        var u  = _n(o.units!=null?o.units:o.fractional_units);
+        var px = _n(o.price);
+        var mv = _n(o.market_value); if(!mv) mv = u*px*100;   // contrato = 100 subyacentes
+        _optValue += mv; _optCount++;
       });
     });
+    // FIX 1 — Agrega por ticker ANTES de entregar a aiPortImportData: ese pipeline (diseñado para
+    // OCR) DESCARTA tickers repetidos, y snapMapHoldings emite una entrada por cuenta. Con AAPL en
+    // brokerage + AAPL en la Roth IRA, o en dos brokers distintos, la segunda se perdía en silencio.
+    positions = (function(rows){
+      var by={}, order=[];
+      rows.forEach(function(p){
+        var a = by[p.ticker];
+        if(!a){ a = by[p.ticker] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:0,
+                                     market_value:0, day_change_pct:0, type:p.type, _costSum:0 };
+                order.push(p.ticker); }
+        a.shares       += p.shares;
+        a.market_value += p.market_value;
+        a._costSum     += (p.avg_cost||0) * (p.shares||0);     // avg_cost ponderado por acciones
+        if(!a.current_price && p.current_price) a.current_price = p.current_price;
+        if(a.type==='stock' && p.type && p.type!=='stock') a.type = p.type;
+      });
+      return order.map(function(k){ var a=by[k]; a.avg_cost = a.shares ? a._costSum/a.shares : 0; delete a._costSum; return a; });
+    })(positions);
+    // FIX 4 (cont.) — acumulado parcial → se descarta y se reconstruye desde cash + Σ market_value.
+    if(_totalAccounts && _totalAccounts < accounts.length){
+      console.warn('[snaptrade] balance.total parcial ('+_totalAccounts+'/'+accounts.length+' cuentas) → se usa cash + Σ market_value');
+      total = 0;
+    }
     if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
+    else if(_optValue) total -= _optValue;   // FIX 2: el total del broker incluye opciones; las filas no.
+    // Instrumentación (FIX 2 / FIX 3): visible en consola y en window para diagnóstico.
+    try{
+      var _cl = Object.keys(_ccys).filter(function(c){ return c && c!=='USD'; });
+      window._SNAP_FX_WARNING   = _cl.length ? _cl : null;
+      window._SNAP_OPTIONS_VALUE = _optValue || 0;
+      if(_cl.length)  console.warn('[snaptrade] monedas NO-USD sin convertir:', _cl.join(', '), '— las cifras pueden estar mezcladas.');
+      if(_optCount)   console.warn('[snaptrade] '+_optCount+' posición(es) de opciones no mapeadas; '+_optValue.toFixed(2)+' descontado del valor de la cuenta.');
+    }catch(e){}
     // Bloque 2.3: si el broker expone rendimiento por período en el payload (algunas cuentas lo
     // traen), léelo → aiPortImportData lo ancla vía _injectPeriodAnchors. Si NO viene, NO se
     // inventa override: se omite → PORTIV_HIST reconstruye el % REAL de cada ventana (Yahoo).
@@ -26366,6 +26521,10 @@ document.addEventListener('DOMContentLoaded', function(){
   function snapRefresh(opts){
     opts=opts||{};
     if(_busy) return Promise.resolve(null); _busy=true; _setRefreshBtn(true);
+    // FIX 14 — Un refresh MANUAL reabre la ventana de reintentos del historial. Si se agotó (la
+    // cuenta tardó más de lo previsto en tener balance history), el usuario se quedaba el resto de
+    // la sesión sin curva del broker, sin forma de reintentar salvo recargar la app.
+    if(!opts.silent){ _snapHistoryTries = 0; _snapHistoryForced = false; }
     return stCall('snaptrade-refresh', {}).then(function(j){
       if(!j || !j.connected){ try{ localStorage.removeItem('pv_broker_connected'); localStorage.removeItem('pv_broker_series'); window._BROKER_HISTORY_PENDING=false; window._BROKER_LIVE=false; }catch(e){} _render('disconnected'); return j; }
       // Inception real del broker (1ª transacción) → la reconstrucción Yahoo NO se proyecta
@@ -26379,18 +26538,25 @@ document.addEventListener('DOMContentLoaded', function(){
       // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
       try{
         var data = snapMapHoldings(j.holdings);
-        if(data.positions.length || data.cash_balance){
+        // FIX 11 — Con la conexión ESTABLECIDA (connected, sin syncing y sin broken) un payload sin
+        // posiciones ni efectivo es un dato real: cartera liquidada. Mientras syncing/broken, un
+        // payload vacío solo significa "aún no llegó" y no se toca nada.
+        var _settled = !!(j.connected && !j.syncing && !j.broken);
+        if(data.positions.length || data.cash_balance || _settled){
           // Bloque 4 (fix): limpia la semilla del dueño SOLO cuando YA hay datos REALES
           // del broker para reemplazarla. Nunca borra a $0.00 con un payload vacío o aún
           // sincronizando — esa era la causa del "portafolio en cero" al conectar.
-          try { if (typeof window._brokerClearSeed==='function') window._brokerClearSeed(); }catch(e){}
+          if(data.positions.length || data.cash_balance){
+            try { if (typeof window._brokerClearSeed==='function') window._brokerClearSeed(); }catch(e){}
+          }
+          try{ window._BROKER_EMPTY_OK = _settled; }catch(e){}
           if(typeof aiPortImportData==='function') aiPortImportData(data);
           // Broker path: aplica en SILENCIO (sin toast "AI Portfolio" ni salto de pestaña en cada
           // poll de 2 min). El estado del broker ya se refleja en _render('connected'). El flag se
           // pone ANTES de aiPortApply() (síncrono → el toast lee el flag) y se limpia justo después.
           if(typeof aiPortApply==='function'){
             try{ window._BROKER_APPLYING=true; }catch(e){}
-            var _apRes; try{ _apRes=aiPortApply(); } finally { try{ window._BROKER_APPLYING=false; }catch(e){} }
+            var _apRes; try{ _apRes=aiPortApply(); } finally { try{ window._BROKER_APPLYING=false; window._BROKER_EMPTY_OK=false; }catch(e){} }
             return Promise.resolve(_apRes)
             // Bloque 2.1: SnapTrade no trae cierre previo → snapMapHoldings deja day_change_pct=0
             // y el badge del día salía $0.00. Tras aplicar, refresca precios en vivo (fetchLivePrices
@@ -26406,6 +26572,7 @@ document.addEventListener('DOMContentLoaded', function(){
           }
         }
       }catch(e){ console.warn('[snaptrade] apply failed', e); }
+      finally { try{ window._BROKER_EMPTY_OK=false; }catch(_e){} }
       return j;
     }).then(function(j){
       if(j && j.connected && j.syncing) _render('syncing');
@@ -26413,22 +26580,54 @@ document.addEventListener('DOMContentLoaded', function(){
       if(j && j.connected && !j.syncing) snapHistory();
       return j;
     }).catch(function(e){
-      var _m=(e&&e.message)||'';
-      console.warn('[snaptrade] refresh:', _m);
+      var _m=(e&&e.message)||'', _st=(e&&e.status)||0;
+      console.warn('[snaptrade] refresh:', _st||'', _m);
+      // FIX 13 — Un 401/403 es el TRANSPORTE (JWT de Supabase recién vencido), no una conexión de
+      // broker rota. Antes "status code 4" matcheaba 400/401/403/404 y "unauthor" matcheaba el
+      // "Unauthorized" de Supabase → un fallo de auth transitorio pintaba el banner rojo de
+      // reconectar. Ahora se refresca la sesión y se reintenta UNA vez (fuera del _busy).
+      if((_st===401 || _st===403) && !opts._retried) return { __authRetry:true };
+      if(_st===401 || _st===403) return null;                 // el reintento tampoco pasó: no es el broker
       // Conexión caída/expirada/no encontrada (p.ej. 410) → banner limpio "reconecta",
       // nunca un toast crudo con el volcado de headers. En refresh manual (no silencioso),
       // aviso corto y limpio.
-      if(/broken/i.test(_m) || /\b410\b|status code 4|not found|does not exist|expired|unauthor|revok/i.test(_m)) _render('broken');
+      if(/broken/i.test(_m) || _st===410 || /\b410\b|not found|does not exist|expired|revok/i.test(_m)) _render('broken');
       else if(!(opts&&opts.silent)) toast('No se pudieron actualizar tus posiciones. Intenta de nuevo.');
       return null;
-    }).finally(function(){ _busy=false; _setRefreshBtn(false); });
+    }).finally(function(){ _busy=false; _setRefreshBtn(false); })
+    .then(function(res){
+      // El reintento va DESPUÉS del finally: así _busy ya está liberado y no hay dos refrescos
+      // solapados aplicando el mismo payload.
+      if(!(res && res.__authRetry)) return res;
+      var _o={}; for(var k in opts) _o[k]=opts[k]; _o._retried=true;
+      var _sb = window.sbClient;
+      var _r = (_sb && _sb.auth && _sb.auth.refreshSession) ? Promise.resolve(_sb.auth.refreshSession()) : Promise.resolve();
+      return _r.then(function(){ return snapRefresh(_o); }).catch(function(){ return null; });
+    });
   }
   window.snapRefresh = snapRefresh;
+
+  // ── FIX 16: Desconectar el broker SIN borrar la cuenta ──
+  function snapDisconnect(){
+    if(!window.confirm('¿Desconectar tu broker?\n\nPortiv dejará de importar tus posiciones automáticamente. Tu cuenta y tu portafolio actual se conservan, y puedes volver a conectarlo cuando quieras.')) return;
+    return stCall('snaptrade-disconnect', {}).then(function(){
+      try{ localStorage.removeItem('pv_broker_connected'); localStorage.removeItem('pv_broker_series'); localStorage.removeItem('pv_broker_inception'); }catch(e){}
+      try{ window._BROKER_HISTORY_PENDING=false; window._BROKER_LIVE=false; window._BROKER_INCEPTION=null; }catch(e){}
+      _render('disconnected');
+      toast('Broker desconectado.');
+    }).catch(function(e){ toast((e&&e.message)||'No se pudo desconectar. Intenta de nuevo.'); });
+  }
+  window.snapDisconnect = snapDisconnect;
 
   // ── History → feed the EXISTING premium perf chart via _applyValueChart ──
   var _snapHistoryFirstApply = false;   // Bloque 2.4: solo la 1ª vez fijamos el período; luego respetamos la selección del usuario
   var _snapHistoryForced = false;       // 1ª carga de la sesión: fuerza historial FRESCO (ignora caché diaria)
   var _snapHistoryTries = 0;   // reintentos mientras el historial del broker aún no está disponible
+  // FIX 14 — 6 × 12 s = ~72 s de ventana, mientras el poll de _boot tolera hasta ~14 min de sync
+  // inicial. Si el balance history tardaba algo más que las holdings, el usuario se quedaba toda la
+  // sesión con "el historial estará disponible próximamente". Ahora ~5 min con backoff.
+  var _SNAP_HIST_MAX = 14;
+  function _snapHistDelay(){ return Math.min(30000, 12000 + Math.max(0,_snapHistoryTries-1)*3000); }
   function snapHistory(){
     // Cuenta recién conectada: getAccountBalanceHistory / accountId pueden tardar unos segundos en
     // estar listos. MIENTRAS no llegue la serie REAL densa mantenemos _BROKER_HISTORY_PENDING=true
@@ -26451,13 +26650,13 @@ document.addEventListener('DOMContentLoaded', function(){
         }catch(e){ _pvLogError('snaptrade apply history', e); }
         _perfNote('');
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
-      } else if(_snapHistoryTries < 6){
+      } else if(_snapHistoryTries < _SNAP_HIST_MAX){
         // Aún no disponible → reintenta con force; MANTÉN pending + skeleton (nunca reconstrucción).
         _snapHistoryTries++;
         try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=true; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(true); }catch(e){}
         _snapHistoryForced=false;                       // fuerza serie fresca en el reintento
-        setTimeout(snapHistory, 12000);
+        setTimeout(snapHistory, _snapHistDelay());
       } else {
         // Reintentos agotados: el historial realmente no está disponible aún. Libera pending (última
         // red de seguridad) y avisa; sin bucle infinito.
@@ -26467,12 +26666,12 @@ document.addEventListener('DOMContentLoaded', function(){
         _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
       }
     }).catch(function(){
-      if(_snapHistoryTries < 6){
+      if(_snapHistoryTries < _SNAP_HIST_MAX){
         _snapHistoryTries++;
         try{ window._BROKER_HISTORY_PENDING=true; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(true); }catch(e){}
         _snapHistoryForced=false;
-        setTimeout(snapHistory, 12000);
+        setTimeout(snapHistory, _snapHistDelay());
       } else {
         try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
@@ -26526,6 +26725,7 @@ document.addEventListener('DOMContentLoaded', function(){
 
   function _render(state, meta){
     _state = state; _lastMeta = meta||{};
+    try{ window._snapState = state; }catch(e){}   // FIX 12: lo lee onAuthStateChange para no re-sincronizar de más
     // Aviso de sincronización en el portafolio: visible solo mientras el broker importa.
     _setSyncBanner(state==='syncing');
     // Settings card
@@ -26552,7 +26752,17 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-status"><span class="snap-dot ok"></span>Sincronizado con tu broker</div>'
         +'<div class="snap-row"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Actualizar</button>'
         +'<button class="snap-btn secondary" data-snap-connect data-snap-label="Reconectar / agregar">Reconectar</button></div>'
+        // FIX 16 — Hasta ahora la ÚNICA vía a snaptrade-disconnect era eliminar la cuenta entera:
+        // quien se iba sin borrarla seguía costando ~$1/mes de conexión activa.
+        +'<div class="snap-row" style="margin-top:8px"><button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar broker</button></div>'
         +'<div class="snap-note">🔒 Los datos se actualizan una vez al día (sincronización incluida de tu broker).</div>';
+    }
+    // FIX 12a — Estado neutro mientras el primer refresh autenticado resuelve. Antes _boot pintaba
+    // 'disconnected' de entrada y TODO usuario ya conectado veía el CTA "Conecta tu broker" durante
+    // el primer segundo.
+    if(state==='unknown'){
+      return '<h3>Broker</h3><p class="snap-sub">Comprobando el estado de tu conexión…</p>'
+        +'<div class="snap-status"><span class="snap-spin" style="border-color:rgba(4,22,44,.25);border-top-color:#04162c"></span>Un momento…</div>';
     }
     if(state==='syncing'){
       return '<h3>Sincronizando tu cuenta…</h3>'
@@ -26594,7 +26804,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Boot: detect return from portal, then reflect connection state ──
   function _boot(){
     _injectPortfolioUI();
-    _render('disconnected'); // default CTA until the authed refresh resolves
+    _render('unknown');   // FIX 12a: estado neutro (sin CTA) hasta que el refresh autenticado resuelva
     var pending=false; try{ pending = localStorage.getItem('pv_snap_pending')==='1'; }catch(e){}
     var url = location.search || '';
     var returned = pending || /snaptrade|success|brokerage/i.test(url);
@@ -26607,9 +26817,15 @@ document.addEventListener('DOMContentLoaded', function(){
     // per-account to surface data ASAP). Keep polling up to ~14 min: 6 s for the first
     // 4 min, then 12 s. If it STILL hasn't landed, stop the loop and tell the user they
     // can retry manually — never leave a silent, frozen spinner.
-    var _syncTries=0, _SYNC_MAX=100, _syncToasted=false;
+    var _syncTries=0, _SYNC_MAX=100, _syncToasted=false, _authTries=0;
     function go(){ if(!window.sbClient){ return setTimeout(go, 400); }
       snapRefresh({silent:true}).then(function(j){
+        // FIX 12c — stCall exige sesión. Si el usuario acaba de registrarse o iniciar sesión EN ESTA
+        // MISMA carga, el primer refresh rechaza, el catch devuelve null y el loop moría sin
+        // reagendarse: broker ya conectado, pero "Conecta tu broker" y cero posiciones hasta
+        // recargar (en iOS/Capacitor no hay recarga natural). Ahora reintenta.
+        if(j==null){ if(_authTries++ < 10) setTimeout(go, 2000); return; }
+        _authTries=0;
         if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
         if(returned && j && j.connected && j.syncing && !_syncToasted){
           _syncToasted=true; toast('Conectado. Importando tus posiciones desde el broker… puede tardar unos minutos.');
@@ -26620,6 +26836,23 @@ document.addEventListener('DOMContentLoaded', function(){
         }
       }); }
     go();
+    // FIX 15 — No existía ningún refresco periódico: los comentarios hablaban de un "poll cada 2
+    // min" que no estaba en el código. Los precios sí se refrescaban (en vivo), pero una compra o
+    // venta hecha en el broker no aparecía hasta recargar la app. SnapTrade sirve de su caché → sin
+    // cargo. Nada corre con la app en segundo plano.
+    var _lastAuto = Date.now();
+    function _autoRefresh(){
+      if(document.hidden) return;
+      if(_state!=='connected' && _state!=='syncing') return;
+      _lastAuto = Date.now();
+      snapRefresh({silent:true});
+    }
+    setInterval(_autoRefresh, 20*60*1000);
+    document.addEventListener('visibilitychange', function(){
+      if(document.hidden) return;
+      if(Date.now() - _lastAuto < 10*60*1000) return;   // volver a la app tras >10 min → refresca
+      _autoRefresh();
+    });
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _boot); else _boot();
 })();
