@@ -524,6 +524,10 @@
   .r-analysis p { margin-bottom:12px; }
   .r-analysis p:last-child { margin-bottom:0; }
   .r-chart-wrap { position:relative; height:220px; }
+  .r-chart-empty { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:6px; text-align:center; padding:0 24px; }
+  .r-chart-empty .t { font-size:14px; font-weight:700; color:var(--text2,#5b6472); }
+  .r-chart-empty .s { font-size:12px; line-height:1.5; color:var(--text3,#8A92A3); max-width:420px; }
 
   .period-pills { display:flex; gap:4px; flex-wrap:wrap; }
   .ppill { padding:4px 13px; border-radius: 999px; border:1px solid var(--border2); background:none; color:var(--text3); font:500 11px var(--font); cursor:pointer; transition:all .12s; }
@@ -3949,6 +3953,9 @@
       .pvx .px-eqr-note{background:var(--px-card);border:1px solid var(--px-line);border-radius:12px;padding:14px 16px}
       .pvx .px-eqr-note .kk{font-size:11px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;color:var(--px-muted);margin-bottom:7px;font-family:'Poppins','Manrope',sans-serif}
       .pvx .px-eqr-note .vv{font-size:13.5px;line-height:1.6;color:var(--px-ink-soft)}
+      .pvx .px-eqr-sum{margin:16px 0 20px;background:var(--px-track);border:1px solid var(--px-line);border-left:3px solid var(--px-green-text);border-radius:12px;padding:14px 16px}
+      .pvx .px-eqr-sum .kk{font-size:11px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;color:var(--px-muted);margin-bottom:7px;font-family:'Poppins','Manrope',sans-serif}
+      .pvx .px-eqr-sum p{margin:0;font-size:14px;line-height:1.7;color:var(--px-ink-soft)}
       .pvx .px-eqr-read{margin-top:14px;padding-top:14px;border-top:1px dashed #e4e7ec;font-size:14px;line-height:1.65;color:var(--px-ink-soft)}
       /* consensus */
       .pvx .px-cons-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
@@ -15036,36 +15043,14 @@ let _researchDayChgPct = 0;   // today's %-change (from info)
 let _currentResearchInfo = null;
 
 function _buildChartFromReturns(info, period) {
-  const px = info?.regularMarketPrice || 0;
-  if (!px) return { timestamps: [], closes: [] };
-  const retMap = {
-    '1d':  { ret: info?.regularMarketChangePercent || 0,        days: 1,    pts: 14 },
-    '5d':  { ret: (info?.regularMarketChangePercent||0) * 1.8,  days: 7,    pts: 20 },
-    '1mo': { ret: info?.mtdReturn,  days: 30,   pts: 30 },
-    '3mo': { ret: info?.qtdReturn,  days: 91,   pts: 45 },
-    '6mo': { ret: info?.htdReturn,  days: 182,  pts: 60 },
-    '1y':  { ret: info?.ytdReturn,  days: 365,  pts: 52 },
-    '5y':  { ret: info?.fytdReturn ?? (info?.ytdReturn != null ? info.ytdReturn * 4 : null) ?? 30, days: 1825, pts: 60 },
-  };
-  const cfg = retMap[period] || retMap['1mo'];
-  if (cfg.ret == null) return { timestamps: [], closes: [] };
-  const startPx = px / (1 + cfg.ret / 100);
-  const nowTs = Math.floor(Date.now() / 1000);
-  const startTs = nowTs - cfg.days * 86400;
-  const beta = Math.min(info?.beta || 1, 3);
-  const timestamps = [], closes = [];
-  for (let i = 0; i < cfg.pts; i++) {
-    const frac = i / (cfg.pts - 1);
-    let price = startPx + (px - startPx) * frac;
-    const wave = startPx * 0.012 * beta
-               * Math.sin(frac * Math.PI * 4.2 + 1.1)
-               * (1 - Math.pow(2 * frac - 1, 8));
-    price = Math.max(price + wave, 0.01);
-    timestamps.push(Math.floor(startTs + frac * cfg.days * 86400));
-    closes.push(Math.round(price * 100) / 100);
-  }
-  closes[closes.length - 1] = px;
-  return { timestamps, closes };
+  // RETIRADO — generaba una curva sintética (una sinusoide sembrada con el retorno del período
+  // y el beta) que se pintaba en "Precio Histórico" como si fuera el movimiento real de la
+  // acción. Con Yahoo fuera (App Review 5C) y /stock/candle de Finnhub en 403, era lo ÚNICO
+  // que se veía: ejes de $306–$322 para una acción con rango 52W de $187–$408.
+  // Ahora devuelve vacío siempre: sin velas con licencia, la tarjeta muestra su estado honesto
+  // en vez de un precio inventado. Reactivar velas = darle plan a /stock/candle (o integrar
+  // otro proveedor licenciado); el resto del flujo ya las consume tal cual.
+  return { timestamps: [], closes: [], _synthetic: true };
 }
 let _researchCurPrice  = 0;   // current market price
 
@@ -15348,7 +15333,7 @@ async function _fetchResearch(ticker) {
       const _hcl = (_h && _h.closes) ? _h.closes.filter(c => c != null) : [];
       if (_hcl.length >= 2) { _initChart = _h; _initReal = true; _chartLSset(ticker, '1mo', _h); }
     } catch(e){}
-    if (!_initChart) _initChart = Object.assign(_buildChartFromReturns(info, '1mo'), { _synthetic: true });
+    if (!_initChart) _initChart = { timestamps: [], closes: [], _synthetic: true };
     researchChartCache['1mo'] = _initChart;
     // Precalienta el RESTO de períodos (1D/1W/3M/6M/1A/YTD/5A) ANTES de abrir, para que
     // cambiar de fecha sea instantáneo y con data real. Cap de 3s → no penaliza la espera si
@@ -17053,32 +17038,6 @@ function _renderQualAnalysis(a, el){
       <div class="px-hint">La columna del centro traduce cada múltiplo a lenguaje simple: si "23x" es barato, justo o premium <em>para esta empresa</em>.</div></div>`;
   }
 
-  // 5b) REACCIÓN AL ÚLTIMO REPORTE (IA, 1× global por earnings). Si no hay objeto → nada:
-  //     la sección desaparece entera, sin placeholders ni "cargando" colgado.
-  const eqr = a.earningsReaction;
-  if (eqr && ((eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length) || eqr.lectura_mercado)) {
-    const _fd = (() => { try { const d = new Date(String(eqr.reportDate) + 'T12:00:00');
-      return isNaN(d) ? '' : d.toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }); } catch(e){ return ''; } })();
-    const _num = v => (typeof v === 'number') ? '$' + v.toFixed(2) : null;
-    let chips = '';
-    if (eqr.periodLabel) chips += `<span class="px-eqr-chip">${esc(eqr.periodLabel)}</span>`;
-    if (_fd)             chips += `<span class="px-eqr-chip">Reportado el ${esc(_fd)}</span>`;
-    if (typeof eqr.beat === 'boolean' && _num(eqr.epsActual)) {
-      chips += `<span class="px-eqr-chip ${eqr.beat ? 'beat' : 'miss'}">EPS ${_num(eqr.epsActual)} vs. ${_num(eqr.epsEstimate) || '—'} · ${eqr.beat ? 'superó' : 'falló'}</span>`;
-    }
-    const _col = (title, cls, icon, arr) => (Array.isArray(arr) && arr.length)
-      ? `<div class="${cls}"><h4>${icon} ${title}</h4><ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
-    const _cols = _col('QUÉ SALIÓ BIEN','pros','✓',eqr.bueno) + _col('QUÉ SALIÓ MAL','risks','⚠',eqr.malo);
-    const _note = (kk, vv) => vv ? `<div class="px-eqr-note"><div class="kk">${kk}</div><div class="vv">${esc(vv)}</div></div>` : '';
-    const _notes = _note('Lo que más creció', eqr.mas_crecio) + _note('Lo más destacado', eqr.destacado);
-    h += `<div class="px-card"><h2 class="px-sec-title">Reacción a resultados</h2>
-      <p class="px-intro">Qué dejó el último reporte y cómo lo está leyendo el mercado.</p>
-      ${chips ? `<div class="px-eqr-head" style="margin-top:14px">${chips}</div>` : ''}
-      ${_cols ? `<div class="px-pr">${_cols}</div>` : ''}
-      ${_notes ? `<div class="px-eqr-notes">${_notes}</div>` : ''}
-      ${eqr.lectura_mercado ? `<div class="px-eqr-read">${esc(eqr.lectura_mercado)}</div>` : ''}
-      <div class="px-hint">Cifras de EPS tomadas del reporte oficial; la lectura de mercado se genera una sola vez por trimestre y se comparte entre usuarios.</div></div>`;
-  }
 
   // 6) SALUD financiera (márgenes + FCF + apalancamiento + dividendo). Solo filas con dato.
   if (a.health && a.health.length){
@@ -17108,6 +17067,39 @@ function _renderQualAnalysis(a, el){
         ${inner}
         <div class="px-hint">${esc(rg.note)}</div></div>`;
     }
+  }
+
+  // 7c) REACCIÓN AL ÚLTIMO REPORTE (IA, 1× global por earnings). Va DESPUÉS de "Crecimiento
+  //     reciente": primero la tendencia de trimestres, luego la lectura del último.
+  //     Si no hay objeto → nada: la sección desaparece entera, sin placeholders.
+  const eqr = a.earningsReaction;
+  if (eqr && (eqr.resumen || (eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length) || eqr.lectura_mercado)) {
+    const _fd = (() => { try { const d = new Date(String(eqr.reportDate) + 'T12:00:00');
+      return isNaN(d) ? '' : d.toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }); } catch(e){ return ''; } })();
+    const _num = v => (typeof v === 'number') ? '$' + v.toFixed(2) : null;
+    let chips = '';
+    if (eqr.periodLabel) chips += `<span class="px-eqr-chip">${esc(eqr.periodLabel)}</span>`;
+    if (_fd)             chips += `<span class="px-eqr-chip">Reportado el ${esc(_fd)}</span>`;
+    if (typeof eqr.beat === 'boolean' && _num(eqr.epsActual)) {
+      // Sorpresa < 0.5% → "en línea" (evita marcar como fallo un EPS que redondea igual al estimado).
+      const _sp  = (typeof eqr.surprisePct === 'number') ? eqr.surprisePct : null;
+      const _st  = (_sp != null && Math.abs(_sp) < 0.5) ? 'line' : (eqr.beat ? 'beat' : 'miss');
+      const _lbl = _st === 'line' ? 'en línea' : (_st === 'beat' ? 'superó' : 'falló');
+      chips += `<span class="px-eqr-chip ${_st === 'line' ? '' : _st}">EPS ${_num(eqr.epsActual)} vs. ${_num(eqr.epsEstimate) || '—'} · ${_lbl}</span>`;
+    }
+    const _col = (title, cls, icon, arr) => (Array.isArray(arr) && arr.length)
+      ? `<div class="${cls}"><h4>${icon} ${title}</h4><ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+    const _cols = _col('QUÉ SALIÓ BIEN','pros','✓',eqr.bueno) + _col('QUÉ SALIÓ MAL','risks','⚠',eqr.malo);
+    const _note = (kk, vv) => vv ? `<div class="px-eqr-note"><div class="kk">${kk}</div><div class="vv">${esc(vv)}</div></div>` : '';
+    const _notes = _note('Lo que más creció', eqr.mas_crecio) + _note('Lo más destacado', eqr.destacado);
+    h += `<div class="px-card"><h2 class="px-sec-title">Reacción a resultados</h2>
+      <p class="px-intro">Qué dejó el último reporte y cómo lo está leyendo el mercado.</p>
+      ${chips ? `<div class="px-eqr-head" style="margin-top:14px">${chips}</div>` : ''}
+      ${eqr.resumen ? `<div class="px-eqr-sum"><div class="kk">EN RESUMEN</div><p>${esc(eqr.resumen)}</p></div>` : ''}
+      ${_cols ? `<div class="px-pr">${_cols}</div>` : ''}
+      ${_notes ? `<div class="px-eqr-notes">${_notes}</div>` : ''}
+      ${eqr.lectura_mercado ? `<div class="px-eqr-read">${esc(eqr.lectura_mercado)}</div>` : ''}
+      <div class="px-hint">Cifras de EPS tomadas del reporte oficial; la lectura de mercado se genera una sola vez por trimestre y se comparte entre usuarios.</div></div>`;
   }
 
   // 7b) COMPARACIÓN CON COMPETIDORES — slot vacío; se llena LAZY en 2º plano (peers reales),
@@ -17330,7 +17322,7 @@ async function _getStockNarrative(ticker, info, facts){
 // Costo por generación ≈ $0.047 (2 búsquedas + ~8K input + ~900-1.300 output, Sonnet 5).
 // No se pagan búsquedas para reconstruir cifras que YA tenemos: el EPS real vs. estimado
 // va en el prompt desde EPS._cache.
-const _EQR_LS = 'portiv_earnings_reaction_v1';
+const _EQR_LS = 'portiv_earnings_reaction_v2';   // v2: schema con 'resumen' → purga los objetos viejos sin él
 function _eqrLoad(){ try { return JSON.parse(localStorage.getItem(_EQR_LS)||'{}')||{}; } catch(e){ return {}; } }
 // Sin TTL por tiempo: la única invalidación válida es un reporte NUEVO (eKey distinta).
 function _eqrGetLocal(tk, eKey){
@@ -17378,7 +17370,8 @@ async function _fetchEarningsReactionAI(ticker, info, epsFacts){
   if (!_canGen) return null;
   const name = (info && (info.longName || info.shortName)) || ticker;
   const SYSTEM = `Eres un analista de inversiones. Respondes SOLO con un objeto JSON válido en ESPAÑOL, sin markdown ni texto extra. Esquema exacto:
-{"bueno":["2-3 puntos concretos con cifras"],"malo":["2-3 puntos concretos con cifras"],"mas_crecio":"1-2 frases: qué segmento o línea de negocio creció más y por qué","destacado":"1-2 frases: el dato o anuncio más relevante de la llamada de resultados","lectura_mercado":"2-3 frases: cómo se está leyendo el reporte, corto y mediano plazo"}
+{"resumen":"3-5 frases: qué pasó en el trimestre y qué fue lo más destacado","bueno":["2-3 puntos concretos con cifras"],"malo":["2-3 puntos concretos con cifras"],"mas_crecio":"1-2 frases: qué segmento o línea de negocio creció más y por qué","destacado":"1-2 frases: el dato o anuncio más relevante de la llamada de resultados","lectura_mercado":"2-3 frases: cómo se está leyendo el reporte, corto y mediano plazo"}
+"resumen" es OBLIGATORIO y va primero: un párrafo corrido, en lenguaje simple, que cuente qué reportó la empresa (ingresos y EPS con cifras), qué fue lo más destacado del trimestre, qué dijo la guía hacia adelante y cómo reaccionó la acción. Debe entenderse solo, sin leer el resto del JSON. Los demás campos SIEMPRE que tengas el dato: "mas_crecio" y "destacado" no los dejes vacíos si la información existe.
 Usa las cifras que ya te doy; no las contradigas. Si un dato no lo encuentras, omítelo en vez de inventarlo. Sé concreto y directo, sin relleno ni disclaimers legales.`;
   const _n = v => (typeof v === 'number') ? v.toFixed(2) : '—';
   const prompt = `Empresa: ${name} (${ticker})
@@ -17391,7 +17384,7 @@ Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a
     const res = await _aiFetch({
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({
-        model: AI_MODELS.narrative, max_tokens: 900, system: SYSTEM, prompt,
+        model: AI_MODELS.narrative, max_tokens: 1100, system: SYSTEM, prompt,
         allowed_tools: ['WebSearch','WebFetch'],
         tools: [{ type:'web_search_20250305', name:'web_search', max_uses:2 }]
       })
@@ -17403,8 +17396,9 @@ Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a
     if (!obj || typeof obj !== 'object') return null;
     obj.bueno = Array.isArray(obj.bueno) ? obj.bueno.filter(Boolean).slice(0,3) : [];
     obj.malo  = Array.isArray(obj.malo)  ? obj.malo.filter(Boolean).slice(0,3)  : [];
+    obj.resumen = (typeof obj.resumen === 'string') ? obj.resumen.trim() : '';
     // Sin contenido útil → null (la sección se oculta entera, sin placeholders).
-    if (!obj.bueno.length && !obj.malo.length && !obj.lectura_mercado) return null;
+    if (!obj.resumen && !obj.bueno.length && !obj.malo.length && !obj.lectura_mercado) return null;
     return obj;
   } catch(e){ return null; }
 }
@@ -17417,16 +17411,16 @@ async function _getEarningsReaction(ticker, info){
   const local = _eqrGetLocal(ticker, eKey);
   if (local) {
     // Ya la tenemos para ESTE reporte → cero API. Asegura de paso que esté en la nube.
-    try { _sharedAISet('eqr:v1:' + ticker, Object.assign({ earningsKey: eKey }, local)); } catch(e){}
+    try { _sharedAISet('eqr:v2:' + ticker, Object.assign({ earningsKey: eKey }, local)); } catch(e){}
     return local;
   }
   if (_eqrInflight.has(ticker)) return _eqrInflight.get(ticker);
   const _p = (async () => {
-    const key = 'eqr:v1:' + ticker;
+    const key = 'eqr:v2:' + ticker;
     // 1) NUBE: si otro usuario ya la generó para este mismo reporte, $0 para todos los demás.
     try {
       const cloud = await _sharedAIGet(key, null);
-      if (cloud && typeof cloud === 'object' && cloud.earningsKey === eKey &&
+      if (cloud && typeof cloud === 'object' && cloud.earningsKey === eKey && cloud.resumen &&
           ((cloud.bueno && cloud.bueno.length) || cloud.lectura_mercado)) {
         _eqrSaveLocal(ticker, cloud, eKey);
         return cloud;
@@ -17442,6 +17436,7 @@ async function _getEarningsReaction(ticker, info){
     obj.epsActual   = facts.actual;
     obj.epsEstimate = facts.estimate;
     obj.beat        = facts.beat;
+    obj.surprisePct = (typeof facts.surprisePct === 'number') ? facts.surprisePct : null;
     obj.periodLabel = facts.label || '';
     _eqrSaveLocal(ticker, obj, eKey);
     try { _sharedAISet(key, obj); } catch(e){}          // …y queda gratis para el resto.
@@ -18315,18 +18310,39 @@ ${S(12, '5 PUNTOS CLAVE + PUNTUACIÓN FINAL', 'var(--text3)', `
 }
 
 
+// Sin fuente de velas con licencia, la tarjeta lo dice en vez de inventar una curva.
+function _chartEmptyState(on){
+  const wrap = document.querySelector('.r-chart-wrap');
+  if (!wrap) return;
+  const cv = document.getElementById('researchChartCanvas');
+  let ph = document.getElementById('r-chart-empty');
+  if (!on) { if (ph) ph.remove(); if (cv) cv.style.visibility = ''; return; }
+  if (researchChartInst) { try { researchChartInst.destroy(); } catch(e){} researchChartInst = null; }
+  if (cv) cv.style.visibility = 'hidden';
+  if (ph) return;
+  ph = document.createElement('div');
+  ph.id = 'r-chart-empty';
+  ph.className = 'r-chart-empty';
+  ph.innerHTML = '<div class="t">Sin histórico de precios para este período</div>'
+               + '<div class="s">Nuestro proveedor de datos no entrega la serie de precios. Preferimos no mostrar nada antes que dibujar una curva estimada.</div>';
+  wrap.appendChild(ph);
+}
+
 function _drawResearchChart(chartData, isPos) {
   if (!chartData) return;
-  // FIX: mientras el histórico REAL llega, se muestra una curva estimada (para no dejar el
-  // panel vacío) — pero SIEMPRE con esta etiqueta visible, para que nunca se confunda con el
-  // movimiento real de la acción. Desaparece en cuanto _drawResearchChart recibe data real.
-  { const _est = document.getElementById('r-chart-estimated'); if (_est) _est.style.display = chartData._synthetic ? 'inline' : 'none'; }
+  // REGLA DURA: a este lienzo SOLO entran precios reales. La curva "estimada" se retiró.
+  { const _est = document.getElementById('r-chart-estimated'); if (_est) _est.style.display = 'none'; }
+  if (chartData._synthetic) { _chartEmptyState(true); return; }
   const ts = chartData.timestamps || [];
   const cl = chartData.closes || [];
   let pts = ts.map((t,i) => ({
     x: new Date(t * 1000).toLocaleDateString('en-US', {month:'short', day:'numeric'}),
     y: cl[i]
   })).filter(p => p.y != null && isFinite(p.y));
+
+  // Menos de 2 cierres reales → no hay nada honesto que dibujar. Estado vacío, nunca relleno.
+  if (pts.length < 2) { _chartEmptyState(true); return; }
+  _chartEmptyState(false);
 
   // (Expansión intradía desactivada — estilo Apple Stocks con cierres diarios limpios)
 
@@ -18516,22 +18532,15 @@ async function setResearchPeriod(range, btn) {
     }
   }
 
-  // 2. Mostrar simulación instantánea mientras carga la real
-  if (_currentResearchInfo) {
-    const sim = _buildChartFromReturns(_currentResearchInfo, range);
-    const scl = (sim.closes || []).filter(c => c != null);
-    if (scl.length >= 2) {
-      _drawResearchChart(sim, scl[scl.length-1] >= scl[0]);
-      _applyChartPeriodChange(sim, range);
-    }
-  }
+  // 2. Sin curva de relleno: la "simulación instantánea" se retiró (eran precios inventados).
+  //    Mientras baja la serie real, la tarjeta queda con lo último real o en estado vacío.
 
   // 3. Cargar datos reales en segundo plano
   try {
     const raw = await apiCall({action:'history', ticker:currentResearchTicker, period:range}, 8000)
       .catch(() => ({timestamps:[], closes:[]}));
     const _real = raw?.closes?.filter(c => c != null).length >= 2;
-    const d = _real ? raw : Object.assign(_buildChartFromReturns(_currentResearchInfo, range), { _synthetic: true });
+    const d = _real ? raw : { timestamps: [], closes: [], _synthetic: true };
     // FIX: solo se cachea (para reuso instantáneo) si es data REAL. La sintética nunca se
     // guarda como definitiva → el próximo click a este período vuelve a intentar la real.
     if (_real) { researchChartCache[range] = d; _chartLSset(currentResearchTicker, range, d); }
