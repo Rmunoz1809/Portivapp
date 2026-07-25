@@ -431,7 +431,7 @@
   }
   .period-btn:hover { color: var(--text2); }
   .period-btn.active { border-color: var(--border2); color: var(--text); background: var(--surface2); }
-  .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 300px; }
+  .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 420px; }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -456,7 +456,7 @@
     .perf-metrics { gap: 14px; }
     .period-btns { gap: 3px; flex-wrap: wrap; }
     .period-btn { padding: 4px 10px; font-size: 11px; }
-    .perf-chart-wrap { min-height: 220px; }
+    .perf-chart-wrap { min-height: 300px; }
     /* Table — scroll horizontal en mobile */
     .ptable-wrap { -webkit-overflow-scrolling: touch; }
     thead th, tbody td { padding-left: 6px; padding-right: 6px; font-size: 12px; }
@@ -2351,7 +2351,7 @@
     .holdings-head { padding: 14px 14px 10px; }
     .holdings-title { font-size: 16px; }
     .news-thumb { width: 60px; height: 44px; }
-    .perf-chart-wrap { height: 300px; }
+    .perf-chart-wrap { height: 340px; }
   }
   /* ── SEARCH OVERLAY ── */
   .search-overlay {
@@ -4872,6 +4872,17 @@ window.PADDLE_PRICES = {
       <span class="material-symbols-outlined" style="font-size:18px">logout</span>
       <span>Cerrar sesión</span>
     </button>
+
+    <!-- Apple 5.1.1(v): borrado de cuenta accesible desde la UI. Reusa _acctDeleteAccount()
+         (doble confirmacion + desconexion del broker + delete-account server-side). -->
+    <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border,#e0e3ea)">
+      <div style="font:600 13px var(--font,system-ui);color:var(--st-primary,#0F1D35);margin-bottom:4px">Eliminar mi cuenta</div>
+      <div style="font:400 12px var(--font,system-ui);color:#8a93a3;line-height:1.5;margin-bottom:10px">Borra de forma permanente tu cuenta, tu portafolio y la conexión con tu broker. No se puede deshacer.</div>
+      <button class="set-btn-danger" id="setDeleteAcctBtn" onclick="_acctDeleteAccount()" aria-label="Eliminar mi cuenta de forma permanente" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:46px;border-radius:12px;border:1px solid #dc2626;background:transparent;color:#dc2626;font:600 14px var(--font,system-ui);cursor:pointer;transition:background .15s">
+        <span class="material-symbols-outlined" style="font-size:18px" aria-hidden="true">delete_forever</span>
+        <span>Eliminar mi cuenta</span>
+      </button>
+    </div>
   </div>
 
   <!-- ── B) PREFERENCIAS ── -->
@@ -12309,6 +12320,7 @@ const PORTIV_CHART = {
     perfChart.data.datasets[0].data=ds.values;
     perfChart.data.datasets[0].borderColor=col;
     if(ctx)perfChart.data.datasets[0].backgroundColor=typeof _perfFill==='function'?_perfFill(ctx,isPos):col+'33';
+    try{ if(typeof _applyChartYBounds==='function') _applyChartYBounds(); }catch(e){}
     perfChart.update('periodChange');
     // Actualiza encabezado de cambio
     if(typeof _updateSummaryCardFor==='function')_updateSummaryCardFor(p,ds.change,ds.changePct);
@@ -12963,9 +12975,11 @@ function _applyPerfYScale(){
   if (!(step>0)) step = (PERF_YSCALE.max - PERF_YSCALE.min) / 4 || 500;
   const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
   if (!y) return;
-  // SOLO aplica el stepSize (el espaciado de líneas del broker, ej. $500).
-  // El min/max lo controla EXCLUSIVAMENTE _applyChartYBounds() → escala siempre consistente.
-  if (y.ticks) y.ticks.stepSize = step;
+  // El eje ahora se auto-encaja al período dibujado (_applyChartYBounds), que también
+  // elige su propio stepSize "redondo". El step del broker ya NO se fuerza: en 1M/1W
+  // aplastaba la línea (step de $500 sobre un rango de $150). Se conserva solo como
+  // fallback si aún no hay serie pintada.
+  try { _applyChartYBounds(); } catch(e) { if (y.ticks) y.ticks.stepSize = step; }
   perfChart.update('none');
 }
 
@@ -13250,12 +13264,58 @@ function _calcGlobalYBounds(extraVals) {
   _chartYFrozen = { min: _chartYMin, max: _chartYMax };
   _chartYRefit = false;
 }
+// ── Auto-encaje del eje Y al período DIBUJADO ────────────────────────────────
+// Cada período (1D/1M/3M/ALL) calcula su propia banda ajustada a SUS datos, así la
+// línea llena la misma fracción vertical en todos → todas las gráficas se ven "del
+// mismo tamaño". El piso de amplitud (minSpan) mantiene la proporción vs el precio:
+// un día plano NO se convierte en montaña.
+function _niceStep(span, target) {
+  const raw = span / (target || 4);
+  if (!(raw > 0)) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  const m = n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 3 ? 3 : n <= 5 ? 5 : 10;
+  return m * mag;
+}
+function _fitYToSeries(vals) {
+  const v = (Array.isArray(vals) ? vals : []).filter(x => typeof x === 'number' && isFinite(x) && x > 0);
+  if (v.length < 2) return null;
+  let dmin = Math.min(...v), dmax = Math.max(...v);
+  const mid = (dmin + dmax) / 2;
+  if (!(mid > 0)) return null;
+  // Amplitud mínima = 0.4% del valor → un día casi sin movimiento no se amplifica
+  // hasta parecer una montaña (proporción vs el precio comparable entre períodos).
+  const minSpan = mid * 0.004;
+  if (dmax - dmin < minSpan) { dmin = mid - minSpan / 2; dmax = mid + minSpan / 2; }
+  const span = dmax - dmin;
+  const step = _niceStep(span, 4);
+  let lo = Math.floor(dmin / step) * step;
+  let hi = Math.ceil(dmax / step) * step;
+  // Aire mínimo del 12% arriba/abajo → la línea nunca toca los bordes.
+  const need = span * 0.12;
+  if (dmin - lo < need) lo = dmin - need;
+  if (hi - dmax < need) hi = dmax + need;
+  lo = Math.max(0, lo);
+  if (!(hi > lo)) return null;
+  return { min: lo, max: hi, step };
+}
 function _applyChartYBounds() {
   if (!perfChart) return;
-  if (_chartYMin === null) _calcGlobalYBounds();  // calcular si aún no tenemos los bounds
-  if (_chartYMin === null) return;                // si no hay datos aún, no hacer nada
-  perfChart.options.scales.y.min = _chartYMin;
-  perfChart.options.scales.y.max = _chartYMax;
+  const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+  if (!y) return;
+  // 1) Preferido: encajar a la serie que está pintada ahora mismo.
+  const fit = _fitYToSeries(perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0]
+    ? perfChart.data.datasets[0].data : null);
+  if (fit) {
+    y.min = fit.min; y.max = fit.max;
+    if (y.ticks) y.ticks.stepSize = fit.step;
+    return;
+  }
+  // 2) Fallback (aún sin datos pintados): banda global del historial.
+  if (_chartYMin === null) _calcGlobalYBounds();
+  if (_chartYMin === null) return;
+  y.min = _chartYMin;
+  y.max = _chartYMax;
 }
 // Recalcula y actualiza los bounds (llamar tras importar nueva gráfica o recibir precios en vivo).
 function _refreshChartYBounds() {
