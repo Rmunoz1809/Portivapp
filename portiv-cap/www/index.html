@@ -19497,8 +19497,8 @@ function renderWatchlist() {
             <span class="wl2-footer-market" style="color:${mktOpen?'#0A7A52':'#9aa6b8'}">${mktOpen?'NYSE/NASDAQ Open':'Market Closed'}</span>
           </div>
           <div class="wl2-footer-right">
-            <span class="wl2-footer-link">Privacy Policy</span>
-            <span class="wl2-footer-link">Terms of Service</span>
+            <a class="wl2-footer-link" href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
+            <a class="wl2-footer-link" href="terminos.html" target="_blank" rel="noopener">Términos</a>
           </div>
         </div>
       </div>`;
@@ -19960,6 +19960,9 @@ function _renderWeeklyOutlook(data) {
   const wrap = document.getElementById('weekOutlookContent');
   if (!wrap) return;
 
+  // Resultados de la semana ANTES de contar eventos: un seed que solo traía macro vacía no puede
+  // mandar la vista al estado "sin eventos" si hay empresas reportando.
+  try { _earnEnsureFresh(1); _earnInjectSeed(data, 1); } catch(e){}
   // ── Sin eventos reales → mensaje limpio (no mostrar texto conversacional de la IA) ──
   const _totalEvents = (data && Array.isArray(data.days))
     ? data.days.reduce((s,d)=>s + ((d.events||[]).length), 0) : 0;
@@ -20323,6 +20326,11 @@ function _renderNextWeekOutlook(){
     }
     // seed listo (embebido o fallback) → continúa al render normal abajo.
   }
+  // GARANTÍA: quién reporta la próxima semana entra AQUÍ, en cada pintado, venga el seed de
+  // donde venga (nube, IA, caché vieja, fallback). Si el caché de resultados venció se refresca
+  // en background y este mismo render se repite con los datos nuevos.
+  try { _earnEnsureFresh(1); } catch(e){}
+  try { if (_earnInjectSeed(seed, 1)) { try { localStorage.setItem('weekly_outlook_' + _weekKey(1), JSON.stringify(seed)); } catch(e){} } } catch(e){}
   const lbl = document.getElementById('nextWeekLabel'); if (lbl) lbl.textContent = seed.week || '';
   const top = _weekVolLevel(seed);
   const vb = document.getElementById('nextWeekVolBadge');
@@ -20463,6 +20471,151 @@ async function _ensureOutlookEarnings(){
   try{ if(typeof _renderNextWeekOutlook === 'function') _renderNextWeekOutlook(); }catch(e){}
 }
 window._ensureOutlookEarnings = _ensureOutlookEarnings;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  GARANTÍA DURA — QUIÉN REPORTA ESTA SEMANA SIEMPRE SALE EN NOTICIAS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Por qué existe esto: la inyección anterior (_ensureOutlookEarnings) corría UNA sola vez
+// tras la carga. Si después llegaba el seed de la nube, o el outlook IA se regeneraba, o el
+// render corría antes de que respondiera el calendario, el cuadro quedaba SOLO con macro y
+// los resultados desaparecían hasta el siguiente día. Era una carrera, y por eso volvía.
+// Regla nueva: los resultados se inyectan EN CADA RENDER desde un caché propio en
+// localStorage (refresco por TTL, independiente del seed/nube/IA). Ningún orden de llegada
+// puede volver a dejar la semana sin "X reporta resultados".
+const _EARN_TTL_MS       = 6 * 60 * 60 * 1000;   // caché con resultados → refresco cada 6 h
+const _EARN_TTL_EMPTY_MS = 30 * 60 * 1000;       // caché vacío (o fallo) → reintenta en 30 min
+const _earnInflight = {};
+
+function _earnKey(off){ return 'portiv_earn_' + (typeof _weekKey === 'function' ? _weekKey(off) : ('off' + off)); }
+function _earnISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function _earnRead(off){
+  try { const o = JSON.parse(localStorage.getItem(_earnKey(off)) || 'null');
+        return (o && Array.isArray(o.rows)) ? o : null; } catch(e){ return null; }
+}
+// Trae el calendario de resultados (Finnhub, licenciado) de la semana `off` y lo cachea.
+async function _earnFetchWeek(off){
+  const mon = _mondayOf(off), fri = new Date(mon); fri.setDate(mon.getDate() + 4);
+  const d = await apiCall({ action:'earningsCalendar', from:_earnISO(mon), to:_earnISO(fri) }, 12000);
+  const held  = new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).map(h => h.ticker));
+  const watch = (typeof _BIGCAP_EARNINGS_WATCH !== 'undefined') ? _BIGCAP_EARNINGS_WATCH : new Set();
+  const rows = ((d && d.earnings) || [])
+    .filter(e => e && e.symbol && e.date && (held.has(e.symbol) || watch.has(e.symbol)))
+    .map(e => ({ date:e.date, symbol:e.symbol, hour:e.hour || '', eps:e.epsEstimate, rev:e.revenueEstimate }));
+  try { localStorage.setItem(_earnKey(off), JSON.stringify({ ts: Date.now(), rows })); } catch(e){}
+  return rows;
+}
+// Refresca en background si el caché venció; al llegar datos NUEVOS repinta ambos cuadros.
+function _earnEnsureFresh(off){
+  try {
+    const c = _earnRead(off);
+    const ttl = (c && c.rows.length) ? _EARN_TTL_MS : _EARN_TTL_EMPTY_MS;
+    if (c && (Date.now() - (c.ts || 0)) < ttl) return;
+    if (_earnInflight[off]) return;
+    _earnInflight[off] = true;
+    const before = JSON.stringify((c && c.rows) || []);
+    _earnFetchWeek(off).then(rows => {
+      _earnInflight[off] = false;
+      if (JSON.stringify(rows || []) === before) return;      // sin cambios → no repintar
+      try { if (typeof _renderNextWeekOutlook === 'function') _renderNextWeekOutlook(); } catch(e){}
+      try { if (typeof PORTIV_NEWS !== 'undefined') PORTIV_NEWS.renderThisWeek(); } catch(e){}
+    }).catch(() => {
+      _earnInflight[off] = false;
+      // Fallo de red: marca el intento para no martillar la API en cada render.
+      try { localStorage.setItem(_earnKey(off), JSON.stringify({ ts: Date.now(), rows: (c && c.rows) || [] })); } catch(e){}
+    });
+  } catch(e){}
+}
+// Eventos de resultados de la semana `off`, ya redactados (mismo texto que usa el outlook).
+function _earnEventsFor(off){
+  const c = _earnRead(off);
+  if (!c || !c.rows.length) return [];
+  const mon = _mondayOf(off);
+  return c.rows.map(r => {
+    const d  = new Date(r.date + 'T12:00:00');
+    const di = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - mon) / 86400000) + 1;
+    const dayIdx = (di >= 1 && di <= 5) ? di : 5;
+    const h = (typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).find(x => x.ticker === r.symbol);
+    const when = r.hour === 'bmo' ? 'antes de la apertura' : r.hour === 'amc' ? 'tras el cierre' : '';
+    return {
+      symbol: r.symbol, dayIdx, iso: _earnISO(d),
+      title: `${r.symbol} reporta resultados${when ? ' (' + when + ')' : ''}`,
+      time:  r.hour === 'bmo' ? 'Antes de apertura' : r.hour === 'amc' ? 'Tras el cierre' : 'Hora por confirmar',
+      description: [
+        `${h ? h.name : r.symbol} (${r.symbol}) publica resultados trimestrales ${when || 'esta semana'}.`,
+        (r.eps != null ? `EPS estimado: ${r.eps}.` : ''),
+        (r.rev != null ? `Ingresos estimados: $${(r.rev/1e9).toFixed(1)}B.` : ''),
+        (h ? 'Es una de tus posiciones: el impacto es directo en el portafolio; lo que más mueve la acción es la guía hacia adelante, no las cifras del trimestre.'
+           : 'Por su peso en el mercado puede mover al sector y al índice aunque no la tengas en cartera; lo que más pesa es la guía hacia adelante.')
+      ].filter(Boolean).join(' '),
+    };
+  });
+}
+// ¿Ese día ya trae el reporte de ese símbolo? (evita duplicar lo que ya inyectó otro camino)
+function _earnHasSym(events, sym){
+  return (events || []).some(x => x && x.category === 'earnings' &&
+    new RegExp('^' + sym + '\\b').test(String(x.title || '')));
+}
+// Inyecta en el shape del SEED del outlook (days[].events con description/tickers_affected).
+function _earnInjectSeed(seed, off){
+  if (!seed || !Array.isArray(seed.days) || !seed.days.length) return false;
+  const evs = _earnEventsFor(off);
+  if (!evs.length) return false;
+  const mon = _mondayOf(off);
+  let changed = false;
+  seed.days.forEach((day, i) => {
+    if (!day) return;
+    // Índice real del día: por la fecha del seed ("Miércoles, 29 de julio"); si no se puede
+    // leer, por posición (los seeds siempre vienen en orden lunes→viernes).
+    let di = null;
+    try {
+      const dd = (typeof _parseSpanishDate === 'function') ? _parseSpanishDate(day.date || day.short || '') : null;
+      if (dd) { const k = Math.round((new Date(dd.getFullYear(), dd.getMonth(), dd.getDate()) - mon) / 86400000) + 1; if (k >= 1 && k <= 5) di = k; }
+    } catch(e){}
+    if (di == null) di = Math.min(i + 1, 5);
+    if (!Array.isArray(day.events)) day.events = [];
+    evs.filter(e => e.dayIdx === di).forEach(e => {
+      if (_earnHasSym(day.events, e.symbol)) return;
+      day.events.push({
+        title: e.title, description: e.description, time: e.time,
+        impact: 'high', category: 'earnings', tickers_affected: [e.symbol], _date: e.iso,
+      });
+      changed = true;
+    });
+  });
+  return changed;
+}
+// Inyecta en el MODELO canónico de PORTIV_NEWS (days[].events con summary/tickers/id).
+function _earnInjectModel(model, off){
+  if (!model) return false;
+  const evs = _earnEventsFor(off);
+  if (!evs.length) return false;
+  if (!Array.isArray(model.days)) model.days = [];
+  const mon = _mondayOf(off);
+  const byIdx = {}; model.days.forEach(d => { if (d && d.dayIdx) byIdx[d.dayIdx] = d; });
+  let changed = false;
+  evs.forEach(e => {
+    let day = byIdx[e.dayIdx];
+    if (!day) {
+      const d = new Date(mon); d.setDate(mon.getDate() + (e.dayIdx - 1));
+      day = { dayIdx: e.dayIdx, date: e.iso, events: [] };
+      byIdx[e.dayIdx] = day; model.days.push(day); changed = true;
+    }
+    if (!Array.isArray(day.events)) day.events = [];
+    if (_earnHasSym(day.events, e.symbol)) return;
+    day.events.push({
+      id: 'earn_' + off + '_' + e.symbol + '_' + e.iso,
+      title: e.title, summary: e.description, impact: 'high', category: 'earnings',
+      tickers: [e.symbol], heldTickers: (typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).some(h => h.ticker === e.symbol) ? [e.symbol] : [],
+      time: e.time, source: 'Finnhub Earnings Calendar', dayIdx: e.dayIdx, score: 999,
+    });
+    changed = true;
+  });
+  model.days.sort((a, b) => (a.dayIdx || 9) - (b.dayIdx || 9));
+  return changed;
+}
+window._earnInjectSeed = _earnInjectSeed;
+window._earnInjectModel = _earnInjectModel;
+window._earnEnsureFresh = _earnEnsureFresh;
 
 // Construye un objeto de outlook ESTRUCTURADO (días/eventos) desde fuentes gratuitas
 // (calendario macro determinista + earnings ya cargados en NEXT_WEEK_NEWS). Devuelve el
@@ -23768,6 +23921,10 @@ const PORTIV_NEWS = {
     // Aunque no haya NINGÚN evento aún, NO cortamos aquí: el render de abajo pinta SIEMPRE los 5
     // días hábiles (con nota de sesión en los vacíos) → la semana completa nunca desaparece.
     if (!Array.isArray(model.days)) model.days = [];
+    // GARANTÍA: los resultados de la semana se inyectan en CADA render (no dependen de que el
+    // build haya corrido antes ni de qué caché ganó la carrera) → "X reporta resultados" siempre.
+    try { _earnEnsureFresh(0); } catch(e){}
+    try { if (_earnInjectModel(model, 0)) { try { this.save(0, model); } catch(e){} } } catch(e){}
     // Badge de volatilidad junto al título (idéntico al Outlook): volatilidad REAL de la
     // semana (no "alta" por un solo evento) — ver _weekVolLevel.
     const _topImp = _weekVolLevel(model);
