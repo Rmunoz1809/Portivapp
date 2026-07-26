@@ -431,7 +431,7 @@
   }
   .period-btn:hover { color: var(--text2); }
   .period-btn.active { border-color: var(--border2); color: var(--text); background: var(--surface2); }
-  .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 400px; }
+  .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 300px; }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -456,7 +456,7 @@
     .perf-metrics { gap: 14px; }
     .period-btns { gap: 3px; flex-wrap: wrap; }
     .period-btn { padding: 4px 10px; font-size: 11px; }
-    .perf-chart-wrap { min-height: 300px; }
+    .perf-chart-wrap { min-height: 240px; }
     /* Table — scroll horizontal en mobile */
     .ptable-wrap { -webkit-overflow-scrolling: touch; }
     thead th, tbody td { padding-left: 6px; padding-right: 6px; font-size: 12px; }
@@ -2351,7 +2351,7 @@
     .holdings-head { padding: 14px 14px 10px; }
     .holdings-title { font-size: 16px; }
     .news-thumb { width: 60px; height: 44px; }
-    .perf-chart-wrap { height: 340px; }
+    .perf-chart-wrap { height: 250px; }
   }
   /* ── SEARCH OVERLAY ── */
   .search-overlay {
@@ -3953,9 +3953,13 @@
       .pvx .px-eqr-note{background:var(--px-card);border:1px solid var(--px-line);border-radius:12px;padding:14px 16px}
       .pvx .px-eqr-note .kk{font-size:11px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;color:var(--px-muted);margin-bottom:7px;font-family:'Poppins','Manrope',sans-serif}
       .pvx .px-eqr-note .vv{font-size:13.5px;line-height:1.6;color:var(--px-ink-soft)}
-      .pvx .px-eqr-sum{margin:16px 0 20px;background:var(--px-track);border:1px solid var(--px-line);border-left:3px solid var(--px-green-text);border-radius:12px;padding:14px 16px}
-      .pvx .px-eqr-sum .kk{font-size:11px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;color:var(--px-muted);margin-bottom:7px;font-family:'Poppins','Manrope',sans-serif}
-      .pvx .px-eqr-sum p{margin:0;font-size:14px;line-height:1.7;color:var(--px-ink-soft)}
+      /* Resumen sin caja ni fondo: es el cuerpo del análisis, no una nota al margen. */
+      .pvx .px-eqr-sum{margin:16px 0 20px}
+      .pvx .px-eqr-sum p{margin:0;font-size:14.5px;line-height:1.75;color:var(--px-ink-soft)}
+      /* Bloques de texto largo (mercado / qué esperar): título propio, sin caja. */
+      .pvx .px-eqr-blk{margin-top:20px;padding-top:16px;border-top:1px solid var(--px-line)}
+      .pvx .px-eqr-blk h4{margin:0 0 8px;font-size:12px;letter-spacing:.5px;text-transform:uppercase;font-weight:800;color:var(--px-ink-soft);font-family:'Poppins','Manrope',sans-serif}
+      .pvx .px-eqr-blk p{margin:0;font-size:14px;line-height:1.7;color:var(--px-ink-soft)}
       .pvx .px-eqr-read{margin-top:14px;padding-top:14px;border-top:1px dashed #e4e7ec;font-size:14px;line-height:1.65;color:var(--px-ink-soft)}
       /* consensus */
       .pvx .px-cons-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
@@ -13240,10 +13244,11 @@ function _calcGlobalYBounds(extraVals) {
   _chartYRefit = false;
 }
 // ── Auto-encaje del eje Y al período DIBUJADO ────────────────────────────────
-// Cada período (1D/1M/3M/ALL) calcula su propia banda ajustada a SUS datos, así la
-// línea llena la misma fracción vertical en todos → todas las gráficas se ven "del
-// mismo tamaño". El piso de amplitud (minSpan) mantiene la proporción vs el precio:
-// un día plano NO se convierte en montaña.
+// Cada período (1D/1M/3M/ALL) calcula su propia banda, pero la fracción de alto que
+// ocupa la curva NO es fija: se deriva de cuánto se movió el portafolio EN DINERO
+// dentro de esa ventana. Un día plano ocupa poco y se lee plano; un tramo de +10%
+// llena la caja. Así la gráfica se comporta como la de un broker y no convierte
+// ruido de centavos en montañas.
 function _niceStep(span, target) {
   const raw = span / (target || 4);
   if (!(raw > 0)) return 1;
@@ -13262,26 +13267,38 @@ function _fmtAxisY(v, step) {
   if (a >= 1000) return '$' + (v / 1000).toFixed(s >= 1000 ? 0 : s >= 100 ? 1 : 2) + 'K';
   return '$' + v.toFixed(s >= 10 ? 0 : s >= 1 ? 1 : 2);
 }
+// Fracción del alto que puede ocupar la curva, en función del movimiento REAL del
+// período. Por debajo de _MOVE_LO es ruido y la curva se queda chica; a partir de
+// _MOVE_HI el movimiento es grande de verdad y llena la caja. Entre medias interpola.
+const _FILL_MIN = 0.32, _FILL_MAX = 0.76;
+const _MOVE_LO  = 0.25, _MOVE_HI  = 8;   // variación de la ventana, en %
+function _fillFor(movePct) {
+  if (!(movePct > 0)) return _FILL_MIN;
+  const t = Math.min(1, Math.max(0, (movePct - _MOVE_LO) / (_MOVE_HI - _MOVE_LO)));
+  // Raíz: los primeros puntos porcentuales ganan alto rápido y luego satura, que es
+  // como se percibe el movimiento (de 0% a 1% se nota mucho más que de 7% a 8%).
+  return _FILL_MIN + (_FILL_MAX - _FILL_MIN) * Math.sqrt(t);
+}
 function _fitYToSeries(vals) {
   const v = (Array.isArray(vals) ? vals : []).filter(x => typeof x === 'number' && isFinite(x) && x > 0);
   if (v.length < 2) return null;
-  let dmin = Math.min(...v), dmax = Math.max(...v);
+  const dmin = Math.min(...v), dmax = Math.max(...v);
   const mid = (dmin + dmax) / 2;
   if (!(mid > 0)) return null;
-  // Amplitud mínima = 0.25% del valor → un día casi sin movimiento no se amplifica
-  // hasta parecer una montaña (proporción vs el precio comparable entre períodos).
-  const minSpan = mid * 0.0025;
-  if (dmax - dmin < minSpan) { dmin = mid - minSpan / 2; dmax = mid + minSpan / 2; }
-  const span = dmax - dmin;
-  // Dominio EXACTO (sin redondear al step): solo 7% de aire arriba/abajo → la línea
-  // ocupa ~87% del alto SIEMPRE, en todos los períodos. Redondear el dominio a
-  // múltiplos del step metía hasta un step extra de relleno y volvía a aplanar la curva.
-  const pad = span * 0.07;
-  let lo = Math.max(0, dmin - pad);
-  let hi = dmax + pad;
+  // Piso de amplitud: un portafolio literalmente plano daría span 0 → división por
+  // cero y banda infinita. 0.3% del valor es la banda mínima creíble.
+  const dspan = Math.max(dmax - dmin, mid * 0.003);
+  // Aquí está la escala "por monto": el % que se movió el portafolio decide cuánto
+  // alto ocupa, no el tamaño en píxeles de la caja.
+  const span = dspan / _fillFor((dspan / mid) * 100);
+  const center = (dmin + dmax) / 2;
+  let lo = center - span / 2, hi = center + span / 2;
+  // Nunca por debajo de 0: se DESPLAZA la banda, no se encoge. Encogerla volvería a
+  // estirar la curva justo en los portafolios chicos, que es el caso que más molesta.
+  if (lo < 0) { hi -= lo; lo = 0; }
   if (!(hi > lo)) return null;
   // El step solo controla las LÍNEAS de cuadrícula (etiquetas redondas), no el dominio.
-  return { min: lo, max: hi, step: _niceStep(hi - lo, 5) };
+  return { min: lo, max: hi, step: _niceStep(hi - lo, 4) };
 }
 function _applyChartYBounds() {
   if (!perfChart) return;
@@ -17231,7 +17248,7 @@ function _renderQualAnalysis(a, el){
   //     reciente": primero la tendencia de trimestres, luego la lectura del último.
   //     Si no hay objeto → nada: la sección desaparece entera, sin placeholders.
   const eqr = a.earningsReaction;
-  if (eqr && (eqr.resumen || (eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length) || eqr.lectura_mercado)) {
+  if (eqr && (eqr.resumen || (eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length) || eqr.lectura_mercado || eqr.perspectiva)) {
     const _fd = (() => { try { const d = new Date(String(eqr.reportDate) + 'T12:00:00');
       return isNaN(d) ? '' : d.toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }); } catch(e){ return ''; } })();
     const _num = v => (typeof v === 'number') ? '$' + v.toFixed(2) : null;
@@ -17250,14 +17267,18 @@ function _renderQualAnalysis(a, el){
     const _cols = _col('QUÉ SALIÓ BIEN','pros','✓',eqr.bueno) + _col('QUÉ SALIÓ MAL','risks','⚠',eqr.malo);
     const _note = (kk, vv) => vv ? `<div class="px-eqr-note"><div class="kk">${kk}</div><div class="vv">${esc(vv)}</div></div>` : '';
     const _notes = _note('Lo que más creció', eqr.mas_crecio) + _note('Lo más destacado', eqr.destacado);
-    h += `<div class="px-card"><h2 class="px-sec-title">Reacción a resultados</h2>
+    // Bloque de texto con título propio (mercado / qué esperar). Sin caja gris: el texto
+    // largo se lee mejor a ancho completo que dentro de un recuadro.
+    const _blk = (title, txt) => txt ? `<div class="px-eqr-blk"><h4>${title}</h4><p>${esc(txt)}</p></div>` : '';
+    h += `<div class="px-card"><h2 class="px-sec-title">Earnings análisis</h2>
       <p class="px-intro">Qué dejó el último reporte y cómo lo está leyendo el mercado.</p>
       ${chips ? `<div class="px-eqr-head" style="margin-top:14px">${chips}</div>` : ''}
-      ${eqr.resumen ? `<div class="px-eqr-sum"><div class="kk">EN RESUMEN</div><p>${esc(eqr.resumen)}</p></div>` : ''}
+      ${eqr.resumen ? `<div class="px-eqr-sum"><p>${esc(eqr.resumen)}</p></div>` : ''}
       ${_cols ? `<div class="px-pr">${_cols}</div>` : ''}
       ${_notes ? `<div class="px-eqr-notes">${_notes}</div>` : ''}
-      ${eqr.lectura_mercado ? `<div class="px-eqr-read">${esc(eqr.lectura_mercado)}</div>` : ''}
-      <div class="px-hint">Cifras de EPS tomadas del reporte oficial; la lectura de mercado se genera una sola vez por trimestre y se comparte entre usuarios.</div></div>`;
+      ${_blk('Cómo lo ve el mercado', eqr.lectura_mercado)}
+      ${_blk('Qué esperar de aquí en adelante', eqr.perspectiva)}
+      <div class="px-hint">Cifras de EPS tomadas del reporte oficial. La lectura de mercado y la perspectiva son una conclusión derivada de los datos del reporte, no una recomendación ni una predicción garantizada; se generan una sola vez por trimestre y se comparten entre usuarios.</div></div>`;
   }
 
   // 7b) COMPARACIÓN CON COMPETIDORES — slot vacío; se llena LAZY en 2º plano (peers reales),
@@ -17480,7 +17501,7 @@ async function _getStockNarrative(ticker, info, facts){
 // Costo por generación ≈ $0.047 (2 búsquedas + ~8K input + ~900-1.300 output, Sonnet 5).
 // No se pagan búsquedas para reconstruir cifras que YA tenemos: el EPS real vs. estimado
 // va en el prompt desde EPS._cache.
-const _EQR_LS = 'portiv_earnings_reaction_v2';   // v2: schema con 'resumen' → purga los objetos viejos sin él
+const _EQR_LS = 'portiv_earnings_reaction_v3';   // v3: schema con 'perspectiva' y listas bueno/malo largas → purga los v2
 function _eqrLoad(){ try { return JSON.parse(localStorage.getItem(_EQR_LS)||'{}')||{}; } catch(e){ return {}; } }
 // Sin TTL por tiempo: la única invalidación válida es un reporte NUEVO (eKey distinta).
 function _eqrGetLocal(tk, eKey){
@@ -17528,8 +17549,14 @@ async function _fetchEarningsReactionAI(ticker, info, epsFacts){
   if (!_canGen) return null;
   const name = (info && (info.longName || info.shortName)) || ticker;
   const SYSTEM = `Eres un analista de inversiones. Respondes SOLO con un objeto JSON válido en ESPAÑOL, sin markdown ni texto extra. Esquema exacto:
-{"resumen":"3-5 frases: qué pasó en el trimestre y qué fue lo más destacado","bueno":["2-3 puntos concretos con cifras"],"malo":["2-3 puntos concretos con cifras"],"mas_crecio":"1-2 frases: qué segmento o línea de negocio creció más y por qué","destacado":"1-2 frases: el dato o anuncio más relevante de la llamada de resultados","lectura_mercado":"2-3 frases: cómo se está leyendo el reporte, corto y mediano plazo"}
-"resumen" es OBLIGATORIO y va primero: un párrafo corrido, en lenguaje simple, que cuente qué reportó la empresa (ingresos y EPS con cifras), qué fue lo más destacado del trimestre, qué dijo la guía hacia adelante y cómo reaccionó la acción. Debe entenderse solo, sin leer el resto del JSON. Los demás campos SIEMPRE que tengas el dato: "mas_crecio" y "destacado" no los dejes vacíos si la información existe.
+{"resumen":"3-5 frases: qué pasó en el trimestre y qué fue lo más destacado","bueno":["4-6 puntos concretos con cifras"],"malo":["3-5 puntos concretos con cifras"],"mas_crecio":"1-2 frases: qué segmento o línea de negocio creció más y por qué","destacado":"1-2 frases: el dato o anuncio más relevante de la llamada de resultados","lectura_mercado":"3-4 frases: cómo está leyendo el mercado este reporte AHORA","perspectiva":"3-4 frases: hacia dónde apuntan estos números de aquí en adelante"}
+"resumen" es OBLIGATORIO y va primero: un párrafo corrido, en lenguaje simple, que cuente qué reportó la empresa (ingresos y EPS con cifras), qué fue lo más destacado del trimestre, qué dijo la guía hacia adelante y cómo reaccionó la acción. Debe entenderse solo, sin leer el resto del JSON.
+"bueno" y "malo" son AMBOS obligatorios y deben estar equilibrados: 4-6 puntos en "bueno" y 3-5 en "malo", cada uno con su cifra (crecimiento %, margen, monto, comparación vs. estimado o vs. el año pasado). NUNCA dejes "malo" vacío: en todo reporte hay algo más débil — un segmento que desacelera, un margen que se comprime, capex que sube, flujo de caja negativo, una guía conservadora o la propia reacción de la acción. Si el trimestre fue bueno, di qué fue lo MENOS bueno; no inventes un problema que no existe, pero tampoco lo escondas.
+"lectura_mercado": cómo está reaccionando el mercado hoy y POR QUÉ (qué está premiando y qué está castigando), con el movimiento de la acción si lo encuentras.
+"perspectiva": una CONCLUSIÓN razonada sobre cómo es probable que el mercado siga leyendo estos resultados, derivada ÚNICAMENTE de las cifras del reporte y de la guía. Reglas estrictas para este campo:
+ · NO afirmes nada como un hecho futuro y NO des precios objetivo, ni recomendaciones de comprar/vender/mantener.
+ · Redacta en condicional o probabilístico ("es probable que…", "el mercado tenderá a…", "mientras X se mantenga, …", "si Y se confirma, …"), y nombra qué dato concreto del reporte sostiene cada afirmación.
+ · Di explícitamente qué habría que ver en el PRÓXIMO trimestre para confirmar o desmentir esa lectura.
 Usa las cifras que ya te doy; no las contradigas. Si un dato no lo encuentras, omítelo en vez de inventarlo. Sé concreto y directo, sin relleno ni disclaimers legales.`;
   const _n = v => (typeof v === 'number') ? v.toFixed(2) : '—';
   const prompt = `Empresa: ${name} (${ticker})
@@ -17537,12 +17564,15 @@ Usa las cifras que ya te doy; no las contradigas. Si un dato no lo encuentras, o
 Trimestres previos: ${(epsFacts.history||[]).map(q => `${q.label} real $${_n(q.actual)} vs. est. $${_n(q.estimate)}`).join(' · ') || '(sin histórico)'}
 Contexto financiero: ${(typeof _stockFactsForPrompt === 'function' ? (_stockFactsForPrompt(ticker, info) || '') : '') || '(limitado)'}
 
-Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a este reporte, (2) qué dijo la dirección sobre la guía hacia adelante. Con eso y las cifras de arriba, devuelve el JSON.`;
+Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a este reporte, (2) qué dijo la dirección sobre la guía hacia adelante. Con eso y las cifras de arriba, devuelve el JSON.
+Recuerda: "malo" no puede ir vacío, y "perspectiva" se deduce solo de estos números y de la guía — sin afirmaciones sobre el futuro, sin precio objetivo y sin recomendación.`;
   try {
     const res = await _aiFetch({
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({
-        model: AI_MODELS.narrative, max_tokens: 1100, system: SYSTEM, prompt,
+        // 2000 (antes 1100): el esquema pasó de 2 listas cortas a 4-6 + 3-5 puntos más
+        // dos párrafos nuevos (mercado + perspectiva). Con 1100 el JSON se truncaba.
+        model: AI_MODELS.narrative, max_tokens: 2000, system: SYSTEM, prompt,
         allowed_tools: ['WebSearch','WebFetch'],
         tools: [{ type:'web_search_20250305', name:'web_search', max_uses:2 }]
       })
@@ -17552,11 +17582,12 @@ Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a
     try { _tokAdd(data.usage, AI_MODELS.narrative, 'earnings_reaction'); } catch(e){}
     const obj = _aiExtractJson(data.text || '');
     if (!obj || typeof obj !== 'object') return null;
-    obj.bueno = Array.isArray(obj.bueno) ? obj.bueno.filter(Boolean).slice(0,3) : [];
-    obj.malo  = Array.isArray(obj.malo)  ? obj.malo.filter(Boolean).slice(0,3)  : [];
-    obj.resumen = (typeof obj.resumen === 'string') ? obj.resumen.trim() : '';
+    obj.bueno = Array.isArray(obj.bueno) ? obj.bueno.filter(Boolean).slice(0,6) : [];
+    obj.malo  = Array.isArray(obj.malo)  ? obj.malo.filter(Boolean).slice(0,5)  : [];
+    obj.resumen     = (typeof obj.resumen === 'string') ? obj.resumen.trim() : '';
+    obj.perspectiva = (typeof obj.perspectiva === 'string') ? obj.perspectiva.trim() : '';
     // Sin contenido útil → null (la sección se oculta entera, sin placeholders).
-    if (!obj.resumen && !obj.bueno.length && !obj.malo.length && !obj.lectura_mercado) return null;
+    if (!obj.resumen && !obj.bueno.length && !obj.malo.length && !obj.lectura_mercado && !obj.perspectiva) return null;
     return obj;
   } catch(e){ return null; }
 }
@@ -17569,12 +17600,12 @@ async function _getEarningsReaction(ticker, info){
   const local = _eqrGetLocal(ticker, eKey);
   if (local) {
     // Ya la tenemos para ESTE reporte → cero API. Asegura de paso que esté en la nube.
-    try { _sharedAISet('eqr:v2:' + ticker, Object.assign({ earningsKey: eKey }, local)); } catch(e){}
+    try { _sharedAISet('eqr:v3:' + ticker, Object.assign({ earningsKey: eKey }, local)); } catch(e){}
     return local;
   }
   if (_eqrInflight.has(ticker)) return _eqrInflight.get(ticker);
   const _p = (async () => {
-    const key = 'eqr:v2:' + ticker;
+    const key = 'eqr:v3:' + ticker;
     // 1) NUBE: si otro usuario ya la generó para este mismo reporte, $0 para todos los demás.
     try {
       const cloud = await _sharedAIGet(key, null);
