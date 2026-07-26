@@ -431,7 +431,7 @@
   }
   .period-btn:hover { color: var(--text2); }
   .period-btn.active { border-color: var(--border2); color: var(--text); background: var(--surface2); }
-  .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 300px; }
+  .perf-chart-wrap { position: relative; flex: 1 1 auto; min-height: 480px; }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -456,7 +456,7 @@
     .perf-metrics { gap: 14px; }
     .period-btns { gap: 3px; flex-wrap: wrap; }
     .period-btn { padding: 4px 10px; font-size: 11px; }
-    .perf-chart-wrap { min-height: 220px; }
+    .perf-chart-wrap { min-height: 300px; }
     /* Table — scroll horizontal en mobile */
     .ptable-wrap { -webkit-overflow-scrolling: touch; }
     thead th, tbody td { padding-left: 6px; padding-right: 6px; font-size: 12px; }
@@ -2351,7 +2351,7 @@
     .holdings-head { padding: 14px 14px 10px; }
     .holdings-title { font-size: 16px; }
     .news-thumb { width: 60px; height: 44px; }
-    .perf-chart-wrap { height: 300px; }
+    .perf-chart-wrap { height: 340px; }
   }
   /* ── SEARCH OVERLAY ── */
   .search-overlay {
@@ -12295,6 +12295,7 @@ const PORTIV_CHART = {
     perfChart.data.datasets[0].data=ds.values;
     perfChart.data.datasets[0].borderColor=col;
     if(ctx)perfChart.data.datasets[0].backgroundColor=typeof _perfFill==='function'?_perfFill(ctx,isPos):col+'33';
+    try{ if(typeof _applyChartYBounds==='function') _applyChartYBounds(); }catch(e){}
     perfChart.update('periodChange');
     // Actualiza encabezado de cambio
     if(typeof _updateSummaryCardFor==='function')_updateSummaryCardFor(p,ds.change,ds.changePct);
@@ -12949,9 +12950,11 @@ function _applyPerfYScale(){
   if (!(step>0)) step = (PERF_YSCALE.max - PERF_YSCALE.min) / 4 || 500;
   const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
   if (!y) return;
-  // SOLO aplica el stepSize (el espaciado de líneas del broker, ej. $500).
-  // El min/max lo controla EXCLUSIVAMENTE _applyChartYBounds() → escala siempre consistente.
-  if (y.ticks) y.ticks.stepSize = step;
+  // El eje ahora se auto-encaja al período dibujado (_applyChartYBounds), que también
+  // elige su propio stepSize "redondo". El step del broker ya NO se fuerza: en 1M/1W
+  // aplastaba la línea (step de $500 sobre un rango de $150). Se conserva solo como
+  // fallback si aún no hay serie pintada.
+  try { _applyChartYBounds(); } catch(e) { if (y.ticks) y.ticks.stepSize = step; }
   perfChart.update('none');
 }
 
@@ -13236,12 +13239,83 @@ function _calcGlobalYBounds(extraVals) {
   _chartYFrozen = { min: _chartYMin, max: _chartYMax };
   _chartYRefit = false;
 }
+// ── Auto-encaje del eje Y al período DIBUJADO ────────────────────────────────
+// Cada período (1D/1M/3M/ALL) calcula su propia banda ajustada a SUS datos, así la
+// línea llena la misma fracción vertical en todos → todas las gráficas se ven "del
+// mismo tamaño". El piso de amplitud (minSpan) mantiene la proporción vs el precio:
+// un día plano NO se convierte en montaña.
+function _niceStep(span, target) {
+  const raw = span / (target || 4);
+  if (!(raw > 0)) return 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  const m = n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 3 ? 3 : n <= 5 ? 5 : 10;
+  return m * mag;
+}
+// Etiqueta del eje Y adaptada al step: sirve para CUALQUIER tamaño de portafolio
+// ($480, $9.8K, $5.2M) sin repetir etiquetas cuando la banda es estrecha
+// (antes: step $30 → "$9.8K $9.8K $9.8K" con 1 decimal fijo).
+function _fmtAxisY(v, step) {
+  const s = (typeof step === 'number' && step > 0) ? step : 1;
+  const a = Math.abs(v);
+  if (a >= 1e6) return '$' + (v / 1e6).toFixed(s >= 1e6 ? 0 : s >= 1e5 ? 1 : 2) + 'M';
+  if (a >= 1000) return '$' + (v / 1000).toFixed(s >= 1000 ? 0 : s >= 100 ? 1 : 2) + 'K';
+  return '$' + v.toFixed(s >= 10 ? 0 : s >= 1 ? 1 : 2);
+}
+function _fitYToSeries(vals) {
+  const v = (Array.isArray(vals) ? vals : []).filter(x => typeof x === 'number' && isFinite(x) && x > 0);
+  if (v.length < 2) return null;
+  let dmin = Math.min(...v), dmax = Math.max(...v);
+  const mid = (dmin + dmax) / 2;
+  if (!(mid > 0)) return null;
+  // Amplitud mínima = 0.25% del valor → un día casi sin movimiento no se amplifica
+  // hasta parecer una montaña (proporción vs el precio comparable entre períodos).
+  const minSpan = mid * 0.0025;
+  if (dmax - dmin < minSpan) { dmin = mid - minSpan / 2; dmax = mid + minSpan / 2; }
+  const span = dmax - dmin;
+  // Dominio EXACTO (sin redondear al step): solo 7% de aire arriba/abajo → la línea
+  // ocupa ~87% del alto SIEMPRE, en todos los períodos. Redondear el dominio a
+  // múltiplos del step metía hasta un step extra de relleno y volvía a aplanar la curva.
+  const pad = span * 0.07;
+  let lo = Math.max(0, dmin - pad);
+  let hi = dmax + pad;
+  if (!(hi > lo)) return null;
+  // El step solo controla las LÍNEAS de cuadrícula (etiquetas redondas), no el dominio.
+  return { min: lo, max: hi, step: _niceStep(hi - lo, 5) };
+}
 function _applyChartYBounds() {
   if (!perfChart) return;
-  if (_chartYMin === null) _calcGlobalYBounds();  // calcular si aún no tenemos los bounds
-  if (_chartYMin === null) return;                // si no hay datos aún, no hacer nada
-  perfChart.options.scales.y.min = _chartYMin;
-  perfChart.options.scales.y.max = _chartYMax;
+  const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+  if (!y) return;
+  // 1) Preferido: encajar a la serie que está pintada ahora mismo.
+  const fit = _fitYToSeries(perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0]
+    ? perfChart.data.datasets[0].data : null);
+  if (fit) {
+    y.min = fit.min; y.max = fit.max;
+    if (y.ticks) {
+      y.ticks.stepSize = fit.step;
+      // El dominio es exacto (no múltiplo del step) → sin esto Chart.js añade el min y el
+      // max crudos como ticks y salen dos etiquetas pegadas y "sucias" en los bordes.
+      y.ticks.includeBounds = false;
+    }
+    // Con dominio no alineado al step, Chart.js a veces descarta el stepSize y reparte
+    // los ticks en fracciones feas ($9,523.18). Aquí se fijan a mano: solo múltiplos
+    // exactos del step que caigan dentro de la banda → etiquetas siempre redondas.
+    const _st = fit.step;
+    perfChart._axStep = _st;   // lo lee el formateador de etiquetas (_fmtAxisY)
+    y.afterBuildTicks = function (scale) {
+      const out = [];
+      const first = Math.ceil((scale.min - 1e-9) / _st) * _st;
+      for (let t = first; t <= scale.max + 1e-9 && out.length < 12; t += _st) out.push({ value: +t.toFixed(6) });
+      if (out.length) scale.ticks = out;
+    };
+    return;
+  }
+  // 2) Fallback (aún sin datos pintados): banda global del historial.
+  if (_chartYMin === null) _calcGlobalYBounds();
+  if (_chartYMin === null) return;
+  y.min = _chartYMin;
+  y.max = _chartYMax;
 }
 // Recalcula y actualiza los bounds (llamar tras importar nueva gráfica o recibir precios en vivo).
 function _refreshChartYBounds() {
@@ -13486,7 +13560,7 @@ function initPerfChart() {
           ticks: {
             display: !_PERF_MOB(),
             color: '#8A92A3', font: { size: 11 },
-            callback: v => v >= 1000 ? `$${(v/1000).toFixed(1)}K` : `$${v}`
+            callback: function (v) { return _fmtAxisY(v, this.chart && this.chart._axStep); }
           }
           // min/max se fijan dinámicamente en _applyChartYBounds() — siempre consistentes entre periodos.
         }
@@ -13922,6 +13996,84 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
 // fuente con licencia comercial (nunca Yahoo).
 async function _yhChart(ticker, range, interval, timeoutMs){ return null; }
 
+// ── Alpaca Market Data — velas CON licencia comercial (feed IEX) ──────────────────────────
+// Reemplaza a Yahoo (retirado, sin licencia) como fuente de la serie de "Precio Histórico".
+// La SECRET KEY de Alpaca da acceso a la cuenta entera, así que NUNCA viaja al navegador:
+// va en la Edge Function alpaca-proxy, que inyecta los headers server-side y cachea el
+// resultado en fh_cache (N usuarios con la misma serie = 1 llamada upstream).
+// Ojo: el tier gratis sirve el feed de IEX (~2-3% del volumen). La forma de la curva es
+// correcta; el cierre puede diferir en centavos del cierre consolidado oficial.
+const ALPACA_PROXY = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/alpaca-proxy';
+let _alpacaDead = false;   // 500/403 del proxy (secrets mal puestas) → dejamos de insistir
+
+async function _alpacaFetch(path, timeoutMs = 12000){
+  if (_alpacaDead || !_fhSupabaseOn()) return null;
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(`${ALPACA_PROXY}?path=${encodeURIComponent(path)}`, {
+      signal: ctrl.signal,
+      headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + FH_PROXY_ANON },
+    });
+    // 500 = secrets ausentes, 404 = función sin desplegar. No tiene sentido reintentar
+    // en cada gráfica durante toda la sesión.
+    if (r.status === 500 || r.status === 404 || r.status === 403) { _alpacaDead = true; return null; }
+    if (!r.ok) return null;
+    return await r.json();
+  } catch(e) { return null; }
+  finally { clearTimeout(t); }
+}
+
+// Ventana y granularidad por período. Los rangos van holgados a propósito: fines de semana
+// y feriados no traen barras, así que pedir justo N días dejaría la serie corta.
+function _alpacaPlan(period){
+  const D = 86400000, now = Date.now();
+  const iso = ms => new Date(ms).toISOString().slice(0, 10);
+  switch (period) {
+    case '1d':  return { tf: '5Min',   start: new Date(now - 6*D).toISOString(),  intraday: true  };
+    case '5d':  return { tf: '30Min',  start: new Date(now - 10*D).toISOString(), intraday: true  };
+    case '1mo': return { tf: '1Day',   start: iso(now - 45*D)  };
+    case '3mo': return { tf: '1Day',   start: iso(now - 105*D) };
+    case '6mo': return { tf: '1Day',   start: iso(now - 200*D) };
+    case 'ytd': return { tf: '1Day',   start: `${new Date().getFullYear()}-01-01` };
+    case '1y':  return { tf: '1Day',   start: iso(now - 370*D) };
+    case '2y':  return { tf: '1Week',  start: iso(now - 740*D) };
+    case '3y':  return { tf: '1Week',  start: iso(now - 1110*D) };
+    case '5y':  return { tf: '1Week',  start: iso(now - 1870*D) };
+    case 'max': return { tf: '1Month', start: iso(now - 20*365*D) };
+    default:    return { tf: '1Day',   start: iso(now - 45*D) };
+  }
+}
+
+// Serie real → {timestamps:[s], closes:[$]}. null si no hay dato (jamás inventa nada).
+async function _alpacaBars(ticker, period, timeoutMs = 12000){
+  const sym = (ticker || '').toUpperCase();
+  if (!sym) return null;
+  const plan = _alpacaPlan(period);
+  const qs = `symbols=${encodeURIComponent(sym)}&timeframe=${plan.tf}&start=${plan.start}`
+           + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
+  const d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs);
+  let bars = (d && d.bars && (d.bars[sym] || d.bars[sym.replace('.', '/')])) || [];
+  if (!Array.isArray(bars) || bars.length < 2) return null;
+
+  // 1D = sólo la última sesión: la ventana pide 6 días para no fallar en lunes/feriados.
+  if (plan.intraday && period === '1d') {
+    const nyDay = ms => new Date(ms).toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+    const last = nyDay(Date.parse(bars[bars.length - 1].t));
+    const sameDay = bars.filter(b => nyDay(Date.parse(b.t)) === last);
+    if (sameDay.length >= 2) bars = sameDay;
+  }
+
+  const timestamps = [], closes = [];
+  for (const b of bars) {
+    const ts = Date.parse(b.t);
+    if (!isFinite(ts) || typeof b.c !== 'number' || !isFinite(b.c)) continue;
+    timestamps.push(Math.floor(ts / 1000));
+    closes.push(Math.round(b.c * 10000) / 10000);
+  }
+  return timestamps.length >= 2 ? { timestamps, closes } : null;
+}
+
 // Yahoo Finance noticias: RETIRADO (App Review 5C) — fuente sin licencia. Las noticias van solo
 // por Finnhub (company-news / news), licenciado. _yhNews eliminado; sus llamadas devuelven [].
 
@@ -14147,16 +14299,11 @@ async function apiCall(params, timeoutMs = 15000) {
   }
 
   if (action === 'history') {
-    // Intento 1: Yahoo (mismos datos/serie que ves en Yahoo). 3y usa rango 5y recortado por el llamador.
-    const yhRange = { '1d':'1d','5d':'5d','1mo':'1mo','3mo':'3mo','6mo':'6mo','ytd':'ytd','1y':'1y','2y':'2y','3y':'5y','5y':'5y','max':'max' }[period] || '1mo';
-    const yhInterval = (period === '1d' || period === '5d') ? '30m'
-                     : (period === '5y' || period === '3y' || period === 'max') ? '1wk'
-                     : '1d';
+    // Intento 1: Alpaca (licenciado, feed IEX) vía alpaca-proxy. Sustituye a Yahoo, que se
+    // retiró por falta de licencia y quedó como stub devolviendo null.
     try {
-      const y = await _yhChart(ticker, yhRange, yhInterval, timeoutMs);
-      if (y && y.timestamps && y.timestamps.length > 1) {
-        return { timestamps: y.timestamps, closes: y.closes };
-      }
+      const a = await _alpacaBars(ticker, period, timeoutMs);
+      if (a && a.timestamps.length > 1) return a;
     } catch(e) { /* caer al respaldo Finnhub */ }
 
     // Intento 2 (respaldo): Finnhub candle
@@ -26133,7 +26280,7 @@ document.addEventListener('DOMContentLoaded', function(){
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#04162c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
           <span>Sin pago ahora</span>
         </div>
-        <button class="pw-btn" onclick="_pvConfirmTrial()">Comenzar ahora</button>
+        <button class="pw-btn" onclick="_pvStartCheckout()">Comenzar ahora</button>
         <div class="pw-price"><b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b></div>
         <div class="pw-fine">Cancela cuando quieras · Sin compromisos</div>
         <div class="pw-legal">
@@ -26190,6 +26337,26 @@ document.addEventListener('DOMContentLoaded', function(){
   // (ver eventCallback en la init de Paddle en <head>).
   // Sin toggle mensual/anual en la UI todavía → por defecto precio MENSUAL.
   // Para ofrecer anual: pasar window.PADDLE_PRICES.annual como priceId.
+  // Web: abre el checkout de Paddle (SANDBOX). Tras 'checkout.completed' (eventCallback en <head>)
+  // se cierra el paywall y se conecta el broker vía _pvConfirmTrial().
+  window._pvStartCheckout = async function(){
+    if (!window.Paddle || !window.Paddle.Checkout) {
+      try { alert('El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.'); } catch(e){}
+      return;
+    }
+    var email = null, uid = null;
+    try {
+      var sb = window.sbClient;
+      if (sb && sb.auth) { var r = await sb.auth.getUser(); if (r && r.data && r.data.user) { email = r.data.user.email; uid = r.data.user.id; } }
+    } catch(e){}
+    if ((!email || !uid) && typeof session !== 'undefined' && session && session.user) {
+      email = email || session.user.email; uid = uid || session.user.id;
+    }
+    var priceId = (window.PADDLE_PRICES && window.PADDLE_PRICES.monthly) || 'pri_01ky1he07d68khj66569hd0hjg';
+    var opts = { items: [{ priceId: priceId, quantity: 1 }], customData: uid ? { supabase_user_id: uid } : undefined };
+    if (email) opts.customer = { email: email };
+    try { Paddle.Checkout.open(opts); } catch(e){ try{ alert('No se pudo abrir el checkout. Intenta de nuevo.'); }catch(_){} }
+  };
   window._pvConfirmTrial = function(){
     // iOS: sin checkout web (Paddle). Cierra el paywall y arranca la conexión del broker.
     // La suscripción real se gestionará vía IAP nativo (RevenueCat/StoreKit).
