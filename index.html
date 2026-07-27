@@ -26033,6 +26033,10 @@ if (document.readyState === 'loading') {
     try { if (typeof window._pvMaybeShowQuiz === 'function') window._pvMaybeShowQuiz(); } catch(e){}
     try { document.documentElement.classList.remove('app-locked'); } catch(e){}
     hideOverlay();
+    // Candado de suscripción: se evalúa DESPUÉS de revelar y sin await. Si se hiciera
+    // antes, una consulta lenta dejaría la app en negro; y si fallara, nadie entraría.
+    // El bloqueo real es el 403 del servidor — esto sólo lo explica en pantalla.
+    try { if (typeof window._pvSubGate === 'function') window._pvSubGate(); } catch(e){}
   }
 
   // ── Sincronización por-cuenta de PERFIL + cachés de IA (ahorra tokens entre dispositivos) ──
@@ -26966,8 +26970,251 @@ document.addEventListener('DOMContentLoaded', function(){
     // parece que no pasó nada.
     try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
+    // NO se llama snapConnect() directo: el webhook de Paddle tarda ~1-3 s en escribir el
+    // entitlement, y si conectamos antes la Edge Function responde 403 subscription_required
+    // justo después de que el usuario pagó — el peor momento posible para un error. Se espera
+    // a que el entitlement aparezca (con techo) y recién entonces se conecta.
+    try {
+      if (typeof window._pvAwaitEntitlement === 'function') { window._pvAwaitEntitlement(); return; }
+    } catch(e){}
     try { window.snapConnect(); } catch(e){}
   };
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   CANDADO DE SUSCRIPCIÓN (UI) — banner + bloqueo duro + cambio de tarjeta
+   ───────────────────────────────────────────────────────────────
+   IMPORTANTE: esto es SOLO experiencia de usuario. El candado real vive en el
+   servidor (has_active_entitlement(uid) → Edge Functions responden 403
+   subscription_required). Forzar el DOM desde la consola no da acceso a nada:
+   sin entitlement no hay datos de broker ni IA. Aquí sólo se explica al usuario
+   por qué está bloqueado y se le da el camino para arreglarlo.
+═══════════════════════════════════════════════════════════════ */
+(function(){
+  // Interruptor del bloqueo VISUAL. En false la app no se tapa nunca (el servidor sigue
+  // devolviendo 403 igual: esto no regala acceso a nada, sólo deja de mostrar el muro).
+  // Ponlo en false si alguna vez hay usuarios reales sin forma de pagar todavía.
+  var ENFORCE = true;
+
+  // Mismo bypass que la función SQL. Se duplica a propósito: si sólo estuviera en el
+  // servidor, el dueño vería el bloqueo en pantalla aunque las llamadas le funcionaran.
+  var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
+
+  // Estados de Paddle/RevenueCat que SIGUEN dando acceso. 'past_due' entra aquí a
+  // propósito: Paddle reintenta el cobro varios días y cortar al primer rechazo
+  // expulsaría a un cliente que sólo tiene la tarjeta vencida. Se le avisa, no se le echa.
+  var STATUS_OK    = { active:1, trialing:1, grace:1, past_due:1, canceled:1 };
+  // 'canceled' con entitlement_active=true = canceló la renovación pero conserva el
+  // acceso hasta fin de periodo. Cuando expire llegará otro evento con active=false.
+  var STATUS_WARN  = { past_due:1, canceled:1 };
+
+  var _last = null;      // último estado conocido (evita repintar en cada recheck)
+  var _busy = false;
+
+  // El email se pide a Supabase y no a la variable `session` del módulo de auth: esa
+  // vive en el ámbito de su IIFE y desde aquí sale undefined, lo que haría fallar el
+  // bypass del dueño y bloquearía justo a quien nunca debe bloquearse.
+  async function _isOwner(){
+    try {
+      var sb = window.sbClient;
+      if (!sb || !sb.auth) return false;
+      var r = await sb.auth.getUser();
+      var em = ((r && r.data && r.data.user && r.data.user.email) || '').toLowerCase();
+      return OWNER_EMAILS.indexOf(em) >= 0;
+    } catch(e){ return false; }
+  }
+
+  // Lee la fila propia de `subscriptions`. La RLS sólo deja ver la del usuario
+  // autenticado, así que no hace falta filtrar por uid a mano.
+  window._pvSubStatus = async function(){
+    if (await _isOwner()) return { active:true, status:'owner', owner:true };
+    var sb = window.sbClient;
+    if (!sb) return null;
+    try {
+      var r = await sb.from('subscriptions')
+        .select('entitlement_active,status,expires_at,will_renew')
+        .maybeSingle();
+      // Fallo de red / RLS: se devuelve null y el llamador NO bloquea. Mismo criterio
+      // fail-open que requireEntitlement en el servidor: una caída nuestra no debe
+      // dejar fuera a alguien que sí pagó.
+      if (r && r.error) return null;
+      var d = (r && r.data) || null;
+      if (!d) return { active:false, status:'never' };
+      return {
+        active: d.entitlement_active === true,
+        status: d.status || 'never',
+        expiresAt: d.expires_at || null,
+        willRenew: d.will_renew
+      };
+    } catch(e){ return null; }
+  };
+
+  // ── Banner superior ──────────────────────────────────────────────────────
+  function _banner(kind, text, ctaLabel, onCta){
+    var b = document.getElementById('pvSubBanner');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'pvSubBanner';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:12800;display:flex;'
+        + 'align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;'
+        + 'padding:11px 16px;font-size:14px;font-weight:600;line-height:1.35;'
+        + 'box-shadow:0 2px 12px rgba(0,0,0,.13);transform:translateY(-100%);'
+        + 'transition:transform .28s cubic-bezier(.22,1,.36,1);';
+      document.body.appendChild(b);
+    }
+    var C = kind === 'danger'
+      ? { bg:'#fdecec', fg:'#93000a', btn:'#ba1a1a' }
+      : { bg:'#fff5e0', fg:'#7a4b00', btn:'#a16207' };
+    b.style.background = C.bg; b.style.color = C.fg;
+    b.innerHTML = '';
+    var span = document.createElement('span');
+    span.textContent = text;
+    b.appendChild(span);
+    if (ctaLabel) {
+      var a = document.createElement('button');
+      a.textContent = ctaLabel;
+      a.style.cssText = 'border:none;border-radius:9px;padding:7px 15px;cursor:pointer;'
+        + 'font-size:13px;font-weight:700;color:#fff;background:' + C.btn + ';';
+      a.onclick = onCta;
+      b.appendChild(a);
+    }
+    // El banner empuja la app hacia abajo; si no, tapa el header y se pierden controles.
+    requestAnimationFrame(function(){
+      b.style.transform = 'translateY(0)';
+      try { document.body.style.paddingTop = b.offsetHeight + 'px'; } catch(e){}
+    });
+  }
+  function _bannerHide(){
+    var b = document.getElementById('pvSubBanner');
+    if (!b) return;
+    b.style.transform = 'translateY(-100%)';
+    try { document.body.style.paddingTop = ''; } catch(e){}
+  }
+
+  // ── Bloqueo duro ─────────────────────────────────────────────────────────
+  // z-index 12500: por encima del quiz y del paywall (12000), pero por DEBAJO del
+  // toast (13000) — si algo falla al reintentar el pago, el mensaje tiene que verse.
+  function _block(title, body, ctaLabel){
+    var o = document.getElementById('pvSubBlock');
+    if (!o) {
+      o = document.createElement('div');
+      o.id = 'pvSubBlock';
+      o.style.cssText = 'position:fixed;inset:0;z-index:12500;display:none;'
+        + 'align-items:center;justify-content:center;padding:24px;'
+        + 'background:rgba(8,17,31,.94);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);';
+      o.innerHTML = '<div style="max-width:400px;width:100%;background:#fff;border-radius:20px;'
+        + 'padding:30px 26px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.35);">'
+        + '<div style="width:56px;height:56px;margin:0 auto 16px;border-radius:50%;background:#fdecec;'
+        + 'display:flex;align-items:center;justify-content:center;">'
+        // Candado en SVG y no en Material Symbols: la ligadura del icon-font no siempre
+        // ha cargado cuando se pinta este overlay y se veía la palabra "LOCK" en crudo.
+        + '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ba1a1a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        + '<rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>'
+        + '<h2 id="pvSubBlockTitle" style="margin:0 0 9px;font-size:20px;font-weight:800;color:#0f1d35;"></h2>'
+        + '<p id="pvSubBlockBody" style="margin:0 0 22px;font-size:14.5px;line-height:1.5;color:#5b6c85;"></p>'
+        + '<button id="pvSubBlockCta" style="width:100%;height:50px;border:none;border-radius:13px;'
+        + 'background:#12d18e;color:#04231a;font-size:15.5px;font-weight:800;cursor:pointer;"></button>'
+        + '<button id="pvSubBlockOut" style="width:100%;height:44px;margin-top:9px;border:none;'
+        + 'background:none;color:#8a97a8;font-size:13.5px;font-weight:600;cursor:pointer;">Cerrar sesión</button>'
+        + '</div>';
+      document.body.appendChild(o);
+      // Sin esta salida el usuario sin suscripción queda encerrado sin forma de
+      // cambiar de cuenta — y la cuenta correcta puede ser justo la que sí pagó.
+      o.querySelector('#pvSubBlockOut').onclick = function(){
+        try { if (typeof window._authSignout === 'function') { window._authSignout(); return; } } catch(e){}
+        try { window.sbClient.auth.signOut().then(function(){ location.reload(); }); } catch(e){ location.reload(); }
+      };
+      o.querySelector('#pvSubBlockCta').onclick = function(){ window._pvRetryPayment(); };
+    }
+    o.querySelector('#pvSubBlockTitle').textContent = title;
+    o.querySelector('#pvSubBlockBody').textContent = body;
+    o.querySelector('#pvSubBlockCta').textContent = ctaLabel;
+    o.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+  function _unblock(){
+    var o = document.getElementById('pvSubBlock');
+    if (o) o.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+
+  // Reabrir el checkout es la vía de "cambiar tarjeta" que funciona sin endpoint nuevo:
+  // Paddle pide método de pago otra vez y el cobro corregido genera transaction.completed,
+  // que el webhook convierte en entitlement. La URL nativa de "update payment method" de
+  // Paddle exige llamar a su API con la secret key — no puede salir del navegador.
+  window._pvRetryPayment = function(){
+    if (_busy) return; _busy = true;
+    setTimeout(function(){ _busy = false; }, 1200);
+    try {
+      if (typeof window._pvStartCheckout === 'function') { window._pvStartCheckout(); return; }
+      if (typeof window._pvOpenPaywall === 'function') { window._pvOpenPaywall(); return; }
+    } catch(e){}
+    try { showToast('No se pudo abrir el pago. Recarga la página e inténtalo de nuevo.', 'var(--red)'); } catch(_){}
+  };
+
+  // ── Evaluación + pintado ────────────────────────────────────────────────
+  window._pvSubGate = async function(){
+    var st = await window._pvSubStatus();
+    if (!st) return null;                       // fail-open (ver _pvSubStatus)
+    _last = st;
+    if (st.active && !STATUS_WARN[st.status]) { _bannerHide(); _unblock(); return st; }
+
+    if (st.active && STATUS_WARN[st.status]) {
+      _unblock();
+      if (st.status === 'past_due') {
+        _banner('danger',
+          'No pudimos cobrar tu suscripción. Actualiza tu tarjeta para no perder el acceso.',
+          'Actualizar tarjeta', window._pvRetryPayment);
+      } else {
+        _banner('warn',
+          'Tu suscripción está cancelada. Conservas el acceso hasta el fin del periodo.',
+          'Reactivar', window._pvRetryPayment);
+      }
+      return st;
+    }
+
+    // Sin entitlement → bloqueo duro.
+    _bannerHide();
+    if (!ENFORCE) { _unblock(); return st; }
+    if (st.status === 'past_due' || st.status === 'expired') {
+      _block('Tu pago fue rechazado',
+        'No pudimos cobrar tu suscripción y el acceso quedó suspendido. Actualiza tu tarjeta y el cobro se reintenta al instante.',
+        'Cambiar tarjeta y pagar');
+    } else {
+      _block('Necesitas una suscripción activa',
+        'Portiv conecta con tu broker y analiza tu portafolio en tiempo real. Activa tu suscripción para entrar.',
+        'Activar suscripción');
+    }
+    return st;
+  };
+
+  // Tras pagar, el webhook de Paddle tarda en escribir la fila. Se sondea con techo en
+  // vez de asumir que ya está: sin esto, snapConnect() sale 403 justo después del pago.
+  window._pvAwaitEntitlement = async function(){
+    try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Confirmando tu suscripción…'); } catch(e){}
+    var t0 = 0;
+    while (t0 < 20) {
+      var st = await window._pvSubStatus();
+      if (st && st.active) { _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
+      await new Promise(function(r){ setTimeout(r, 1000); });
+      t0++;
+    }
+    // 20 s sin entitlement: el cobro pudo salir bien y el webhook ir con retraso, así que
+    // NO se afirma que el pago falló. Se deja el camino abierto en vez de un callejón.
+    try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(false); } catch(e){}
+    try { showToast('Pago recibido. Estamos confirmando tu suscripción, puede tardar un minuto.', 'var(--text2)'); } catch(e){}
+    setTimeout(function(){ try { window._pvSubGate(); } catch(e){} }, 15000);
+    return false;
+  };
+
+  // Recheck al volver a la pestaña: una suscripción puede expirar con la app abierta.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible') return;
+    if (!window._pvAuthReady) return;
+    try { window._pvSubGate(); } catch(e){}
+  });
+})();
 </script>
 
 <script>
@@ -27340,6 +27587,13 @@ document.addEventListener('DOMContentLoaded', function(){
       // 12000, así que el error quedaba tapado y el fallo se veía como "la pantalla se quedó
       // parada tras pagar". El error se pinta ahora sobre el propio overlay, con reintento.
       var _m = (e && e.message) || 'No se pudo iniciar la conexión.';
+      // 'subscription_required' es el 403 del candado del servidor, no un fallo de SnapTrade.
+      // Mostrar el código crudo con un botón "Reintentar" era engañoso: reintentar nunca
+      // iba a funcionar. Se deriva al bloqueo de suscripción, que sí ofrece la salida real.
+      if (/subscription_required/i.test(String(_m))) {
+        try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
+        try{ if(window._pvSubGate) { window._pvSubGate(); return; } }catch(_){}
+      }
       try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
       try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
       toast(_m);
