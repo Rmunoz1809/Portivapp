@@ -14178,8 +14178,213 @@ function initPerfChart() {
   window.addEventListener('orientationchange', _pvOnViewportChange, { passive: true });
 })();
 
+// ─── ZOOM CINEMÁTICO ENTRE PERÍODOS ─────────────────────────────────────────────
+// Al pasar a un lapso MÁS CORTO (3M→1M) la serie nueva es, por construcción, la COLA de
+// la que ya está pintada (misma fuente diaria, ventana recortada). Sustituir el dataset
+// hacía que Chart.js interpolara entre dos arrays de LONGITUD distinta: los puntos viejos
+// se re-mapeaban a índices nuevos y durante la transición aparecía una segunda curva
+// "aparte" (la vieja comprimiéndose) antes de asentarse. Aquí, en vez de sustituir, se
+// hace un ZOOM real: la MISMA curva se re-muestrea frame a frame sobre una ventana que
+// se estrecha desde el lapso viejo hasta encuadrar exactamente el nuevo. La banda Y sigue
+// la ventana (=_applyChartYBounds por frame) → la sensación es de acercarse a ese tramo.
+const _PV_ZOOM_N  = 110;   // puntos re-muestreados por frame (curva fluida y barata)
+const _PV_ZOOM_MS = 620;   // duración del acercamiento
+let _pvZoomRAF = null;
+
+function _pvStopZoom() {
+  if (_pvZoomRAF != null) { try { cancelAnimationFrame(_pvZoomRAF); } catch(e){} _pvZoomRAF = null; }
+}
+
+// Días de calendario que cubre cada período (para saber si el cambio ESTRECHA la ventana).
+function _pvPeriodSpanDays(p) {
+  if (p === '1D') return 1;
+  if (p === 'YTD') { try { const n = new Date(); return Math.max(1, (n - new Date(n.getFullYear(),0,1)) / 86400000); } catch(e) { return 200; } }
+  if (p === 'ALL') return Infinity;
+  return (typeof _PERIOD_DAYS !== 'undefined' && _PERIOD_DAYS[p]) || 0;
+}
+
+// Re-muestreo lineal de `vals` sobre la ventana [from,to] (índices FRACCIONARIOS) a n puntos.
+function _pvZoomResample(vals, from, to, n) {
+  const L = vals.length - 1, out = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const x  = from + (to - from) * (n === 1 ? 0 : i / (n - 1));
+    const i0 = Math.max(0, Math.min(L, Math.floor(x)));
+    const i1 = Math.max(0, Math.min(L, i0 + 1));
+    const f  = x - Math.floor(x);
+    const a  = +vals[i0] || 0, b = +vals[i1] || 0;
+    out[i] = +(a + (b - a) * f).toFixed(2);
+  }
+  return out;
+}
+
+// Etiquetas de la ventana re-muestreada: fecha del punto más cercano, sin HH:MM intradía y
+// sin repetir la misma fecha en píxeles contiguos (evita "5 jul 5 jul" al acercarse).
+function _pvZoomLabels(labels, from, to, n) {
+  const L = labels.length - 1, out = new Array(n);
+  let prev = null;
+  for (let i = 0; i < n; i++) {
+    const x = from + (to - from) * (n === 1 ? 0 : i / (n - 1));
+    let l = labels[Math.max(0, Math.min(L, Math.round(x)))];
+    l = String(l == null ? '' : l).replace(/\s+\d{1,2}:\d{2}$/, '');
+    out[i] = (l && l === prev) ? '' : l;
+    if (l) prev = l;
+  }
+  // Bordes SIEMPRE con fecha: al estrechar, el penúltimo punto cae en el mismo día que el
+  // último y el dedupe borraba la etiqueta del borde derecho (el eje perdía "hoy").
+  const lFix = (i) => String(labels[Math.max(0, Math.min(L, i))] ?? '').replace(/\s+\d{1,2}:\d{2}$/, '');
+  out[n - 1] = lFix(Math.round(to));
+  out[0]     = lFix(Math.round(from));
+  if (n > 2 && out[n - 2] === out[n - 1]) out[n - 2] = '';
+  if (n > 2 && out[1] === out[0]) out[1] = '';
+  return out;
+}
+
+function _pvHex2rgb(h) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(h || '').trim());
+  if (!m) return null;
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+function _pvMixColor(a, b, t) {
+  const A = _pvHex2rgb(a), B = _pvHex2rgb(b);
+  if (!A || !B) return b;
+  return `rgb(${Math.round(A[0]+(B[0]-A[0])*t)},${Math.round(A[1]+(B[1]-A[1])*t)},${Math.round(A[2]+(B[2]-A[2])*t)})`;
+}
+
+// Fotografía de lo que hay pintado AHORA (antes de comprometer el período nuevo).
+function _pvZoomSnapshot() {
+  if (!perfChart) return null;
+  const d = perfChart.data, s0 = d && d.datasets && d.datasets[0];
+  if (!s0 || !Array.isArray(s0.data) || s0.data.length < 8) return null;
+  if (!Array.isArray(d.labels) || d.labels.length !== s0.data.length) return null;
+  const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+  return {
+    labels: d.labels.slice(),
+    values: s0.data.slice(),
+    dates : Array.isArray(perfChart._pvDates) ? perfChart._pvDates.slice() : [],
+    color : s0.borderColor,
+    // Banda Y de ARRANQUE (la del lapso viejo). Se interpola hacia la del lapso nuevo: si
+    // en cada frame se re-encajara a los datos visibles, el step de la cuadrícula cambiaría
+    // de forma no monótona y el eje temblaría. Interpolada, el acercamiento es limpio.
+    y     : (y && typeof y.min === 'number' && typeof y.max === 'number') ? { min: y.min, max: y.max } : null,
+  };
+}
+
+// Fija la banda Y (y su cuadrícula redonda) igual que _applyChartYBounds, pero con un
+// dominio dado en vez de encajado a los datos — lo usa el zoom frame a frame.
+function _pvApplyYBand(lo, hi) {
+  if (!perfChart || !(hi > lo)) return;
+  const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+  if (!y) return;
+  const st = (typeof _gridStep === 'function') ? _gridStep(hi - lo) : (hi - lo) / 4;
+  y.min = lo; y.max = hi;
+  if (y.ticks) { y.ticks.stepSize = st; y.ticks.includeBounds = false; }
+  perfChart._axStep = st;
+  y.afterBuildTicks = function (scale) {
+    const out = [];
+    const first = Math.ceil((scale.min - 1e-9) / st) * st;
+    for (let t = first; t <= scale.max + 1e-9 && out.length < 12; t += st) out.push({ value: +t.toFixed(6) });
+    if (out.length) scale.ticks = out;
+  };
+}
+
+// ¿Procede el zoom? Solo al ESTRECHAR entre períodos históricos, con datos suficientes,
+// gráfica visible y sin "reduce motion". Devuelve la foto de la curva vieja o null.
+function _pvZoomPrep(prev, next) {
+  try {
+    if (!perfChart || !prev || !next || prev === next) return null;
+    if (prev === '1D' || next === '1D') return null;              // intradía = otro dominio (HH:MM)
+    if (document.hidden) return null;
+    if (!perfChart.canvas || perfChart.canvas.offsetParent === null) return null;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+    const snap = _pvZoomSnapshot();
+    if (!snap) return null;
+    // Lapso REAL pintado (más fiable que el nominal: cuentas jóvenes recortan la ventana).
+    let srcDays = _pvPeriodSpanDays(prev);
+    if (snap.dates.length >= 2) {
+      const d0 = new Date(snap.dates[0] + 'T00:00:00'), d1 = new Date(snap.dates[snap.dates.length-1] + 'T00:00:00');
+      const sp = (d1 - d0) / 86400000;
+      if (isFinite(sp) && sp > 0) srcDays = sp;
+    }
+    const tgtDays = _pvPeriodSpanDays(next);
+    if (!(isFinite(tgtDays) && tgtDays > 0) || !(srcDays > 0)) return null;
+    if (tgtDays > srcDays * 0.9) return null;                    // no estrecha → sin zoom
+    snap._srcDays = srcDays; snap._tgtDays = tgtDays;
+    return snap;
+  } catch(e) { return null; }
+}
+
+// Ejecuta el acercamiento. `snap` = curva vieja; el dataset del período NUEVO ya está
+// comprometido en el chart (setPeriodData(..., 'skip')) pero aún sin pintar.
+function _pvRunZoom(snap, period) {
+  const s0 = perfChart && perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0];
+  if (!s0) return;
+  const finLabels = perfChart.data.labels.slice();
+  const finValues = s0.data.slice();
+  const finDates  = Array.isArray(perfChart._pvDates) ? perfChart._pvDates.slice() : [];
+  const finColor  = s0.borderColor, finFill = s0.backgroundColor;
+  const last = snap.values.length - 1;
+
+  // Índice donde ABRE la ventana nueva dentro de la curva vieja. Por fecha si la hay
+  // (exacto); si no, por proporción de días (aproximado pero estable).
+  let i0 = -1;
+  if (snap.dates.length === snap.values.length && finDates.length) {
+    const from = finDates[0];
+    for (let i = 0; i < snap.dates.length; i++) { if (snap.dates[i] >= from) { i0 = i; break; } }
+  }
+  if (i0 < 0) i0 = Math.round((1 - snap._tgtDays / snap._srcDays) * last);
+  // Ventana degenerada (casi todo o casi nada) → el zoom no aporta; transición normal.
+  if (!(i0 > 1 && i0 < last - 3)) { perfChart.update('periodChange'); return; }
+
+  const N = _PV_ZOOM_N;
+  const tgtN = _pvZoomResample(finValues, 0, finValues.length - 1, N);
+  // Banda Y: arranque = la del lapso viejo; destino = la que setPeriodData ya dejó encajada
+  // al lapso nuevo. Se interpola (no se re-encaja) para que el eje no tiemble.
+  const yA = snap.y;
+  const yS = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+  const yB = (yS && typeof yS.min === 'number' && typeof yS.max === 'number') ? { min: yS.min, max: yS.max } : null;
+  const yTween = (yA && yB && yA.max > yA.min && yB.max > yB.min);
+  _pvStopZoom();
+  const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+
+  const step = (now) => {
+    _pvZoomRAF = null;
+    const t = Math.min(1, Math.max(0, ((now || Date.now()) - t0) / _PV_ZOOM_MS));
+    // Ease-out marcado: arranca rápido (responde al toque) y asienta suave, sin rebote
+    // —un overshoot en una gráfica financiera lee como error de datos, no como pulido.
+    const e = 1 - Math.pow(1 - t, 3.2);
+    const from = i0 * e;
+    const vals = _pvZoomResample(snap.values, from, last, N);
+    // Últimos ~28% del recorrido: se cruza hacia la serie REAL del período nuevo, así el
+    // frame final YA es esa serie (sin salto al cambiar de dataset al terminar).
+    const w = Math.min(1, Math.max(0, (e - 0.72) / 0.28));
+    if (w > 0) { const s = w * w * (3 - 2 * w); for (let i = 0; i < N; i++) vals[i] = +(vals[i] + (tgtN[i] - vals[i]) * s).toFixed(2); }
+
+    perfChart.data.labels = _pvZoomLabels(snap.labels, from, last, N);
+    s0.data = vals;
+    // El color del período nuevo entra progresivamente (3M verde → 1M rojo se ve fluido).
+    s0.borderColor = (typeof snap.color === 'string' && typeof finColor === 'string')
+      ? _pvMixColor(snap.color, finColor, Math.min(1, e * 1.35)) : finColor;
+    if (e >= 0.5) s0.backgroundColor = finFill;
+    // La banda Y se cierra junto con la ventana → sensación real de acercamiento.
+    if (yTween) { try { _pvApplyYBand(yA.min + (yB.min - yA.min) * e, yA.max + (yB.max - yA.max) * e); } catch(e2){} }
+    perfChart.update('none');
+
+    if (t < 1) { _pvZoomRAF = requestAnimationFrame(step); return; }
+    // Cierre: el dataset REAL del período (etiquetas y puntos exactos) queda pintado.
+    perfChart.data.labels = finLabels;
+    s0.data = finValues;
+    s0.borderColor = finColor;
+    s0.backgroundColor = finFill;
+    try { _applyChartYBounds(); } catch(e2){}
+    perfChart.update('none');
+  };
+  _pvZoomRAF = requestAnimationFrame(step);
+}
+
 // Permite que PORTIV_CHART inyecte un dataset directamente (sin pasar por setPeriod).
-function setPeriodData(period, ds) {
+// `updMode`: modo de update de Chart.js. 'skip' = no pintar (lo hace el zoom por frames).
+function setPeriodData(period, ds, updMode) {
   if (!perfChart || !ds || !ds.values || !ds.values.length) return;
   // ── GARANTÍA (todos los usuarios, sin excepción): el ÚLTIMO punto de la gráfica
   //    SIEMPRE = total en vivo del portafolio (que ya incluye el day change). Sin importar
@@ -14249,7 +14454,10 @@ function setPeriodData(period, ds) {
   // que hacía que Chart.js re-autoescalara a los datos del periodo → la gráfica cambiaba
   // de "tamaño" tras el primer frame (bug del resize). Ahora se mantiene la misma banda.
   try { _applyChartYBounds(); } catch(e){}
-  perfChart.update('periodChange');
+  // Fechas ISO de la serie pintada: las lee el zoom entre períodos para saber en qué punto
+  // de la curva vieja ABRE la ventana nueva (encuadre exacto, no proporcional).
+  try { perfChart._pvDates = Array.isArray(ds.dates) ? ds.dates.slice() : []; } catch(e){}
+  if (updMode !== 'skip') perfChart.update(updMode || 'periodChange');
   // CACHÉ ANTI-FLASH: guarda el ÚLTIMO dataset dibujado de 1M/1D (sellado con el día ET). Como
   // la reconstrucción REAL redibuja DESPUÉS del arranque, la caché acaba conteniendo la curva
   // real; al reabrir el app se hidrata al instante (initPerfChart) → ya NO se ve primero la
@@ -14302,6 +14510,8 @@ function _renderHeaderBadge(period, ds){
 }
 
 function setPeriod(period, btn) {
+  const _prevPeriod = activePeriod;
+  try { _pvStopZoom(); } catch(e) {}          // toques rápidos: un solo zoom vivo a la vez
   activePeriod = period;
   document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
   if (btn && btn.classList) btn.classList.add('active');
@@ -14328,7 +14538,16 @@ function setPeriod(period, btn) {
   if (typeof window._pvChartLoading === 'function') window._pvChartLoading(false);
 
   if (ds && ds.values && ds.values.length) {
-    setPeriodData(period, ds);
+    // Lapso que se ESTRECHA (3M→1M): zoom sobre la misma curva. El dataset nuevo se
+    // compromete igual (cabecera/badge/caché/eje al instante) pero sin pintar: los frames
+    // del zoom lo hacen y el último frame ya ES la serie del período nuevo.
+    const _zSnap = (typeof _pvZoomPrep === 'function') ? _pvZoomPrep(_prevPeriod, period) : null;
+    if (_zSnap) {
+      setPeriodData(period, ds, 'skip');
+      try { _pvRunZoom(_zSnap, period); } catch(e) { try { perfChart.update('periodChange'); } catch(e2){} }
+    } else {
+      setPeriodData(period, ds);
+    }
   } else {
     // Sin datos para este timeframe (p.ej. 1D antes del primer snapshot) → punto base en vivo.
     const T = (typeof calcTotals === 'function') ? calcTotals() : { total: 0 };
