@@ -423,7 +423,10 @@
   .abul-text { font-size: 12px; color: var(--text2); line-height: 1.5; }
 
   /* ── TOAST ── */
-  .toast { position: fixed; bottom: 24px; right: 24px; max-width: 380px; background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 13px 18px 13px 14px; font-size: 13px; font-weight: 500; color: var(--st-on-surface); z-index: 999; opacity: 0; transition: opacity .22s, transform .22s; transform: translateY(10px) scale(.98); pointer-events: none; display: flex; align-items: center; gap: 11px; box-shadow: 0 8px 28px rgba(11,28,48,.16), 0 2px 6px rgba(11,28,48,.08); }
+  .toast { position: fixed; bottom: 24px; right: 24px; max-width: 380px; background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 13px 18px 13px 14px; font-size: 13px; font-weight: 500; color: var(--st-on-surface); z-index: 13000; opacity: 0; transition: opacity .22s, transform .22s; transform: translateY(10px) scale(.98); pointer-events: none; display: flex; align-items: center; gap: 11px; box-shadow: 0 8px 28px rgba(11,28,48,.16), 0 2px 6px rgba(11,28,48,.08); }
+  /* z-index 13000, no 999: los overlays a pantalla completa (quiz de perfil, paywall) van en
+     12000, así que cualquier toast lanzado con uno abierto se pintaba DEBAJO y el usuario no
+     veía el error — la pantalla parecía congelada. Un toast siempre debe estar encima. */
   .toast-icon { flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
   .toast-icon .material-symbols-outlined { font-size: 18px; }
   .toast-msg { line-height: 1.4; }
@@ -433,7 +436,7 @@
      safe-area vía --pv-nav-total, de #4). Desktop no cambia (sidebar a la izquierda; nada
      tapa la esquina abajo-derecha). Ver device-matrix #11. */
   @media (max-width: 899px){
-    .toast { bottom: calc(var(--pv-nav-total) + 12px); z-index: 9500; }
+    .toast { bottom: calc(var(--pv-nav-total) + 12px); z-index: 13000; }
   }
   /* ── Watchlist ── */
   .wl-add-btn { background:var(--blue); color:#fff; border:none; border-radius: 0; padding:9px 16px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; flex-shrink:0; }
@@ -26931,6 +26934,10 @@ document.addEventListener('DOMContentLoaded', function(){
     // La suscripción real se gestionará vía IAP nativo (RevenueCat/StoreKit).
     var o = document.getElementById('portivPaywall');
     if(o) o.classList.remove('open');
+    // El quiz de perfil sigue abierto POR DEBAJO del paywall. Si no se cierra, al terminar
+    // el pago el usuario vuelve a ver la tarjeta del perfil, idéntica a antes de pagar, y
+    // parece que no pasó nada.
+    try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
     try { window.snapConnect(); } catch(e){}
   };
@@ -27287,6 +27294,10 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Connect: open the SnapTrade portal ──
   function snapConnect(){
     _setBusy(true);
+    // Aviso a pantalla completa ANTES de pedir el portal. Va aquí y no en cada llamador
+    // porque la espera existe en los tres caminos (tras el pago, fallback sin paywall y
+    // botón "Conectar mi broker"), y sin él la pantalla se queda muda varios segundos.
+    try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); }catch(e){}
     var _nativeCap = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
     // iOS nativo: el portal SnapTrade se abre DENTRO de la app (in-app browser) y al terminar
     // vuelve por deep link portiv://  → nada se abre en Safari externo. Web: navegación normal.
@@ -27296,7 +27307,16 @@ document.addEventListener('DOMContentLoaded', function(){
       try{ localStorage.setItem('pv_snap_pending','1'); }catch(e){}
       if(_nativeCap){ _snapOpenInApp(j.redirectURI); }
       else { window.location.href = j.redirectURI; }
-    }).catch(function(e){ try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){} toast(e.message||'No se pudo iniciar la conexión.'); _setBusy(false); });
+    }).catch(function(e){
+      _setBusy(false);
+      // El toast NO sirve aquí: vive en z-index 999 (9500 en móvil) y el quiz de perfil va en
+      // 12000, así que el error quedaba tapado y el fallo se veía como "la pantalla se quedó
+      // parada tras pagar". El error se pinta ahora sobre el propio overlay, con reintento.
+      var _m = (e && e.message) || 'No se pudo iniciar la conexión.';
+      try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
+      try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
+      toast(_m);
+    });
   }
   // Abre el portal SnapTrade dentro de la app (SFSafariViewController vía @capacitor/browser) y
   // detecta el regreso: (a) deep link portiv:// que SnapTrade dispara al terminar, o (b) el usuario
@@ -27811,6 +27831,27 @@ document.addEventListener('DOMContentLoaded', function(){
     if(_t){ clearTimeout(_t); _t=null; }
     o.style.display = show?'flex':'none';
     if(show){ _t=setTimeout(function(){ try{ o.style.display='none'; }catch(e){} }, 20000); } // red de seguridad
+  };
+  // Fallo al pedir el portal: se pinta ENCIMA (mismo z-index que el overlay de carga) porque
+  // el toast queda por debajo del quiz/paywall y el usuario no ve nada. Salida siempre visible.
+  window._pvConnectingError=function(msg,onRetry){
+    try{ window._pvConnectingOverlay(false); }catch(e){}
+    var o=document.getElementById('pvConnErrOverlay');
+    if(!o){
+      o=document.createElement('div'); o.id='pvConnErrOverlay';
+      o.style.cssText='position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:28px;background:rgba(6,15,30,.86);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)';
+      o.innerHTML='<div id="pvConnErrMsg" style="color:#fff;font:600 16px/1.45 var(--font,system-ui);text-align:center;max-width:80%"></div>'
+        +'<div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">'
+        +'<button id="pvConnErrRetry" style="border:0;border-radius:11px;padding:12px 22px;font:600 14px var(--font,system-ui);background:#12d18e;color:#04162c;cursor:pointer">Reintentar</button>'
+        +'<button id="pvConnErrClose" style="border:1px solid rgba(255,255,255,.34);border-radius:11px;padding:12px 22px;font:600 14px var(--font,system-ui);background:transparent;color:#fff;cursor:pointer">Ahora no</button>'
+        +'</div>';
+      document.body.appendChild(o);
+      document.getElementById('pvConnErrClose').onclick=function(){ o.style.display='none'; };
+    }
+    var m=document.getElementById('pvConnErrMsg'); if(m) m.textContent = msg || 'No se pudo iniciar la conexión con tu broker.';
+    var r=document.getElementById('pvConnErrRetry');
+    if(r) r.onclick=function(){ o.style.display='none'; try{ if(typeof onRetry==='function') onRetry(); }catch(e){} };
+    o.style.display='flex';
   };
   window._pvChartLoading=function(show){
     var wrap=document.querySelector('.perf-chart-wrap'); if(!wrap) return;
