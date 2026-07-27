@@ -14,6 +14,57 @@
   html.app-locked #authOverlay { visibility:visible !important; }
 </style>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<script>
+/* ─── iPad → layout de tablet (bottom-nav), no el de escritorio ───────────────
+   El CSS conmuta de paradigma en 900px: ≥900 = sidebar de escritorio, ≤899 = bottom-nav
+   con safe-area (la versión ya afinada para iPad). El iPad VERTICAL (820/834) caía en el
+   lado móvil, pero el HORIZONTAL (1180/1194/1366) caía en escritorio → sidebar en un
+   equipo táctil. En vez de reescribir ~40 media queries (riesgo de layout híbrido: nav
+   móvil con grids de escritorio), se fija el ancho del VIEWPORT a 899 en iPad: TODAS las
+   media queries y el matchMedia del JS (PV_isMobile) leen el mismo ancho a la vez, así que
+   no hay forma de quedar a medio camino. Safari escala la página para llenar la pantalla.
+
+   Detección: iPadOS 13+ se anuncia como "Macintosh" en el UA, así que se combina con
+   maxTouchPoints (un Mac real reporta 0, incluido el de Touch Bar). No toca iPhone ni Mac.
+
+   Split View / Stage Manager: si la ventana ya mide ≤899 NO se fija nada (forzar 899 en una
+   ventana de 507 encogería el texto). Se recalcula al rotar/redimensionar. Estando fijado,
+   innerWidth vale 899, así que el ancho real se recupera con visualViewport.scale. */
+(function () {
+  var m = document.querySelector('meta[name="viewport"]');
+  if (!m) return;
+  var TABLET_W = 899;                       // mismo número que el breakpoint del CSS
+  var DESKTOP  = 'width=device-width, initial-scale=1.0, viewport-fit=cover';
+  /* Sin initial-scale al fijar el ancho: el viewport final es el MAYOR entre `width` y el
+     que implica la escala, así que initial-scale=1 anularía el width=899. */
+  var TABLET   = 'width=' + TABLET_W + ', viewport-fit=cover';
+  var ua = navigator.userAgent || '';
+  /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama del Mac
+     táctil. (No cambiaría el layout — nunca superan 899 px — pero sí marcaría la clase.) */
+  var isIPad = !/iPhone|iPod/.test(ua) &&
+    (/iPad/.test(ua) || (/Mac/.test(ua + (navigator.platform || '')) && navigator.maxTouchPoints > 1));
+  if (!isIPad) return;
+  document.documentElement.classList.add('pv-ipad');
+  function realW() {
+    var w = document.documentElement.clientWidth || window.innerWidth || 0;
+    var s = (window.visualViewport && window.visualViewport.scale) || 1;
+    return Math.round(w * (s > 0 ? s : 1));
+  }
+  function apply() {
+    var want = realW() > TABLET_W ? TABLET : DESKTOP;
+    if (m.getAttribute('content') !== want) m.setAttribute('content', want);
+  }
+  apply();
+  var t = null;
+  function onChange() {
+    if (t) clearTimeout(t);
+    /* iOS reporta el tamaño tarde tras rotar: se mide dos veces. */
+    t = setTimeout(function () { t = null; apply(); setTimeout(apply, 260); }, 120);
+  }
+  window.addEventListener('resize', onChange, { passive: true });
+  window.addEventListener('orientationchange', onChange, { passive: true });
+})();
+</script>
 <title>Portafolio — Plataforma de Inversión</title>
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
@@ -4054,11 +4105,8 @@ window.PADDLE_PRICES = {
       <div class="r-analysis" id="r-analysis"></div>
     </div>
 
-    <!-- Proyecciones de analistas -->
-    <div class="ra-card" id="r-projections-card" style="display:none;margin-bottom:16px">
-      <div class="ra-card-title">Proyecciones de Precio</div>
-      <div id="r-projections"></div>
-    </div>
+    <!-- Proyecciones de analistas: tarjeta eliminada (estaba duplicada con la px-card
+         "Proyecciones de precio" del render principal, mismos datos). -->
 
     <!-- ETF Holdings -->
     <div class="ra-card" id="r-holdings-card" style="display:none;margin-bottom:16px">
@@ -17314,9 +17362,23 @@ function _renderQualAnalysis(a, el){
       const _lbl = _st === 'line' ? 'en línea' : (_st === 'beat' ? 'superó' : 'falló');
       chips += `<span class="px-eqr-chip ${_st === 'line' ? '' : _st}">EPS ${_num(eqr.epsActual)} vs. ${_num(eqr.epsEstimate) || '—'} · ${_lbl}</span>`;
     }
-    const _col = (title, cls, icon, arr) => (Array.isArray(arr) && arr.length)
-      ? `<div class="${cls}"><h4>${icon} ${title}</h4><ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
-    const _cols = _col('QUÉ SALIÓ BIEN','pros','✓',eqr.bueno) + _col('QUÉ SALIÓ MAL','risks','⚠',eqr.malo);
+    // Antes, una columna vacía se omitía: un trimestre limpio dejaba "QUÉ SALIÓ BIEN" solo,
+    // y el lector no sabía si no hubo nada malo o si el dato faltaba. Ahora, si alguna de las
+    // dos listas trae contenido se pintan AMBAS columnas; la vacía lleva una línea explícita
+    // ("no hubo deterioro material") en vez de desaparecer. Si las dos vienen vacías la
+    // sección de columnas sigue sin aparecer — ahí de verdad no hay lectura que dar.
+    const _clean = arr => (Array.isArray(arr) ? arr : []).filter(x => x != null && String(x).trim());
+    const _bien = _clean(eqr.bueno), _mal = _clean(eqr.malo);
+    const _col = (title, cls, icon, items, fallback) =>
+      `<div class="${cls}"><h4>${icon} ${title}</h4><ul>${
+        items.length ? items.map(x=>`<li>${esc(x)}</li>`).join('') : `<li>${esc(fallback)}</li>`
+      }</ul></div>`;
+    const _cols = (_bien.length || _mal.length)
+      ? _col('QUÉ SALIÓ BIEN','pros','✓',_bien,
+             'Sin aspectos positivos materiales: el reporte no mostró avances relevantes frente al consenso en las métricas clave del trimestre.')
+      + _col('QUÉ SALIÓ MAL','risks','⚠',_mal,
+             'Sin aspectos negativos materiales: el trimestre no dejó desviaciones relevantes frente al consenso ni deterioro en las métricas clave del negocio.')
+      : '';
     const _note = (kk, vv) => vv ? `<div class="px-eqr-note"><div class="kk">${kk}</div><div class="vv">${esc(vv)}</div></div>` : '';
     const _notes = _note('Lo que más creció', eqr.mas_crecio) + _note('Lo más destacado', eqr.destacado);
     // Bloque de texto con título propio (mercado / qué esperar). Sin caja gris: el texto
