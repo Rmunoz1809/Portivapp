@@ -55,6 +55,83 @@ supabase secrets set RC_ACCEPT_SANDBOX=false
 | BILLING_ISSUE (gracia; Apple reintenta) | true | grace | no (salvo que ya expiró) |
 | EXPIRATION · SUBSCRIPTION_PAUSED | false | expired | **sí** → `snaptrade-disconnect` |
 
+## Paddle (web) — `paddle-webhook`
+
+En **iOS la suscripción va por RevenueCat/StoreKit**; en **web va por Paddle Billing** (no Paddle
+Classic). Ambos escriben la MISMA tabla `public.subscriptions`; las filas de Paddle se distinguen por
+`store='paddle'` y dejan `rc_app_user_id` en NULL. El cliente sigue leyendo sólo `subscriptions`.
+
+### Despliegue
+
+```bash
+# El webhook NO lleva JWT de usuario: Paddle postea servidor-a-servidor y la autenticidad
+# se prueba con la firma HMAC del header Paddle-Signature.
+supabase functions deploy paddle-webhook --no-verify-jwt
+
+# Secret key del destino de notificaciones (Paddle → Developer tools → Notifications →
+# tu destino → "Secret key"). SIN este secreto la función responde 500 y NO escribe nada:
+# nunca se acepta un evento sin verificar.
+supabase secrets set PADDLE_WEBHOOK_SECRET=pdl_ntfset_...
+
+# Sólo si Paddle no manda el header Paddle-Environment (queda en `environment` de la fila).
+supabase secrets set PADDLE_ENV=sandbox     # 'production' al lanzar
+```
+
+La baja del broker reutiliza el mismo mecanismo interno que `snaptrade-cleanup`
+(`INTERNAL_DISCONNECT_SECRET`, con fallback a `SNAPTRADE_CRON_SECRET`); ya está seteado.
+
+### ⚠ Lo que TÚ debes hacer en el dashboard de Paddle
+
+1. **Notification destination** (Developer tools → Notifications → New destination):
+   - URL: `https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/paddle-webhook`
+   - Tipo: Webhook · Versión de API: la de **Paddle Billing** (no Classic).
+   - Copia la **Secret key** que te da Paddle y pégala en `PADDLE_WEBHOOK_SECRET` (comando arriba).
+2. **Event types a suscribir — exactamente estos nueve** (cualquier otro se ignora con 200):
+   ```
+   subscription.created
+   subscription.activated
+   subscription.updated
+   subscription.canceled
+   subscription.past_due
+   subscription.paused
+   subscription.resumed
+   transaction.completed
+   transaction.payment_failed
+   ```
+3. **Sandbox vs producción**: el destino se crea por separado en cada entorno. Al pasar a live hay que
+   rehacerlo en el dashboard de producción (secret distinto) y cambiar en `index.html`
+   `Paddle.Environment.set('sandbox')` → `'production'`, el token client-side y los `PADDLE_PRICES`.
+4. **`supabase_user_id`**: ya se manda solo — `_pvStartCheckout()` abre el checkout con
+   `customData: { supabase_user_id: uid }`, y Paddle lo devuelve en `data.custom_data`. Si un evento
+   llega sin él, el webhook intenta resolverlo por email (`profiles.email` → `auth.users`) y, si
+   tampoco, responde **200** con un log de aviso: un 4xx haría que Paddle reintentara 3 días seguidos
+   un evento que nunca vamos a poder mapear.
+
+### Seguridad del webhook (firma)
+
+`Paddle-Signature: ts=<unix_segundos>;h1=<hex>`. Se verifica HMAC-SHA256 de
+`` `${ts}:${cuerpo crudo}` `` con `PADDLE_WEBHOOK_SECRET`, comparando en tiempo constante. El cuerpo se
+lee con `req.text()` **antes** de parsear (reserializar el JSON rompe la firma). Además se rechazan
+firmas con `ts` de más de **5 minutos** (anti-replay). Todo fallo de firma → **401**.
+
+### Mapeo de eventos Paddle → estado (en `paddle-webhook`)
+
+| event_type | entitlement_active | status | ¿baja de broker? |
+|---|---|---|---|
+| subscription.created · subscription.activated · subscription.resumed | true | active | no |
+| subscription.updated | según `data.status` (active/trialing/past_due → true; paused/canceled → false) | el propio `data.status` | sólo si queda inactivo |
+| subscription.canceled | true si aún queda periodo pagado; false si ya es efectiva | canceled | sólo si false |
+| subscription.past_due (gracia; Paddle reintenta el cobro) | true | past_due | no |
+| subscription.paused | false | paused | **sí** → `snaptrade-disconnect` |
+| transaction.payment_failed (no se corta al primer fallo) | true | past_due | no |
+| transaction.completed | true | active | no |
+| cualquier otro | — | — | ignorado (200, sin escribir) |
+
+`expires_at` = `data.current_billing_period.ends_at` (o `next_billed_at`) · `will_renew` = false sólo si
+hay `scheduled_change.action === 'cancel'` · `product_id` = `data.items[0].price.id`.
+**Idempotencia**: upsert por `user_id` + descarte de eventos cuyo `data.updated_at`/`occurred_at` es
+anterior al `updated_at` de la fila (Paddle reintenta y puede entregar desordenado).
+
 ## Pruebas backend ya corridas (throwaway user, sandbox)
 - Sin suscripción → `snaptrade-refresh`/`-connect` = **403 subscription_required** ✅
 - INITIAL_PURCHASE → entitlement activo → refresh = **200** ✅
