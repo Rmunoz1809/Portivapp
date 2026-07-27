@@ -35,6 +35,30 @@ const _isGone = (e: any) => {
   return /not.?found|does not exist|no.?such.?user|already.*delet/i.test(_detail(e));
 };
 
+// Caso REAL comprobado contra la API: borrar un usuario que ya no existe NO
+// devuelve 404 sino un 400 genérico "Please provide valid clientId and userId in
+// query params". Tratarlo a ciegas como "ya no está" sería peligroso: ese mismo
+// mensaje aparecería si NUESTRAS credenciales estuvieran mal, y entonces
+// limpiaríamos el enlace local mientras SnapTrade sigue cobrando (justo lo que
+// este sistema debe evitar). Se desambigua listando los usuarios del cliente:
+//   la lista responde y el userId NO está  → de verdad no existe → baja idempotente
+//   la lista falla                          → el problema es nuestro → reintento
+const _isBadParams = (e: any) =>
+  /provide\s+valid\s+client\s?id|valid\s+clientid\s+and\s+userid/i.test(_detail(e));
+
+async function confirmAbsentUpstream(snapUserId: string): Promise<boolean | null> {
+  try {
+    const r = await snaptrade().authentication.listSnapTradeUsers();
+    const list = (r?.data ?? []) as unknown[];
+    if (!Array.isArray(list)) return null; // respuesta inesperada → no concluir nada
+    const ids = list.map((u: any) => (typeof u === "string" ? u : (u?.userId ?? "")));
+    return !ids.includes(snapUserId);
+  } catch (e: any) {
+    console.error("[snaptrade-disconnect] no se pudo verificar la lista de usuarios:", _detail(e));
+    return null; // sin verificación no se limpia nada
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return preflight(req);
   if (req.method !== "POST") return jsonResponse(req, { error: "Method Not Allowed" }, 405);
@@ -93,6 +117,12 @@ Deno.serve(async (req) => {
     } catch (e: any) {
       if (_isGone(e)) {
         deletedRemote = true; // already deleted upstream → idempotent success
+      } else if (_isBadParams(e) && (await confirmAbsentUpstream(snapUserId)) === true) {
+        // 400 genérico + la lista de SnapTrade confirma que ese userId ya no existe.
+        // Sin esta rama la fila se reintentaría cada hora para siempre y el enlace
+        // local nunca se limpiaría (la app seguiría diciendo "conectado").
+        console.warn("[snaptrade-disconnect] usuario ausente aguas arriba, se limpia el enlace local:", snapUserId);
+        deletedRemote = true;
       } else {
         const detail = _detail(e) || "snaptrade_delete_failed";
         console.error("[snaptrade-disconnect] upstream delete failed (will retry):", detail);
