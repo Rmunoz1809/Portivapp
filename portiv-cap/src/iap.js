@@ -8,8 +8,36 @@ import { Purchases, LOG_LEVEL, PURCHASES_ERROR_CODE } from '@revenuecat/purchase
 import { RevenueCatUI, PAYWALL_RESULT } from '@revenuecat/purchases-capacitor-ui';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 
-// ⚠️ CAMBIAR por la API key de iOS de PRODUCCIÓN antes de lanzar al App Store.
-const REVENUECAT_IOS_API_KEY = 'test_QuOSkuEiywERIEaFurpQhZlKIoQ';
+// ══════════════════════════════════════════════════════════════════════════════
+//  CLAVE DE API DE REVENUECAT — test hoy, producción el día del lanzamiento
+//  ─────────────────────────────────────────────────────────────────────────────
+//  Son claves PÚBLICAS de SDK: viajan dentro del binario por diseño y no son un
+//  secreto (el secreto es la clave v2 del backend, que no vive aquí).
+//
+//  Para pasar a producción hay DOS caminos — elige uno, no hacen falta los dos:
+//
+//   a) Editar este archivo: pegar la clave `appl_…` en RC_KEYS.prod y cambiar
+//      RC_ENV_DEFAULT a 'prod'. Luego `npm run sync`.
+//   b) Sin tocar el código:  export PORTIV_RC_KEY_PROD='appl_…' && npm run sync:prod
+//      (scripts/build-iap-prod.js la inyecta en tiempo de build con --define).
+//
+//  En ambos casos el build de PRODUCCIÓN se niega a completarse si la clave está
+//  vacía, no empieza por `appl_`, o si el bundle resultante todavía contiene una
+//  clave `test_`. Es decir: subir la de sandbox por olvido no es posible.
+// ══════════════════════════════════════════════════════════════════════════════
+const RC_KEYS = {
+  test: 'test_QuOSkuEiywERIEaFurpQhZlKIoQ',
+  prod: '',                    // ← clave pública de iOS de PRODUCCIÓN (empieza por 'appl_')
+};
+const RC_ENV_DEFAULT = 'test'; // ← 'prod' el día del lanzamiento (camino a)
+
+// esbuild sustituye estos dos identificadores en el build de producción (--define).
+// En el build normal no existen, de ahí el guard con typeof.
+const RC_ENV  = (typeof __PV_RC_ENV__ !== 'undefined') ? __PV_RC_ENV__ : RC_ENV_DEFAULT;
+const _RC_INJ = (typeof __PV_RC_KEY__ !== 'undefined') ? __PV_RC_KEY__ : '';
+const REVENUECAT_IOS_API_KEY = _RC_INJ || RC_KEYS[RC_ENV] || RC_KEYS.test;
+const RC_IS_TEST_KEY = /^test_/.test(REVENUECAT_IOS_API_KEY) || RC_ENV !== 'prod';
+
 const ENTITLEMENT_ID = 'Portiv Pro';
 const OFFERING_ID    = 'default';
 
@@ -47,7 +75,13 @@ async function configure() {
     state.configured = true;
     return;
   }
-  try { await Purchases.setLogLevel({ level: LOG_LEVEL.DEBUG }); } catch (e) {}
+  // Aviso ruidoso en cada arranque mientras la clave sea de sandbox: con `test_` las
+  // compras NO son reales y el entitlement no llega al backend de producción.
+  if (RC_IS_TEST_KEY) {
+    console.warn('[PortivIAP] ⚠ Clave de RevenueCat de PRUEBA (env=' + RC_ENV + '). Las compras NO son reales. '
+      + 'Antes del App Store: ver el bloque "CLAVE DE API DE REVENUECAT" en src/iap.js.');
+  }
+  try { await Purchases.setLogLevel({ level: RC_IS_TEST_KEY ? LOG_LEVEL.DEBUG : LOG_LEVEL.WARN }); } catch (e) {}
   await Purchases.configure({ apiKey: REVENUECAT_IOS_API_KEY });
   state.configured = true;
   // Actualizaciones en vivo (renovaciones, cambios desde App Store, restore, etc.)
@@ -57,19 +91,39 @@ async function configure() {
   await refresh();
 }
 
+// Identidad ya vinculada (o vinculándose) con RevenueCat. index.html llama a login()
+// desde el gate de sesión, que puede reentrar (reintento del gate, TOKEN_REFRESHED,
+// re-render): sin este guard cada pasada dispararía un logIn de red inútil.
+let _idUid = null;
+let _idPromise = null;
+
 // Vincula la compra al usuario de Supabase (app_user_id = user.id, el mismo que ve el webhook).
+// Idempotente por uid: repetirla con el mismo usuario no vuelve a llamar al SDK.
 async function login(appUserId) {
-  if (!state.configured) await configure();
-  if (!isNative() || !appUserId) return state.isPro;
-  try {
-    const { customerInfo } = await Purchases.logIn({ appUserID: String(appUserId) });
-    _setPro(_entActive(customerInfo));
-  } catch (e) { console.warn('[PortivIAP] logIn falló', e); }
+  const uid = appUserId ? String(appUserId) : '';
+  if (!uid) return state.isPro;
+  try { if (!state.configured) await configure(); } catch (e) { return state.isPro; }
+  if (!isNative()) return state.isPro;
+  if (_idUid === uid) {                       // mismo usuario: ya vinculado o en vuelo
+    if (_idPromise) { try { await _idPromise; } catch (e) {} }
+    return state.isPro;
+  }
+  _idUid = uid;
+  _idPromise = Purchases.logIn({ appUserID: uid })
+    .then(({ customerInfo }) => { _setPro(_entActive(customerInfo)); })
+    // Fallo (red, SDK sin configurar): se suelta el uid para que la SIGUIENTE transición
+    // de sesión reintente. Nunca se propaga: el login de la app no puede depender de esto.
+    .catch((e) => { console.warn('[PortivIAP] logIn falló', e); _idUid = null; })
+    .finally(() => { _idPromise = null; });
+  await _idPromise;
   return state.isPro;
 }
 
 async function logout() {
+  _idUid = null; _idPromise = null;
+  try { delete window.__pvPendingIapUid; } catch (e) {}
   if (!isNative()) { _setPro(false); return; }
+  // Purchases.logOut() lanza si el usuario actual ya es anónimo — no es un error real.
   try { await Purchases.logOut(); } catch (e) {}
   _setPro(false);
 }
@@ -282,6 +336,10 @@ window.PortivIAP = {
   purchaseAnnual:  () => purchase('annual'),
   restore, presentPaywall, autowire, onChange,
   isPro: () => state.isPro,
+  appUserId: () => _idUid,        // para verificar en consola que NO es $RCAnonymousID
+  // Diagnóstico rápido en la consola de Safari conectada al dispositivo:
+  //   PortivIAP.env()  →  { env:'test', testKey:true, keyPrefix:'test_QuOS…' }
+  env: () => ({ env: RC_ENV, testKey: RC_IS_TEST_KEY, keyPrefix: REVENUECAT_IOS_API_KEY.slice(0, 9) + '…' }),
   ENTITLEMENT_ID, OFFERING_ID,
 };
 
@@ -290,6 +348,10 @@ window.PortivIAP = {
 (async () => {
   try { await configure(); await loadOfferings(); }
   catch (e) { console.warn('[PortivIAP] init', e); }
+  // Este bundle se inyecta con `defer`, así que en un arranque en frío con sesión
+  // persistida el gate de auth ya corrió y dejó el uid aquí. Sin recogerlo, ese
+  // usuario se quedaría anónimo hasta el siguiente login manual.
+  try { const pend = window.__pvPendingIapUid; if (pend) login(pend); } catch (e) {}
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', autowire);
   else autowire();
 })();

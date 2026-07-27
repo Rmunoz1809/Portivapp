@@ -26574,6 +26574,24 @@ if (document.readyState === 'loading') {
     if (window._pvKilled) return;   // cuenta eliminada → no cargar nada (se reinicia limpio)
     session = s;
     try { window.__pvUserId = (s.user && s.user.id) || 'local'; } catch(e){}
+    // RevenueCat: vincular la compra al UUID de Supabase. Sin esto TODO cliente queda con
+    // un $RCAnonymousID y el entitlement no se comparte entre iOS y web (quien paga en el
+    // iPhone entra en portivapp.com y no es Pro). Este es el único punto por el que pasan
+    // las tres transiciones "sin sesión → con sesión": arranque con sesión persistida,
+    // login y signup. PortivIAP.login() es idempotente por uid, así que un re-gate (retry,
+    // TOKEN_REFRESHED) no repite la llamada de red. No se hace `await`: un fallo del SDK
+    // no puede retrasar ni romper la entrada del usuario. `__pvPendingIapUid` cubre el
+    // arranque en frío, donde portiv-iap.js (defer) aún no ha cargado al llegar aquí.
+    try {
+      var _iapUid = (s.user && s.user.id) || '';
+      if (_iapUid) {
+        window.__pvPendingIapUid = _iapUid;
+        if (window.PortivIAP && typeof window.PortivIAP.login === 'function') {
+          Promise.resolve(window.PortivIAP.login(_iapUid))
+            .catch(function(e){ try { _pvLogError('PortivIAP.login', e); } catch(_){} });
+        }
+      }
+    } catch(e){}
     // Sesión autenticada lista → SharedNews ya puede ESCRIBIR en la nube (RLS exige auth).
     // Sin esto, la generación corría como anónimo, la escritura la bloqueaba RLS y nunca
     // persistía → cada dispositivo regeneraba (bug de "se genera dos veces" + costo N×).
@@ -26941,6 +26959,19 @@ if (document.readyState === 'loading') {
   // Wi-Fi a datos): antes cualquiera de esos borraba el portafolio local, la sesión volvía
   // sola un segundo después y la app se reconstruía entera desde la nube. Ese ciclo, en un
   // teléfono con red inestable, es un arranque en frío tras otro.
+  // RevenueCat conserva el App User ID entre lanzamientos. Sin logOut(), la SIGUIENTE
+  // cuenta que entre en este dispositivo heredaría el customer de la anterior — y con él
+  // su entitlement. Se llama en TODO cierre de sesión: manual, cuenta eliminada y la
+  // salida del muro del candado. Nunca lanza: cerrar sesión no puede fallar por el SDK.
+  window._pvIapLogout = function(){
+    try { delete window.__pvPendingIapUid; } catch(e){ window.__pvPendingIapUid = null; }
+    try {
+      var iap = window.PortivIAP;
+      if (iap && typeof iap.logout === 'function') return Promise.resolve(iap.logout()).catch(function(){});
+    } catch(e){}
+    return Promise.resolve();
+  };
+
   function showLogin(purge){
     session = null;
     window._pvAuthReady = false;
@@ -26980,7 +27011,7 @@ if (document.readyState === 'loading') {
         if (deleted) {
           window._pvKilled = true;                          // corta cualquier carga en curso
           try { _pvNukeLocalAll(); } catch(e){ _pvLogError('auth deleted-account purge', e); }
-          sb.auth.signOut().catch(function(){}).then(function(){
+          sb.auth.signOut().catch(function(){}).then(function(){ return window._pvIapLogout(); }).then(function(){
             try { location.reload(); } catch(e){ showLogin(); }   // recarga → arranca limpio, sin sesión
           });
           return;
@@ -27082,6 +27113,7 @@ if (document.readyState === 'loading') {
       showOverlay();
     } catch(e){}
     try { await sb.auth.signOut(); } catch(e){}
+    try { await window._pvIapLogout(); } catch(e){}   // desvincula el customer de RevenueCat
     try {
       sessionStorage.removeItem('_cloudApplied');
       // limpiar todos los marcadores por-usuario para que la próxima cuenta re-evalúe desde cero
@@ -27312,12 +27344,25 @@ document.addEventListener('DOMContentLoaded', function(){
   </div>
 </div>
 <script>
+  // ¿Corremos dentro del wrapper de Capacitor? Se calcula SIN mirar PortivIAP a propósito:
+  // antes `_nat` exigía que el SDK existiera, así que si portiv-iap.js no cargaba caíamos al
+  // overlay web — y ese overlay abre Paddle Checkout. Un método de pago externo dentro de la
+  // app de iOS es rechazo directo en App Review (Guideline 3.1.1), además de prometer un
+  // "1 mes gratis" hardcodeado que ahí no lo concede nadie. En nativo no hay plan B: o el
+  // paywall de StoreKit, o un error honesto.
+  window._pvIsNativeApp = function(){
+    try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }
+    catch(e){ return false; }
+  };
   window._pvShowPaywall = function(){
+    var _nat = window._pvIsNativeApp();
     // iOS nativo → paywall PREHECHO de RevenueCat (IAP StoreKit), NO el overlay web.
+    // Ese paywall lo diseña el dashboard de RevenueCat y resuelve SOLO la elegibilidad del
+    // intro offer ("1 mes gratis") por producto y por usuario, con el dato que Apple le da
+    // al SDK. Por eso aquí no se pinta ningún badge de trial a mano.
     try {
-      var iap = window.PortivIAP;
-      var _nat = !!(iap && window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-      if (_nat && typeof iap.presentPaywall === 'function'){
+      var iap = _nat ? window.PortivIAP : null;
+      if (_nat && iap && typeof iap.presentPaywall === 'function'){
         // Vincula la compra al usuario Supabase (si hay sesión) → atribución del webhook.
         try{ if(window.__pvUserId && window.__pvUserId!=='local' && iap.login) iap.login(window.__pvUserId); }catch(e){}
         iap.presentPaywall().then(function(res){
@@ -27333,7 +27378,15 @@ document.addEventListener('DOMContentLoaded', function(){
         return;   // en nativo NO se abre el overlay web
       }
     } catch(e){}
-    // Web (o sin IAP disponible) → overlay custom como antes.
+    if (_nat) {
+      // Estamos en iOS pero el SDK de compras no está disponible (portiv-iap.js no cargó).
+      // Mostrar el overlay web aquí sería ofrecer Paddle dentro de la app. Se avisa y se sale.
+      var _m = 'No se pudo abrir la suscripción. Cierra la app y vuelve a abrirla.';
+      try { if (typeof showToast === 'function') { showToast(_m, 'var(--red)'); return; } } catch(e){}
+      try { alert(_m); } catch(e){}
+      return;
+    }
+    // Web → overlay custom como antes.
     var o = document.getElementById('portivPaywall');
     if(!o) return;
     o.scrollTop = 0; o.classList.add('open');
@@ -27362,6 +27415,10 @@ document.addEventListener('DOMContentLoaded', function(){
   // Web: abre el checkout de Paddle (SANDBOX). Tras 'checkout.completed' (eventCallback en <head>)
   // se cierra el paywall y se conecta el broker vía _pvConfirmTrial().
   window._pvStartCheckout = async function(){
+    // En iOS el cobro SIEMPRE pasa por StoreKit. Paddle es un método de pago externo y
+    // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
+    // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
+    if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
     if (!window.Paddle || !window.Paddle.Checkout) {
       try { alert('El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.'); } catch(e){}
       return;
@@ -27565,7 +27622,7 @@ document.addEventListener('DOMContentLoaded', function(){
       // Sin esta salida el usuario sin suscripción queda encerrado sin forma de
       // cambiar de cuenta — y la cuenta correcta puede ser justo la que sí pagó.
       o.querySelector('#pvSubBlockOut').onclick = function(){
-        try { window.sbClient.auth.signOut().then(function(){ location.reload(); }); } catch(e){ location.reload(); }
+        try { window.sbClient.auth.signOut().then(function(){ return window._pvIapLogout(); }).then(function(){ location.reload(); }); } catch(e){ location.reload(); }
       };
       o.querySelector('#pvSubBlockRestore').onclick = function(){ window._pvRestorePurchases(); };
       o.querySelector('#pvSubBlockCta').onclick = function(){ window._pvRetryPayment(); };

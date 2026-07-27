@@ -88,8 +88,47 @@ Notas Catalyst:
 - El paywall y "Restaurar compras" ya funcionan en Mac (StoreKit soporta Catalyst).
 - El safe-area CSS no estorba en Mac (los insets son 0 en ventana de escritorio).
 
+## Cambiar a la API key de PRODUCCIÓN de RevenueCat
+
+Hoy el bundle se construye con la clave de sandbox (`test_…`), a propósito. Con ella la app
+funciona pero **ninguna compra es real**, así que subirla al App Store por despiste es el
+fallo caro: la app arranca, el paywall abre, y el pago muere en silencio. Por eso el camino
+de producción está automatizado y **se niega a compilar** con una clave que no sea `appl_…`.
+
+La clave pública de iOS está en RevenueCat → *Project settings* → *API keys*. Es pública
+(viaja dentro del binario por diseño), no es un secreto que haya que ocultar.
+
+**Camino recomendado — sin tocar código:**
+
+```sh
+export PORTIV_RC_KEY_PROD='appl_xxxxxxxxxxxxxxxxxxxxxxxxx'
+npm run sync:prod        # valida la clave → build → npx cap sync ios
+```
+
+**Camino alternativo — editando el archivo:** en `src/iap.js`, bloque
+`CLAVE DE API DE REVENUECAT`: pegar la clave en `RC_KEYS.prod` y cambiar
+`RC_ENV_DEFAULT` a `'prod'`. Luego `npm run sync`.
+
+Qué rechaza el build de producción (`scripts/build-iap-prod.js`):
+clave vacía · clave `test_…` · prefijo que no sea `appl_` · clave demasiado corta ·
+y, ya compilado, un bundle donde la clave no acabó realmente inyectada (en ese caso
+borra `www/portiv-iap.js`, para que no se suba el artefacto anterior por error).
+
+Cómo confirmar en qué modo está un build, desde la consola de Safari conectada al dispositivo:
+
+```js
+PortivIAP.env()      // → { env:'prod', testKey:false, keyPrefix:'appl_xxxx…' }
+PortivIAP.appUserId()  // → el UUID de Supabase, NO '$RCAnonymousID:…'
+```
+
+Mientras la clave sea de test, cada arranque deja un aviso en consola:
+`[PortivIAP] ⚠ Clave de RevenueCat de PRUEBA…`. Cuando ese aviso desaparece, el build es de producción.
+
+**Volver a sandbox** para seguir probando: `npm run sync` (el build normal siempre usa la de test).
+
 ## Checklist antes de lanzar
-- [ ] API key de iOS de PRODUCCIÓN en `src/iap.js` + `npm run build:iap`.
+- [ ] API key de iOS de PRODUCCIÓN: `export PORTIV_RC_KEY_PROD='appl_…' && npm run sync:prod`
+      (ver sección anterior). Verificar con `PortivIAP.env()` → `testKey:false`.
 - [ ] En App Store Connect: productos `$rc_monthly` / `$rc_annual` aprobados y ligados a RevenueCat (App Store, no Test Store).
 - [ ] Capability **In-App Purchase** activada en Xcode (target App → Signing & Capabilities).
 - [ ] Firma (Team) configurada en Xcode.
