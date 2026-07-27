@@ -12,7 +12,106 @@
   html.app-locked { background:#0b1220 !important; }
   html.app-locked body { visibility:hidden !important; }
   html.app-locked #authOverlay { visibility:visible !important; }
+  /* La red de seguridad del arranque vive FUERA de <body>, así que app-locked no la toca. */
 </style>
+<script>
+/* ─── RED DE SEGURIDAD DEL ARRANQUE (anti pantalla en blanco) ────────────────────
+   Va lo más arriba posible del <head>, ANTES de cualquier <script src>, para que su
+   temporizador ya esté armado cuando algo de más abajo falle o se cuelgue.
+
+   El problema que resuelve: `html.app-locked` esconde el <body> entero hasta que el
+   gating de cuenta lo revela (revealApp) o hasta que se muestra el login (showLogin).
+   Si algo revienta ANTES de llegar a cualquiera de esos dos puntos —un <script src>
+   que no llega, una excepción no capturada, una promesa rechazada en el arranque— no
+   hay nadie que quite el candado: la pantalla se queda vacía para siempre, sin
+   spinner, sin error, sin botón. Es imposible de diagnosticar desde el teléfono y
+   parece que la app "no abre".
+
+   Qué hace: a los 10 s comprueba si el candado sigue puesto Y si el overlay de auth
+   NO se está pintando de verdad (existe, tiene alto y es visible). Si se cumple,
+   dibuja un panel propio con el motivo y un botón de reintentar.
+
+   Qué NO hace: NO quita `app-locked` ni revela el <body>. Revelar la app sin haber
+   pasado el gate mostraría datos de otra cuenta / el portafolio sin sesión. Ante la
+   duda, el fallo se muestra tapado, no destapado.
+
+   Los handlers globales de error solo GUARDAN el motivo; no adelantan el panel: un
+   error suelto (una imagen rota, un fetch de noticias) no debe tapar un arranque que
+   iba bien. El único juez es el chequeo de los 10 s. */
+(function(){
+  var TIMEOUT_MS = 10000;
+  var lastErr = '';
+
+  // Guarda el primer error del arranque para poder decir QUÉ falló (si es que falló).
+  window.addEventListener('error', function(ev){
+    if (lastErr) return;
+    if (ev && ev.target && ev.target !== window && ev.target.src) {
+      lastErr = 'No cargó: ' + String(ev.target.src).split('/').pop();
+    } else if (ev && ev.message) {
+      lastErr = ev.message;
+    }
+  }, true);   // captura: los fallos de <script src>/<img> no burbujean
+  window.addEventListener('unhandledrejection', function(ev){
+    if (lastErr) return;
+    var r = ev && ev.reason;
+    lastErr = (r && (r.message || r)) ? String(r.message || r) : 'promesa rechazada';
+  });
+
+  // ¿El overlay de auth se está pintando de verdad? No basta con que exista en el DOM:
+  // si el parser se quedó bloqueado el elemento ni siquiera llegó, y si llegó puede
+  // seguir en display:none porque showOverlay() nunca corrió.
+  function overlayVisible(){
+    var o = document.getElementById('authOverlay');
+    if (!o) return false;
+    var cs = window.getComputedStyle(o);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    if (parseFloat(cs.opacity || '1') < 0.05) return false;
+    return o.offsetHeight > 0;
+  }
+
+  function panel(){
+    if (document.getElementById('pvBootFail')) return;
+    var why = lastErr
+      ? lastErr
+      : (!window.supabase ? 'No se cargó la librería de sesión.' : 'El arranque no terminó.');
+    var d = document.createElement('div');
+    d.id = 'pvBootFail';
+    // Estilos EN LÍNEA y colores literales: en este punto no se puede dar por hecho que
+    // las hojas de estilo, las variables CSS ni las fuentes locales hayan cargado.
+    d.setAttribute('style', 'position:fixed;inset:0;z-index:2147483647;visibility:visible;'
+      + 'background:#0b1220;color:#e8eefc;display:flex;align-items:center;justify-content:center;'
+      + 'padding:24px;box-sizing:border-box;'
+      + 'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;');
+    var box = document.createElement('div');
+    box.setAttribute('style', 'max-width:340px;width:100%;text-align:center;');
+    var h = document.createElement('div');
+    h.setAttribute('style', 'font-size:19px;font-weight:700;margin-bottom:10px;');
+    h.textContent = 'No pudimos abrir Portiv';
+    var p = document.createElement('div');
+    p.setAttribute('style', 'font-size:14px;line-height:1.5;color:#9fb0cc;margin-bottom:22px;');
+    p.textContent = 'Revisa tu conexión y vuelve a intentarlo.';
+    var b = document.createElement('button');
+    b.setAttribute('style', 'width:100%;height:50px;border:none;border-radius:12px;'
+      + 'background:#12d18e;color:#04162c;font-size:16px;font-weight:700;cursor:pointer;');
+    b.textContent = 'Reintentar';
+    b.onclick = function(){ try { location.reload(); } catch(e){} };
+    // Motivo técnico en pequeño: es lo que convierte "no abre" en un reporte accionable.
+    var s = document.createElement('div');
+    s.setAttribute('style', 'font-size:11px;color:#5f7090;margin-top:16px;word-break:break-word;');
+    s.textContent = why;
+    box.appendChild(h); box.appendChild(p); box.appendChild(b); box.appendChild(s);
+    d.appendChild(box);
+    // Al <html>, no al <body>: si el parser se colgó en el <head>, <body> aún no existe.
+    (document.body || document.documentElement).appendChild(d);
+  }
+
+  setTimeout(function(){
+    if (!document.documentElement.classList.contains('app-locked')) return;  // la app ya se reveló
+    if (overlayVisible()) return;                                            // login/“Cargando…” a la vista
+    try { panel(); } catch(e){}
+  }, TIMEOUT_MS);
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>
 /* ─── iPad → layout de tablet (bottom-nav), no el de escritorio ───────────────
@@ -68,7 +167,10 @@
 <title>Portafolio — Plataforma de Inversión</title>
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
-<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- Chart.js LOCAL por el mismo motivo que Supabase: dentro del .app, sin red. Este sí llevaba
+     defer (no bloqueaba el parser), pero sin CDN las gráficas quedaban vacías al abrir la app
+     sin cobertura. Va local para que la app funcione entera offline, no a medias. -->
+<script defer src="vendor/chart-4.4.0.umd.min.js"></script>
 <style>
   :root {
     /* ══ Stitch design tokens (exact match) ══ */
@@ -2988,8 +3090,17 @@
   .wl2-remove { padding: 2px 3px !important; font-size: 15px !important; }
 }
 </style>
-<!-- Supabase Auth (login por email + código) -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<!-- Supabase Auth (login por email + código) — COPIA LOCAL, no CDN.
+     PANTALLA EN BLANCO EN iOS: esto era <script src="https://cdn.jsdelivr.net/...">, síncrono y
+     lo último del <head>. Un <script> sin defer/async DETIENE el parser: hasta que el archivo
+     llega, el navegador no parsea NADA de lo que viene después — y después viene <body> entero,
+     incluido #authOverlay. Con html.app-locked ocultando el body, el resultado en el simulador
+     (o en un iPhone con red mala, en avión, o con el Wi-Fi caído) era una pantalla vacía
+     indefinida: sin login, sin error, sin spinner. Nada que reintentar porque nada había cargado.
+     Una app nativa NO puede depender de un CDN para pintar su primer píxel: el JS va dentro del
+     .app y arranca offline. La versión está fijada en el nombre del archivo para que se vea de
+     un vistazo qué se está sirviendo (actualizar = bajar el nuevo y cambiar estas dos líneas). -->
+<script src="vendor/supabase-2.110.8.min.js"></script>
 <!-- Paddle eliminado del build iOS: la suscripción usa IAP nativo (App Store), no checkout web. -->
 <!-- RevenueCat IAP (StoreKit) — expone window.PortivIAP.presentPaywall() y PortivAppleAuth -->
 <script defer src="portiv-iap.js"></script>
@@ -6687,6 +6798,7 @@ const TICKER_SECTOR = {
   MA:'Pagos · Fintech',
   VOO:'ETF · Índice',
   SNDK:'Tech · Semiconductores',
+  SPCX:'Espacio · Conectividad satelital',
 };
 // Dividend yield real aproximado (snapshot) — fuente: datos públicos de cada empresa
 const TICKER_DIV_YIELD = {
@@ -6700,6 +6812,7 @@ const TICKER_DIV_YIELD = {
   CRM:0.0030,  BAC:0.0260,  ABBV:0.0340, KO:0.0290,  MRK:0.0340, PEP:0.0350,
   TMUS:0.0150, CSCO:0.0270, ACN:0.0180,  DIS:0.0090, MCD:0.0240,
   SNDK:0,
+  SPCX:0,   // no paga dividendo (prospecto 424B4, 12-jun-2026)
 };
 // Tasa de crecimiento anual esperada de EPS (consenso real de analistas por ticker, fuente: Yahoo/Zacks/Refinitiv consensus snapshots).
 // Valores diferenciados por empresa — granularidad de 0.5pp para reflejar que no hay dos negocios iguales.
@@ -9512,7 +9625,7 @@ const PORTIV_WHY = {
   _cache: null,
   _inflight: new Set(),
 
-  SECTOR: { NVDA:'semiconductores de IA', MU:'memoria/semiconductores', TSM:'fundición de chips', AAPL:'hardware de consumo', GOOGL:'publicidad digital y cloud', META:'publicidad social', MSFT:'software y cloud', AMZN:'e-commerce y cloud', MA:'pagos', APP:'publicidad móvil', VOO:'índice S&P 500' },
+  SECTOR: { SPCX:'internet satelital, lanzamientos e IA', NVDA:'semiconductores de IA', MU:'memoria/semiconductores', TSM:'fundición de chips', AAPL:'hardware de consumo', GOOGL:'publicidad digital y cloud', META:'publicidad social', MSFT:'software y cloud', AMZN:'e-commerce y cloud', MA:'pagos', APP:'publicidad móvil', VOO:'índice S&P 500' },
   // Catalizador típico por empresa (semilla local para el fallback sin IA).
   HINT: {
     NVDA:'la demanda de GPUs para centros de datos de IA (Blackwell) y el sentimiento sobre el ciclo de IA',
@@ -14363,11 +14476,25 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
   const sym = (ticker || '').toUpperCase();
   if (!sym) return null;
   const plan = _alpacaPlan(period);
-  const qs = `symbols=${encodeURIComponent(sym)}&timeframe=${plan.tf}&start=${plan.start}`
-           + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
-  const d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs);
-  let bars = (d && d.bars && (d.bars[sym] || d.bars[sym.replace('.', '/')])) || [];
-  if (!Array.isArray(bars) || bars.length < 2) return null;
+  const _pedir = async (tf) => {
+    const qs = `symbols=${encodeURIComponent(sym)}&timeframe=${tf}&start=${plan.start}`
+             + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
+    const d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs);
+    const b = (d && d.bars && (d.bars[sym] || d.bars[sym.replace('.', '/')])) || [];
+    return Array.isArray(b) ? b : [];
+  };
+  let bars = await _pedir(plan.tf);
+  // Empresa recién salida a bolsa: 2y/5y agrupan por SEMANA y max por MES, así que un
+  // ticker con pocas semanas de historia devolvía 7 o incluso 2 puntos, y la gráfica
+  // quedaba como una recta entre el primer y el último precio que se saltaba el máximo y
+  // el mínimo del período. Si la serie sale demasiado corta para el marco pedido, se
+  // reintenta en diario: misma ventana, sin agregar. Solo se dispara en ese caso raro,
+  // así que no añade llamadas en tickers con historia normal.
+  if (bars.length < 20 && (plan.tf === '1Week' || plan.tf === '1Month')) {
+    const diario = await _pedir('1Day');
+    if (diario.length > bars.length) bars = diario;
+  }
+  if (bars.length < 2) return null;
 
   // 1D = sólo la última sesión: la ventana pide 6 días para no fallar en lunes/feriados.
   if (plan.intraday && period === '1d') {
@@ -15045,6 +15172,7 @@ const STOCK_DB = [
   ['PLTR','Palantir Technologies','Defensa'],['APP','AppLovin Corp.','AdTech'],
   ['RDDT','Reddit Inc.','Social'],['COIN','Coinbase Global','Crypto'],
   ['AXON','Axon Enterprise','Defensa'],['RKLB','Rocket Lab USA','Espacio'],
+  ['SPCX','SpaceX (Space Exploration Technologies)','Espacio'],
   // ── Mega cap ──
   ['TSLA','Tesla Inc.','Auto/Tech'],['BRK.B','Berkshire Hathaway B','Financiero'],
   ['BRK.A','Berkshire Hathaway A','Financiero'],['LLY','Eli Lilly and Company','Salud'],
@@ -16639,7 +16767,7 @@ function _computePortfolioRating(ticker, {pe, roe, revG, beta, info}) {
     industry.includes('internet') || industry.includes('cloud') ||
     industry.includes('artificial') || industry.includes('cybersec') ||
     ['NVDA','AMD','TSM','MU','ASML','AMAT','LRCX','KLAC',
-     'CRWD','PANW','ZS','PLTR','AXON','APP','RDDT','RKLB',
+     'CRWD','PANW','ZS','PLTR','AXON','APP','RDDT','RKLB','SPCX',
      'ASTS','COIN','HOOD','NFLX','UBER','ABNB'].includes(ticker);
   const isNonTechSector =
     sector.includes('util') || sector.includes('real estate') ||
@@ -16744,6 +16872,7 @@ function _todayMove(ticker, info) {
 
 // ─── Company bios & moat/catalyst/risk context ───────────────────────────────
 const COMPANY_BIOS = {
+  SPCX:{desc:'SpaceX salió a bolsa el 12 de junio de 2026 y hoy son tres negocios en uno, no solo cohetes. El más grande es Starlink, su internet por satélite: el 61% de los ingresos de 2025, con unos 10.3 millones de clientes en 164 países conectados por cerca de 9,600 satélites. El segundo son los lanzamientos: hizo 165 vuelos del Falcon 9 en 2025 (alrededor de la mitad de todos los del mundo) y es quien lleva a los astronautas de la NASA a la Estación Espacial. El tercero es el que sorprende a mucha gente: en febrero de 2026 absorbió xAI (el asistente Grok) y la red social X, que juntas aportan el 17% de los ingresos. Vendió $18,674 millones en 2025 y perdió $4,937 millones, y prácticamente toda esa pérdida viene de la división de inteligencia artificial, no de los cohetes: Starlink sí gana dinero. Dicho simple: se compra como empresa espacial, pero hoy buena parte del gasto y del riesgo está en IA.',moat:['Starlink: unos 9,600 satélites en órbita, cerca del 75% de todos los satélites activos maniobrables — replicar esa red cuesta años y decenas de miles de millones','Cohetes reutilizables: 165 vuelos del Falcon 9 en 2025 con más del 99% de éxito y más de 570 propulsores recuperados y reutilizados','Integración vertical: fabrica el cohete, el satélite y la antena del cliente, así que abarata su propio despliegue frente a cualquier rival que deba comprar el lanzamiento','Contratos públicos de largo plazo: $4,930 millones de la NASA para vuelos tripulados hasta 2030 y más de $5,900 millones del programa de lanzamiento de seguridad nacional (NSSL)'],catalysts:['Starship: en su vuelo 13 (24 de julio de 2026) puso en órbita sus primeros 20 satélites Starlink V3. Si entra en servicio regular, hunde el costo por kilo lanzado','Satélites Starlink V3, de 1 Tbps cada uno, desde la segunda mitad de 2026: mucha más capacidad vendible por cada lanzamiento','Espectro comprado a EchoStar y aprobado por la FCC en mayo de 2026: primera banda nacional exclusiva para conectar teléfonos normales directamente al satélite','Defensa: $6,450 millones en adjudicaciones de la Space Force en mayo de 2026 para seguimiento de misiles y red de datos militar','Primer reporte trimestral como empresa pública el 4 de agosto de 2026 — la primera cifra auditada que el mercado podrá contrastar con el prospecto'],risks:['Pierde dinero: $4,937 millones de pérdida en 2025 y $4,276 millones solo en el primer trimestre de 2026, con un déficit acumulado de $41,300 millones','La división de IA (xAI y X) perdió $6,355 millones en 2025, más del doble de lo que factura: es la que provoca toda la pérdida del grupo','El ingreso medio por cliente de Starlink cayó de unos $99 a unos $66 al mes en dos años, y la propia empresa avisa en el prospecto que seguirá bajando','Fin del bloqueo de venta: unos 911 millones de acciones quedan libres el 6 de agosto de 2026, y el número de acciones negociables se multiplica varias veces hasta diciembre','Elon Musk controla cerca del 80% de los votos con acciones de 10 votos y sin fecha de caducidad; la empresa se acoge a la exención de controlled company de Nasdaq, que la libera de tener mayoría de consejeros independientes','Cotiza en torno a 80 veces las ventas del último año: un múltiplo que solo se sostiene si todo sale bien','Los ingresos por lanzar carga de terceros llevan dos años planos ($2,576 millones en 2025) y esa división entró en pérdida operativa'],competitors:['Amazon Leo (ex-Kuiper)','Rocket Lab (RKLB)','AST SpaceMobile (ASTS)','Viasat (VSAT)','Iridium (IRDM)','Blue Origin','ULA','Arianespace'],tam:'La empresa declara un mercado potencial de $28.5 billones, pero conviene leer el desglose: $26.5 billones de esa cifra son de inteligencia artificial y no del espacio. El mercado espacial que ella misma estima es de $370,000 millones y el de conectividad, $1.6 billones. Es una estimación de la propia compañía, no de un tercero independiente.'},
   NVDA:{desc:'NVIDIA fabrica los chips (llamados GPUs) que sirven para entrenar y hacer funcionar la inteligencia artificial. Sus modelos H100, H200 y el nuevo Blackwell son los que usan ChatGPT, Gemini y Claude para "pensar"; hoy son el estándar de toda la industria y prácticamente no tienen sustituto. Su mayor ventaja no es solo el chip, sino CUDA: el software que los programadores usan para sacarle provecho. Más de 4 millones de desarrolladores ya trabajan con CUDA, así que cambiar a otra marca obligaría a reescribir años de código — por eso la gente se queda con NVIDIA aunque sea cara.',moat:['Ecosistema CUDA: +4M desarrolladores, imposible de migrar','Arquitectura líder en IA — AMD está 1-2 generaciones atrás','Economías de escala en diseño de chips','Marca dominante = precio premium aceptado sin resistencia'],catalysts:['Blackwell B200/GB200 — ciclo de upgrade masivo en data centers','CUDA como plataforma de software independiente del hardware','Expansión en robótica y autos autónomos (DRIVE Thor)','AI en edge: cada dispositivo necesita inferencia local'],risks:['Restricciones de exportación a China (20-25% del revenue en riesgo)','Dependencia de TSMC para manufactura (riesgo geopolítico Taiwán)','AMD MI300X compite en price/performance','Ciclos de inversión en data centers pueden pausarse'],competitors:['AMD','Intel','Google (TPUs)','Amazon (Trainium)','Microsoft (Maia)'],tam:'$400B+ en chips para IA para 2027'},
   AAPL:{desc:'Apple gana dinero de dos formas. La primera es vendiendo aparatos caros y de alta calidad: el iPhone (que representa la mitad de sus ventas), más Mac, iPad y Apple Watch. La segunda son los servicios digitales (App Store, iCloud, Apple Pay y Apple TV+), que aportan otra cuarta parte de sus ventas y dejan muchísima ganancia (75 centavos de cada dólar). Lo que hace fuerte a Apple es que todos sus productos funcionan mejor juntos: una vez que tienes iPhone, reloj y Mac, cambiarte a otra marca es incómodo y caro. Con más de 2,000 millones de aparatos en uso en el mundo, esa fidelidad es casi imposible de romper.',moat:['Ecosistema iOS/macOS: switching cost de ~$1,500 promedio por usuario','Marca premium — justifica 30-40% de precio sobre competidores','Integración vertical hardware-chip-software-servicios única en el mundo','+2B dispositivos activos = flywheel de Servicios imparable'],catalysts:['Apple Intelligence — requiere iPhone 15 Pro+, fuerza ciclo de upgrade','Servicios creciendo +14% YoY con margen 75% — mix shift positivo','Expansión en India (manufactura + mercado de 1.4B personas)','Vision Pro como plataforma de computing espacial a 5-10 años'],risks:['85% del ensamblaje iPhone en China — aranceles impactan margen','Saturación del mercado premium de smartphones','Regulación App Store (EU, DOJ) puede reducir take rate del 15-30%','Dependencia del ciclo de upgrade — sin AI no hay catalizador claro'],competitors:['Samsung','Google (Pixel)','Huawei','Spotify','Netflix'],tam:'$3.8T en hardware premium + servicios digitales globales'},
   MSFT:{desc:'Microsoft tiene tres grandes negocios. El primero y que más crece es la nube: Azure, que alquila servidores y potencia de cómputo por internet a otras empresas, y crece cerca de 30% al año gracias a la IA. El segundo es el software de trabajo que casi todos usamos: Office (Word, Excel), Teams y LinkedIn. El tercero es Windows y la consola Xbox. Su gran ventaja es que prácticamente todas las empresas del mundo ya dependen de sus programas, así que cuando Microsoft les ofrece su asistente de IA (Copilot) por unos dólares más al mes, la venta es casi automática. Esos 50,000 contratos de Copilot son su carta de crecimiento más fuerte.',moat:['Azure: infraestructura cloud con 50,000 clientes enterprise bajo contratos plurianuales','Microsoft 365 con +350M usuarios de pago — switching cost de $500-2,000/usuario/año','GitHub con 90M desarrolladores = distribución de software sin rival','Inversión exclusiva en OpenAI ($13B comprometidos) — ventaja IA temporal pero real'],catalysts:['Copilot para M365: $30/mes por usuario sobre base de 350M — TAM incremental de $126B','Azure AI Services: consumo de tokens crece 3x cada 6 meses','Copilot Studio (+1M agentes activos) monetiza enterprise automation','Activision Blizzard: 400M usuarios mensuales para Game Pass'],risks:['AWS (Amazon) y Google Cloud compiten agresivamente en precios','Regulación antimonopolio (EU sobre Activision, FTC)','Desaceleración del gasto cloud corporativo en recesión','Compensación ejecutiva alta con stock dilution moderada'],competitors:['Amazon (AWS)','Google (Cloud)','Salesforce','Oracle','Adobe'],tam:'$1.1T en cloud + software enterprise para 2027'},
@@ -17193,7 +17322,7 @@ const _PEER_UNIVERSE = {
   'Mega-cap Tech':   ['AAPL','GOOGL','META','AMZN','NFLX','MSFT'],
   'AdTech · Social': ['APP','TTD','RDDT','SNAP','PINS','MGNI','DV'],
   'Defensa · Gobierno':['PLTR','AXON','LDOS','SAIC','BAH','CSCO'],
-  'Espacio':         ['RKLB','ASTS','LUNR','IRDM'],
+  'Espacio':         ['SPCX','RKLB','ASTS','LUNR','IRDM'],
   'Tech · Otros':    ['AAPL','GOOGL','META','MSFT','AMZN'],
   'Pagos · Fintech': ['MA','V','AXP','PYPL','SQ','AFRM','COIN','HOOD','NU','SOFI','FI','FIS'],
   'Finanzas':        ['JPM','BAC','WFC','GS','MS','C','USB','SCHW'],
@@ -17206,6 +17335,8 @@ const _PEER_UNIVERSE = {
 // el nicho amplio (p.ej. "Semiconductores") mezcla memoria, lógica, foundry y equipos, que NO
 // compiten entre sí. Aquí cada empresa apunta a sus verdaderos rivales cotizados en EEUU.
 const _PEER_OVERRIDE = {
+  // Espacio y conectividad satelital
+  'SPCX':['RKLB','ASTS','VSAT','IRDM'],  'RKLB':['SPCX','ASTS','LUNR','IRDM'],
   // Memoria y almacenamiento (DRAM/NAND/HDD) — Samsung y SK Hynix no cotizan en EEUU (van en el párrafo).
   'MU':  ['WDC','STX','SNDK'],  'WDC': ['STX','MU','SNDK'],  'STX': ['WDC','MU','SNDK'],  'SNDK':['MU','WDC','STX'],
   // GPU / aceleradores de cómputo
@@ -17263,6 +17394,7 @@ async function _peersCompData(ticker, selfMetrics, peerTickers){
 // Posición de mercado por ticker: cuota aprox. + estructura (monopolio/oligopolio/fragmentado) + líderes.
 // Hechos de industria reales y estables, redactados como aproximación (~). NO son métricas inventadas del app.
 const _MARKET_POSITION = {
+  'SPCX':'Es el actor dominante del sector: con unos 165 vuelos del Falcon 9 en 2025 realizó cerca de la mitad de todos los lanzamientos orbitales del mundo, y Starlink opera alrededor de 9,600 satélites, en torno al 75% de todos los satélites activos maniobrables que hay en órbita. No es un monopolio legal, pero hoy ningún rival cotizado opera a esa escala: Rocket Lab aún no estrena su cohete mediano Neutron, Blue Origin perdió un New Glenn en una prueba en tierra en mayo de 2026 y el Vulcan de ULA lleva parado desde febrero de 2026. La competencia real de medio plazo no cotiza por separado: Amazon Leo (396 satélites desplegados) y las constelaciones chinas Guowang y Qianfan.',
   'MU':  'En DRAM es el nº3 mundial (~20-25% de cuota), detrás de Samsung (~40%) y SK Hynix (~35%); en NAND ronda el ~10-13%. Es un oligopolio de 3 grandes en DRAM, no un monopolio, lo que da cierta disciplina de precios. Aun así sus márgenes son de los más cíclicos del sector: se hunden con la sobreoferta y se disparan con la demanda de memoria para IA (HBM), hoy su mayor palanca.',
   'WDC': 'En discos duros (HDD) forma un duopolio con Seagate, con ~40-45% de cuota cada uno; en memoria flash compite a través de su alianza con Kioxia. Su valor depende de dos ciclos distintos —disco y NAND— muy sensibles a la oferta. Por eso escindió su negocio flash (Sandisk), para separar esas dinámicas.',
   'STX': 'En discos duros forma un duopolio con Western Digital (~40-45% cada uno) y lidera en unidades de alta capacidad para centros de datos. Al no fabricar memoria flash, evita ese ciclo y se concentra en el almacenamiento masivo. Su apuesta tecnológica (HAMR) busca abaratar el coste por terabyte frente al SSD.',
@@ -17313,11 +17445,17 @@ function _peerGapText(ticker, rows){
   if (typeof self.pe==='number' && isFinite(self.pe) && self.pe>0 && peM!=null && peM>0){
     parts.push(`cotiza a ${self.pe.toFixed(1)}x P/E, ${self.pe<peM?'más barata que':'con prima sobre'} la mediana de sus rivales (${peM.toFixed(1)}x)`);
   }
-  const leads = [];
-  const nMax=maxOf('netM'); if (typeof self.netM==='number'&&isFinite(self.netM)&&nMax!=null&&self.netM>=nMax) leads.push('margen neto');
-  const rMax=maxOf('roe');  if (typeof self.roe ==='number'&&isFinite(self.roe )&&rMax!=null&&self.roe >=rMax) leads.push('ROE');
+  // Liderazgo SOLO con la métrica en positivo: ser el "mejor" margen neto de un grupo en
+  // el que todos pierden dinero no es una fortaleza, y decirlo contradice la cifra
+  // negativa que el usuario está viendo en la misma tabla.
+  const leads = [], negs = [];
+  const nMax=maxOf('netM');
+  if (typeof self.netM==='number'&&isFinite(self.netM)&&nMax!=null&&self.netM>=nMax) (self.netM>0?leads:negs).push('margen neto');
+  const rMax=maxOf('roe');
+  if (typeof self.roe ==='number'&&isFinite(self.roe )&&rMax!=null&&self.roe >=rMax) (self.roe >0?leads:negs).push('ROE');
   let s = parts.length ? `${ticker} ${parts.join(' y ')}.` : '';
   if (leads.length) s += ` Encabeza a su grupo en ${leads.join(' y ')}.`;
+  if (negs.length)  s += ` Su ${negs.join(' y ')} ${negs.length===1?'es negativo':'son negativos'}, aunque menos que ${negs.length===1?'el':'los'} de sus rivales: es el mejor de un grupo que hoy pierde dinero, no una cifra sana.`;
   return s.trim();
 }
 
@@ -19750,7 +19888,7 @@ function wlNiche(ticker, info) {
       (ind.includes('defense') && sec.includes('tech')))
     return {group:'Tech', niche:'Defensa · Gobierno'};
 
-  if (['RKLB','ASTS','SPCE','LUNR','IRDM','MAXR'].includes(t))
+  if (['SPCX','RKLB','ASTS','SPCE','LUNR','IRDM','MAXR'].includes(t))
     return {group:'Tech', niche:'Espacio'};
 
   if (sec.includes('tech') || sec.includes('communic') ||
@@ -21924,6 +22062,7 @@ function _classifyNewsSentiment(title) {
 // Aliases de búsqueda: mapea nombre comercial conocido → ticker.
 // Muchas noticias dicen "Google" en vez de "Alphabet", "Facebook" en vez de "Meta", etc.
 const _TICKER_ALIASES = {
+  SPCX:  ['spacex','space x','starlink','starship','falcon 9','falcon heavy','xai','grok'],
   GOOGL: ['google','alphabet','youtube','waymo','deepmind','gemini'],
   META:  ['meta','facebook','instagram','whatsapp','threads','zuckerberg'],
   NVDA:  ['nvidia','nvda','blackwell','hopper','cuda','jensen huang'],
