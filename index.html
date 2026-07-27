@@ -3014,9 +3014,19 @@ window.PADDLE_PRICES = {
     Paddle.Initialize({
       token: 'test_3c9a0fa251a22ce22645e35a21f', // TODO(live): token client-side LIVE
       eventCallback: function(ev){
-        if (!ev || ev.name !== 'checkout.completed') return;
-        // Pago OK → cierra el paywall y arranca la conexión del broker (una sola vez).
-        try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){}
+        if (!ev) return;
+        if (ev.name === 'checkout.completed') {
+          // Pago OK → cierra el paywall y arranca la conexión del broker (una sola vez).
+          try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){}
+          return;
+        }
+        // El usuario cerró el checkout sin pagar (o Paddle lo rechazó). Antes no se
+        // escuchaba: el overlay de Paddle desaparecía y debajo quedaban el paywall y el
+        // quiz de perfil abiertos, así que la app se veía congelada en la tarjeta del
+        // perfil sin ninguna explicación. Se limpia la pila y se dice qué pasó.
+        if (ev.name === 'checkout.closed' || ev.name === 'checkout.error') {
+          try { if (typeof window._pvAbortCheckout === 'function') window._pvAbortCheckout(ev.name === 'checkout.error'); } catch(e){}
+        }
       }
     });
   }
@@ -26897,8 +26907,25 @@ document.addEventListener('DOMContentLoaded', function(){
   window._pvClosePaywall = function(){
     var o = document.getElementById('portivPaywall');
     if(o) o.classList.remove('open');
+    // El quiz de perfil vive DEBAJO del paywall (z-index 12000 los dos). Al cerrar el
+    // paywall se hacía showTab('portfolio') pero el quiz seguía tapando la pantalla:
+    // el usuario se quedaba mirando la tarjeta del perfil sin salida. Mismo motivo que
+    // en _pvConfirmTrial, pero por el camino de "no pagué".
+    try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
     try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+  };
+  // Cierre del checkout SIN pago completado. Se separa de _pvClosePaywall porque aquí sí
+  // hay que explicar por qué no pasó nada: sin mensaje, cerrar Paddle y volver al perfil
+  // es indistinguible de un fallo de la app.
+  window._pvAbortCheckout = function(wasError){
+    try { window._pvClosePaywall(); } catch(e){}
+    var msg = wasError
+      ? 'No se pudo procesar el pago. Inténtalo de nuevo desde Portafolio → Conectar mi broker.'
+      : 'Pago no completado. Puedes retomarlo cuando quieras desde Portafolio → Conectar mi broker.';
+    // showToast() y no toast(): el helper `toast` es local del IIFE de SnapTrade y no
+    // existe en este ámbito, así que la llamada se perdía en silencio.
+    try { if (typeof showToast === 'function') showToast(msg, wasError ? 'var(--red)' : 'var(--text2)'); else alert(msg); } catch(e){ try{ alert(msg); }catch(_){} }
   };
   // "Comenzar ahora" en la pantalla de prueba gratis: recién AQUÍ arranca el análisis de
   // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
