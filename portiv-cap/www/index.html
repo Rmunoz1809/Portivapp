@@ -14489,6 +14489,9 @@ function _renderHeaderBadge(period, ds){
 
 function setPeriod(period, btn) {
   const _prevPeriod = activePeriod;
+  // Reentrada del MISMO período mientras el zoom está vivo (doble dispatch, redibujos en
+  // cascada): no se toca nada, el zoom ya termina en la serie correcta.
+  try { if (period === activePeriod && _pvZoomRAF != null) return; } catch(e) {}
   try { _pvStopZoom(); } catch(e) {}          // toques rápidos: un solo zoom vivo a la vez
   activePeriod = period;
   document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
@@ -14548,6 +14551,10 @@ function bindPeriodBtns(){
   wrap.addEventListener('click', function(ev){
     var b = ev.target.closest('.period-btn');
     if (!b || !wrap.contains(b)) return;
+    // El chip ya trae su PROPIO handler (onclick inline en el HTML, o .onclick en los que
+    // agrega unlockPeriods): si delegamos también, setPeriod corre DOS veces por toque y la
+    // segunda pasada cancelaba el zoom recién arrancado. La delegación sólo cubre chips sueltos.
+    if (b.getAttribute('onclick') || typeof b.onclick === 'function') return;
     ev.preventDefault();
     setPeriod(b.dataset.period, b);   // mueve .active + redibuja
   });
