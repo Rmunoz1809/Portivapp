@@ -12770,6 +12770,12 @@ const PORTIV_CHART = {
 
   // ── Redibuja la gráfica según el período activo ───────────────────────
   refresh(period){
+    // Tope duro: ~12 repintados por segundo. Cualquier ciclo repintado→generate→repintado
+    // (este o uno futuro) muere aquí en vez de clavar el hilo principal. El uso normal
+    // repinta ~1 vez por minuto, así que este techo es invisible.
+    const _now=Date.now();
+    if(_now-(this._rfWin||0)>1000){ this._rfWin=_now; this._rfN=0; }
+    if((this._rfN=(this._rfN||0)+1)>12) return;
     const p=period||(typeof activePeriod!=='undefined'?activePeriod:'1M');
     const ds=this.generate(p);
     if(!ds||!ds.values.length)return;
@@ -12899,6 +12905,27 @@ const PORTIV_HIST = {
   _LS_DAILY: 'portiv_hist_daily_v1', _LS_INTRA: 'portiv_hist_intra_v1',
   _DAILY_TTL: 86400000, _INTRA_TTL: 300000,   // daily fresco 24h · intradía 5min (Fase 2/3)
   ready(){ return this._ready; },
+  // ── CORTAFUEGOS ANTI-BUCLE ────────────────────────────────────────────────────
+  //  generate() pide la reconstrucción → al terminar, la reconstrucción repinta →
+  //  el repintado vuelve a llamar a generate()… El freno de refetch dependía de que
+  //  la carga hubiera quedado COMPLETA (_ready/_intraReady). Si algún ticker no tiene
+  //  cobertura (ETF/cripto sin intradía), la red está caída o el WKWebView de iOS
+  //  bloquea al proveedor de precios, ese "listo" nunca llega y el ciclo se repetía
+  //  SIN PAUSA: hilo principal al 100% y la app entera congelada al abrir la gráfica
+  //  de HOY. Ahora TODO intento marca la hora —salga bien o mal— y un intento fallido
+  //  espera un backoff creciente (15s → 4min) antes de reintentar.
+  _tryAt: {}, _tryFails: {},
+  _canRetry(kind){
+    const now = Date.now(), f = this._tryFails[kind] || 0;
+    const wait = f ? Math.min(240000, 15000 * Math.pow(2, Math.min(4, f - 1))) : 0;
+    if (now - (this._tryAt[kind] || 0) < wait) return false;
+    this._tryAt[kind] = now;
+    return true;
+  },
+  _noteTry(kind, ok){
+    this._tryFails[kind] = ok ? 0 : Math.min(9, (this._tryFails[kind] || 0) + 1);
+    this._tryAt[kind] = Date.now();
+  },
   _tickers(){
     try { return [...new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : [])
       .filter(h => h && h.ticker && (+h.qty > 0))
@@ -12912,7 +12939,9 @@ const PORTIV_HIST = {
     const haveAll = tks.every(t => this.data[t]);
     // Cache LS/memoria fresco (24h) y con TODAS las posiciones → NO refetch (Fase 2).
     if (haveAll && (Date.now() - this._at) < this._DAILY_TTL) { this._ready = true; return; }
+    if (!this._canRetry('daily')) return;                        // intento reciente fallido → backoff
     this._loading = true;
+    const _have0 = tks.filter(t => this.data[t]).length;         // cobertura ANTES de esta carga
     try {
       const q = tks.slice();
       const one = async (tk) => {
@@ -12946,8 +12975,11 @@ const PORTIV_HIST = {
       this._persistDaily();                                     // re-persistir tras refetch (Fase 2)
     } catch(e){}
     this._loading = false;
-    // Redibuja el período activo ya con la línea real.
-    try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
+    this._noteTry('daily', this._ready);
+    // Repinta SOLO si esta carga aportó cobertura nueva. Repintar sin novedad reabre el
+    // ciclo repintado→generate→ensure, que es justo lo que congelaba la app.
+    const _gain = this._tickers().filter(t => this.data[t]).length > _have0;
+    try { if ((this._ready || _gain) && typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
   },
   // Serie sincrónica (usa lo ya cacheado). fromISO = inicio de ventana (null = ALL).
   series(fromISO){
@@ -12996,9 +13028,11 @@ const PORTIV_HIST = {
     if (this._intraLoading) return;
     try { this._hydrate(); } catch(e){}
     if (this._intraReady && (Date.now()-this._intraAt) < this._INTRA_TTL) return;   // Fase 3: throttle 90s → 5min
+    if (!this._canRetry('intra')) return;                        // intento reciente fallido → backoff
     const tks = this._tickers();
     if (!tks.length) return;
     this._intraLoading = true;
+    const _have0 = tks.filter(t => this.intra[t] && Object.keys(this.intra[t]).length).length;
     try {
       const today = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : null;
       const q = tks.slice();
@@ -13029,8 +13063,10 @@ const PORTIV_HIST = {
       this._persistIntra();                                   // persistir intradía de HOY (Fase 2)
     } catch(e){}
     this._intraLoading = false;
-    // Redibuja 1D ya con la curva real si es el período activo.
-    try { if (typeof activePeriod!=='undefined' && activePeriod==='1D' && PORTIV_CHART.refresh) PORTIV_CHART.refresh('1D'); } catch(e){}
+    this._noteTry('intra', this._intraReady);
+    // Repinta 1D SOLO si esta carga aportó datos nuevos (mismo cortafuegos que arriba).
+    const _gain = this._tickers().filter(t => this.intra[t] && Object.keys(this.intra[t]).length).length > _have0;
+    try { if ((this._intraReady || _gain) && typeof activePeriod!=='undefined' && activePeriod==='1D' && PORTIV_CHART.refresh) PORTIV_CHART.refresh('1D'); } catch(e){}
   },
   // Serie intradía sincrónica (usa lo cacheado por ensureIntradayAsync). null si no está lista.
   seriesIntraday(){
