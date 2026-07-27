@@ -10941,7 +10941,24 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
   // Flujo robusto: (1) SIEMPRE lee la nube primero (todos leen la MISMA copia). (2) Si está
   // fresca → 0 gasto. (3) Solo un usuario AUTENTICADO, tomando el lock global, genera 1× y la
   // sube. Los demás dispositivos leen esa copia. Evita el "se genera dos veces" y el costo N×.
-  async function ensureFresh(){
+  // ── Guard de re-entrada + enfriamiento ──────────────────────────────────────
+  // `renderNewsTab()` llamaba a `ensureFresh()`, y casi todas las salidas de `ensureFresh()`
+  // llamaban a `_rerender()` → `renderNewsTab()`. Sin sesión, o con el lock global tomado por
+  // otro dispositivo, eso era un BUCLE INFINITO: repintaba a cadencia de round-trip de red
+  // (y, si `sbClient` no existe, en microtareas → el hilo principal nunca llegaba a pintar =
+  // la app "congelada"). Ahora: una sola pasada en vuelo, y como máximo una pasada por minuto
+  // salvo que se fuerce explícitamente (scheduler diario / forceRefresh).
+  let _ensuring = null, _lastEnsureAt = 0;
+  const ENSURE_COOLDOWN = 60 * 1000;
+  function ensureFresh(force){
+    if(_gen) return Promise.resolve();
+    if(_ensuring) return _ensuring;
+    if(!force && _lastEnsureAt && (Date.now() - _lastEnsureAt) < ENSURE_COOLDOWN) return Promise.resolve();
+    _lastEnsureAt = Date.now();
+    _ensuring = _ensureFreshInner().catch(function(){}).then(function(){ _ensuring = null; });
+    return _ensuring;
+  }
+  async function _ensureFreshInner(){
     if(_gen) return;
     // 1) Lee la nube y adopta si es más fresca que lo local.
     const cloud = await _cloudGet();
@@ -10956,7 +10973,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     // 3) Lock global: si otro dispositivo ya está generando, esperamos y re-leemos (no gastamos).
     if(!(await _acquireLock())){
       _failed=false; _rerender();
-      setTimeout(async ()=>{ const c=await _cloudGet(); if(c && !_staleToday(c)){ _saveLocal(c); apply(); _rerender(); } else { ensureFresh(); } }, 10000);
+      setTimeout(async ()=>{ const c=await _cloudGet(); if(c && !_staleToday(c)){ _saveLocal(c); apply(); _rerender(); } else { ensureFresh(true); } }, 10000);
       return;
     }
 
@@ -11001,7 +11018,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     }catch(e){ _failed=true; try{ console.warn('SharedNews:', (e&&e.message)||e); }catch(_){} _rerender(); }
     finally{ _gen=false; _researched=true; await _releaseLock(); _rerender(); }   // ya se investigó → no dejar spinner eterno
   }
-  function _rerender(){ try{ const t=document.getElementById('tab-noticias'); if(typeof renderNewsTab==='function' && t && t.classList.contains('visible')) renderNewsTab(); }catch(e){} }
+  function _rerender(){ try{ _pvScheduleNewsRender(); }catch(e){} }
 
   // Fuerza una regeneración DIARIA (usada por el scheduler 00:00 ET). Marca lo local como
   // vencido y llama a ensureFresh → que primero LEE la nube (si otro ya generó hoy, la adopta
@@ -11009,7 +11026,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
   // PRÓXIMA semana" ruedan cada día, cloud-shared (1× global, no por usuario).
   async function forceRefresh(){
     try{ const o=_local(); if(o){ o.slot=''; o.ts_today=0; _saveLocal(o); } }catch(e){}
-    try{ return await ensureFresh(); }catch(e){}
+    try{ return await ensureFresh(true); }catch(e){}
   }
 
   return { apply, ensureFresh, hasFresh, state, forceRefresh };
@@ -17364,20 +17381,65 @@ function _renderQualAnalysis(a, el){
     }
     // Antes, una columna vacía se omitía: un trimestre limpio dejaba "QUÉ SALIÓ BIEN" solo,
     // y el lector no sabía si no hubo nada malo o si el dato faltaba. Ahora, si alguna de las
-    // dos listas trae contenido se pintan AMBAS columnas; la vacía lleva una línea explícita
-    // ("no hubo deterioro material") en vez de desaparecer. Si las dos vienen vacías la
-    // sección de columnas sigue sin aparecer — ahí de verdad no hay lectura que dar.
+    // dos listas trae contenido se pintan AMBAS columnas. Si las dos vienen vacías la sección
+    // de columnas sigue sin aparecer — ahí de verdad no hay lectura que dar.
+    //
+    // El relleno de la columna vacía NO puede ser un texto fijo: un "sin aspectos negativos"
+    // junto al chip "EPS $0.13 vs. $0.71 · falló" es una contradicción directa. Se deriva del
+    // MISMO dato duro que pinta el chip (beat / sorpresa / EPS reportado vs. estimado) más el
+    // historial de trimestres, así que la frase no puede desmentir lo que se ve arriba. Cuando
+    // no hay dato de EPS se dice "no se identificaron" (lo que sabemos) y nunca "no hubo".
     const _clean = arr => (Array.isArray(arr) ? arr : []).filter(x => x != null && String(x).trim());
     const _bien = _clean(eqr.bueno), _mal = _clean(eqr.malo);
+    const _eA = (typeof eqr.epsActual   === 'number' && isFinite(eqr.epsActual))   ? eqr.epsActual   : null;
+    const _eE = (typeof eqr.epsEstimate === 'number' && isFinite(eqr.epsEstimate)) ? eqr.epsEstimate : null;
+    const _$ = v => (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+    // Sorpresa: la del backend si viene; si no, se calcula, y solo cuando el estimado tiene
+    // magnitud suficiente (un estimado ~0 dispara porcentajes absurdos).
+    let _sp = (typeof eqr.surprisePct === 'number' && isFinite(eqr.surprisePct)) ? eqr.surprisePct
+            : (_eA != null && _eE != null && Math.abs(_eE) > 0.005) ? ((_eA - _eE) / Math.abs(_eE)) * 100
+            : null;
+    if (_sp != null && Math.abs(_sp) > 999) _sp = null;
+    const _spTxt = (_sp != null) ? `${_sp >= 0 ? '+' : '−'}${Math.abs(_sp).toFixed(1)}%` : null;
+    // "En línea" bajo 0.5% de sorpresa: el mismo umbral que usa el chip, para no llamar fallo
+    // a un EPS que redondea igual al estimado.
+    const _line = (_sp != null && Math.abs(_sp) < 0.5);
+    const _beat = _line ? null
+                : (typeof eqr.beat === 'boolean') ? eqr.beat
+                : (_eA != null && _eE != null) ? (_eA >= _eE)
+                : null;
+    // El estimado solo se nombra si tiene magnitud real: "frente al estimado de $0.00" no dice
+    // nada. Y con sorpresa <0.5% se omite el porcentaje: "de $1.00 frente al estimado de $1.00
+    // (+0.2% de sorpresa)" es ruido — ahí el punto es justamente que no hubo sorpresa.
+    const _eEs = (_eE != null && Math.abs(_eE) > 0.005) ? _eE : null;
+    const _vsBase = (_eA != null && _eEs != null) ? `de ${_$(_eA)} frente al estimado de ${_$(_eEs)}`
+                  : (_eA != null ? `reportado de ${_$(_eA)}` : '');
+    const _vs = _vsBase + ((_vsBase && _spTxt && !_line) ? ` (${_spTxt} de sorpresa)` : '');
+    // Historial: cuántos de los últimos trimestres cerraron bajo consenso (mismo array que
+    // alimenta las tarjetas "Superó ▲ / Falló ▼" de arriba).
+    const _qs = (a.recentGrowth && Array.isArray(a.recentGrowth.quarters)) ? a.recentGrowth.quarters : [];
+    const _miss = _qs.filter(q => q && q.beat === false).length;
+    const _hist = (_qs.length >= 3 && _miss > 0)
+      ? ` En los últimos ${_qs.length} trimestres, ${_miss} ${_miss === 1 ? 'cerró' : 'cerraron'} por debajo del consenso.`
+      : '';
+    const _fbMal =
+      _beat === false ? `El EPS ${_vs || 'del trimestre'} quedó por debajo del consenso: esa es la desviación central del reporte.${_hist}`
+      : _line          ? `El EPS ${_vs || 'del trimestre'} cerró prácticamente en línea con el consenso: el trimestre no aportó sorpresa al alza.${_hist}`
+      : _beat === true ? (_hist
+          ? `Sin desviaciones materiales en este trimestre frente al consenso; la señal a vigilar es el historial.${_hist}`
+          : 'Sin desviaciones materiales frente al consenso ni deterioro en las métricas clave publicadas del trimestre.')
+      : `No se identificaron desviaciones materiales en las métricas publicadas del trimestre.${_hist}`;
+    const _fbBien =
+      _beat === true  ? `El EPS ${_vs || 'del trimestre'} superó al consenso: ese es el punto a favor del reporte.`
+      : _line         ? `El EPS ${_vs || 'del trimestre'} cumplió con el consenso, sin desviación material respecto de lo esperado.`
+      : _beat === false ? 'No se identificaron avances materiales: el trimestre cerró por debajo del consenso en la métrica principal.'
+      : 'No se identificaron avances materiales en las métricas publicadas del trimestre.';
     const _col = (title, cls, icon, items, fallback) =>
       `<div class="${cls}"><h4>${icon} ${title}</h4><ul>${
         items.length ? items.map(x=>`<li>${esc(x)}</li>`).join('') : `<li>${esc(fallback)}</li>`
       }</ul></div>`;
     const _cols = (_bien.length || _mal.length)
-      ? _col('QUÉ SALIÓ BIEN','pros','✓',_bien,
-             'Sin aspectos positivos materiales: el reporte no mostró avances relevantes frente al consenso en las métricas clave del trimestre.')
-      + _col('QUÉ SALIÓ MAL','risks','⚠',_mal,
-             'Sin aspectos negativos materiales: el trimestre no dejó desviaciones relevantes frente al consenso ni deterioro en las métricas clave del negocio.')
+      ? _col('QUÉ SALIÓ BIEN','pros','✓',_bien,_fbBien) + _col('QUÉ SALIÓ MAL','risks','⚠',_mal,_fbMal)
       : '';
     const _note = (kk, vv) => vv ? `<div class="px-eqr-note"><div class="kk">${kk}</div><div class="vv">${esc(vv)}</div></div>` : '';
     const _notes = _note('Lo que más creció', eqr.mas_crecio) + _note('Lo más destacado', eqr.destacado);
