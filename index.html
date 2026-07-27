@@ -133,7 +133,13 @@
     --shadow-lg: 0 16px 40px -12px rgba(15, 29, 53, 0.15), 0 4px 12px rgba(15, 29, 53, 0.07);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; -webkit-text-size-adjust: 100%; }
+  /* `overscroll-behavior` no se usaba en ningún sitio: al llegar al final de una lista o de
+     un modal, el scroll se encadenaba al body y aparecía el rebote de iOS arrastrando toda la
+     pantalla. `100dvh` como respaldo de `100vh` para que la barra de Safari que se colapsa no
+     deje la página más alta que el viewport. */
+  html, body { overscroll-behavior-y: none; }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); font-size: 13px; min-height: 100vh; min-height: 100dvh; -webkit-text-size-adjust: 100%; }
+  .page, .nm-overlay, .stitch-layout, .ai-chat-body, .modal, .modal-content { overscroll-behavior: contain; }
   button { touch-action: manipulation; cursor: pointer; }
   input { touch-action: manipulation; }
 
@@ -761,10 +767,13 @@
      STITCH LAYOUT: Sidebar + Main + Right
   ════════════════════════════════════════ */
 
+  /* dvh: en Safari móvil 100vh EXCLUYE la barra que se colapsa → el contenido queda más alto
+     que el viewport y la página salta al scrollear. 100dvh sigue la altura real. Se deja 100vh
+     como respaldo para navegadores sin dvh (los que no lo soportan ignoran la segunda línea). */
   /* App shell — Stitch exact: body flex h-screen overflow-hidden */
   html, body { height: 100%; }
   body {
-    display: flex; height: 100vh; overflow: hidden;
+    display: flex; height: 100vh; height: 100dvh; overflow: hidden;
     background: var(--st-bg); font-family: 'Manrope', sans-serif;
   }
 
@@ -886,6 +895,7 @@
     margin-left: 256px;
     flex: 1;
     height: 100vh;
+    height: 100dvh;
     overflow-y: auto;
     overflow-x: hidden;
     background: var(--st-bg);
@@ -1036,6 +1046,7 @@
     gap: 24px;
     padding: 24px;
     min-height: 100vh;
+    min-height: 100dvh;
     align-items: stretch;
     background: var(--st-bg);
     font-family: 'Manrope', sans-serif;
@@ -2511,6 +2522,7 @@
     top: 0 !important; left: 0 !important; bottom: 0 !important;
     width: var(--sidebar-w) !important;
     height: 100vh !important;
+    height: 100dvh !important;
     flex-direction: column !important;
     align-items: flex-start !important;
     padding: 20px 14px 20px !important;
@@ -2571,6 +2583,7 @@
     margin-left: var(--sidebar-w) !important;
     padding: 24px 28px !important;
     min-height: 100vh;
+    min-height: 100dvh;
     box-sizing: border-box;
   }
   .dash-topbar-mobile { display: none !important; }
@@ -2988,8 +3001,12 @@ window.PADDLE_PRICES = {
 (function(){
   // En Capacitor nativo NO se inicializa Paddle (la suscripción va por IAP/RevenueCat).
   try { if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return; } catch(e){}
+  // Este reintento no tenía tope: si el CDN de Paddle no carga (datos móviles, portal
+  // cautivo, bloqueador), programaba un timer cada 60 ms PARA SIEMPRE — ~16 por segundo,
+  // toda la sesión. Tope de 100 intentos ≈ 6 s.
+  var _pdTries = 0;
   function initPaddle(){
-    if (!window.Paddle || !window.Paddle.Environment) { return setTimeout(initPaddle, 60); }
+    if (!window.Paddle || !window.Paddle.Environment) { if (_pdTries++ < 100) setTimeout(initPaddle, 60); return; }
     Paddle.Environment.set('sandbox'); // TODO(live): 'production'
     Paddle.Initialize({
       token: 'test_3c9a0fa251a22ce22645e35a21f', // TODO(live): token client-side LIVE
@@ -4295,9 +4312,9 @@ window.PADDLE_PRICES = {
      hermano flex del body y parte el ancho de TODAS las pestañas. Solo se muestra activo. */
   #tab-aianalyst { padding:0 !important; background:#f4f6fb; flex-direction:column; overflow:hidden; }
   #tab-aianalyst.active { display:flex; }
-  .ai-chat-page { display:flex; flex-direction:column; height:var(--vvh, 100vh); background:#f4f6fb; font-family:'Manrope',sans-serif; }
+  .ai-chat-page { display:flex; flex-direction:column; height:var(--vvh, 100dvh); background:#f4f6fb; font-family:'Manrope',sans-serif; }
   /* Móvil: al abrir el teclado NO scrollear el documento — el chat queda quieto y el input visible. */
-  @media(max-width:760px){ body:has(#tab-aianalyst.active){ overflow:hidden; height:100vh; } }
+  @media(max-width:760px){ body:has(#tab-aianalyst.active){ overflow:hidden; height:100vh; height:100dvh; } }
   .ai-chat-header { padding:18px 24px; background:#fff; border-bottom:1px solid #e8eaf0; display:flex; align-items:center; gap:14px; flex-shrink:0; }
   .ai-chat-header-avatar { width:40px; height:40px; border-radius:50%; background:var(--blue); display:flex; align-items:center; justify-content:center; color:#fff; font-size:15px; font-weight:700; flex-shrink:0; line-height:1; }
   .ai-chat-header-info { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
@@ -6161,7 +6178,9 @@ function _amPrewarmLeader(){
     return true;
   } catch(e) { return true; }   // sin localStorage disponible → no bloquear, comportarse como antes
 }
-setInterval(() => { try { _amPrewarmLeader(); } catch(e){} }, 7000);
+// `document.hidden` añadido: era el único timer de los 12 sin puerta de visibilidad, y
+// escribe localStorage (síncrono, a disco) cada 7 s incluso con la app en segundo plano.
+setInterval(() => { if (document.hidden) return; try { _amPrewarmLeader(); } catch(e){} }, 7000);
 
 const _ANTHROPIC_MODEL_MAP = {
   'claude-haiku-4-5':  'claude-haiku-4-5-20251001',
@@ -11248,6 +11267,9 @@ function _newsContextLine(n, ticker){
 }
 
 // ── Stitch card builder ───────────────────────────────────────────────
+// Objetos derivados estables para el relleno de "Hoy" (ver renderTodayNews). WeakMap para
+// que no impida el recolector de basura ni se cuele en lo que se serializa a localStorage.
+const _newsFillCache = new WeakMap();
 function _snCard(n, idx) {
   const sentiment = n.s === 'pos' ? 'bullish' : n.s === 'neg' ? 'bearish' : 'neutral';
   const sentLabel = n.s === 'pos' ? 'BULLISH' : n.s === 'neg' ? 'BEARISH' : 'NEUTRAL';
@@ -11319,13 +11341,23 @@ var _pvNewsRenderPending = false;
 function _pvScheduleNewsRender(){
   if (_pvNewsRenderPending) return;
   _pvNewsRenderPending = true;
-  requestAnimationFrame(function(){
+  var _done = false;
+  var _run = function(){
+    if (_done) return;
+    _done = true;
     _pvNewsRenderPending = false;
     try{
       var t = document.getElementById('tab-noticias');
       if (typeof renderNewsTab === 'function' && t && t.classList.contains('visible')) renderNewsTab();
     }catch(e){}
-  });
+  };
+  try { requestAnimationFrame(_run); } catch(e){}
+  // Respaldo obligatorio: con la app en segundo plano —o con rAF estrangulado, cosa que iOS
+  // hace de forma agresiva— el callback de `requestAnimationFrame` puede no ejecutarse NUNCA.
+  // Sin este respaldo, `_pvNewsRenderPending` se quedaría pegado en true y a partir de ahí
+  // ningún render volvería a programarse jamás (noticias congeladas). El primero que llegue
+  // gana; el otro sale por `_done`.
+  setTimeout(_run, 250);
 }
 
 // ── Stitch Featured article builder ──────────────────────────────────
@@ -11457,7 +11489,15 @@ function renderTodayNews(){
   // vista por-ticker, solo se reutiliza aquí para no dejar espacios en blanco.
   if (items.length < 8) {
     const pool = [];
-    HOLDINGS.forEach(h => (STOCK_NEWS[h.ticker] || []).filter(_newsHasContext).slice(0,3).forEach(n => pool.push({ ...n, _ticker: h.ticker })));
+    // Se reutiliza el MISMO objeto derivado entre renders. Con `{...n}` se creaba uno nuevo
+    // cada vez, `_newsRegister` le asignaba un id distinto, y por lo tanto el HTML de la
+    // tarjeta cambiaba en CADA render aunque la noticia fuera idéntica → el guard
+    // anti-parpadeo de abajo nunca podría saltarse el repintado.
+    HOLDINGS.forEach(h => (STOCK_NEWS[h.ticker] || []).filter(_newsHasContext).slice(0,3).forEach(n => {
+      let d = _newsFillCache.get(n);
+      if (!d || d._ticker !== h.ticker) { d = Object.assign({}, n, { _ticker: h.ticker, __nid: undefined }); _newsFillCache.set(n, d); }
+      pool.push(d);
+    }));
     const _s2 = new Set(items.map(n => (n.h||n.headline||'').slice(0,70).toLowerCase()));
     const fillers = pool.filter(n => { const k=(n.h||n.headline||'').slice(0,70).toLowerCase(); if(!k||_s2.has(k)) return false; _s2.add(k); return true; })
                         .sort((a,b) => _newsImportance(b) - _newsImportance(a));
@@ -11972,7 +12012,11 @@ function showTab(name) {
   // Clear watchlist refresh interval when leaving
   if (_wlRefreshInterval) { clearInterval(_wlRefreshInterval); _wlRefreshInterval = null; }
   {
-    const pg = $('tab-'+name);
+    // Sin este guard, un nombre de pestaña inválido lanzaba DESPUÉS de haber desactivado
+    // todas las páginas (arriba) → pantalla en blanco sin forma de volver. Fallback a
+    // Portafolio.
+    let pg = $('tab-'+name);
+    if (!pg) { name = 'portfolio'; pg = $('tab-portfolio'); if (!pg) return; }
     pg.classList.add('active');
     // La pestaña nueva SIEMPRE abre desde arriba (no hereda el scroll anterior).
     try { window.scrollTo(0,0); pg.scrollTop = 0; var _sc = pg.querySelector('.stitch-layout, .ai-chat-body, .nm-overlay'); if(_sc) _sc.scrollTop = 0; } catch(e){}
@@ -12943,8 +12987,19 @@ function _extendPerfMasterWithHistory(liveTotal) {
 
 // Registra el valor de hoy y actualiza la gráfica.
 // Llamar después de calcTotals() en renderAll().
+// Se llama desde `renderAll()`, o sea en cada tick de precios. Por dentro hace
+// getItem → JSON.parse → findIndex → sort → JSON.stringify → setItem, y después
+// `_extendPerfMasterWithHistory` copia y reordena tres arrays y reconstruye PERF_DATA.
+// Es una TERCERA escritura síncrona a localStorage por render, sobre datos que apenas
+// cambian. Se limita a: solo si el total redondeado cambió, y como mucho una vez cada
+// 2 minutos. El punto diario que persiste es el mismo.
+let _lastSnapAt = 0, _lastSnapTotal = -1;
 function _recordDailySnapshot(liveTotal) {
   if (!liveTotal || liveTotal <= 0) return;
+  const _r = Math.round(liveTotal * 100);
+  const _now = Date.now();
+  if (_r === _lastSnapTotal && (_now - _lastSnapAt) < 120000) return;
+  _lastSnapAt = _now; _lastSnapTotal = _r;
   _saveDailyPoint(_todayISO(), liveTotal);
   _extendPerfMasterWithHistory(liveTotal);
 }
@@ -25631,6 +25686,18 @@ if (document.readyState === 'loading') {
       <span>Continuar con Apple</span>
     </button>
 
+    <!-- Continuar con Google (nativo en iOS, OAuth vía Supabase en web) -->
+    <!-- Apple va primero a propósito: la guideline 4.8 del App Store exige ofrecer
+         Sign in with Apple cuando hay login social de terceros; ponerlo arriba es la
+         lectura conservadora de esa regla. -->
+    <button id="googleSignInBtn" onclick="_authGoogleSignin()"
+      style="width:100%;height:54px;margin-top:10px;border-radius:13px;border:1px solid #dadce0;background:#fff;color:#1f1f1f;font-size:16px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;transition:opacity .18s,transform .12s;">
+      <!-- La "G" va en los colores de marca (no currentColor): el logo monocromo viola
+           los lineamientos de Google para botones de inicio de sesión. -->
+      <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z"/><path fill="#34A853" d="M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z"/><path fill="#FBBC05" d="M11.69 28.18C11.25 26.86 11 25.45 11 24s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24s.85 6.91 2.34 9.88l7.35-5.7z"/><path fill="#EA4335" d="M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7c1.73-5.2 6.58-9.07 12.31-9.07z"/></svg>
+      <span>Continuar con Google</span>
+    </button>
+
     <div class="av-divider" style="margin-top:20px;display:none;"></div>
 
     <div style="text-align:center;display:none;">
@@ -25857,6 +25924,80 @@ if (document.readyState === 'loading') {
       var _msg = (e && (e.message || e.error)) || '';
       var _canceled = /cancel|1001|AuthorizationError|popup_closed/i.test(String(_msg));
       if (!_canceled) setMsg(_msg || 'No se pudo iniciar sesión con Apple.', true);
+      if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+      if (lbl) lbl.textContent = origTxt;
+    }
+  };
+
+  // ── Continuar con Google ──
+  // Espejo estructural de _authAppleSignin. En iOS NO se usa signInWithOAuth por
+  // redirect: Capacitor intercepta la navegación y abre Safari EXTERNO, el usuario
+  // sale de la app y el code verifier de PKCE (guardado en localStorage del WKWebView)
+  // se pierde al volver → login que "funciona" pero nunca entrega sesión, o loop.
+  // Por eso el nativo usa el SDK de Google y le pasa el id_token a Supabase, igual
+  // que Apple hace con ASAuthorization.
+  var _googleSdkReady = false;   // el SDK solo se inicializa una vez por sesión
+  window._authGoogleSignin = async function(){
+    var btn = document.getElementById('googleSignInBtn');
+    var lbl = btn ? btn.querySelector('span') : null;
+    var origTxt = lbl ? lbl.textContent : '';
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.6'; btn.style.cursor = 'default'; }
+    if (lbl) lbl.textContent = 'Conectando con Google…';
+    var _isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+    try {
+      // ── iOS nativo: Google Sign-In NATIVO (GIDSignIn vía @capgo/capacitor-social-login).
+      //    El diálogo vive dentro de la app; devuelve idToken → signInWithIdToken. ──
+      if (_isNative) {
+        var SL = (window.Capacitor.Plugins && window.Capacitor.Plugins.SocialLogin) || null;
+        if (!SL) throw new Error('Inicio de sesión con Google no disponible en esta versión de la app.');
+        // Inicialización perezosa: el arranque ya es pesado y el SDK de Google solo
+        // hace falta para quien pulsa este botón, no para todos los usuarios.
+        if (!_googleSdkReady) {
+          await SL.initialize({
+            google: {
+              iOSClientId: '342943410334-j60tliu5qslp131h9ftahjlupqo0gp22.apps.googleusercontent.com',
+              webClientId: '342943410334-8rogqn0mk1k9qti5ue2c4kqa7e83bqb8.apps.googleusercontent.com'
+            }
+          });
+          _googleSdkReady = true;
+        }
+        // Ojo: a diferencia de Apple, Google NO hashea el nonce — lo copia tal cual al
+        // claim `nonce` del id_token (el plugin lo pasa verbatim a GIDSignIn). Por eso
+        // aquí va el CRUDO en ambos lados; mandar el SHA-256 dejaría desalineados el
+        // claim del token y lo que Supabase compara.
+        var rawNonce = _appleGenNonce();
+        var res = await SL.login({
+          provider: 'google',
+          options: { scopes: ['email', 'profile'], nonce: rawNonce }
+        });
+        var idToken = res && res.result && res.result.idToken;
+        if (!idToken) throw new Error('Google no devolvió el token de identidad.');
+        var rn = await sb.auth.signInWithIdToken({ provider: 'google', token: idToken, nonce: rawNonce });
+        if (rn && rn.error) throw rn.error;
+        // onAuthStateChange recoge la sesión y revela la app. Restauramos el botón por si el gate tarda.
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+        if (lbl) lbl.textContent = origTxt;
+        return;
+      }
+      // ── Web: OAuth por redirect ──
+      // Mismo criterio que Apple: en un origen local (127/file://) el servidor puede
+      // estar apagado al volver de Google → ERR_CONNECTION_REFUSED. Caemos al dominio
+      // de producción para no aterrizar en una URL muerta.
+      var _origin = window.location.origin || '';
+      var _isLocal = /^(https?:)?\/\/(127\.0\.0\.1|\[::1\])/.test(_origin) || window.location.protocol === 'file:';
+      var _redirectTo = _isLocal ? 'https://portivapp.com/' : (_origin + window.location.pathname);
+      var r = await sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: _redirectTo }
+      });
+      if (r && r.error) throw r.error;
+      // Éxito: el navegador se va a accounts.google.com. No restauramos el botón (se sale de la página).
+    } catch(e){
+      // Cerrar el diálogo nativo no es un error que mostrar. A los códigos que ya cubría
+      // Apple se añaden los de Google (12501 / SIGN_IN_CANCELLED / canceled).
+      var _msg = (e && (e.message || e.error)) || '';
+      var _canceled = /cancel|canceled|12501|SIGN_IN_CANCELLED|1001|AuthorizationError|popup_closed/i.test(String(_msg));
+      if (!_canceled) setMsg(_msg || 'No se pudo iniciar sesión con Google.', true);
       if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
       if (lbl) lbl.textContent = origTxt;
     }
