@@ -4931,7 +4931,7 @@ window.PADDLE_PRICES = {
       <div style="font:600 13px var(--font,system-ui);color:var(--st-primary,#0F1D35);margin-bottom:4px">Eliminar mi cuenta</div>
       <div style="font:400 12px var(--font,system-ui);color:#8a93a3;line-height:1.5;margin-bottom:10px">Borra de forma permanente tu cuenta, tu portafolio y la conexión con tu broker. No se puede deshacer.</div>
       <button class="set-btn-danger" id="setDeleteAcctBtn" onclick="_acctDeleteAccount()" aria-label="Eliminar mi cuenta de forma permanente" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:46px;border-radius:12px;border:1px solid #dc2626;background:transparent;color:#dc2626;font:600 14px var(--font,system-ui);cursor:pointer;transition:background .15s">
-        <span class="material-symbols-outlined" style="font-size:18px" aria-hidden="true">delete_forever</span>
+        <span class="material-symbols-outlined" style="font-size:18px" aria-hidden="true">warning_amber</span>
         <span>Eliminar mi cuenta</span>
       </button>
     </div>
@@ -6093,6 +6093,22 @@ async function renderSettings(){
 // ── Logging de desarrollo: no-op en producción (window.DEBUG=false) ───────────
 window.DEBUG = false;
 window._pvLog = function(){ if (window.DEBUG) { try { console.log.apply(console, arguments); } catch(_){} } };
+
+// ── Formateadores Intl memoizados ────────────────────────────────────────────
+// Construir un `Intl.DateTimeFormat` con `timeZone` es de las operaciones más caras de
+// JavaScriptCore: ~0.3–2 ms por construcción en un chip A-series contra microsegundos en
+// un Mac. `_nyParts()` lo construía en CADA llamada, y de ahí cuelgan `_todayET`,
+// `_nowHHMM`, `isMarketOpenNow`, `saveIntraday`, `saveDaily` y `generate` — decenas de
+// construcciones por render. Esa diferencia de costo es buena parte de por qué la app
+// va fluida en escritorio y se traba en iPhone/iPad. Aquí se construye una vez por
+// combinación (locale + opciones) y se reutiliza.
+function _pvDTF(locale, opts){
+  try{
+    if(!_pvDTF._c) _pvDTF._c = Object.create(null);
+    var k = locale + '|' + JSON.stringify(opts || {});
+    return _pvDTF._c[k] || (_pvDTF._c[k] = new Intl.DateTimeFormat(locale, opts));
+  }catch(e){ return new Intl.DateTimeFormat(locale, opts); }
+}
 const _PV_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
 // Ruta a la función serverless de IA en el MISMO sitio (si algún día la despliegas en
 // netlify/functions/anthropic, funciona sin CORS). Si no existe (404) o falla, se cae
@@ -6468,9 +6484,18 @@ function savePortfolio() {
       perfYScale: (typeof PERF_YSCALE !== 'undefined' && PERF_YSCALE) ? PERF_YSCALE : undefined,
     });
     _lsSet('portfolio_state_v4', snapshot);
-    // Backup independiente — nunca se borra por cambios de versión
-    _lsSet('portfolio_state_backup', snapshot);
-    _lsSet('portfolio_backup_ts', Date.now().toString());
+    // Backup independiente — nunca se borra por cambios de versión.
+    // `savePortfolio()` corre dentro de `fetchLivePrices()`, o sea cada 30 s en horario de
+    // mercado, y escribía el MISMO blob dos veces. `localStorage.setItem` en iOS Safari es
+    // síncrono y va a disco, y el blob crece con `txLog`/`perfMaster` → el tirón empeora
+    // cuanto más usas la app. El backup no necesita esa frecuencia: basta cada 5 minutos
+    // (o cuando aún no existe). El guardado principal sigue siendo en cada llamada.
+    var _bkAge = 0;
+    try { _bkAge = Date.now() - (parseInt(localStorage.getItem('portfolio_backup_ts'), 10) || 0); } catch(e) { _bkAge = Infinity; }
+    if (!(_bkAge < 5 * 60 * 1000)) {
+      _lsSet('portfolio_state_backup', snapshot);
+      _lsSet('portfolio_backup_ts', Date.now().toString());
+    }
   } catch(e) { reportError('Portafolio · guardar estado (localStorage)', e, { userMsg: 'No se pudo guardar el portafolio: ' + e.message }); }
 }
 
@@ -6647,8 +6672,16 @@ function renderAll() {
     _recordDailySnapshot(T.total);
   }
   updatePerfHeader();
-  renderDeepPortfolioAnalysis(T);
-  _analysisDirty = false;
+  // El análisis profundo (≈28 KB de plantilla, 7 reemplazos de innerHTML, tabla por activo,
+  // PV_AI.render + _buildRebalPlan) vive en la pestaña "Analizar". Como el DOM mantiene TODAS
+  // las pestañas montadas, el guard de existencia de `#port-deep-analysis` SIEMPRE pasaba: se
+  // reconstruía entero ~3 veces por minuto (tick 30s + tick 60s + volver a la app) aunque el
+  // usuario estuviera en Portafolio y nadie lo viera. En un iPhone eso es el grueso del tirón.
+  // `_analysisDirty` ya existía para esto pero nadie lo leía. Ahora sí: si la pestaña está
+  // oculta solo se marca sucia, y showTab('analizar') la reconstruye al abrirla.
+  const _anEl = document.getElementById('tab-analizar');
+  if (_anEl && !_anEl.classList.contains('visible')) { _analysisDirty = true; }
+  else { renderDeepPortfolioAnalysis(T); _analysisDirty = false; }
 }
 
 // ═══════════════════════════════════════════════════
@@ -8541,7 +8574,22 @@ function renderTable(T) {
     <td></td>
   </tr>`;
 
-  tbody.innerHTML = html;
+  // No reemplazar el cuerpo de la tabla mientras el usuario está escribiendo en el cajón de
+  // trade: el `<input class="amount-input">` vive DENTRO de este tbody, así que cada tick de
+  // 30 s lo destruía → se perdía el monto tecleado, se perdía el foco y en iOS el teclado se
+  // cerraba y volvía a abrir solo. Eso es justo lo que se siente como "se tildó". Igual que
+  // `renderSummary`, que ya protege su campo editable. Los importes se actualizarán en el
+  // siguiente tick, en cuanto el cajón se cierre.
+  // Solo se bloquea mientras el foco está DENTRO de la tabla (el usuario está tecleando);
+  // los re-render disparados por el propio usuario (abrir el cajón, cambiar compra/venta)
+  // no tienen foco en un input todavía y siguen pasando normalmente.
+  const _typing = (function(){
+    try{
+      const ae = document.activeElement;
+      return !!(ae && tbody.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
+    }catch(e){ return false; }
+  })();
+  if (!_typing) tbody.innerHTML = html;
 
   // ── Positions Total (footer) ──
   // FIX: día y día% desde la fuente única (_calcRealDayChange); total al centavo (round2),
@@ -10815,7 +10863,10 @@ const SharedNews = (function(){
   // Dos slots diarios: am (00:00–11:59) y pm (12:00–23:59). "Hoy" se regenera al cambiar de
   // slot → EXACTAMENTE 2 veces al día, gane quien gane el trigger (scheduler, tab, boot).
   function _slot(){ let mins=0; try{ const p=PORTIV_NEWS.nyParts(); mins=p.h*60+p.mi; }catch(e){ const d=new Date(); mins=d.getHours()*60+d.getMinutes(); } return _todayET() + (mins >= 720 ? '#pm' : '#am'); }
-  function _staleToday(o){ return !o || !Array.isArray(o.today) || !o.today.length || (o.lang||'es')!==_curLang() || (o.slot||'') !== _slot(); }
+  // El `day` es defensa en profundidad sobre el `slot`: una copia de la nube guardada con un
+  // slot corrupto (o de una versión anterior del formato) se colaba como "fresca" y quedaba
+  // servida a todos los usuarios durante días. Comparar la fecha ET no deja ese hueco.
+  function _staleToday(o){ return !o || !Array.isArray(o.today) || !o.today.length || (o.lang||'es')!==_curLang() || (o.slot||'') !== _slot() || (o.day||'') !== _todayET(); }
   function hasFresh(){ return !_staleToday(_local()); }
   // ¿Hay CUALQUIER noticia cacheada, aunque sea de un día anterior? En feriados / días sin
   // noticias nuevas, mostrar las anteriores es mejor que un error.
@@ -10875,8 +10926,33 @@ const SharedNews = (function(){
   // Normaliza + LIMPIA (quita <cite>/artefactos IA) + DEDUP por titular. El texto queda
   // limpio ANTES de subirse a la nube → todos los usuarios reciben la copia sin basura.
   const _clean = (typeof _cleanNewsText==='function') ? _cleanNewsText : (x=>String(x||''));
-  const _titleKey = t => String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().split(' ').slice(0,7).join(' ');
-  const _norm = arr => {
+  // Se quitan los acentos ANTES de recortar a [a-z0-9]: si no, "reunión" quedaba como
+  // "reuni n" y "reunion" como "reunion" → la misma noticia escrita con y sin tilde pasaba
+  // el dedup dos veces y salía duplicada en la portada.
+  const _titleKey = t => String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,' ').trim().split(' ').slice(0,7).join(' ');
+  // Antigüedad en DÍAS de una fecha "YYYY-MM-DD" respecto de hoy en Nueva York. null si la
+  // fecha no es válida (la IA no la puso o la puso mal) — en ese caso no se descarta nada:
+  // solo filtramos lo que viene fechado EXPLÍCITAMENTE como viejo.
+  const _ageDays = iso => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso||'').trim());
+    if(!m) return null;
+    const hoy = _todayET().split('-');
+    return Math.round((Date.UTC(+hoy[0], +hoy[1]-1, +hoy[2]) - Date.UTC(+m[1], +m[2]-1, +m[3])) / 86400000);
+  };
+  const _MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  // Etiqueta que ve el usuario. Antes no había ninguna y la tarjeta decía "Recent" siempre,
+  // así que una noticia de hace dos semanas se leía como si fuera de hoy.
+  const _dateLabel = iso => {
+    const a = _ageDays(iso);
+    if(a === null) return '';
+    if(a <= 0) return 'Hoy';   // a<0 = desfase de huso (la fuente publica ya en el día siguiente)
+    if(a === 1) return 'Ayer';
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso).trim());
+    return m ? (+m[3]) + ' ' + (_MESES[+m[2]-1]||'') : '';
+  };
+  // maxAgeDays: solo para "hoy". "Esta/próxima semana" son eventos futuros → sin filtro.
+  const _norm = (arr, maxAgeDays) => {
     const seen = new Set(); const out = [];
     (arr||[]).forEach(n => {
       if (!n || !n.h) return;
@@ -10885,10 +10961,16 @@ const SharedNews = (function(){
       seen.add(k);
       out.push({
         h: _clean(n.h), s:(n.s==='pos'||n.s==='neg')?n.s:'neu', source:n.source||'', impact:n.impact||'Mercado general',
-        ext:_clean(n.ext||''), date:n.date||'', _ts:Date.now(), tipo:'Mercado General'
+        ext:_clean(n.ext||''), date:_dateLabel(n.date), _age:_ageDays(n.date), _iso:String(n.date||''), _ts:Date.now(), tipo:'Mercado General'
       });
     });
-    return out.slice(0,8);
+    // Descarte por antigüedad: si la IA fechó una noticia como vieja, fuera. Devolver []
+    // es DELIBERADO — `_ensureFreshInner` conserva entonces las anteriores y NO avanza el
+    // slot, así que se reintenta en el siguiente ciclo en vez de congelar lo caducado.
+    const _res = (typeof maxAgeDays === 'number')
+      ? out.filter(n => n._age === null || n._age <= maxAgeDays)
+      : out;
+    return _res.slice(0,8);
   };
 
   async function _generate(){
@@ -10910,6 +10992,8 @@ const SharedNews = (function(){
 
 REGLAS ESTRICTAS:
 ${_todayWindow}
+- OBLIGATORIO: cada noticia lleva "date" con su fecha REAL de publicación en formato YYYY-MM-DD. Si en la búsqueda no puedes confirmar la fecha, DESCARTA esa noticia y busca otra: una noticia sin fecha verificable no sirve.
+- PROHIBIDO reciclar noticias de días o semanas anteriores aunque el tema siga siendo relevante. Ejemplo de lo que NO debes devolver: un titular tipo "los grandes bancos reportan la semana próxima" publicado hace dos semanas — ese "próxima semana" ya pasó. Si el hecho ya ocurrió, o el "próximamente" del titular ya quedó atrás, no lo incluyas.
 - EXACTAMENTE 8 noticias, ordenadas de MÁS a MENOS importantes. Prioriza SIEMPRE lo que afecta al mercado en su conjunto (índices amplios, Fed/tasas, inflación, mega-caps tecnológicas, petróleo/energía global) por encima de historias nicho que solo mueven 1-2 acciones pequeñas o temas locales/regionales sin impacto real en el mercado de EE.UU. Si un evento geopolítico es importante pero su efecto en el mercado es marginal, bájalo al final de la lista o descártalo por uno más relevante.
 - SIN DUPLICADOS: cada titular debe ser un tema distinto (no dos versiones de la misma noticia).
 - Solo noticias REALES encontradas en la búsqueda, con cifras REALES y verificables. PROHIBIDO inventar o exagerar cifras (ej. caídas/subidas de precio de acciones) — si no encuentras el dato exacto en la búsqueda, describe el hecho SIN inventar el número, o usa una cifra aproximada calificada como "cerca de" en vez de presentarla como exacta.
@@ -10917,7 +11001,7 @@ ${_todayWindow}
 - Texto LIMPIO en español. PROHIBIDO usar etiquetas <cite>, corchetes de referencia [1], markdown, o cualquier marca de la herramienta de búsqueda. Solo prosa natural.
 
 Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
-{"today":[{"h":"titular claro y específico","s":"pos|neg|neu","source":"Bloomberg","impact":"tickers concretos (ej: NVDA, AAPL) o el sector afectado","ext":"2-3 frases limpias: qué pasó y qué significa para el mercado"}],"thisWeek":[{"h":"...","s":"...","source":"...","impact":"...","ext":"..."}],"nextWeek":[{"h":"catalizador/evento próximo","s":"neu","source":"","impact":"...","ext":"qué vigilar"}]}
+{"today":[{"h":"titular claro y específico","s":"pos|neg|neu","source":"Bloomberg","date":"YYYY-MM-DD","impact":"tickers concretos (ej: NVDA, AAPL) o el sector afectado","ext":"2-3 frases limpias: qué pasó y qué significa para el mercado"}],"thisWeek":[{"h":"...","s":"...","source":"...","date":"YYYY-MM-DD","impact":"...","ext":"..."}],"nextWeek":[{"h":"catalizador/evento próximo","s":"neu","source":"","impact":"...","ext":"qué vigilar"}]}
 "today"=EXACTAMENTE 8 noticias más importantes ${_isFinde?'del FIN DE SEMANA':'de HOY'}, priorizando impacto de mercado amplio. "thisWeek"=5-6 temas clave de ESTA semana. "nextWeek"=4-5 catalizadores/eventos de la PRÓXIMA semana.`;
     // essential:true → permitido en el path de PAGO. NO es gasto por usuario: las noticias son
     // CLOUD-SHARED (tabla shared_analysis, fila __NEWS_GENERAL__) con lock global + TTL 6h → se
@@ -10935,7 +11019,8 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','news'); }catch(e){}
     const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedNews sin JSON');
     const raw=JSON.parse(m[0]);
-    return { today:_norm(raw.today), thisWeek:_norm(raw.thisWeek), nextWeek:_norm(raw.nextWeek) };
+    // Fin de semana: la ventana del prompt son 48h, así que se tolera un día más.
+    return { today:_norm(raw.today, _isFinde ? 3 : 2), thisWeek:_norm(raw.thisWeek), nextWeek:_norm(raw.nextWeek) };
   }
 
   // Flujo robusto: (1) SIEMPRE lee la nube primero (todos leen la MISMA copia). (2) Si está
@@ -10948,8 +11033,9 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
   // (y, si `sbClient` no existe, en microtareas → el hilo principal nunca llegaba a pintar =
   // la app "congelada"). Ahora: una sola pasada en vuelo, y como máximo una pasada por minuto
   // salvo que se fuerce explícitamente (scheduler diario / forceRefresh).
-  let _ensuring = null, _lastEnsureAt = 0;
+  let _ensuring = null, _lastEnsureAt = 0, _lastGenAt = 0, _lockTries = 0;
   const ENSURE_COOLDOWN = 60 * 1000;
+  const GEN_RETRY = 15 * 60 * 1000;
   function ensureFresh(force){
     if(_gen) return Promise.resolve();
     if(_ensuring) return _ensuring;
@@ -10970,14 +11056,30 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     //    otro dispositivo regeneraría). Nos quedamos leyendo la nube; genera un usuario logueado.
     if(!_authed()){ _failed = !o; _researched = true; _rerender(); return; }   // leyó la nube; sin sesión no genera → no colgar
 
+    // 2.5) Anti-bucle de generación. `_staleToday` decide por `slot`, y `slot` SOLO avanza si
+    //      la generación trajo contenido (ver más abajo). Un feriado, un timeout, o una copia
+    //      global generada en otro idioma dejaban la copia local eternamente "vieja" → cada
+    //      render pagaba una generación con IA otra vez. Máximo un intento cada 15 min.
+    if(_lastGenAt && (Date.now() - _lastGenAt) < GEN_RETRY){ _researched = true; _rerender(); return; }
+
     // 3) Lock global: si otro dispositivo ya está generando, esperamos y re-leemos (no gastamos).
     if(!(await _acquireLock())){
       _failed=false; _rerender();
-      setTimeout(async ()=>{ const c=await _cloudGet(); if(c && !_staleToday(c)){ _saveLocal(c); apply(); _rerender(); } else { ensureFresh(true); } }, 10000);
+      // El reintento tenía cadencia fija de 10 s y NINGÚN tope. `_acquireLock()` devuelve false
+      // tanto si otro dispositivo tiene el lock como si `_sharedWrite` falló por red — así que
+      // en un teléfono con señal mala el cliente entraba en un bucle que golpeaba el limitador
+      // de tasa, y el limitador garantizaba que el bucle siguiera. Ahora: máximo 3 reintentos
+      // con backoff 10 s → 30 s → 90 s.
+      if(_lockTries < 3){
+        const _delay = 10000 * Math.pow(3, _lockTries);
+        _lockTries++;
+        setTimeout(async ()=>{ const c=await _cloudGet(); if(c && !_staleToday(c)){ _lockTries=0; _saveLocal(c); apply(); _rerender(); } else { ensureFresh(true); } }, _delay);
+      }
       return;
     }
+    _lockTries = 0;
 
-    _gen = true; _failed = false; _rerender();   // muestra "cargando" mientras genera
+    _gen = true; _lastGenAt = Date.now(); _failed = false; _rerender();   // muestra "cargando" mientras genera
     try{
       // Re-verifica JUSTO antes de gastar: quizá otro subió mientras tomábamos el lock.
       const c2 = await _cloudGet();
@@ -11164,8 +11266,9 @@ function _snCard(n, idx) {
   const src = n.source || '';
   const srcColor = sourceColors[src] || '#44474d';
   const srcInitial = src.charAt(0).toUpperCase() || '•';
-  // "2h"/"3d" → relativo (añade "ago"); "May 13" → fecha absoluta (tal cual); sin fecha → "Recent".
-  const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : 'Recent';
+  // "2h"/"3d" → relativo (añade "ago"); "Hoy"/"24 jul" → tal cual. Sin fecha se deja VACÍO:
+  // antes ponía "Recent", que afirmaba frescura sobre noticias que podían ser de hace semanas.
+  const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : '';
   return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
     <div class="sn-card-top">
       <span class="sn-card-time">${timeAgo}</span>
@@ -11205,9 +11308,34 @@ function _snFeatImageFor(n){
   return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
 }
 
+// ── Coalescedor de re-render del tab de Noticias ─────────────────────────────
+// Cuatro fuentes independientes pedían `renderNewsTab()` en ráfaga (SharedNews.ensureFresh
+// mientras progresa lee-nube→lock→genera→sube, autoUpdateNews, el fallback de Finnhub y
+// PORTIV_NEWS). Cada llamada reemplaza el DOM y por lo tanto **reinicia desde cero** las
+// animaciones CSS de entrada (`.pn-day-group{animation:pn-fade}`, `.pv-spinner`) — que solo
+// están activas en móvil. Eso es exactamente el "parpadeo" que se ve en teléfono/iPad y casi
+// no se nota en escritorio. Todas las peticiones se colapsan ahora en UN render por frame.
+var _pvNewsRenderPending = false;
+function _pvScheduleNewsRender(){
+  if (_pvNewsRenderPending) return;
+  _pvNewsRenderPending = true;
+  requestAnimationFrame(function(){
+    _pvNewsRenderPending = false;
+    try{
+      var t = document.getElementById('tab-noticias');
+      if (typeof renderNewsTab === 'function' && t && t.classList.contains('visible')) renderNewsTab();
+    }catch(e){}
+  });
+}
+
 // ── Stitch Featured article builder ──────────────────────────────────
 function _snSetFeatured(n, idx) {
+  // Si la card destacada quedó en estado "buscando…", su markup estático (snFeatTitle,
+  // snFeatDesc, snFeatTickers, snFeatBtn…) fue reemplazado por el spinner y estos
+  // getElementById darían null → la destacada se quedaba en spinner PARA SIEMPRE en un
+  // dispositivo nuevo (caché vacío). Se restaura el markup original antes de poblarlo.
   if (!n) return;
+  try { _snFeaturedRestore(); } catch(e){}
   const el = id => document.getElementById(id);
   if (el('snFeatImg')) {
     const fimg = el('snFeatImg');
@@ -11234,7 +11362,7 @@ function _snSetFeatured(n, idx) {
   }
   if (el('snFeatTitle')) el('snFeatTitle').textContent = n.h || n.headline || '';
   if (el('snFeatDesc'))  el('snFeatDesc').textContent  = (n.ext || n.detail || '').slice(0, 200) + '…';
-  if (el('snFeatTime'))  el('snFeatTime').textContent  = n.date ? n.date : 'Recent';
+  if (el('snFeatTime'))  el('snFeatTime').textContent  = n.date || '';
   if (el('snFeatSource'))el('snFeatSource').textContent= 'By ' + (n.source || 'Reuters');
   // sector badge
   const ticker = (n._ticker || (n.impact||'').split(',')[0]?.trim() || '').toUpperCase();
@@ -11267,9 +11395,25 @@ function _snSetFeatured(n, idx) {
 
 // Estado de la card destacada cuando aún no hay noticias reales: spinner (loading) o
 // mensaje de reintento (failed). NUNCA se muestra una noticia genérica/seed primero.
+// Devuelve la card destacada a su markup estático original (snFeatTitle/Desc/Tickers/Btn…)
+// después de haber mostrado el spinner. Sin esto, `_snSetFeatured` no encuentra ningún nodo
+// y la destacada se queda cargando indefinidamente.
+function _snFeaturedRestore(){
+  const body = document.querySelector('#snFeatured .sn-feat-body');
+  if(!body || body._snMode !== 'loading') return;
+  if(typeof body._snOrigHtml === 'string') body.innerHTML = body._snOrigHtml;
+  body._snMode = 'ready';
+}
 function _snFeaturedState(mode){
   const body = document.querySelector('#snFeatured .sn-feat-body');
   if(!body) return;
+  // Idempotente: si el spinner YA está montado, no se vuelve a escribir el innerHTML.
+  // Re-escribirlo creaba nodos nuevos en cada render → la animación del spinner se
+  // reiniciaba y la card daba un salto visible (parte del parpadeo en móvil).
+  if(body._snMode === 'loading') return;
+  // Guarda el markup original UNA sola vez, para poder volver a él cuando lleguen noticias.
+  if(typeof body._snOrigHtml !== 'string') body._snOrigHtml = body.innerHTML;
+  body._snMode = 'loading';
   // NUNCA se muestra "no se pudieron cargar": si no hay noticias que mostrar (feriado / día sin
   // noticias, o primera carga), se mantiene el spinner de búsqueda y se sigue intentando en
   // background. Las anteriores, si existen, se renderizan por el flujo normal (state='ready').
@@ -11322,11 +11466,16 @@ function renderTodayNews(){
 
   // Sin noticias aún (IA + Finnhub aún no trajeron nada): spinner, NUNCA "no hay noticias".
   // El fallback de Finnhub (renderNewsTab) sigue trayendo en background y re-renderiza al llegar.
+  // Guard anti-parpadeo: solo se toca el DOM si el HTML cambió de verdad. Reemplazar la
+  // grilla con contenido idéntico la colapsaba a 0 de alto por un frame y reiniciaba las
+  // animaciones de entrada de las cards → blink visible en móvil en cada re-render.
+  // (Mismo patrón que ya usaban #dailyNews y #thisWeekNews; a #todayNews le faltaba.)
+  const _paint = html => { if (cont._tnLastHtml !== html) { cont._tnLastHtml = html; cont.innerHTML = html; } };
   if (!items.length) {
-    cont.innerHTML = `<div style="grid-column:1/-1"><div class="pv-spinner-wrap" style="flex-direction:column;gap:10px;padding:24px 0"><span class="pv-spinner"></span><span style="font-size:12px;color:var(--text3)">Buscando noticias recientes…</span></div></div>`;
+    _paint(`<div style="grid-column:1/-1"><div class="pv-spinner-wrap" style="flex-direction:column;gap:10px;padding:24px 0"><span class="pv-spinner"></span><span style="font-size:12px;color:var(--text3)">Buscando noticias recientes…</span></div></div>`);
     return;
   }
-  cont.innerHTML = items.map(n => _snCard(n, _newsCache.push(n)-1)).join('');
+  _paint(items.map(n => _snCard(n, _newsCache.push(n)-1)).join(''));
   const u = document.getElementById('todayNewsUpdated');
   if (u) u.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
 }
@@ -11388,14 +11537,18 @@ function renderNewsTab() {
   }
   const dc = {pos:'var(--green)',neg:'var(--red)',neu:'var(--text3)'};
   const emptyPlaceholder = (msg) => `<div style="font-size:12px;color:var(--text3);padding:16px 0;text-align:center">${msg}</div>`;
+  // Mismo guard anti-parpadeo para la fila de chips por ticker: se reconstruía entera en
+  // cada render aunque los porcentajes no hubieran cambiado (reflow visible de la fila).
+  const _tbEl = $('tickerBtns');
+  const _tbPaint = html => { if (_tbEl && _tbEl._tbLastHtml !== html) { _tbEl._tbLastHtml = html; _tbEl.innerHTML = html; } };
   if (!HOLDINGS.length) {
-    $('tickerBtns').innerHTML = `<div style="font-size:12px;color:var(--text3);padding:8px 0">Agrega posiciones a tu portafolio para ver noticias por ticker.</div>`;
+    _tbPaint(`<div style="font-size:12px;color:var(--text3);padding:8px 0">Agrega posiciones a tu portafolio para ver noticias por ticker.</div>`);
   } else {
-    $('tickerBtns').innerHTML = HOLDINGS.map(h => {
+    _tbPaint(HOLDINGS.map(h => {
       const cls = h.dayChgPct >= 0 ? 'pos' : 'neg';
       const chgColor = h.dayChgPct>=0?'var(--st-secondary)':'var(--red)';
       return `<button onclick="showStockNews('${h.ticker}',this)" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:999px;border:1.5px solid var(--st-outline-var);background:var(--surface);cursor:pointer;font-family:'Manrope',sans-serif;font-size:12px;font-weight:700;color:var(--st-primary);transition:all .15s;" onmouseover="this.style.background='var(--st-surface-cont)'" onmouseout="this.style.background='var(--surface)'">${h.ticker}<span style="color:${chgColor};font-weight:600">${h.dayChgPct>=0?'+':''}${h.dayChgPct.toFixed(2)}%</span></button>`;
-    }).join('');
+    }).join(''));
   }
   _newsCache = [];
 
@@ -11939,7 +12092,7 @@ const PORTIV_CHART = {
   // ── NY time helpers ────────────────────────────────────────────────────
   _nyParts(d){
     const src = d || new Date();
-    const f = new Intl.DateTimeFormat('en-US',{timeZone:this.TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',weekday:'short',hour12:false});
+    const f = _pvDTF('en-US',{timeZone:this.TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',weekday:'short',hour12:false});
     const p={}; f.formatToParts(src).forEach(x=>{p[x.type]=x.value;});
     const wm={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};
     let h=+p.hour; if(h===24)h=0;
@@ -12678,7 +12831,7 @@ const PORTIV_HIST = {
   // ── Persistencia en localStorage (Fase 2: evita re-bajar todo en cada recarga) ──
   _todayETsafe(){
     try { if (typeof PORTIV_CHART!=='undefined' && PORTIV_CHART._todayET) return PORTIV_CHART._todayET(); } catch(e){}
-    try { return new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date()); } catch(e){ return null; }
+    try { return _pvDTF('en-CA',{timeZone:'America/New_York'}).format(new Date()); } catch(e){ return null; }
   },
   _persistDaily(){ try { const s=JSON.stringify({at:this._at,data:this.data});
     (typeof _lsSet==='function'?_lsSet(this._LS_DAILY,s):localStorage.setItem(this._LS_DAILY,s)); } catch(e){} },
@@ -12715,7 +12868,7 @@ function _todayISO() {
   // la gráfica (PORTIV_CHART._todayET) para que el último punto y el borde derecho coincidan.
   try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART._todayET) return PORTIV_CHART._todayET(); } catch(e){}
   // Fallback: ET vía Intl (en-CA da YYYY-MM-DD).
-  try { return new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); } catch(e){}
+  try { return _pvDTF('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()); } catch(e){}
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
@@ -19900,7 +20053,7 @@ const _DOW_ES = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sá
 function _mondayOf(offsetWeeks) {
   // Usa America/New_York para que la semana rote al lunes 00:00 ET, no en hora local.
   const p = {};
-  new Intl.DateTimeFormat('en-US', {
+  _pvDTF('en-US', {
     timeZone:'America/New_York', year:'numeric', month:'2-digit',
     day:'2-digit', weekday:'short'
   }).formatToParts(new Date()).forEach(x => { p[x.type] = x.value; });
@@ -20939,7 +21092,7 @@ const SharedOutlook = (function(){
   // Día ET (YYYY-MM-DD) — usado por el refresh diario para rodar al cruzar medianoche NY.
   function _etDay(){
     try{ const p=(typeof PORTIV_NEWS!=='undefined')?PORTIV_NEWS.nyParts():null; if(p) return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`; }catch(e){}
-    try{ const x={}; new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).forEach(o=>x[o.type]=o.value); return `${x.year}-${x.month}-${x.day}`; }catch(e){ return new Date().toISOString().slice(0,10); }
+    try{ const x={}; _pvDTF('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()).forEach(o=>x[o.type]=o.value); return `${x.year}-${x.month}-${x.day}`; }catch(e){ return new Date().toISOString().slice(0,10); }
   }
   // Frescura según el caller: normal = TTL 24h; daily (scheduler 00:00 ET) = exige que la copia
   // de nube sea del MISMO día ET → fuerza UNA regeneración al cruzar medianoche. Sigue siendo 1×
@@ -21831,7 +21984,13 @@ async function _refreshGeneralNews(timeoutMs) {
     let mapped = all.filter(n => !HOLDINGS.length || n._rel > 0).sort((a, b) => b._rel - a._rel);
     if (mapped.length < 4) mapped = all.slice().sort((a, b) => (b._rel - a._rel) || ((b._ts || 0) - (a._ts || 0)));
     mapped = mapped.slice(0, 10);
-    if (mapped.length) {
+    // NO pisar el set COMPARTIDO de la nube (SharedNews) con el de Finnhub. Son dos listas
+    // distintas escribiendo la misma variable: `autoUpdateNews` escribía la de Finnhub y el
+    // siguiente `renderNewsTab()` → `SharedNews.apply()` volvía a escribir la de la nube, así
+    // que en pantalla los titulares SALTABAN de un set al otro. Finnhub queda como respaldo:
+    // solo escribe cuando la copia compartida no está fresca.
+    const _sharedFresh = (function(){ try { return !!(window.SharedNews && SharedNews.hasFresh && SharedNews.hasFresh()); } catch(e){ return false; } })();
+    if (mapped.length && !_sharedFresh) {
       GENERAL_NEWS = mapped;
       try { localStorage.setItem('news_general', JSON.stringify(GENERAL_NEWS)); } catch(e) {}
     }
@@ -23305,7 +23464,7 @@ const PORTIV_SYNC = {
 
   _ny(d){
     if(typeof PORTIV_NEWS!=='undefined')return PORTIV_NEWS.nyParts(d||new Date());
-    const s=d||new Date(),f=new Intl.DateTimeFormat('en-US',{timeZone:this.TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',weekday:'short',hour12:false});
+    const s=d||new Date(),f=_pvDTF('en-US',{timeZone:this.TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',weekday:'short',hour12:false});
     const p={};f.formatToParts(s).forEach(x=>{p[x.type]=x.value;});
     const w={Sun:0,Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6};let h=+p.hour;if(h===24)h=0;
     return{y:+p.year,mo:+p.month,d:+p.day,h,mi:+p.minute,wd:w[p.weekday]};
@@ -23457,7 +23616,7 @@ const PORTIV_NEWS = {
   // Devuelve los componentes de fecha/hora ACTUALES en Nueva York, sin importar la TZ del navegador.
   nyParts(date){
     const d = date || new Date();
-    const f = new Intl.DateTimeFormat('en-US', {
+    const f = _pvDTF('en-US', {
       timeZone: this.TZ, year:'numeric', month:'2-digit', day:'2-digit',
       hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false, weekday:'short'
     });
@@ -25209,8 +25368,18 @@ function init() {
     //    auto-limpiables como _wlRefreshInterval / _researchPriceTimer).
     if (!window._pvVisResumeBound) {
       window._pvVisResumeBound = true;
+      // Sin freno: cada vuelta a la app disparaba fetch + renderAll + regeneración de gráfica
+      // en un mismo frame, justo después de que el hook de `pagehide` hiciera su trabajo al
+      // salir. Volver a la app dos veces seguidas duplicaba todo. Ahora, como mucho una
+      // ráfaga cada 10 s, y en tiempo ocioso para no pelear con el primer frame.
+      var _lastResume = 0;
       document.addEventListener('visibilitychange', () => {
         if (document.hidden) return;
+        var _n = Date.now();
+        if (_n - _lastResume < 10000) return;
+        _lastResume = _n;
+        var _idle = window.requestIdleCallback || function(fn){ return setTimeout(fn, 120); };
+        _idle(() => {
         try {
           if (isMarketOpen() || isExtendedHours()) { try { fetchLivePrices(); } catch(e){} }
           if (typeof renderAll === 'function') renderAll();
@@ -25218,6 +25387,7 @@ function init() {
             try { PORTIV_CHART.refresh('1D'); } catch(e) {}
           } else if (typeof _redrawActiveChart === 'function') { _redrawActiveChart(); }
         } catch(e) {}
+        }, { timeout: 500 });
       });
     }
 
@@ -25778,7 +25948,13 @@ if (document.readyState === 'loading') {
   // preferencias de dispositivo (idioma/tema) y las API keys locales — no son datos de cuenta.
   function _pvNukeLocalAll(){
     try {
-      var KEEP = { portiv_lang:1, portiv_theme:1, fh_api_key:1 };
+      // `pv_bound_uid` NO es dato de cuenta: es la marca de "este navegador ya está ligado a
+      // este usuario". Al borrarla, el siguiente login veía un bind distinto y disparaba
+      // `_purgeAccountLocal()` + `location.reload()` — es decir, un arranque en frío completo
+      // cada vez que la sesión parpadeaba. En un teléfono con red intermitente eso pasaba
+      // seguido. Se conserva: el aislamiento entre cuentas lo sigue dando la comparación de
+      // bind (si entra OTRO usuario, no coincide y se purga igual).
+      var KEEP = { portiv_lang:1, portiv_theme:1, fh_api_key:1, pv_bound_uid:1 };
       Object.keys(localStorage).forEach(function(k){
         if (KEEP[k]) return;
         if (/^(portiv_|pv_|news_|weekly_outlook_|outlook_|week_top_|wl_|portfolio_|shared_news_|fh_)/.test(k))
@@ -25792,7 +25968,26 @@ if (document.readyState === 'loading') {
   }
   window._pvNukeLocalAll = _pvNukeLocalAll;
 
-  async function cloudLoadAndGate(s){
+  // ── Guard de entrada única ──────────────────────────────────────────────────
+  // supabase-js v2 emite `INITIAL_SESSION` en cuanto uno se suscribe, ANTES de que resuelva
+  // el `getUser()` del arranque. Resultado: `onAuthStateChange` y el `.then()` de
+  // `getSession()` entraban aquí EN PARALELO, y ninguno de los dos tenía guard. Dos pasadas
+  // concurrentes de una función que escribe localStorage, limpia watchlist y noticias,
+  // restaura bundles completos y puede llamar a `location.reload()`. En un dispositivo nuevo
+  // (sin `pv_bound_uid`, sin caché) eso encadenaba hasta DOS recargas → parsear y ejecutar
+  // 1.7 MB de app tres veces seguidas, todo con el body en `visibility:hidden`. Se ve
+  // exactamente como una app congelada, y solo pasa en un dispositivo que arranca en frío.
+  var _gateRunning = false;
+  function cloudLoadAndGate(s){
+    if (window._pvKilled) return;
+    if (_gateRunning) return;       // ya hay una pasada en curso → la segunda sobra
+    _gateRunning = true;
+    return Promise.resolve()
+      .then(function(){ return _cloudLoadAndGateInner(s); })
+      .catch(function(e){ try { _pvLogError('cloudLoadAndGate', e); } catch(_){} })
+      .then(function(){ _gateRunning = false; });
+  }
+  async function _cloudLoadAndGateInner(s){
     if (window._pvKilled) return;   // cuenta eliminada → no cargar nada (se reinicia limpio)
     session = s;
     try { window.__pvUserId = (s.user && s.user.id) || 'local'; } catch(e){}
@@ -26012,7 +26207,18 @@ if (document.readyState === 'loading') {
       var raw = localStorage.getItem(LS_KEY);
       var obj = raw ? JSON.parse(raw) : {};
       var _ph = _pvPortHash(obj);
-      if (_ph === _lastPortHash) return;                    // nada cambió (ignorando precio) → no reescribir
+      // PÉRDIDA DE DATOS ENTRE DISPOSITIVOS (arreglado): el wrapper de `savePortfolio` marca
+      // `pv_port_synced='0'` ("tengo cambios sin subir") en CADA llamada, y `fetchLivePrices`
+      // llama a `savePortfolio()` cada 30 s. Como el hash ignora los precios, esta compuerta
+      // salía por aquí y la marca NUNCA volvía a '1'. Resultado: cualquier dispositivo que
+      // hubiera estado abierto en horario de mercado decía para siempre "tengo cambios locales
+      // pendientes, con fecha de hace un momento" → al reabrirlo ganaba la copia local y
+      // SOBRESCRIBÍA en la nube las ediciones hechas desde el otro dispositivo. Si no hay nada
+      // que subir, hay que decirlo: sincronizado.
+      if (_ph === _lastPortHash) {
+        try { localStorage.setItem('pv_port_synced', '1'); } catch(e){}
+        return;                                             // nada cambió (ignorando precio) → no reescribir
+      }
       var _stamp = new Date().toISOString();
       var _res = await sb.from('profiles').upsert({ id: session.user.id, email: session.user.email, portfolio: obj, updated_at: _stamp });
       if (!_res || !_res.error) {
@@ -26143,9 +26349,21 @@ if (document.readyState === 'loading') {
     };
   })();
 
-  function showLogin(){
+  // `purge` = ¿hay que borrar todo rastro local? Solo en un cierre de sesión REAL (logout
+  // explícito, cuenta eliminada) o al arrancar sin sesión. NO en un evento transitorio de
+  // `onAuthStateChange` (p. ej. un refresh de token que falla porque el teléfono cambió de
+  // Wi-Fi a datos): antes cualquiera de esos borraba el portafolio local, la sesión volvía
+  // sola un segundo después y la app se reconstruía entera desde la nube. Ese ciclo, en un
+  // teléfono con red inestable, es un arranque en frío tras otro.
+  function showLogin(purge){
     session = null;
     window._pvAuthReady = false;
+    if (purge === false) {
+      var _b0 = document.getElementById('authBoot'); if (_b0) _b0.style.display = 'none';
+      var _b1 = document.getElementById('authBody'); if (_b1) _b1.style.display = 'block';
+      setMode('signin'); showOverlay();
+      return;
+    }
     // Sin sesión válida → no debe quedar NINGÚN dato de cuenta en este navegador (cuenta
     // eliminada, sesión cerrada o expirada). La nube es la fuente de verdad: al re-loguear
     // una cuenta válida, cloudLoadAndGate restaura todo desde su fila. Una cuenta eliminada
@@ -26186,7 +26404,10 @@ if (document.readyState === 'loading') {
     // pegado para siempre (boot trap). Fallback seguro: reportar y mostrar login.
   }).catch(function(e){ try{ _pvLogError('boot getSession', e); }catch(_){} try{ showLogin(); }catch(_){} });
   sb.auth.onAuthStateChange(function(_e, s){
-    if (s && !session) cloudLoadAndGate(s); else if (!s) showLogin();
+    // Solo un cierre de sesión REAL borra datos locales; los eventos transitorios
+    // (TOKEN_REFRESHED fallido, etc.) únicamente muestran el login.
+    if (s && !session) cloudLoadAndGate(s);
+    else if (!s) showLogin(_e === 'SIGNED_OUT' || _e === 'USER_DELETED');
     // FIX 12b — _boot() corre en DOMContentLoaded y su primer snapRefresh puede rechazar por "sin
     // sesión" cuando el login/registro ocurre en esta misma carga. No había NADA que resincronizara
     // al llegar la sesión: el usuario con broker conectado veía "Conecta tu broker" hasta recargar.
@@ -27384,7 +27605,13 @@ document.addEventListener('DOMContentLoaded', function(){
     // 4 min, then 12 s. If it STILL hasn't landed, stop the loop and tell the user they
     // can retry manually — never leave a silent, frozen spinner.
     var _syncTries=0, _SYNC_MAX=100, _syncToasted=false, _authTries=0;
-    function go(){ if(!window.sbClient){ return setTimeout(go, 400); }
+    // El bucle de espera de `sbClient` no tenía tope, a diferencia de sus hermanos
+    // (`_authTries<10`, `_syncTries<_SYNC_MAX`). `sbClient` depende del script de supabase-js
+    // servido por un CDN: si esa descarga se cae o la bloquea la red (datos móviles, portal
+    // cautivo, DNS corporativo), esto reintentaba a 2,5 Hz PARA SIEMPRE y la página nunca
+    // llegaba a estar ociosa. Tope: 50 intentos ≈ 20 s.
+    var _sbTries=0;
+    function go(){ if(!window.sbClient){ if(_sbTries++ < 50) setTimeout(go, 400); return; }
       snapRefresh({silent:true}).then(function(j){
         // FIX 12c — stCall exige sesión. Si el usuario acaba de registrarse o iniciar sesión EN ESTA
         // MISMA carga, el primer refresh rechaza, el catch devuelve null y el loop moría sin

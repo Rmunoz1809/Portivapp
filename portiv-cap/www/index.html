@@ -4906,7 +4906,7 @@
       <div style="font:600 13px var(--font,system-ui);color:var(--st-primary,#0F1D35);margin-bottom:4px">Eliminar mi cuenta</div>
       <div style="font:400 12px var(--font,system-ui);color:#8a93a3;line-height:1.5;margin-bottom:10px">Borra de forma permanente tu cuenta, tu portafolio y la conexión con tu broker. No se puede deshacer.</div>
       <button class="set-btn-danger" id="setDeleteAcctBtn" onclick="_acctDeleteAccount()" aria-label="Eliminar mi cuenta de forma permanente" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:46px;border-radius:12px;border:1px solid #dc2626;background:transparent;color:#dc2626;font:600 14px var(--font,system-ui);cursor:pointer;transition:background .15s">
-        <span class="material-symbols-outlined" style="font-size:18px" aria-hidden="true">delete_forever</span>
+        <span class="material-symbols-outlined" style="font-size:18px" aria-hidden="true">warning_amber</span>
         <span>Eliminar mi cuenta</span>
       </button>
     </div>
@@ -10790,7 +10790,10 @@ const SharedNews = (function(){
   // Dos slots diarios: am (00:00–11:59) y pm (12:00–23:59). "Hoy" se regenera al cambiar de
   // slot → EXACTAMENTE 2 veces al día, gane quien gane el trigger (scheduler, tab, boot).
   function _slot(){ let mins=0; try{ const p=PORTIV_NEWS.nyParts(); mins=p.h*60+p.mi; }catch(e){ const d=new Date(); mins=d.getHours()*60+d.getMinutes(); } return _todayET() + (mins >= 720 ? '#pm' : '#am'); }
-  function _staleToday(o){ return !o || !Array.isArray(o.today) || !o.today.length || (o.lang||'es')!==_curLang() || (o.slot||'') !== _slot(); }
+  // El `day` es defensa en profundidad sobre el `slot`: una copia de la nube guardada con un
+  // slot corrupto (o de una versión anterior del formato) se colaba como "fresca" y quedaba
+  // servida a todos los usuarios durante días. Comparar la fecha ET no deja ese hueco.
+  function _staleToday(o){ return !o || !Array.isArray(o.today) || !o.today.length || (o.lang||'es')!==_curLang() || (o.slot||'') !== _slot() || (o.day||'') !== _todayET(); }
   function hasFresh(){ return !_staleToday(_local()); }
   // ¿Hay CUALQUIER noticia cacheada, aunque sea de un día anterior? En feriados / días sin
   // noticias nuevas, mostrar las anteriores es mejor que un error.
@@ -10850,8 +10853,33 @@ const SharedNews = (function(){
   // Normaliza + LIMPIA (quita <cite>/artefactos IA) + DEDUP por titular. El texto queda
   // limpio ANTES de subirse a la nube → todos los usuarios reciben la copia sin basura.
   const _clean = (typeof _cleanNewsText==='function') ? _cleanNewsText : (x=>String(x||''));
-  const _titleKey = t => String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().split(' ').slice(0,7).join(' ');
-  const _norm = arr => {
+  // Se quitan los acentos ANTES de recortar a [a-z0-9]: si no, "reunión" quedaba como
+  // "reuni n" y "reunion" como "reunion" → la misma noticia escrita con y sin tilde pasaba
+  // el dedup dos veces y salía duplicada en la portada.
+  const _titleKey = t => String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,' ').trim().split(' ').slice(0,7).join(' ');
+  // Antigüedad en DÍAS de una fecha "YYYY-MM-DD" respecto de hoy en Nueva York. null si la
+  // fecha no es válida (la IA no la puso o la puso mal) — en ese caso no se descarta nada:
+  // solo filtramos lo que viene fechado EXPLÍCITAMENTE como viejo.
+  const _ageDays = iso => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso||'').trim());
+    if(!m) return null;
+    const hoy = _todayET().split('-');
+    return Math.round((Date.UTC(+hoy[0], +hoy[1]-1, +hoy[2]) - Date.UTC(+m[1], +m[2]-1, +m[3])) / 86400000);
+  };
+  const _MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  // Etiqueta que ve el usuario. Antes no había ninguna y la tarjeta decía "Recent" siempre,
+  // así que una noticia de hace dos semanas se leía como si fuera de hoy.
+  const _dateLabel = iso => {
+    const a = _ageDays(iso);
+    if(a === null) return '';
+    if(a <= 0) return 'Hoy';   // a<0 = desfase de huso (la fuente publica ya en el día siguiente)
+    if(a === 1) return 'Ayer';
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso).trim());
+    return m ? (+m[3]) + ' ' + (_MESES[+m[2]-1]||'') : '';
+  };
+  // maxAgeDays: solo para "hoy". "Esta/próxima semana" son eventos futuros → sin filtro.
+  const _norm = (arr, maxAgeDays) => {
     const seen = new Set(); const out = [];
     (arr||[]).forEach(n => {
       if (!n || !n.h) return;
@@ -10860,10 +10888,16 @@ const SharedNews = (function(){
       seen.add(k);
       out.push({
         h: _clean(n.h), s:(n.s==='pos'||n.s==='neg')?n.s:'neu', source:n.source||'', impact:n.impact||'Mercado general',
-        ext:_clean(n.ext||''), date:n.date||'', _ts:Date.now(), tipo:'Mercado General'
+        ext:_clean(n.ext||''), date:_dateLabel(n.date), _age:_ageDays(n.date), _iso:String(n.date||''), _ts:Date.now(), tipo:'Mercado General'
       });
     });
-    return out.slice(0,8);
+    // Descarte por antigüedad: si la IA fechó una noticia como vieja, fuera. Devolver []
+    // es DELIBERADO — `_ensureFreshInner` conserva entonces las anteriores y NO avanza el
+    // slot, así que se reintenta en el siguiente ciclo en vez de congelar lo caducado.
+    const _res = (typeof maxAgeDays === 'number')
+      ? out.filter(n => n._age === null || n._age <= maxAgeDays)
+      : out;
+    return _res.slice(0,8);
   };
 
   async function _generate(){
@@ -10885,6 +10919,8 @@ const SharedNews = (function(){
 
 REGLAS ESTRICTAS:
 ${_todayWindow}
+- OBLIGATORIO: cada noticia lleva "date" con su fecha REAL de publicación en formato YYYY-MM-DD. Si en la búsqueda no puedes confirmar la fecha, DESCARTA esa noticia y busca otra: una noticia sin fecha verificable no sirve.
+- PROHIBIDO reciclar noticias de días o semanas anteriores aunque el tema siga siendo relevante. Ejemplo de lo que NO debes devolver: un titular tipo "los grandes bancos reportan la semana próxima" publicado hace dos semanas — ese "próxima semana" ya pasó. Si el hecho ya ocurrió, o el "próximamente" del titular ya quedó atrás, no lo incluyas.
 - EXACTAMENTE 8 noticias, ordenadas de MÁS a MENOS importantes. Prioriza SIEMPRE lo que afecta al mercado en su conjunto (índices amplios, Fed/tasas, inflación, mega-caps tecnológicas, petróleo/energía global) por encima de historias nicho que solo mueven 1-2 acciones pequeñas o temas locales/regionales sin impacto real en el mercado de EE.UU. Si un evento geopolítico es importante pero su efecto en el mercado es marginal, bájalo al final de la lista o descártalo por uno más relevante.
 - SIN DUPLICADOS: cada titular debe ser un tema distinto (no dos versiones de la misma noticia).
 - Solo noticias REALES encontradas en la búsqueda, con cifras REALES y verificables. PROHIBIDO inventar o exagerar cifras (ej. caídas/subidas de precio de acciones) — si no encuentras el dato exacto en la búsqueda, describe el hecho SIN inventar el número, o usa una cifra aproximada calificada como "cerca de" en vez de presentarla como exacta.
@@ -10892,7 +10928,7 @@ ${_todayWindow}
 - Texto LIMPIO en español. PROHIBIDO usar etiquetas <cite>, corchetes de referencia [1], markdown, o cualquier marca de la herramienta de búsqueda. Solo prosa natural.
 
 Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
-{"today":[{"h":"titular claro y específico","s":"pos|neg|neu","source":"Bloomberg","impact":"tickers concretos (ej: NVDA, AAPL) o el sector afectado","ext":"2-3 frases limpias: qué pasó y qué significa para el mercado"}],"thisWeek":[{"h":"...","s":"...","source":"...","impact":"...","ext":"..."}],"nextWeek":[{"h":"catalizador/evento próximo","s":"neu","source":"","impact":"...","ext":"qué vigilar"}]}
+{"today":[{"h":"titular claro y específico","s":"pos|neg|neu","source":"Bloomberg","date":"YYYY-MM-DD","impact":"tickers concretos (ej: NVDA, AAPL) o el sector afectado","ext":"2-3 frases limpias: qué pasó y qué significa para el mercado"}],"thisWeek":[{"h":"...","s":"...","source":"...","date":"YYYY-MM-DD","impact":"...","ext":"..."}],"nextWeek":[{"h":"catalizador/evento próximo","s":"neu","source":"","impact":"...","ext":"qué vigilar"}]}
 "today"=EXACTAMENTE 8 noticias más importantes ${_isFinde?'del FIN DE SEMANA':'de HOY'}, priorizando impacto de mercado amplio. "thisWeek"=5-6 temas clave de ESTA semana. "nextWeek"=4-5 catalizadores/eventos de la PRÓXIMA semana.`;
     // essential:true → permitido en el path de PAGO. NO es gasto por usuario: las noticias son
     // CLOUD-SHARED (tabla shared_analysis, fila __NEWS_GENERAL__) con lock global + TTL 6h → se
@@ -10910,7 +10946,8 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','news'); }catch(e){}
     const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedNews sin JSON');
     const raw=JSON.parse(m[0]);
-    return { today:_norm(raw.today), thisWeek:_norm(raw.thisWeek), nextWeek:_norm(raw.nextWeek) };
+    // Fin de semana: la ventana del prompt son 48h, así que se tolera un día más.
+    return { today:_norm(raw.today, _isFinde ? 3 : 2), thisWeek:_norm(raw.thisWeek), nextWeek:_norm(raw.nextWeek) };
   }
 
   // Flujo robusto: (1) SIEMPRE lee la nube primero (todos leen la MISMA copia). (2) Si está
@@ -11122,8 +11159,9 @@ function _snCard(n, idx) {
   const src = n.source || '';
   const srcColor = sourceColors[src] || '#44474d';
   const srcInitial = src.charAt(0).toUpperCase() || '•';
-  // "2h"/"3d" → relativo (añade "ago"); "May 13" → fecha absoluta (tal cual); sin fecha → "Recent".
-  const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : 'Recent';
+  // "2h"/"3d" → relativo (añade "ago"); "Hoy"/"24 jul" → tal cual. Sin fecha se deja VACÍO:
+  // antes ponía "Recent", que afirmaba frescura sobre noticias que podían ser de hace semanas.
+  const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : '';
   return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
     <div class="sn-card-top">
       <span class="sn-card-time">${timeAgo}</span>
@@ -11192,7 +11230,7 @@ function _snSetFeatured(n, idx) {
   }
   if (el('snFeatTitle')) el('snFeatTitle').textContent = n.h || n.headline || '';
   if (el('snFeatDesc'))  el('snFeatDesc').textContent  = (n.ext || n.detail || '').slice(0, 200) + '…';
-  if (el('snFeatTime'))  el('snFeatTime').textContent  = n.date ? n.date : 'Recent';
+  if (el('snFeatTime'))  el('snFeatTime').textContent  = n.date || '';
   if (el('snFeatSource'))el('snFeatSource').textContent= 'By ' + (n.source || 'Reuters');
   // sector badge
   const ticker = (n._ticker || (n.impact||'').split(',')[0]?.trim() || '').toUpperCase();
