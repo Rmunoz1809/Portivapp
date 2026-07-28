@@ -14077,8 +14077,9 @@ function initPerfChart() {
         borderWidth: 2,
         backgroundColor: _perfFill(ctx, isPos0),
         fill: 'origin',
-        tension: 0,                        // líneas RECTAS entre cierres reales — sin curva que insinúe valores no reportados
-        cubicInterpolationMode: 'default', // 'monotone' curvaba entre puntos (ignora tension); 'default'+tension:0 = segmentos rectos
+        tension: 0.3,                      // trazo curvo Portiv, idéntico en todos los períodos
+        cubicInterpolationMode: 'monotone',// interpolación que PRESERVA LA FORMA: pasa exacto por cada
+                                           // cierre y nunca sobrepasa a sus vecinos → redondea sin inventar picos
         pointRadius: 0,
         pointHoverRadius: 0,
       }]
@@ -14483,12 +14484,17 @@ function setPeriodData(period, ds, updMode) {
   perfChart.data.datasets[0].data = ds.values;
   perfChart.data.datasets[0].borderColor = col;
   if (ctx && typeof _perfFill === 'function') perfChart.data.datasets[0].backgroundColor = _perfFill(ctx, isPos);
-  // Línea densa (histórico con puente browniano) → polilínea recta y fina tipo broker real
-  // (tension 0, sin monotone que aplana el ruido); series cortas/1D → curva suave clásica.
-  const _dense = period !== '1D' && ds.values.length > 30;
-  perfChart.data.datasets[0].tension = _dense ? 0 : 0.3;
-  perfChart.data.datasets[0].cubicInterpolationMode = _dense ? 'default' : 'monotone';
-  perfChart.data.datasets[0].borderWidth = _dense ? 1.5 : 2;
+  // TRAZO ÚNICO PARA TODOS LOS PERÍODOS. Antes, toda serie de más de 30 puntos caía en
+  // polilínea recta de 1.5px: 1M salía redondeado y 3M/6M dentados, dos gráficas distintas
+  // en la misma tarjeta (y el estilo cambiaba a media animación al pasar de una a otra).
+  // 'monotone' es interpolación que PRESERVA LA FORMA: la curva pasa EXACTO por cada cierre
+  // y jamás se sale del rango de sus vecinos, así que redondea sin inventar máximos ni
+  // mínimos que no ocurrieron. El grosor cede un pelo en series muy densas (1Y+) para que
+  // la curva no se empaste consigo misma.
+  const _n = ds.values.length;
+  perfChart.data.datasets[0].tension = 0.3;
+  perfChart.data.datasets[0].cubicInterpolationMode = 'monotone';
+  perfChart.data.datasets[0].borderWidth = _n > 260 ? 1.8 : 2;
   // Para 1D: hover enganche cada punto horario (modo index).
   // Para otros períodos: modo dayIndex (salta etiquetas HH:MM intradía sintéticas).
   try {
