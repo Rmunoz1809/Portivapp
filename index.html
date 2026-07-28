@@ -13721,6 +13721,8 @@ function _periodAvailable(key) {
 // Antes solo AÑADÍA milestones y nunca ocultaba → 6M/1Y (hardcodeados en el HTML) salían
 // siempre, dibujando gráficas inventadas. Ahora: crea los milestones que falten en el DOM
 // cuando ya hay datos, y muestra/oculta TODOS los botones por _periodAvailable.
+// Chequeos SEGUIDOS en los que el período activo apareció "sin datos" (ver más abajo).
+let _pvUnavailStreak = 0;
 function unlockPeriods() {
   const container = $('periodBtns');
   if (!container) return;
@@ -13740,12 +13742,25 @@ function unlockPeriods() {
   container.querySelectorAll('.period-btn[data-period]').forEach(btn => {
     btn.style.display = _periodAvailable(btn.dataset.period) ? '' : 'none';
   });
-  // Si el período ACTIVO quedó oculto (sin datos) → saltar al más largo disponible.
+  // Si el período ACTIVO quedó oculto (sin datos) → saltar a otro disponible.
+  // OJO: esto corre en CADA render y _periodAvailable depende de series que se
+  // reconstruyen en segundo plano (broker/Yahoo). Un "no disponible" momentáneo sacaba al
+  // usuario de su período y lo mandaba a ALL de la nada mientras miraba la gráfica. Ahora
+  // hace falta fallar DOS chequeos seguidos, y se cae al período disponible MÁS CERCANO
+  // en duración —no siempre a ALL—, que es un salto mucho menos violento.
   if (typeof activePeriod !== 'undefined' && activePeriod && !_periodAvailable(activePeriod)) {
-    const order = ['ALL','3Y','2Y','1Y','6M','3M','1M','2W','1W','1D'];
-    const fb = order.find(p => { const b = container.querySelector(`.period-btn[data-period="${p}"]`); return b && b.style.display !== 'none' && _periodAvailable(p); }) || '1M';
-    const b = container.querySelector(`.period-btn[data-period="${fb}"]`);
-    if (b && typeof setPeriod === 'function') setPeriod(fb, b);
+    _pvUnavailStreak++;
+    if (_pvUnavailStreak >= 2) {
+      const order = ['ALL','3Y','2Y','1Y','6M','3M','1M','2W','1W','1D'];
+      const avail = order.filter(p => { const b = container.querySelector(`.period-btn[data-period="${p}"]`); return b && b.style.display !== 'none' && _periodAvailable(p); });
+      const _dur = p => (p === 'ALL' ? 1e6 : p === 'YTD' ? 200 : (_PERIOD_DAYS[p] || 1e6));
+      const _cur = _dur(activePeriod);
+      const fb = avail.sort((a, b2) => Math.abs(_dur(a) - _cur) - Math.abs(_dur(b2) - _cur))[0] || '1M';
+      const b = container.querySelector(`.period-btn[data-period="${fb}"]`);
+      if (b && typeof setPeriod === 'function') setPeriod(fb, b);
+    }
+  } else {
+    _pvUnavailStreak = 0;
   }
 }
 
@@ -14291,7 +14306,10 @@ function _pvMixColor(a, b, t) {
 function _pvZoomSnapshot() {
   if (!perfChart) return null;
   const d = perfChart.data, s0 = d && d.datasets && d.datasets[0];
-  if (!s0 || !Array.isArray(s0.data) || s0.data.length < 8) return null;
+  // Mínimo de puntos para encuadrar. Antes eran 8 y dejaba fuera a 1W (7 puntos): el paso
+  // 1W↔2W caía en la transición de Chart.js entre largos distintos, que es la que dibuja la
+  // curva fantasma. Con 5 basta: el re-muestreo interpola la MISMA polilínea ya pintada.
+  if (!s0 || !Array.isArray(s0.data) || s0.data.length < 5) return null;
   if (!Array.isArray(d.labels) || d.labels.length !== s0.data.length) return null;
   const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
   return {
@@ -14342,10 +14360,16 @@ function _pvZoomPrep(prev, next) {
       const sp = (d1 - d0) / 86400000;
       if (isFinite(sp) && sp > 0) srcDays = sp;
     }
-    const tgtDays = _pvPeriodSpanDays(next);
-    if (!(isFinite(tgtDays) && tgtDays > 0) || !(srcDays > 0)) return null;
-    if (tgtDays > srcDays * 0.9) return null;                    // no estrecha → sin zoom
-    snap._srcDays = srcDays; snap._tgtDays = tgtDays;
+    const tgtDays = _pvPeriodSpanDays(next);                     // ALL = Infinity (siempre ensancha)
+    if (!(tgtDays > 0) || !(srcDays > 0)) return null;
+    // El encuadre va ahora en LOS DOS SENTIDOS. Antes solo se animaba al estrechar y el
+    // resto de cambios caía en la transición de Chart.js, que interpola entre series de
+    // DISTINTO largo → durante la transición aparece una SEGUNDA curva fantasma
+    // comprimiéndose (lo que se ve al pasar de 1W a 2W). Ensanchar = alejar la cámara.
+    snap._dir = (tgtDays < srcDays * 0.9) ? 'in' : (tgtDays > srcDays * 1.1) ? 'out' : null;
+    if (!snap._dir) return null;                                 // mismo lapso → cambio directo
+    snap._srcDays = srcDays;
+    snap._tgtDays = isFinite(tgtDays) ? tgtDays : srcDays * 4;
     return snap;
   } catch(e) { return null; }
 }
@@ -14359,21 +14383,37 @@ function _pvRunZoom(snap, period) {
   const finValues = s0.data.slice();
   const finDates  = Array.isArray(perfChart._pvDates) ? perfChart._pvDates.slice() : [];
   const finColor  = s0.borderColor, finFill = s0.backgroundColor;
-  const last = snap.values.length - 1;
+  // Sentido de la cámara: 'in' acerca (la serie GRANDE es la vieja) y 'out' aleja (la
+  // GRANDE es la nueva). En ambos casos se re-muestrea SIEMPRE la serie grande a N puntos
+  // fijos → Chart.js nunca ve un cambio de largo, así que no puede pintar la fantasma.
+  const _out   = (snap._dir === 'out');
+  const bigV   = _out ? finValues : snap.values;
+  const bigL   = _out ? finLabels : snap.labels;
+  const bigD   = _out ? finDates  : snap.dates;
+  const smallD = _out ? snap.dates  : finDates;
+  const smallV = _out ? snap.values : finValues;
+  const last   = bigV.length - 1;
 
-  // Índice donde ABRE la ventana nueva dentro de la curva vieja. Por fecha si la hay
+  // Índice donde ABRE la ventana chica dentro de la curva grande. Por fecha si la hay
   // (exacto); si no, por proporción de días (aproximado pero estable).
   let i0 = -1;
-  if (snap.dates.length === snap.values.length && finDates.length) {
-    const from = finDates[0];
-    for (let i = 0; i < snap.dates.length; i++) { if (snap.dates[i] >= from) { i0 = i; break; } }
+  if (bigD.length === bigV.length && smallD.length) {
+    const from = smallD[0];
+    for (let i = 0; i < bigD.length; i++) { if (bigD[i] >= from) { i0 = i; break; } }
   }
-  if (i0 < 0) i0 = Math.round((1 - snap._tgtDays / snap._srcDays) * last);
-  // Ventana degenerada (casi todo o casi nada) → el zoom no aporta; transición normal.
-  if (!(i0 > 1 && i0 < last - 3)) { perfChart.update('periodChange'); return; }
+  if (i0 < 0) {
+    const rat = Math.min(snap._srcDays, snap._tgtDays) / Math.max(snap._srcDays, snap._tgtDays);
+    i0 = Math.round((1 - rat) * last);
+  }
+  // Ventana degenerada (casi todo o casi nada) → el encuadre no aporta. Cambio DIRECTO,
+  // nunca 'periodChange': entre largos distintos esa transición es justo la que dibuja
+  // la segunda curva.
+  if (!(i0 > 1 && i0 < last - 3)) { perfChart.update('none'); return; }
 
   const N = _PV_ZOOM_N;
-  const tgtN = _pvZoomResample(finValues, 0, finValues.length - 1, N);
+  // Serie del OTRO extremo re-muestreada a N: con ella se cruza el cierre ('in') o el
+  // arranque ('out') de la animación.
+  const tgtN = _pvZoomResample(smallV, 0, smallV.length - 1, N);
   // Banda Y: arranque = la del lapso viejo; destino = la que setPeriodData ya dejó encajada
   // al lapso nuevo. Se interpola (no se re-encaja) para que el eje no tiemble.
   const yA = snap.y;
@@ -14389,14 +14429,17 @@ function _pvRunZoom(snap, period) {
     // Ease-out marcado: arranca rápido (responde al toque) y asienta suave, sin rebote
     // —un overshoot en una gráfica financiera lee como error de datos, no como pulido.
     const e = 1 - Math.pow(1 - t, 3.2);
-    const from = i0 * e;
-    const vals = _pvZoomResample(snap.values, from, last, N);
-    // Últimos ~28% del recorrido: se cruza hacia la serie REAL del período nuevo, así el
-    // frame final YA es esa serie (sin salto al cambiar de dataset al terminar).
-    const w = Math.min(1, Math.max(0, (e - 0.72) / 0.28));
+    // 'in': la ventana se CIERRA (i0·e → i0). 'out': se ABRE (i0 → 0).
+    const from = _out ? i0 * (1 - e) : i0 * e;
+    const vals = _pvZoomResample(bigV, from, last, N);
+    // Cruce con la serie del otro extremo: al ACERCAR ocurre en el último ~28% (el frame
+    // final YA es la serie nueva); al ALEJAR en el primer ~28% (el primer frame YA es la
+    // curva que estaba pintada). En ninguno de los dos hay salto de dataset.
+    const w = _out ? (1 - Math.min(1, Math.max(0, e / 0.28)))
+                   : Math.min(1, Math.max(0, (e - 0.72) / 0.28));
     if (w > 0) { const s = w * w * (3 - 2 * w); for (let i = 0; i < N; i++) vals[i] = +(vals[i] + (tgtN[i] - vals[i]) * s).toFixed(2); }
 
-    perfChart.data.labels = _pvZoomLabels(snap.labels, from, last, N);
+    perfChart.data.labels = _pvZoomLabels(bigL, from, last, N);
     s0.data = vals;
     // El color del período nuevo entra progresivamente (3M verde → 1M rojo se ve fluido).
     s0.borderColor = (typeof snap.color === 'string' && typeof finColor === 'string')
@@ -14422,6 +14465,10 @@ function _pvRunZoom(snap, period) {
 // `updMode`: modo de update de Chart.js. 'skip' = no pintar (lo hace el zoom por frames).
 function setPeriodData(period, ds, updMode) {
   if (!perfChart || !ds || !ds.values || !ds.values.length) return;
+  // Largo de la serie pintada AHORA (antes de reemplazarla): decide si la transición
+  // animada de Chart.js es segura. Ver el update() del final.
+  const _prevLen = (perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0]
+    && Array.isArray(perfChart.data.datasets[0].data)) ? perfChart.data.datasets[0].data.length : -1;
   // ── GARANTÍA (todos los usuarios, sin excepción): el ÚLTIMO punto de la gráfica
   //    SIEMPRE = total en vivo del portafolio (que ya incluye el day change). Sin importar
   //    de qué serie venga (histórica, override, caché), aquí se re-ancla → la gráfica nunca
@@ -14493,7 +14540,14 @@ function setPeriodData(period, ds, updMode) {
   // Fechas ISO de la serie pintada: las lee el zoom entre períodos para saber en qué punto
   // de la curva vieja ABRE la ventana nueva (encuadre exacto, no proporcional).
   try { perfChart._pvDates = Array.isArray(ds.dates) ? ds.dates.slice() : []; } catch(e){}
-  if (updMode !== 'skip') perfChart.update(updMode || 'periodChange');
+  // RED DE SEGURIDAD CONTRA LA CURVA FANTASMA: al animar entre series de DISTINTO largo,
+  // Chart.js re-mapea los puntos viejos sobre los índices nuevos e interpola → se ve una
+  // segunda curva comprimiéndose. Con el MISMO largo la interpolación es punto a punto y
+  // sí es segura. Si el largo cambia y no hay encuadre animando el cambio, se pinta
+  // directo. Esto cubre TODOS los caminos (cambio de período, refresh, precios en vivo).
+  if (updMode !== 'skip') {
+    perfChart.update(updMode || (_prevLen === ds.values.length ? 'periodChange' : 'none'));
+  }
   // CACHÉ ANTI-FLASH: guarda el ÚLTIMO dataset dibujado de 1M/1D (sellado con el día ET). Como
   // la reconstrucción REAL redibuja DESPUÉS del arranque, la caché acaba conteniendo la curva
   // real; al reabrir el app se hidrata al instante (initPerfChart) → ya NO se ve primero la
@@ -14606,6 +14660,12 @@ function bindPeriodBtns(){
   var wrap = document.getElementById('periodBtns');
   if (!wrap || wrap._pvBound) return;
   wrap._pvBound = true;
+  // Intención del usuario: si tocó un chip, NADA automático vuelve a cambiarle el período
+  // (la primera llegada del historial del broker lo mandaba a ALL en plena navegación).
+  // Fase de CAPTURA → corre antes que el onclick propio del chip.
+  wrap.addEventListener('click', function(ev){
+    try { if (ev.target && ev.target.closest && ev.target.closest('.period-btn')) window._pvUserPeriod = true; } catch(e){}
+  }, true);
   wrap.addEventListener('click', function(ev){
     var b = ev.target.closest('.period-btn');
     if (!b || !wrap.contains(b)) return;
@@ -28143,10 +28203,16 @@ document.addEventListener('DOMContentLoaded', function(){
           window._BROKER_LIVE = true;
           _applyValueChart(pts);
           try{ localStorage.setItem('pv_broker_series', JSON.stringify({ day:(typeof _todayISO==='function'?_todayISO():new Date().toISOString().slice(0,10)), pts:pts })); }catch(e){}
-          if(!_snapHistoryFirstApply){
+          // Primera llegada del historial del broker: encuadra en ALL, pero SOLO si el
+          // usuario todavía no eligió período. Esta respuesta llega segundos o minutos
+          // después de cargar, así que antes le cambiaba la gráfica a ALL de la nada.
+          if(!_snapHistoryFirstApply && !window._pvUserPeriod){
             _snapHistoryFirstApply = true;
             if(typeof setPeriod==='function'){ var b=document.querySelector('#periodBtns [data-period="ALL"]'); setPeriod('ALL', b||undefined); }
-          } else if(typeof _redrawActiveChart==='function'){ _redrawActiveChart(); }
+          } else {
+            _snapHistoryFirstApply = true;
+            if(typeof _redrawActiveChart==='function'){ _redrawActiveChart(); }
+          }
         }catch(e){ _pvLogError('snaptrade apply history', e); }
         _perfNote('');
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
