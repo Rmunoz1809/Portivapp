@@ -2,12 +2,11 @@
 <html lang="es" class="app-locked">
 <head>
 <meta charset="UTF-8">
-<!-- Handshake TCP+TLS adelantado al único origen remoto que el arranque SIEMPRE toca
-     (Supabase, para auth/gate). Va aquí arriba, antes de cualquier <style>, para que el
-     navegador lo vea en el primer trozo del HTML.
-     (En este bundle NO hay preconnect a jsdelivr: el SDK de Supabase y Chart.js se sirven
-     desde vendor/ dentro del .app, así que ese origen no se contacta nunca.) -->
+<!-- Handshake TCP+TLS adelantado a los dos orígenes que el arranque SIEMPRE toca (Supabase
+     para auth/gate, jsdelivr para el SDK). Va aquí arriba, antes de cualquier <style>, para
+     que el navegador lo vea en el primer trozo del HTML. -->
 <link rel="preconnect" href="https://zblhifszlhdgkhnymwjh.supabase.co" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Las fuentes son locales pero el navegador solo las descubre tras parsear fonts.css.
      Con el preload arrancan en paralelo al CSS, no después. Solo los dos woff2 que se usan
      en el primer paint (Inter latin del texto, Material Symbols de los iconos del shell);
@@ -27,6 +26,10 @@
   /* La red de seguridad del arranque vive FUERA de <body>, así que app-locked no la toca. */
 </style>
 <script>
+/* Clave anónima de Supabase — declarada UNA sola vez. Antes estaba copiada literal en
+   tres sitios (_AI_SB_ANON, FH_PROXY_ANON, SUPABASE_ANON): rotarla obligaba a acordarse
+   de los tres. Es pública por diseño (RLS + anon role), no es un secreto. */
+window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
 /* ─── RED DE SEGURIDAD DEL ARRANQUE (anti pantalla en blanco) ────────────────────
    Va lo más arriba posible del <head>, ANTES de cualquier <script src>, para que su
    temporizador ya esté armado cuando algo de más abajo falle o se cuelgue.
@@ -124,6 +127,102 @@
   }, TIMEOUT_MS);
 })();
 </script>
+
+<script>
+/* ─── ANTI-PANTALLA-CONGELADA (capa invisible que se come los clics) ─────────────
+   Va en el <head> para estar armada antes de que exista un solo botón.
+
+   El problema que resuelve: la app tiene varias capas a pantalla completa (login,
+   paywall, quiz, buscador, modales, bloqueo de suscripción). Todas se apagan bajando
+   la opacidad o quitando una clase. Si UNA se queda a medias —transparente pero aún
+   con `pointer-events` activos— el resultado no es un error: la app se ve perfecta,
+   con sus datos, y ningún botón responde. Es el fallo más caro de diagnosticar porque
+   no deja rastro en consola: los clics sí ocurren, solo que aterrizan en un cristal.
+
+   El caso concreto del overlay de login ya está arreglado de raíz (ver el bloque
+   INVARIANTE del CSS + showOverlay/hideOverlay). Esto es el cinturón por si mañana
+   alguien añade otra capa y repite el patrón: en el PRIMER clic muerto la detecta,
+   la desactiva y deja pasar el clic. La app se descongela sola, sin recargar.
+
+   Coste: cero mientras nada esté roto (solo corre en `pointerdown`, y sale en la
+   primera comprobación si el clic aterrizó en algo que no ocupa la pantalla entera). */
+(function(){
+  function coversViewport(r){
+    return r.width  >= (window.innerWidth  || 0) * 0.9
+        && r.height >= (window.innerHeight || 0) * 0.9;
+  }
+  // "Invisible" de verdad: transparente, oculto, o de tamaño cero. NO se cuenta como
+  // invisible un overlay con fondo semitransparente (esos SÍ deben capturar el clic:
+  // es como se cierra un modal tocando fuera).
+  function isInvisible(cs){
+    return cs.visibility === 'hidden'
+        || cs.display === 'none'
+        || parseFloat(cs.opacity || '1') < 0.05;
+  }
+  // Desactivar la capa NO puede ser definitivo: si el clic cayó en el primer frame de una
+  // capa que se estaba abriendo (opacity 0 → 1), esa capa es legítima y volverá a verse.
+  // Por eso cada desactivación queda vigilada: en cuanto el elemento sea visible otra vez
+  // se le devuelven los clics. Así el cinturón nunca rompe una capa que sí funcionaba.
+  var _watch = [], _watchTimer = null;
+  function _watchTick(){
+    _watch = _watch.filter(function(el){
+      if (!el.isConnected) return false;
+      var cs; try { cs = window.getComputedStyle(el); } catch(e){ return false; }
+      // Se mira sin el override para saber si la capa "quería" verse.
+      if (cs.visibility !== 'hidden' && parseFloat(cs.opacity || '1') >= 0.05) {
+        try { el.style.removeProperty('pointer-events'); } catch(e){}
+        return false;                       // volvió a ser visible → deja de estar vigilada
+      }
+      return true;
+    });
+    if (!_watch.length) { clearInterval(_watchTimer); _watchTimer = null; }
+  }
+  function unstick(el){
+    try {
+      el.style.setProperty('pointer-events', 'none', 'important');
+      console.warn('[PORTIV_UNFREEZE] capa invisible bloqueaba los clics → desactivada:',
+        el.id || el.className || el.tagName);
+      if (_watch.indexOf(el) < 0) _watch.push(el);
+      if (!_watchTimer) _watchTimer = setInterval(_watchTick, 500);
+    } catch(e){}
+  }
+  // Recorre la cadena desde donde cayó el clic hacia arriba: el bloqueador es siempre
+  // un ancestro del target (o el target mismo).
+  function sweepFrom(el){
+    var fixed = 0;
+    while (el && el !== document.body && el !== document.documentElement && fixed < 40) {
+      fixed++;
+      var cs;
+      try { cs = window.getComputedStyle(el); } catch(e){ break; }
+      if ((cs.position === 'fixed' || cs.position === 'absolute')
+          && cs.pointerEvents !== 'none'
+          && isInvisible(cs)
+          && coversViewport(el.getBoundingClientRect())) {
+        unstick(el);
+        return true;
+      }
+      el = el.parentElement;
+    }
+    return false;
+  }
+  window.addEventListener('pointerdown', function(ev){
+    try { sweepFrom(ev.target); } catch(e){}
+  }, true);   // captura: hay que llegar antes que cualquier handler de la app
+
+  // Volver a la pestaña/app es justo el momento en que aparecen estos estados a medias
+  // (los temporizadores y las animaciones se congelan en segundo plano). Se barre lo que
+  // haya en el centro de la pantalla sin esperar a que el usuario descubra el bloqueo.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible') return;
+    setTimeout(function(){
+      try {
+        var el = document.elementFromPoint((window.innerWidth||0)/2, (window.innerHeight||0)/2);
+        if (el) sweepFrom(el);
+      } catch(e){}
+    }, 400);   // deja terminar las transiciones que sí van a completarse
+  });
+})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>
 /* ─── iPad → layout de tablet (bottom-nav), no el de escritorio ───────────────
@@ -179,15 +278,10 @@
 <title>Portafolio — Plataforma de Inversión</title>
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
-<!-- Chart.js LOCAL por el mismo motivo que Supabase: dentro del .app, sin red. Sin CDN las
-     gráficas quedaban vacías al abrir la app sin cobertura. Va local para que la app funcione
-     entera offline, no a medias.
-     YA NO se carga aquí en el <head>. Son ~200 KB que el login no necesita para nada: el
-     primer gráfico aparece después del gate de cuenta, y muchas sesiones (login fallido, abrir
-     solo Noticias/Ajustes) no dibujan ninguno. Aunque el fichero sea local (sin coste de red),
-     descargarlo y sobre todo PARSEARLO/EJECUTARLO en el arranque compite por el hilo principal
-     con el primer paint. Se carga bajo demanda con _ensureChartJs(), que llaman las tres
-     funciones que crean un Chart. La ruta sigue siendo vendor/ → sigue funcionando offline. -->
+<!-- chart.js YA NO se carga en el <head>. Son ~200 KB que el login no necesita para nada:
+     el primer gráfico aparece después del gate de cuenta, y muchas sesiones (login fallido,
+     abrir solo Noticias/Ajustes) no dibujan ninguno. Se carga bajo demanda con
+     _ensureChartJs(), que llaman las tres funciones que crean un Chart. -->
 <script>
 window._ensureChartJs = (function(){
   var _p = null;
@@ -196,7 +290,7 @@ window._ensureChartJs = (function(){
     if (_p) return _p;
     _p = new Promise(function(res, rej){
       var s = document.createElement('script');
-      s.src = 'vendor/chart-4.4.0.umd.min.js';
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
       s.onload  = function(){ res(); };
       s.onerror = function(){ _p = null; rej(new Error('chartjs')); };
       document.head.appendChild(s);
@@ -560,6 +654,9 @@ window._ensureChartJs = (function(){
 
   /* ── TOAST ── */
   .toast { position: fixed; bottom: 24px; right: 24px; max-width: 380px; background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 13px 18px 13px 14px; font-size: 13px; font-weight: 500; color: var(--st-on-surface); z-index: 13000; opacity: 0; transition: opacity .22s, transform .22s; transform: translateY(10px) scale(.98); pointer-events: none; display: flex; align-items: center; gap: 11px; box-shadow: 0 8px 28px rgba(11,28,48,.16), 0 2px 6px rgba(11,28,48,.08); }
+  /* z-index 13000, no 999: los overlays a pantalla completa (quiz de perfil, paywall) van en
+     12000, así que cualquier toast lanzado con uno abierto se pintaba DEBAJO y el usuario no
+     veía el error — la pantalla parecía congelada. Un toast siempre debe estar encima. */
   .toast-icon { flex-shrink: 0; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
   .toast-icon .material-symbols-outlined { font-size: 18px; }
   .toast-msg { line-height: 1.4; }
@@ -586,12 +683,9 @@ window._ensureChartJs = (function(){
   .toast.show { opacity: 1; transform: translateY(0) scale(1); }
 
   /* ── CONFIRM MODAL ── */
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; display: flex; align-items: flex-start; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .15s;
-    overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
-    padding: calc(16px + env(safe-area-inset-top)) 14px calc(16px + env(safe-area-inset-bottom)); }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 200; display: flex; align-items: center; justify-content: center; opacity: 0; pointer-events: none; transition: opacity .15s; }
   .modal-overlay.open { opacity: 1; pointer-events: all; }
-  .modal { background: var(--surface); border: 1px solid var(--border2); border-radius: 0; padding: 24px 28px; min-width: 0; max-width: 420px; width: 100%; margin: auto; animation: modalIn .15s ease; }
-  @media (max-width: 600px){ .modal { padding: 18px 16px; } .modal-title { font-size: 15px; } .modal-btns { margin-top: 16px; } }
+  .modal { background: var(--surface); border: 1px solid var(--border2); border-radius: 0; padding: 24px 28px; min-width: 320px; max-width: 420px; width: 90%; animation: modalIn .15s ease; }
   @keyframes modalIn { from { transform: scale(.96); opacity:0; } to { transform: scale(1); opacity:1; } }
   .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
   .modal-sub { font-size: 12px; color: var(--text2); margin-bottom: 20px; }
@@ -2332,8 +2426,7 @@ window._ensureChartJs = (function(){
   /* ══ Paywall / pantalla Pro (tras "Analizar y sincronizar") ══ */
   .pw-overlay {
     position: fixed; inset: 0; z-index: 12050; display: none;
-    align-items: flex-start; justify-content: center;
-    padding: calc(20px + env(safe-area-inset-top)) 14px calc(20px + env(safe-area-inset-bottom));
+    align-items: center; justify-content: center; padding: 24px;
     background: rgba(4,22,44,.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
     overflow-y: auto;
     font-family: -apple-system, BlinkMacSystemFont, 'Inter', system-ui, sans-serif;
@@ -2384,39 +2477,6 @@ window._ensureChartJs = (function(){
   /* PC: modal algo más ancho y con más aire; en móvil ocupa el ancho disponible */
   @media (min-width: 760px){ .pw-card { max-width: 448px; } .pw-body { padding: 24px 28px 24px; } .pw-title { font-size: 22px; } }
   @media (max-width: 380px){ .pw-body { padding: 18px 18px 20px; } }
-  /* ── Móvil: el paywall debe caber sin scroll ── */
-  @media (max-width: 600px){
-    .pw-hero { padding: 12px 14px 0; }
-    .pw-hero-top { margin-bottom: 10px; }
-    .pw-brand-mark { width: 34px; height: 34px; }
-    .pw-brand-name { font-size: 15px; }
-    .pw-dash { padding: 11px 14px 2px; }
-    .pw-dash-val { font-size: 19px; }
-    .pw-body { padding: 16px 18px 16px; }
-    .pw-title { font-size: 19px; margin-bottom: 12px; }
-    .pw-feats { gap: 11px; margin-bottom: 14px; }
-    .pw-feat-d { font-size: 12px; line-height: 1.42; }
-    .pw-cta { padding-top: 14px; }
-    .pw-nopay { margin-bottom: 10px; }
-    .pw-btn { padding: 15px; font-size: 16px; border-radius: 14px; }
-    .pw-price { margin-top: 9px; }
-    .pw-legal { margin-top: 8px; }
-  }
-  @media (max-width: 600px) and (max-height: 720px){
-    .pw-hero { padding: 9px 12px 0; }
-    .pw-hero-top { margin-bottom: 8px; }
-    .pw-dash { padding: 9px 12px 2px; }
-    .pw-body { padding: 13px 15px 13px; }
-    .pw-title { font-size: 17.5px; margin-bottom: 10px; }
-    .pw-feats { gap: 8px; margin-bottom: 11px; }
-    .pw-feat-t { font-size: 13.5px; }
-    .pw-feat-d { font-size: 11.5px; line-height: 1.38; }
-    .pw-cta { padding-top: 11px; }
-    .pw-nopay { margin-bottom: 8px; }
-    .pw-btn { padding: 13px; font-size: 15px; }
-    .pw-price { margin-top: 7px; font-size: 12px; }
-    .pw-legal { margin-top: 6px; }
-  }
 
   .pq-skip-btn { display: block; width: 100%; margin-top: 10px; background: none; border: none; color: var(--st-on-surf-var); font-size: 13px; font-weight: 600; cursor: pointer; padding: 6px; font-family: inherit; }
   .pq-skip-btn:hover { color: var(--st-primary); text-decoration: underline; }
@@ -2667,7 +2727,7 @@ window._ensureChartJs = (function(){
     position: fixed; inset: 0; z-index: 900;
     background: rgba(11,18,32,0.45); backdrop-filter: blur(5px);
     display: flex; align-items: flex-start; justify-content: center;
-    padding-top: calc(72px + env(safe-area-inset-top)); opacity: 0; pointer-events: none;
+    padding-top: 72px; opacity: 0; pointer-events: none;
     transition: opacity .15s ease;
   }
   .search-overlay.open { opacity: 1; pointer-events: all; }
@@ -3235,20 +3295,103 @@ window._ensureChartJs = (function(){
   .wl2-remove { padding: 2px 3px !important; font-size: 15px !important; }
 }
 </style>
-<!-- Supabase Auth (login por email + código) — COPIA LOCAL, no CDN.
-     PANTALLA EN BLANCO EN iOS: esto era <script src="https://cdn.jsdelivr.net/...">, síncrono y
-     lo último del <head>. Un <script> sin defer/async DETIENE el parser: hasta que el archivo
-     llega, el navegador no parsea NADA de lo que viene después — y después viene <body> entero,
-     incluido #authOverlay. Con html.app-locked ocultando el body, el resultado en el simulador
-     (o en un iPhone con red mala, en avión, o con el Wi-Fi caído) era una pantalla vacía
-     indefinida: sin login, sin error, sin spinner. Nada que reintentar porque nada había cargado.
-     Una app nativa NO puede depender de un CDN para pintar su primer píxel: el JS va dentro del
-     .app y arranca offline. La versión está fijada en el nombre del archivo para que se vea de
-     un vistazo qué se está sirviendo (actualizar = bajar el nuevo y cambiar estas dos líneas). -->
-<script src="vendor/supabase-2.110.8.min.js"></script>
-<!-- Paddle eliminado del build iOS: la suscripción usa IAP nativo (App Store), no checkout web. -->
-<!-- RevenueCat IAP (StoreKit) — expone window.PortivIAP.presentPaywall() y PortivAppleAuth -->
-<script defer src="portiv-iap.js"></script>
+<!-- Supabase Auth (login por email + código).
+     La etiqueta de script se MOVIÓ junto al bloque que lo consume (justo antes del IIFE de auth,
+     al final del documento). Aquí bloqueaba el parseo del HTML entero: el #authOverlay vive
+     al final del documento y es lo ÚNICO exento de `html.app-locked` — es decir, no se podía
+     pintar nada hasta que este script de tercero terminara de descargarse y ejecutarse.
+     El preload de abajo mantiene la descarga arrancando igual de temprano que antes; lo único
+     que se mueve es el punto de EJECUCIÓN, que sigue siendo síncrono e inmediatamente anterior
+     al IIFE de auth → el orden relativo con `init` y `_boot` no cambia en absoluto.
+     (Alternativa descartada: `defer`. Habría obligado a envolver ~970 líneas del IIFE de auth
+     en un _pvAuthBoot() sobre DOMContentLoaded, y además habría invertido el orden con el
+     `init` de noticias/outlook, que hoy corre con window.sbClient ya creado.)
+     La red de seguridad de los 10 s sigue comprobando `!window.supabase`: a los 10 s este
+     script ya cargó o ya falló, así que su diagnóstico sigue siendo válido. -->
+<link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin>
+<!-- Paddle.js (billing / suscripción Portiv Pro) — SOLO build web. iOS usa IAP nativo (RevenueCat).
+     YA NO se carga en el <head>: es un script de tercero que solo hace falta cuando el usuario
+     abre el checkout, y en el arranque competía por red con Supabase y el propio HTML.
+     Se carga perezosamente con _ensurePaddle() desde _pvStartCheckout. -->
+<script>
+/* PADDLE BILLING (LIVE). Entorno de producción, token client-side LIVE y priceIds LIVE. */
+window.PADDLE_PRICES = {
+  monthly: 'pri_01kxps87qstgex009vr5w6z1sn', // USD 4.99/mes · prueba 30 días
+  annual:  'pri_01kxpseeyhn7d9yw29fxc6rvse'  // USD 49.99/año
+};
+// Paddle emite 'checkout.closed' TAMBIÉN después de un pago correcto (al descartar el
+// overlay). Sin este flag, el usuario que sí pagó veía el toast "Pago no completado"
+// justo encima de la pantalla de conexión del broker. Vive en el ámbito global del
+// script para que _pvStartCheckout (otro bloque <script>) pueda resetearlo.
+var _pvCheckoutCompleted = false;
+(function(){
+  // En Capacitor nativo NO se inicializa Paddle (la suscripción va por IAP/RevenueCat).
+  try { if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return; } catch(e){}
+  // Este reintento no tenía tope: si el CDN de Paddle no carga (datos móviles, portal
+  // cautivo, bloqueador), programaba un timer cada 60 ms PARA SIEMPRE — ~16 por segundo,
+  // toda la sesión. Tope de 100 intentos ≈ 6 s. Con la carga perezosa initPaddle() solo se
+  // llama desde el onload del script, así que window.Paddle ya existe y el reintento casi
+  // nunca entra; se conserva por si Paddle publica su global un tick después del load.
+  var _pdTries = 0;
+  function initPaddle(){
+    if (!window.Paddle || !window.Paddle.Environment) { if (_pdTries++ < 100) setTimeout(initPaddle, 60); return; }
+    Paddle.Environment.set('production');
+    Paddle.Initialize({
+      token: 'PADDLE_LIVE_CLIENT_TOKEN', // ← reemplazar con el token client-side LIVE del dashboard
+      eventCallback: function(ev){
+        if (!ev) return;
+        if (ev.name === 'checkout.completed') {
+          // Pago OK → cierra el paywall y arranca la conexión del broker (una sola vez).
+          _pvCheckoutCompleted = true;
+          try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){}
+          return;
+        }
+        // El usuario cerró el checkout sin pagar (o Paddle lo rechazó). Antes no se
+        // escuchaba: el overlay de Paddle desaparecía y debajo quedaban el paywall y el
+        // quiz de perfil abiertos, así que la app se veía congelada en la tarjeta del
+        // perfil sin ninguna explicación. Se limpia la pila y se dice qué pasó.
+        if (ev.name === 'checkout.closed' || ev.name === 'checkout.error') {
+          // Cierre POSTERIOR a un pago correcto → no es un abandono. Se consume el flag.
+          if (_pvCheckoutCompleted) { _pvCheckoutCompleted = false; return; }
+          try { if (typeof window._pvAbortCheckout === 'function') window._pvAbortCheckout(ev.name === 'checkout.error'); } catch(e){}
+        }
+      }
+    });
+  }
+  // CARGA PEREZOSA. Antes el <script src> de Paddle estaba en el <head> y esto llamaba a
+  // initPaddle() en el acto. Ahora el script se descarga la PRIMERA vez que se abre el
+  // checkout: el arranque se ahorra una conexión a un tercero, y el checkout paga ~300 ms
+  // extra una sola vez. Idempotente: llamadas concurrentes comparten la misma promesa.
+  var _paddleLoading = null;
+  window._ensurePaddle = function(){
+    if (window.Paddle) return Promise.resolve();
+    if (_paddleLoading) return _paddleLoading;
+    _paddleLoading = new Promise(function(res, rej){
+      var s = document.createElement('script');
+      s.src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
+      s.onload  = function(){ try { initPaddle(); } catch(e){} res(); };
+      s.onerror = function(){ _paddleLoading = null; rej(new Error('paddle')); };
+      document.head.appendChild(s);
+    });
+    return _paddleLoading;
+  };
+})();
+</script>
+<!-- RevenueCat IAP (StoreKit) — expone window.PortivIAP.presentPaywall() y PortivAppleAuth.
+     Solo existe dentro del bundle de Capacitor: en el build web daba 404, y ese 404 era
+     el PRIMER error del arranque, así que la red de seguridad de los 10 s culpaba
+     ("No cargó: portiv-iap.js") a un archivo que en web no hace ninguna falta.
+     Se inyecta únicamente en plataforma nativa. -->
+<script>
+(function(){
+  try {
+    if (!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())) return;
+  } catch(e){ return; }
+  var s = document.createElement('script');
+  s.src = 'portiv-iap.js'; s.defer = true;
+  document.head.appendChild(s);
+})();
+</script>
 </head>
 <body>
 <!-- Aplica el tema guardado ANTES del primer render para evitar parpadeo (FOUC) -->
@@ -3625,6 +3768,7 @@ window._ensureChartJs = (function(){
         </button>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
+      <div class="pv-ai-foot" style="margin-top:8px;padding-top:8px;text-align:center;">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
     </div>
 
   </div>
@@ -4138,6 +4282,7 @@ window._ensureChartJs = (function(){
             <div class="rap-sub-row" style="margin-top:10px"><span>Valoración</span><span class="rap-sub-tag" id="r-val-score">—</span></div>
             <div class="rap-bar"><div class="rap-bar-fill" id="r-val-bar"></div></div>
           </div>
+          <div class="pv-ai-foot">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
         </div>
       </div>
     </div>
@@ -5676,12 +5821,13 @@ async function _translatePageToEnglish(root){
   root = root || document.body;
   if (!root) return;
   if (_trRunning) { _trRescan = true; return; }   // ya hay un lote corriendo → pide re-escaneo
-  // Trae el diccionario compartido de la nube (una vez por carga) ANTES de decidir qué mandar
-  // a la IA: la mayoría de frases ya están traducidas por otros usuarios → 0 costo.
-  if (!_trCloudLoaded) { try { await _trCloudLoad(); } catch(e){} if (getLang() !== 'en') return; }
-
+  // El flag se toma ANTES del primer await: si no, dos llamadas concurrentes pasaban ambas
+  // la guarda mientras se cargaba el diccionario y se duplicaba el lote de traducción.
   _trRunning = true;
   try {
+    // Trae el diccionario compartido de la nube (una vez por carga) ANTES de decidir qué mandar
+    // a la IA: la mayoría de frases ya están traducidas por otros usuarios → 0 costo.
+    if (!_trCloudLoaded) { try { await _trCloudLoad(); } catch(e){} if (getLang() !== 'en') return; }
     do {
       _trRescan = false;
       const cache = _trCacheGet();
@@ -5942,7 +6088,7 @@ async function renderSettings(){
         <div id="nmMktBody"></div>
       </div>
       <!-- Link original -->
-      <a id="nmLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;margin-top:22px;font-size:13px;font-weight:700;color:var(--blue);text-decoration:none;">Ver noticia original ↗</a>
+      <a id="nmLink" href="#" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener noreferrer" style="display:none;margin-top:22px;font-size:13px;font-weight:700;color:var(--blue);text-decoration:none;">Ver noticia original ↗</a>
       <!-- Legacy hidden refs (JS compat) -->
       <div id="nmSource" style="display:none"></div>
       <div id="nmDates" style="display:none"></div>
@@ -6005,14 +6151,12 @@ async function renderSettings(){
 .as-overlay {
   position:fixed;inset:0;z-index:8000;background:rgba(11,28,48,0.45);
   backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-  display:none;align-items:flex-start;justify-content:center;
-  padding:calc(20px + env(safe-area-inset-top)) 14px calc(20px + env(safe-area-inset-bottom));
-  overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+  display:none;align-items:center;justify-content:center;padding:20px;
   font-family:'Manrope',sans-serif;
 }
 .as-overlay.open { display:flex; }
 .as-card {
-  background:#fff;border-radius:24px;width:100%;max-width:460px;margin:auto;
+  background:#fff;border-radius:24px;width:100%;max-width:460px;
   box-shadow:0 24px 64px -16px rgba(11,28,48,0.22);
   padding:28px 28px 24px;
 }
@@ -6381,7 +6525,7 @@ const _AI_FN_URL = '/.netlify/functions/anthropic';
 // Netlify → daba 405). Edge Function de Supabase con la key guardada como secreto
 // ANTHROPIC_API_KEY (Edge Functions → Secrets). Mismo host/anon que finnhub-proxy.
 const _AI_SB_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/anthropic-proxy';
-const _AI_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
+const _AI_SB_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
 function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protocol); } catch(e){ return false; } }
 
 // ── FORZAR FACTURACIÓN A TU API KEY (a pedido explícito) ─────────────────────────
@@ -6800,7 +6944,7 @@ function savePortfolio() {
       _lsSet('portfolio_state_backup', snapshot);
       _lsSet('portfolio_backup_ts', Date.now().toString());
     }
-  } catch(e) { reportError('Portafolio · guardar estado (localStorage)', e, { userMsg: 'No se pudo guardar el portafolio: ' + e.message }); }
+  } catch(e) { pvReportError('Portafolio · guardar estado (localStorage)', e, { userMsg: 'No se pudo guardar el portafolio: ' + e.message }); }
 }
 
 // Era un IIFE anónimo de un solo uso. Ahora es una función CON NOMBRE que además se invoca
@@ -6846,7 +6990,7 @@ function loadSavedPortfolio() {
     if (s.empty) { HOLDINGS.length = 0; CASH = 0; MONEY_MARKET = 0; INITIAL_CAPITAL = 0; TOTAL_OVERRIDE = null; PERIOD_CHANGE_OVERRIDE = {}; _OVERRIDE_ASOF = null; _OVERRIDE_CAP_NAV = null; window._SAVED_PERF_MASTER = null; }
     if (Array.isArray(s.txLog))     TX_LOG = s.txLog;
     sanitizeHoldings();
-  } catch(e) { reportError('Portafolio · cargar estado (localStorage)', e, { userMsg: 'No se pudo cargar el portafolio guardado: ' + e.message }); }
+  } catch(e) { pvReportError('Portafolio · cargar estado (localStorage)', e, { userMsg: 'No se pudo cargar el portafolio guardado: ' + e.message }); }
 }
 loadSavedPortfolio();
 window._pvLoadSavedPortfolio = loadSavedPortfolio;
@@ -7970,7 +8114,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       this.save({ text, at: Date.now(), ver: this._VER, profileAt: p.takenAt || null, portfolioHash: (typeof portfolioHash === 'function' ? portfolioHash() : null), rebalSig: planSig || '' });
       this.render();
     } catch(e){
-      if (typeof reportError === 'function') reportError('IA · análisis de perfil', e, { toast:true });
+      if (typeof pvReportError === 'function') pvReportError('IA · análisis de perfil', e, { toast:true });
       this.render('No se pudo generar el análisis: ' + e.message);
     } finally {
       this._busy = false;
@@ -8900,6 +9044,21 @@ function renderTable(T) {
       return !!(ae && tbody.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
     }catch(e){ return false; }
   })();
+  // Empty state. Un usuario recién registrado que NO conecta broker veía un dashboard
+  // entero en ceros con la tabla vacía y ninguna ruta visible para empezar — eso es
+  // "app incompleta" para un revisor (Guideline 2.1), que además no va a conectar una
+  // cuenta real de Schwab. Aquí se le ofrecen las dos rutas que NO requieren broker.
+  if (!HOLDINGS.length) {
+    html = `<tr><td colspan="13" style="padding:38px 20px;text-align:center;">
+      <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:6px;">Todavía no tienes posiciones</div>
+      <div style="font-size:13px;color:var(--text3);line-height:1.6;max-width:420px;margin:0 auto 16px;">Conecta tu broker para importarlas automáticamente, sube una captura de pantalla y deja que la IA las extraiga, o añádelas a mano.</div>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Conectar broker</button>
+        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Subir captura</button>
+        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Añadir manualmente</button>
+      </div>
+    </td></tr>` + html;
+  }
   if (!_typing) tbody.innerHTML = html;
 
   // ── Positions Total (footer) ──
@@ -9614,7 +9773,7 @@ function _newsAsEvent(n){
 // NO muestra precio ni % — solo ticker + nombre (qué empresas del usuario toca). Grid de 2
 // columnas; con una sola posición usa una columna a ancho completo para que quede simétrico.
 function _nmHeldPills(heldObjs){
-  const esc = s => String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = pvEsc;   // delegado al escape único de la app
   const list = (heldObjs || []).filter(Boolean);
   if (!list.length) return '';
   const cls = list.length === 1 ? 'nm-af-grid single' : 'nm-af-grid';
@@ -10059,7 +10218,7 @@ window.PORTIV_WHY = PORTIV_WHY;
 
 // Builds 3 instant summary points from article data — no AI needed, shown immediately
 function _nmInstantPuntos(n) {
-  const esc = s => String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = pvEsc;   // delegado al escape único de la app
   const ticker = (n.impact||'').split(',')[0].trim();
   const held = ticker ? (typeof HOLDINGS!=='undefined' ? HOLDINGS.find(h=>h.ticker===ticker) : null) : null;
   const pct = held ? (held.dayChgPct||0) : 0;
@@ -10182,7 +10341,7 @@ async function _generateNewsSummary(n) {
     _sharedAISet(_nsKey, data);   // sube a la nube → los demás usuarios lo leen gratis (1× global)
     _nmAiRender(body, data);
   } catch(e) {
-    reportError('IA · análisis de noticia', e, { toast: false });
+    pvReportError('IA · análisis de noticia', e, { toast: false });
     // Don't overwrite instant puntos on error — they're already showing
   } finally {
     _nmAiInflight.delete(cacheKey);
@@ -10190,7 +10349,7 @@ async function _generateNewsSummary(n) {
 }
 
 function _nmAiRender(body, d) {
-  const esc = s => String(s || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = pvEsc;   // delegado al escape único de la app
   const items = Array.isArray(d.puntos) && d.puntos.length
     ? d.puntos
     : (d.resumen || '').split(/\n\n+/).map(p => p.trim()).filter(Boolean);
@@ -10397,7 +10556,8 @@ function _openOutlookEvent(evKey, outlookKey) {
   const _mktSec = document.getElementById('nmMktSection');
   if (_mktSec) _mktSec.style.display = '';
   ['nmAnalysisSection','nmChartSection','nmRecoSection'].forEach(id=>{ const e=$(id); if(e) e.style.display='none'; });
-  const img = $('nmImg'); if(img) img.style.display='none';
+  // (se eliminó el toggle de $('nmImg'): ese ID no existe — el markup define #nmFigure/#nmImage,
+  //  y #nmFigure nace con display:none y nada lo muestra, así que era doblemente no-op)
 
   // ABRIR EL MODAL PRIMERO. La generación de contenido (_composeEventImpact es síncrona y
   // podía lanzar con algún dato real) NO debe impedir que el modal aparezca. Antes, si algo
@@ -10419,7 +10579,6 @@ function closeNewsModal() {
   $('newsModal').classList.remove('open');
   document.body.style.overflow = '';
   ['nmAnalysisSection','nmChartSection','nmRecoSection'].forEach(id=>{ const e=$(id); if(e) e.style.display=''; });
-  const img = $('nmImg'); if(img) img.style.display='';
   // Reinicia la sección inline "Cómo afecta al mercado" para la próxima apertura.
   const _ms = document.getElementById('nmMktSection'); if (_ms) _ms.style.display = 'none';
   const _ie = document.getElementById('nmImpactExplain'); if (_ie) _ie.innerHTML = '';
@@ -10540,137 +10699,12 @@ window._sharedFlushPending = _sharedFlushPending;
 // a _fetchEventResultData para EL MISMO evento casi a la vez; como ninguno había cacheado aún,
 // TODOS generaban → 2+ llamadas de pago por el mismo resumen. Este wrapper garantiza que,
 // por cada cacheKey, solo haya UNA generación en vuelo: los demás reusan esa misma promesa.
-const _evResultInflight = new Map();   // cacheKey → Promise
+// Catalizadores PROGRAMADOS: NUNCA se genera ni actualiza un resultado (bueno/malo). Se
+// quedan como "Programado" — sin veredicto, sin gasto de API, sin auto-actualización.
+// El cuerpo que llamaba a la IA (_fetchEventResultData_impl, _evResultInflight y su
+// caché) quedó inalcanzable tras este return y se eliminó.
 async function _fetchEventResultData(ev) {
-  // Catalizadores PROGRAMADOS: NUNCA se genera ni actualiza un resultado (bueno/malo). Se
-  // quedan como "Programado" — sin veredicto, sin gasto de API, sin auto-actualización.
   return null;
-  if (location.protocol === 'file:' && !window._aiKeyAvailable()) return null;
-  const cacheKey = _eventCacheKey(ev);
-  const cached = _nmAiGet(cacheKey);
-  if (cached) return cached;
-  if (_evResultInflight.has(cacheKey)) return _evResultInflight.get(cacheKey);   // ya se está generando → reusa
-  const _p = _fetchEventResultData_impl(ev, cacheKey);
-  _evResultInflight.set(cacheKey, _p);
-  try { return await _p; } finally { _evResultInflight.delete(cacheKey); }
-}
-async function _fetchEventResultData_impl(ev, cacheKey) {
-  let todayStr = '';
-  try { const p = (typeof PORTIV_NEWS!=='undefined') ? PORTIV_NEWS.nyParts() : null;
-        todayStr = p ? `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}` : new Date().toISOString().slice(0,10); }
-  catch(e) { todayStr = new Date().toISOString().slice(0,10); }
-  // La app CONOCE la fecha programada del evento → decide la temporalidad de forma
-  // DETERMINISTA, sin dejar que la IA marque como "ocurrido" un evento que aún no llega
-  // (los indicadores recurrentes hacían que la IA reportara la cifra de la ocurrencia
-  // anterior — jobless claims de la semana pasada, decisión FOMC previa — como resultado).
-  const _isFut = (typeof _eventIsFuture === 'function') ? _eventIsFuture(ev) : false;
-  const _coerceTemporality = (d) => {
-    if (d && _isFut) {
-      d.ocurrio = false;
-      d.real = null;
-      if (d.fecha_real && /^\d{4}-\d{2}-\d{2}$/.test(d.fecha_real) && d.fecha_real <= todayStr) d.fecha_real = null;
-    }
-    return d;
-  };
-
-  // Nube compartida: ¿otro usuario ya lo generó? (genérico → válido para todos)
-  const _shared = await _eventSharedGet(cacheKey);
-  if (_shared) { _coerceTemporality(_shared); const _st = (_shared.ocurrio===true)?90*24*60*60*1000:12*60*60*1000; _nmAiSet(cacheKey, _shared, _st); return _shared; }
-
-  const _tkList = (ev.tickers_affected || ev.tickers || []).map(t=>String(t).trim().toUpperCase()).filter(Boolean);
-  const _tk = _tkList.join(', ');   // tickers del evento (genérico); ya NO se inyecta cartera del usuario
-  const PROMPT = `Busca en internet el RESULTADO REAL de este evento financiero/macroeconomico:
-
-Evento: "${ev.title||''}"
-Categoria: ${ev.category||'macro'} · Impacto estimado: ${ev.impact||'medio'}
-Fecha programada: ${ev.date || ev._date || ev.time || 'esta semana'}
-Descripcion: ${ev.description || ev.summary || ''}
-${_tk ? `Tickers relacionados: ${_tk}` : ''}
-Hoy es: ${todayStr}
-${_isFut ? `
-ATENCION — ESTE EVENTO AUN NO HA OCURRIDO: su fecha programada es POSTERIOR a hoy. Por lo tanto "ocurrio" DEBE ser false y "real" DEBE ser null. NO reportes ni cites la cifra de una ocurrencia ANTERIOR de este mismo indicador recurrente (p.ej. NO des el dato de solicitudes de desempleo de la semana pasada, ni una decision/actas del FOMC previas, como si fueran ESTE evento). En "resultado" describe UNICAMENTE que espera el consenso para esta publicacion futura. "esperado"=consenso proyectado; "anterior"=ultimo dato conocido del periodo previo.
-` : ''}
-Determina si el evento YA OCURRIO a la fecha de hoy. Si ya ocurrio, busca QUE PASO EXACTAMENTE: la CIFRA REAL publicada, comparada con lo que ESPERABA el consenso y el dato ANTERIOR, y POR QUE el mercado lo tomo como positivo o negativo.
-
-EFICIENCIA OBLIGATORIA: haz como MAXIMO UNA (1) sola busqueda web — la mas especifica posible (ej: "ISM manufacturing PMI junio 2026 actual result"). NO hagas multiples busquedas. Con esa unica busqueda extrae todas las cifras (real, esperado, anterior). Si esa busqueda no basta, completa con tu conocimiento. NUNCA hagas mas de 1 busqueda.
-
-Responde UNICAMENTE con JSON valido, sin texto adicional:
-{
-  "ocurrio": true o false,
-  "resultado": "el resultado concreto en UNA frase con la CIFRA REAL (ej: 'El PMI compuesto de junio subio a 53.1, por encima del 51.8 esperado y del 52.3 de mayo'). Si aun no ocurre, di brevemente que espera el consenso.",
-  "real": "la cifra/dato exacto que se publico (ej: '53.1') o null si aun no ocurre",
-  "esperado": "lo que esperaba el consenso (ej: '51.8') o null",
-  "anterior": "el dato del periodo previo (ej: '52.3') o null",
-  "porque": "1-2 frases explicando POR QUE salio positivo o negativo y que lo causo (ej: 'Positivo: la expansion en servicios supero la debilidad manufacturera, alejando temores de recesion y reforzando la narrativa de aterrizaje suave de Warsh').",
-  "puntos": ["dato o detalle real 1 con cifras", "dato o detalle real 2 con cifras"],
-  "sentimiento": "pos, neg o neu (como reacciono el mercado)",
-  "impacto": "alto, medio o bajo",
-  "fecha_real": "la fecha REAL de publicacion/ocurrencia del evento en formato AAAA-MM-DD (verificala en la busqueda; puede diferir de la fecha programada que te di), o null si no la confirmas"
-}
-
-Usa SIEMPRE cifras reales obtenidas de la busqueda (real vs esperado vs anterior). Si el evento ya ocurrio, 'porque' es obligatorio. 2 puntos cortos con numeros. Responde en espanol.
-
-OBLIGATORIO — NUNCA dejes campos vacios. SIEMPRE llena "resultado", "porque" y al menos 2 "puntos" con contenido sustancial:
-- Si encuentras la cifra real: usala.
-- Si NO encuentras la cifra exacta en la busqueda: NO devuelvas vacio. Da el CONTEXTO con tu conocimiento — que mide el indicador, el consenso/rango esperado, el dato previo conocido, y que implica para el mercado y el sector. Marca ocurrio segun corresponda.
-- Prohibido responder resultado:"" o puntos:[]. Si lo haces, la respuesta es invalida.`;
-
-  // Texto que NO es un resultado real, sino un error/limite del proveedor (no mostrarlo).
-  // Incluye "session limit" (mensaje real del proxy de suscripción: "You've hit your session limit").
-  const _looksLikeError = t => /you'?ve hit your (session |usage )?limit|usage limit|rate.?limit|limit.*reset|resets? \d|too many requests|unauthorized|forbidden|invalid api key|quota/i.test(t || '');
-  const _body = {
-    model: 'claude-haiku-4-5',
-    max_tokens: 900,                 // espacio para resultado + porque + 2 puntos con contexto
-    system: 'Eres un analista financiero. Respondes UNICAMENTE con JSON valido en espanol, sin texto adicional ni bloques de codigo. JAMAS dejas campos vacios: si no hay cifra real, das contexto sustancial con tu conocimiento.',
-    prompt: PROMPT,
-    allowed_tools: ['WebSearch', 'WebFetch'],
-    // 1 sola búsqueda: el prompt obliga a la IA a buscar UNA vez (la más específica) y
-    // completar con su conocimiento. Cada search inyecta 10-30K tokens → es el grueso del
-    // costo. El tope max_uses aplica en el proxy server-side.
-    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 1 }]
-  };
-  // Resultado vía proxy server-side (Supabase, key como secreto). Sin fallback de key en el cliente.
-  const _tryGetText = async () => {
-    const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
-    const j = await r.json().catch(()=>({}));
-    try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
-    if (!r.ok) throw new Error((j.error && j.error.message) || 'Error ' + r.status);
-    return (j.text || '').trim();
-  };
-
-  let t = await _tryGetText();
-  // Fuente caída/limitada: mensaje claro y accionable.
-  if (!t || _looksLikeError(t)) {
-    throw new Error('La IA no está disponible ahora (límite de uso). Se restablece más tarde.');
-  }
-  // Extracción robusta (maneja ```json, llaves balanceadas). Si el modelo respondió en
-  // prosa (sin JSON pero con contenido real), la mostramos con los números que encontró.
-  let data = _aiExtractJson(t);
-  if (!data) {
-    const prosa = t.replace(/```[a-zA-Z]*/g,'').replace(/```/g,'').trim();
-    if (prosa.length >= 40 && !_looksLikeError(prosa)) { data = { ocurrio: true, resultado: prosa, puntos: [] }; }
-    else throw new Error('Respuesta sin JSON');
-  }
-  // Guard de contenido: el modelo a veces devuelve JSON VÁLIDO pero VACÍO
-  // (resultado:'', puntos:[], sin cifras) → render mostraba "QUE ESPERAR" en blanco.
-  // Si no hay nada útil, NO cachear y lanzar → _genEventResult cae al contexto compuesto
-  // (que sí tiene texto). El próximo intento puede traer datos reales.
-  {
-    const _has = v => v != null && String(v).trim() !== '' && String(v).toLowerCase() !== 'null';
-    const _pts = Array.isArray(data.puntos) ? data.puntos.filter(Boolean) : [];
-    const _hasContent = _has(data.resultado) || _pts.length || _has(data.real) || _has(data.porque);
-    if (!_hasContent) throw new Error('Respuesta vacía del modelo');
-  }
-  // Corrección DETERMINISTA de temporalidad antes de cachear: un evento programado en el
-  // futuro NUNCA se guarda como "ocurrido" (aunque la IA lo marque) → el card mostrará
-  // "Qué esperar" y no una cifra "real" de una ocurrencia anterior.
-  _coerceTemporality(data);
-  // Evento YA ocurrido → su resultado real es inmutable: cachéalo 90 días (no re-consultar).
-  // Evento futuro ("qué esperar") → 12h: el consenso puede actualizarse antes de publicarse.
-  const _ttl = (data && data.ocurrio === true) ? 90*24*60*60*1000 : 12*60*60*1000;
-  _nmAiSet(cacheKey, data, _ttl);
-  _eventSharedSet(cacheKey, data);   // compartir para todos (una sola generación global)
-  return data;
 }
 
 
@@ -10752,7 +10786,7 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
 // Render del brief en Market Context (cómo afecta).
 function _renderEventBrief(mkt, d){
   if (!mkt || !d) return;
-  const esc = s => String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = pvEsc;   // delegado al escape único de la app
   const col = d.sentimiento==='pos'?'#16794a':d.sentimiento==='neg'?'#b45309':'#5b6b7d';
   const il  = {alto:'Alto',medio:'Medio',bajo:'Bajo'}[d.impacto]||'';
   const pts = Array.isArray(d.puntos)?d.puntos.filter(Boolean):[];
@@ -11087,7 +11121,7 @@ function _fmtRealDate(s){
   return `${+m[3]} de ${meses[mo]}`;
 }
 function _renderEventResult(mkt, d) {
-  const esc = s => String(s || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = pvEsc;   // delegado al escape único de la app
   const items = Array.isArray(d.puntos) ? d.puntos.filter(Boolean) : [];
   const tag = d.ocurrio ? 'Resultado real' : 'Que esperar';
   const tagColor = d.ocurrio ? '#16794a' : '#8a96a3';
@@ -11558,7 +11592,7 @@ function renderWeekCatalysts(list, emptyMsg) {
     const datePart = dm ? ` ${dm[1]} ${dm[2].charAt(0).toUpperCase()+dm[2].slice(1)}` : '';
     const dname = g.name.charAt(0).toUpperCase() + g.name.slice(1);
     html += `<div class="swc-day-group"><div class="swc-day-header">
-        <span class="swc-day-name">${dname}${datePart}</span>
+        <span class="swc-day-name">${pvEsc(dname)}${datePart}</span>
         <span class="swc-day-date" style="${impStyle[dayImp]};padding:2px 10px;border-radius:999px;font-size:11px;font-weight:700;font-family:'Manrope',sans-serif">${impLabel[dayImp]}</span>
       </div><div class="swc-items">`;
     g.items.forEach(n => {
@@ -11568,10 +11602,10 @@ function renderWeekCatalysts(list, emptyMsg) {
       const ctxShort = ctx.length > 140 ? ctx.slice(0,137)+'…' : ctx;
       html += `<div class="swc-item" onclick="openNewsByKey('${_newsRegister(n)}','week')">
         <div class="swc-item-body">
-          <div class="swc-item-title">${n.h}</div>
-          <div class="swc-item-ctx">${ctxShort}</div>
+          <div class="swc-item-title">${pvEsc(n.h)}</div>
+          <div class="swc-item-ctx">${pvEsc(ctxShort)}</div>
           <div class="swc-item-tags">
-            ${n.tipo?`<span class="swc-tag swc-tag-type">${n.tipo}</span>`:''}
+            ${n.tipo?`<span class="swc-tag swc-tag-type">${pvEsc(n.tipo)}</span>`:''}
             ${tk.map(t=>`<span class="swc-tag ${heldSet.has(t)?'swc-tag-held':''}">${t}</span>`).join('')}
           </div>
         </div>
@@ -11631,14 +11665,14 @@ function _snCard(n, idx) {
   const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : '';
   return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
     <div class="sn-card-top">
-      <span class="sn-card-time">${timeAgo}</span>
+      <span class="sn-card-time">${pvEsc(timeAgo)}</span>
     </div>
     <div class="sn-card-source">
-      <div class="sn-card-source-dot" style="background:${srcColor}">${srcInitial}</div>
-      <span class="sn-card-source-name">${src}</span>
+      <div class="sn-card-source-dot" style="background:${srcColor}">${pvEsc(srcInitial)}</div>
+      <span class="sn-card-source-name">${pvEsc(src)}</span>
       ${n.corroborated ? `<span title="Confirmada por Yahoo Finance y Finnhub" style="margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.04em;color:#16794a;background:#e6f4ec;padding:2px 6px;border-radius:6px">✓ 2 FUENTES</span>` : ''}
     </div>
-    <div class="sn-card-headline">${n.h || n.headline || ''}</div>
+    <div class="sn-card-headline">${pvEsc(n.h || n.headline || '')}</div>
     <div class="sn-card-div"></div>
     <span class="sn-card-sentiment ${sentiment}">
       ${n.s==='pos'?'↑':n.s==='neg'?'↓':'·'} <span class="sn-sent-word">Sentimiento </span>${n.s==='pos'?'alcista':n.s==='neg'?'bajista':'neutral'}
@@ -12187,13 +12221,13 @@ function showToast(msg, color='var(--text2)') {
 
 // ── Reporte de errores visible (Fase 1) ───────────────────────────────────
 // Antes había ~110 catch silenciosos. Estos helpers centralizan el reporte:
-//  · reportError(ctx, err)            → console.error + toast rojo + buffer debug
-//  · reportError(ctx, err,{toast:false}) → console.error + buffer (sin toast, p/ tareas en background)
+//  · pvReportError(ctx, err)            → console.error + toast rojo + buffer debug
+//  · pvReportError(ctx, err,{toast:false}) → console.error + buffer (sin toast, p/ tareas en background)
 //  · reportQuiet(ctx, err)            → idem sin toast (para fallbacks recuperables)
 // Modo debug en pantalla:  pvDebug(true)  en la consola, o localStorage 'pv_debug'='1'.
 const PV_DEBUG = { log: [] };
 function pvIsDebug(){ try { return localStorage.getItem('pv_debug') === '1'; } catch(_){ return false; } }
-function reportError(ctx, err, opts){
+function pvReportError(ctx, err, opts){
   opts = opts || {};
   const msg = (err && err.message) ? err.message : String(err);
   console.error('[Portafolio] ' + ctx + ':', err);
@@ -12209,9 +12243,9 @@ function reportError(ctx, err, opts){
     try { showToast(txt, 'var(--red)'); } catch(_){}
   }
   if (pvIsDebug()) { try { _pvRenderDebug(); } catch(_){} }
-  return null; // conveniente para `return reportError(...)` donde antes era `return null`
+  return null; // conveniente para `return pvReportError(...)` donde antes era `return null`
 }
-function reportQuiet(ctx, err){ return reportError(ctx, err, { toast: false }); }
+function reportQuiet(ctx, err){ return pvReportError(ctx, err, { toast: false }); }
 
 // ── Reporte de errores al backend (best-effort, nunca lanza) ──────────────────────
 // Reusa reportQuiet para el log local (consola + buffer debug, sin toast) y además intenta
@@ -12271,6 +12305,13 @@ function _lsSet(k, v){
   }
 }
 
+// Escape HTML único para TODA la app. Cubre texto y atributos (incluye comillas).
+function pvEsc(s){
+  return String(s == null ? '' : s).replace(/[&<>"'`]/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'
+  }[c]));
+}
+window.pvEsc = pvEsc;
 
 // Overlay de modo debug: solo visible cuando pv_debug='1'. No afecta el diseño normal.
 function _pvRenderDebug(){
@@ -12298,7 +12339,7 @@ function pvDebug(on){
   else { const b = document.getElementById('pvDebugBox'); if (b) b.remove(); }
   return 'modo debug ' + (on ? 'ON' : 'OFF');
 }
-if (typeof window !== 'undefined') { window.pvDebug = pvDebug; window.reportError = reportError; }
+if (typeof window !== 'undefined') { window.pvDebug = pvDebug; window.pvReportError = pvReportError; }
 
 // ── Optimización de consumo de IA: cache por portafolio (Fase opt) ─────────────
 // Objetivo: regenerar análisis de IA SOLO cuando cambie info relevante (compra/venta/
@@ -13693,6 +13734,29 @@ function _expandIntraday(pd, stepsPerDay = 10, volPct = 0.0022, linear = false) 
 }
 
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AUDITORÍA (integridad de datos financieros) — LEER ANTES DE TOCAR
+//
+// QUÉ PERÍODOS LA CONSUMEN HOY: NINGUNO. `_densifyDaily` no tiene un solo
+// call-site en el archivo. La única otra mención es el comentario de
+// PORTIV_CHART.generate() ("Se RETIRÓ el puente browniano determinista
+// (_densifyDaily)"): 1W/2W/1M/3M/1A/ALL ya se dibujan con los cierres REALES
+// unidos por rectas. Es decir, el sintético que quedaba ya estaba desconectado;
+// esto es código muerto, no una fuente de datos activa.
+//
+// QUÉ PASARÍA VISUALMENTE SI SE SUSTITUYERA POR INTERPOLACIÓN LINEAL: nada.
+// Eso es exactamente lo que la app ya hace — el dataset usa `tension: 0`
+// (ver _dense en la actualización del chart) y por eso la línea histórica ya se
+// ve como polilínea recta entre cierres. Si esta función se reconectara, el
+// único cambio sería añadir micro-ruido inventado entre cierres reales: la línea
+// pasaría de recta a "temblorosa" entre anclas, sin alterar los montos ni el %
+// del período (el puente está pinneado a 0 en cada ancla).
+//
+// El interruptor está preparado abajo: poner PV_SYNTHETIC_DENSIFY en false hace
+// que la función devuelva la serie sin tocar. NO SE BORRA la función a la espera
+// de confirmación del dueño del producto.
+// ═══════════════════════════════════════════════════════════════════════════
+const PV_SYNTHETIC_DENSIFY = true;   // false → sin puntos intermedios inventados
 // ── Densificado DIARIO profesional (puente browniano determinista) ───────────
 // Convierte una serie diaria-sparse (anclas leídas de la foto + anclas de período)
 // en una línea con resolución DIARIA y movimiento realista tipo broker real:
@@ -13703,6 +13767,7 @@ function _expandIntraday(pd, stepsPerDay = 10, volPct = 0.0022, linear = false) 
 //  · 100% determinista (semilla = fechas de las anclas) → "memoria del dibujo":
 //    la MISMA línea se redibuja idéntica en cada render y entre recargas.
 function _densifyDaily(pd, volPct){
+  if (!PV_SYNTHETIC_DENSIFY) return pd;   // ← una línea para apagar el sintético
   if (!pd || !pd.values || pd.values.length < 2 || !Array.isArray(pd.dates)) return pd;
   const dayMs = 86400000;
   // PRNG determinista (mulberry32) sembrado desde un string.
@@ -14209,6 +14274,9 @@ function initPerfChart() {
   // la serie que se va a dibujar (d.values). Así el config ya lleva min/max finitos y el
   // primer paint del constructor NO autoescala (elimina el "resize" al cargar).
   try { _calcGlobalYBounds(d && d.values ? d.values : null); } catch(e) {}
+  // Única instancia de Chart.js que no se destruía: cada recreación dejaba viva la anterior
+  // (listeners de resize + el canvas retenido). Se destruye antes de reemplazarla.
+  if (perfChart) { try { perfChart.destroy(); } catch(e){} perfChart = null; }
   perfChart = new Chart(ctx, {
     type: 'line',
     plugins: [portivCrosshair],
@@ -14912,13 +14980,17 @@ let FINNHUB_KEY = localStorage.getItem('fh_api_key')
 // En el sitio público (Netlify) se usa (1) si está, si no (2): así el visitante ve precios en
 // vivo SIN que la key viaje al navegador. config.local.js no se sube → no hay key embebida.
 const FH_PROXY_BASE = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/finnhub-proxy';
-const FH_PROXY_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
+const FH_PROXY_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
 const FH_NETLIFY_FN = '/.netlify/functions/finnhub';
 let _fhProxyDead = false;   // Supabase proxy no desplegado/caído → no reintentar en esta sesión
 let _fhNetlifyDead = false; // Netlify function no desplegada/caída → no reintentar en esta sesión
 function _onRemoteDeploy() { return (typeof _PV_NATIVE!=='undefined' && _PV_NATIVE) || /^https?:$/.test(location.protocol); }
 function _fhSupabaseOn() { return !!FH_PROXY_BASE && !_fhProxyDead && localStorage.getItem('fh_proxy_off') !== '1'; }
-function _fhNetlifyOn()  { return !_fhNetlifyDead && _onRemoteDeploy(); }
+// La app se sirve desde GitHub Pages, no desde Netlify: /.netlify/functions/finnhub no
+// existe. Se intentaba PRIMERO en cada sesión y siempre daba 404 antes de caer al proxy de
+// Supabase — una petición perdida y un error de consola por arranque. Desactivada.
+// (Se conserva la rama 'netlify' en _fhEndpoint por si se vuelve a desplegar ahí.)
+function _fhNetlifyOn()  { return false; }
 // ¿Hay alguna vía para precios en vivo? (controla el banner "configura tu API key").
 function _finnhubAvailable() { return _fhSupabaseOn() || _fhNetlifyOn() || !!FINNHUB_KEY; }
 
@@ -15171,7 +15243,7 @@ async function apiCall(params, timeoutMs = 15000) {
           try { _quoteCachePut(sym, d.c, d.d || 0, d.dp || 0, 'fh'); } catch(e){}
           return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0 };
         }
-      } catch(e) { /* sin respaldo: ver abajo */ }
+      } catch(e) { /* respaldo Yahoo */ }
       // El RESPALDO Yahoo se eliminó: _yhChart es hoy un stub que devuelve null siempre (ver
       // su definición), así que este bloque solo añadía una llamada muerta al camino crítico.
       reportQuiet('Datos · cotización de '+sym+' (Finnhub falló)', new Error('sin datos'));
@@ -15550,7 +15622,10 @@ async function fetchLivePrices() {
       const stored = _loadPrevCloseData();
       if (Object.keys(freshPrevClose).length > 0) {
         // Merged con lo ya guardado (en caso de que algunos tickers no respondieron)
-        const mergedPrices = { ...(stored && stored.date === stored.date ? stored.prices : {}), ...freshPrevClose };
+        // La comparación era consigo misma (siempre true): se mergeaban cierres previos de
+        // días anteriores, así que desde el segundo día de uso el % de cambio diario del
+        // portafolio salía mal. Solo vale lo guardado HOY.
+        const mergedPrices = { ...(stored && stored.date === today ? stored.prices : {}), ...freshPrevClose };
         // portfolioClose del día anterior = Σ(qty × prevClose) + cash
         let prevPortfolioMkt = 0;
         HOLDINGS.forEach(h => {
@@ -16032,7 +16107,7 @@ const STOCK_DB = [
 
 let _dropSelIdx = -1;
 
-function _escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _escHtml(s){ return pvEsc(s); }   // delegado al escape único de la app
 
 function _highlight(text, q) {
   if (!q) return _escHtml(text);
@@ -16041,6 +16116,20 @@ function _highlight(text, q) {
   return _escHtml(text.slice(0, idx)) +
     `<span class="sdrop-hi">${_escHtml(text.slice(idx, idx + q.length))}</span>` +
     _escHtml(text.slice(idx + q.length));
+}
+
+// Delegación para las sugerencias de búsqueda. Antes el ticker se interpolaba dentro de
+// un handler inline que interpolaba el ticker: cualquier comilla rompía el atributo y
+// permitía inyectar JS. Ahora el ticker viaja en data-ticker (escapado) y el click lo
+// resuelve un único listener en el contenedor.
+function _bindPickDelegation(el, fn) {
+  if (!el || el.dataset.pvPickBound) return;
+  el.dataset.pvPickBound = '1';
+  el.addEventListener('mousedown', function(ev){
+    const it = ev.target && ev.target.closest ? ev.target.closest('[data-ticker]') : null;
+    if (!it || !el.contains(it)) return;
+    fn(it.getAttribute('data-ticker') || '');
+  });
 }
 
 function _searchStocks(q) {
@@ -16064,12 +16153,13 @@ function onSearchInput(val) {
   if (!results.length || !val.trim()) { dd.classList.remove('open'); return; }
   const q = val.trim();
   dd.innerHTML = results.map(([t, n, sec], i) =>
-    `<div class="sdrop-item" data-ticker="${t}" onmousedown="pickStock('${t}')">
+    `<div class="sdrop-item" data-ticker="${pvEsc(t)}">
       <span class="sdrop-tk">${_highlight(t, q.toUpperCase())}</span>
       <span class="sdrop-nm">${_highlight(n, q)}</span>
-      <span class="sdrop-sector">${sec||''}</span>
+      <span class="sdrop-sector">${pvEsc(sec||'')}</span>
     </div>`
   ).join('');
+  _bindPickDelegation(dd, pickStock);
   dd.classList.add('open');
 }
 
@@ -16150,16 +16240,17 @@ function onNavSearchInput(val) {
   }
   const results = _searchStocks(q);
   if (!results.length) {
-    container.innerHTML = `<div class="search-modal-hint">No se encontraron resultados para "<strong>${q}</strong>"</div>`;
+    container.innerHTML = `<div class="search-modal-hint">No se encontraron resultados para "<strong>${pvEsc(q)}</strong>"</div>`;
     return;
   }
   container.innerHTML = results.map(([t, n, sec], i) =>
-    `<div class="search-modal-item" data-idx="${i}" onmousedown="pickNavStock('${t}')">
+    `<div class="search-modal-item" data-idx="${i}" data-ticker="${pvEsc(t)}">
       <span class="search-modal-tk">${_hlMark(t, q.toUpperCase())}</span>
       <span class="search-modal-nm">${_hlMark(n, q)}</span>
-      ${sec ? `<span class="search-modal-sec">${sec}</span>` : ''}
+      ${sec ? `<span class="search-modal-sec">${pvEsc(sec)}</span>` : ''}
     </div>`
   ).join('');
+  _bindPickDelegation(container, pickNavStock);
 }
 
 function onNavSearchKey(e) {
@@ -16175,7 +16266,7 @@ function onNavSearchKey(e) {
   } else if (e.key === 'Enter') {
     e.preventDefault();
     const target = _navSelIdx >= 0 ? items[_navSelIdx] : items[0];
-    if (target) pickNavStock(target.dataset ? target.getAttribute('onmousedown').match(/'([^']+)'/)[1] : '');
+    if (target) pickNavStock(target.getAttribute('data-ticker') || '');
     return;
   }
   items.forEach((el, i) => el.classList.toggle('sel', i === _navSelIdx));
@@ -18039,7 +18130,7 @@ function _peerGapText(ticker, rows){
 // Pinta la tabla de competidores dentro de un contenedor (host). rows = [{ticker,self,pe,revG,netM,roe}].
 function _renderPeersInto(host, ticker, rows){
   if (!host) return;
-  const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const esc = pvEsc;   // delegado al escape único de la app
   if (!Array.isArray(rows) || rows.length < 2){ host.innerHTML=''; return; }   // sin rivales → nada (no tabla solitaria)
   const fx = v => (v==null||!isFinite(v)) ? '—' : `${v.toFixed(1)}x`;
   const fp = v => (v==null||!isFinite(v)) ? '—' : `${v.toFixed(1)}%`;
@@ -18183,7 +18274,7 @@ async function _pvxExtras(ticker, info){
 function _renderQualAnalysis(a, el){
   if (!el || !a) return;
   el.classList.add('pvx');   // activa tokens --px-* y clases px- (aisladas del tema de la app)
-  const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const esc = pvEsc;   // delegado al escape único de la app
   const rc  = r => r==null?'var(--px-muted)': r>=8?'var(--px-green)': r>=6.5?'var(--px-blue)': r>=5?'var(--px-amber)':'var(--px-red)';
   const bullets = arr => (Array.isArray(arr) && arr.length)
     ? `<ul class="px-clean">${arr.map(b => `<li>${esc(b)}</li>`).join('')}</ul>`
@@ -18975,7 +19066,7 @@ async function _upgradeAnalysisToAI(ticker, info){
   _qualSet(ticker, a, eKey);
   _renderQualAnalysis(a, cur);
 }
-function esc0(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc0(s){ return pvEsc(s); }   // delegado al escape único de la app
 
 function _generateAnalysis(ticker, info) {
   // Si es un ETF/fondo, usar el análisis específico de ETF (empresas, diversificación, proyección).
@@ -19523,6 +19614,7 @@ ${S(11, 'OPINIÓN FINAL DEL INVERSOR', ratingClr, `
     'Free cash flow: ¿la empresa sigue generando caja neta positiva?',
     (pe>40)?'Múltiplo P/E: ¿se expande o se contrae con el mercado?':`Crecimiento de EPS: ¿justifica el múltiplo de ${xf(pe)}?`,
   ].map(m=>`<div style="font-size:11px;color:var(--text2);padding:3px 0;border-bottom:1px solid var(--border)">▸ ${m}</div>`).join('')}
+  <div class="pv-ai-foot">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
 `)}
 
 ${S(12, '5 PUNTOS CLAVE + PUNTUACIÓN FINAL', 'var(--text3)', `
@@ -19861,7 +19953,7 @@ function _searchFallback(q){
     .sort((a,b) => (b.symbol.startsWith(u)?1:0) - (a.symbol.startsWith(u)?1:0))
     .slice(0, 8);
 }
-function _escAttr(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _escAttr(s){ return pvEsc(s); }   // delegado al escape único de la app
 function _renderAddSuggestions(){
   const box = $('addSuggestions');
   if (!box) return;
@@ -20334,7 +20426,7 @@ async function lookupAddPrice() {
       _addEnableManualPrice();
     }
   } catch(e) {
-    reportError('Comprar activo · buscar precio de ' + ticker, e, { toast: false });
+    pvReportError('Comprar activo · buscar precio de ' + ticker, e, { toast: false });
     if (!(cached && cached.price > 0)) _addEnableManualPrice();
   } finally {
     if (spinner) spinner.classList.remove('on');
@@ -20417,15 +20509,15 @@ let WATCHLIST_CACHE   = JSON.parse(localStorage.getItem('wl_cache')   || '{}');
 // Seed UFO una sola vez (si el usuario lo borra luego, no se vuelve a agregar)
 if (!localStorage.getItem('wl_seed_ufo')) {
   if (!WATCHLIST_TICKERS.includes('UFO')) WATCHLIST_TICKERS.push('UFO');
-  localStorage.setItem('wl_tickers', JSON.stringify(WATCHLIST_TICKERS));
-  localStorage.setItem('wl_seed_ufo', '1');
+  _lsSet('wl_tickers', JSON.stringify(WATCHLIST_TICKERS));
+  _lsSet('wl_seed_ufo', '1');
 }
 let _wlRefreshInterval = null;
 let _wlSuggestions     = [];
 
 function _wlSave() {
-  localStorage.setItem('wl_tickers', JSON.stringify(WATCHLIST_TICKERS));
-  localStorage.setItem('wl_cache',   JSON.stringify(WATCHLIST_CACHE));
+  _lsSet('wl_tickers', JSON.stringify(WATCHLIST_TICKERS));
+  _lsSet('wl_cache',   JSON.stringify(WATCHLIST_CACHE));
   try { if (window.cloudPush) window.cloudPush(); } catch(e){}
 }
 
@@ -20596,8 +20688,8 @@ function renderWatchlist() {
             <span class="wl2-footer-market" style="color:${mktOpen?'#0A7A52':'#9aa6b8'}">${mktOpen?'NYSE/NASDAQ Open':'Market Closed'}</span>
           </div>
           <div class="wl2-footer-right">
-            <a class="wl2-footer-link" href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
-            <a class="wl2-footer-link" href="terminos.html" target="_blank" rel="noopener">Términos</a>
+            <a class="wl2-footer-link" href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
+            <a class="wl2-footer-link" href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
           </div>
         </div>
       </div>`;
@@ -21172,57 +21264,7 @@ function _renderWeeklyOutlook(data) {
   // Si no hay datos estructurados con eventos → mensaje limpio.
   _renderOutlookEmpty();
   return;
-  // (código de parseo de texto legacy desactivado a propósito)
-  // eslint-disable-next-line no-unreachable
-  if (!data || !data.text) {
-    return;
-  }
-  // Parse sections from the text (uses **Section:** pattern)
-  const raw = data.text || '';
-  // Volatility badge
-  const volMatch = raw.match(/volatilidad[:\s]*\*{0,2}(Alta|Media|Baja|High|Medium|Low)\*{0,2}/i);
-  const volWord = volMatch ? volMatch[1].toLowerCase() : null;
-  const volBadge = document.getElementById('weekOutlookVolBadge');
-  if (volBadge && volWord) {
-    const cls = /alta|high/.test(volWord) ? 'wo-vol-high' : /media|medium|mod/.test(volWord) ? 'wo-vol-medium' : 'wo-vol-low';
-    const lbl = /alta|high/.test(volWord) ? 'Volatilidad Alta' : /media|medium/.test(volWord) ? 'Volatilidad Media' : 'Volatilidad Baja';
-    volBadge.textContent = lbl; volBadge.className = cls; volBadge.style.display = 'inline-flex';
-  }
-  // Date label
-  const nextMon = _mondayOf(1);
-  const nextFri = new Date(nextMon); nextFri.setDate(nextMon.getDate() + 4);
-  const fmt = d => d.toLocaleDateString('es-MX', {day:'numeric', month:'short'});
-  const dateEl = document.getElementById('weekOutlookDate');
-  if (dateEl) dateEl.textContent = `${fmt(nextMon)} – ${fmt(nextFri)}`;
-  // Convert markdown to HTML
-  const toHtml = t => t
-    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g,'<em>$1</em>')
-    .replace(/^[-_*]{3,}$/gm,'')
-    .replace(/^[-•]\s+/gm,'')
-    .split('\n').filter(l=>l.trim()).map(l=>`<p>${l.trim()}</p>`).join('');
-  // Split: events list (lines starting with • or - or day names) vs narrative
-  const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
-  const eventLines = [], narrativeLines = [];
-  const dayRe = /^(lun|mar|mié|jue|vie|mon|tue|wed|thu|fri|•|-)/i;
-  lines.forEach(l => { if (dayRe.test(l)) eventLines.push(l); else narrativeLines.push(l); });
-  // Render events
-  const evHtml = eventLines.map(l => {
-    const clean = l.replace(/^[-•]\s*/,'');
-    const dayM = clean.match(/^(lun|mar|mié|jue|vie|mon|tue|wed|thu|fri)[^:]*:/i);
-    const dayLbl = dayM ? dayM[0].replace(':','') : '';
-    const rest = dayM ? clean.slice(dayM[0].length).trim() : clean;
-    const dotCol = /fed|cpi|pce|payroll|nonfarm|gdp|fomc|macro/i.test(rest) ? '#b45309'
-                 : /earn|result|report|q[1-4]/i.test(rest) ? '#0A7A52' : '#8a96a3';
-    return `<div class="wo-event">
-      <div class="wo-event-day">${dayLbl||'—'}</div>
-      <div class="wo-event-dot" style="background:${dotCol}"></div>
-      <div class="wo-event-body"><div class="wo-event-title">${rest.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')}</div></div>
-    </div>`;
-  }).join('');
-  const narHtml = `<div class="wo-summary">${toHtml(narrativeLines.join('\n'))}</div>`;
-  const footerHtml = `<div class="wo-footer">Generado ${new Date(data.ts||Date.now()).toLocaleDateString('es-MX',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}</div>`;
-  wrap.innerHTML = `<div class="wo-report">${narHtml}${evHtml ? `<div class="wo-events">${evHtml}</div>` : ''}${footerHtml}</div>`;
+  // El parseo de texto plano legacy que seguía era inalcanzable tras este return y se eliminó.
 }
 
 // ── "Outlook — Próxima Semana": renderiza el seed de la PRÓXIMA semana (W1) en el markup
@@ -22206,7 +22248,7 @@ function _outlookNarrativeHtml(text) {
   // Quita la sección "Resumen Ejecutivo" (encabezado + su párrafo) — el outlook arranca
   // directo en "Catalizador Principal". Robusto para narrativas cacheadas y nuevas.
   text = String(text).replace(/\*\*\s*Resumen Ejecutivo\s*\*\*[\s\S]*?(?=\n\s*\*\*)/i, '').replace(/^\s+/, '');
-  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const esc = pvEsc;   // delegado al escape único de la app
   const bold = s => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   const lines = esc(text).split('\n');
   let html = '', inList = false;
@@ -22257,199 +22299,10 @@ function _outlookNarrativeHtml(text) {
 }
 
 // Narrativa determinista (sin IA) — fallback para Netlify o cuando el proxy no está disponible.
-function _generateStaticNarrative(data) {
-  const events = (data.days||[]).flatMap(d => (d.events||[]).map(e => ({...e, _dayShort: d.short||''})));
-  if (!events.length) return null;
-  const highEvs = events.filter(e => e.impact === 'high');
-  const medEvs  = events.filter(e => e.impact === 'medium');
-  const topEv   = highEvs[0] || medEvs[0] || events[0];
-  const volLvl  = highEvs.length ? 'alta' : medEvs.length ? 'moderada' : 'baja';
-  const tickers = (typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).map(h => h.ticker).filter(Boolean);
-  const holdStr = tickers.length ? tickers.slice(0,5).join(', ') + (tickers.length > 5 ? ' y otros' : '') : 'el portafolio';
-  const evLines = events.map(e => `**${e.title}** (${e._dayShort}): ${e.description||'conviene seguir de cerca cómo reacciona el mercado.'}`).join('\n');
-  // Voz humana: frases completas, sin flechas ni jerga, como una nota de gestor.
-  const volFrase = volLvl === 'alta'
-    ? 'Espero una semana movida, con varios datos que pueden sacudir al mercado.'
-    : volLvl === 'moderada'
-    ? 'La semana trae datos relevantes, aunque sin un único evento que lo defina todo: el movimiento vendrá de la suma.'
-    : 'La agenda viene ligera, así que el mercado se moverá más por el flujo de noticias y la técnica que por los datos.';
-  const catFrase = topEv.description
-    ? `El evento que más me importa es ${topEv.title}. ${topEv.description}`
-    : `El evento que más me importa es ${topEv.title}, y estaré atento a cómo lo recibe el mercado.`;
-  return `**Resumen Ejecutivo**\n${volFrase} En total hay ${events.length} cita${events.length>1?'s':''} en el calendario y la volatilidad que anticipo es **${volLvl}**.\n\n**Catalizador Principal**\n${catFrase}\n\n**Eventos Clave**\n${evLines}\n\n**Conclusión para Inversionistas**\nMás que reaccionar a cada dato, la idea es leer el conjunto de la semana en el mercado de EE.UU. y ajustar la exposición solo si algún reporte cambia de verdad la foto de fondo del S&P 500 y el Nasdaq.`;
-}
-
-// Genera el párrafo de análisis IA de la próxima semana (prompt de research institucional).
-// Cacheado dentro del objeto outlook (1 llamada/día máx). Usa web_search para datos reales.
-async function generateOutlookNarrative(data) {
-  // Usa la SUSCRIPCION de IA server-side (anthropic-proxy), NO la API de pago directa. Analiza
-  // los eventos reales del calendario + titulares reales de Finnhub que ya tiene la app (sin busqueda web).
-  if (location.protocol === 'file:' && !window._aiKeyAvailable()) return null;
-  const mon = _mondayOf(1), fri = new Date(mon); fri.setDate(mon.getDate() + 4);
-  const fmt = d => d.toLocaleDateString('es-MX', {weekday:'long', day:'numeric', month:'long'});
-  const holdings = HOLDINGS.map(h => h.ticker).join(', ') || '--';
-  const evtCtx = (data.days||[]).flatMap(d => (d.events||[]).map(e => `- ${d.date}: ${e.title} (${e.time||'TBD'})`)).join('\n') || 'Sin eventos detectados aun en el calendario.';
-  // Titulares recientes (noticias del portafolio) como contexto para el analisis.
-  const _news = [];
-  try {
-    const pull = arr => (Array.isArray(arr)?arr:[]).forEach(n => { const h=n.h||n.headline||n.title; if(h) _news.push(`- ${h}${n.source?' ('+n.source+')':''}`); });
-    if (typeof DAILY_NEWS!=='undefined') pull(DAILY_NEWS);
-    if (typeof STOCK_NEWS!=='undefined' && !Array.isArray(STOCK_NEWS)) { Object.values(STOCK_NEWS).forEach(v=>pull(v)); }
-    else if (typeof STOCK_NEWS!=='undefined') pull(STOCK_NEWS);
-  } catch(e) {}
-  const seen = new Set();
-  const newsCtx = _news.filter(h=>{ if(seen.has(h))return false; seen.add(h); return true; }).slice(0,12).join('\n') || 'Sin titulares recientes disponibles.';
-  const PROMPT = `Eres un estratega de mercado escribiendo el analisis semanal GENERAL para inversores de acciones de EE.UU. NO es para un portafolio concreto ni para un cliente: es una lectura del mercado estadounidense para cualquier inversor.
-
-Escribe el apartado "Outlook -- Proxima Semana" analizando los EVENTOS REALES del calendario y los TITULARES REALES del mercado (abajo en CONTEXTO REAL).
-
-ESTRUCTURA (usa **negritas** para los titulos):
-1. Resumen Ejecutivo (3-5 lineas) -- el tono de la semana y la volatilidad esperada (Baja / Moderada / Alta), contada con naturalidad.
-2. Catalizador Principal -- el evento mas importante y por que importa para el mercado de EE.UU.
-3. Eventos Clave -- 3-5 eventos; por cada uno: Evento - Fecha - Impacto (Alto/Medio/Bajo) - una frase explicando que vigilar.
-4. Riesgos para el Mercado -- los riesgos reales (inflacion, tasas, resultados, geopolitica, petroleo, empleo, China) y por que pesan.
-5. Sectores con Mayor Sensibilidad -- que sectores del mercado se mueven mas y por que.
-6. Conclusion para Inversionistas (2-4 lineas) -- alcista, bajista o neutral? que vigilar?
-
-VOZ HUMANA (CRITICO -- que NO parezca escrito por IA):
-- Escribe en frases completas y naturales, como habla una persona. NADA de fragmentos telegraficos tipo "Anticipa NFP; mueve sentiment rapido".
-- PROHIBIDO usar flechas (->, =>) para encadenar ideas. Conecta con palabras: "lo que presiona", "y eso suele", "por eso".
-- Evita anglicismos cuando hay palabra en espanol: di "caida" no "sell-off", "postura dura/suave de la Fed" no "hawkish/dovish", "animo del mercado" no "sentiment", "resultados" no "earnings", "subida" no "rally", "previsiones" no "guidance".
-- Usa primera persona con mesura ("veo", "me preocupa", "estaria atento a") sin exagerar.
-- Varia el largo de las frases. Que respire. Que se sienta escrito por alguien, no generado.
-
-REGLAS DE FONDO:
-- Basate UNICAMENTE en los eventos y titulares listados abajo. NO inventes fechas, cifras ni eventos. NO uses busqueda web.
-- Prioriza los eventos de mayor impacto. Conecta los titulares recientes con lo que viene.
-- Si un dato no esta en el contexto, razona en escenarios, no lo afirmes como hecho.
-- MERCADO GENERAL, NO CARTERA: escribe para el mercado de EE.UU. en general. Puedes referenciar indices y ETF grandes (S&P 500, Nasdaq, Dow, SOXX). NUNCA menciones "el portafolio", "tus posiciones", ni porcentajes/pesos de una cartera. Solo nombra una empresa concreta si un TITULAR o EVENTO listado abajo es especificamente sobre ella; si no, habla por sector o por indice.
-- Nada de predicciones absolutas. Maximo 320 palabras. Responde en espanol.
-
-CONTEXTO REAL:
-- Semana: ${fmt(mon)} al ${fmt(fri)} de ${mon.getFullYear()}
-- Eventos ya detectados en el calendario:
-${evtCtx}
-- Titulares recientes del mercado:
-${newsCtx}`;
-  try {
-    const res = await _aiFetch( {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: _aiQualityModel(AI_MODELS.reasoning),   // local(gratis)=Sonnet · Netlify(pago)=Haiku barato
-        max_tokens: 1024,             // ~320 palabras ≈ <600 tokens; 1024 da margen sin desperdiciar
-        system: 'Eres un analista senior de research institucional. Respondes en espanol con un analisis claro en markdown ligero (usa **negritas** para los titulos de seccion). Sin preambulos ni despedidas.',
-        prompt: PROMPT
-      })
-    });
-    if (!res.ok) { const eb = await res.json().catch(()=>({})); return reportError('IA - outlook semanal', new Error((eb.error&&eb.error.message)||('HTTP '+res.status)), { toast: false }); }
-    const j = await res.json();
-    try{ _tokAdd(j.usage, AI_MODELS.reasoning, 'outlook'); }catch(e){}
-    const t = (j.text || '').trim();
-    return t || ((j.error && j.error.message) ? reportError('IA - outlook semanal', new Error(j.error.message), { toast:false }) : null);
-  } catch(e) { return reportError('IA - outlook semanal', e, { toast: false }); }
-}
-
-// ¿Hay que regenerar? true si: no hay caché · la semana rotó · o el caché tiene > 24h.
-function shouldRefreshOutlook() {
-  try {
-    const raw = localStorage.getItem('weekly_outlook_' + _weekKey(1));
-    if (!raw) return true;                                   // sin caché
-    const obj = JSON.parse(raw);
-    if (!obj) return true;
-    if (obj._weekKey && obj._weekKey !== _weekKey(1)) return true; // rotó la semana
-    if (obj.curated) return false;                           // seed curado → no expira por TTL
-    // Portafolio cambió (compra/venta/rebalanceo) desde este outlook → regenerar (personalización).
-    if (typeof portfolioTickerHash === 'function' && obj._portfolioHash && obj._portfolioHash !== portfolioTickerHash()) return true;
-    if (!obj.ts || (Date.now() - obj.ts) > outlookCacheTTL) return true; // > 24h
-    return false;
-  } catch(e) { return true; }
-}
-
-// Borra el caché de la próxima semana (preservando el seed curado).
-function invalidateOutlookCache() {
-  try {
-    const key = 'weekly_outlook_' + _weekKey(1);
-    const raw = localStorage.getItem(key);
-    if (raw) { const o = JSON.parse(raw); if (o && o.curated) return; } // no borrar seed curado
-    localStorage.removeItem(key);
-  } catch(e) {}
-  _weekOutlookGenerated = null;
-}
-
-// Pinta el Outlook desde el caché actual (o el fallback si no hay).
-function updateOutlookUI() {
-  try {
-    const raw = localStorage.getItem('weekly_outlook_' + _weekKey(1));
-    if (raw) { _renderWeeklyOutlook(JSON.parse(raw)); return; }
-  } catch(e) {}
-  _renderWeeklyOutlookFallback();
-}
-
-// Regenera el Outlook de la próxima semana usando el MISMO pipeline existente:
-//  1) respeta el seed curado si existe  2) refresca earnings (Finnhub)  3) reconstruye
-//  desde earnings + macro determinista  4) guarda versión sellada (ts + weekKey)  5) refresca UI.
-async function generateNextWeekOutlook() {
-  const key = 'weekly_outlook_' + _weekKey(1);
-
-  // 1) Seed curado para la próxima semana → respetarlo (no degradar a fallback).
-  try {
-    const raw = localStorage.getItem(key);
-    if (raw) { const o = JSON.parse(raw); if (o && o.curated && o._weekKey === _weekKey(1)) {
-      _renderWeeklyOutlook(o);
-      // Guard de día: si la narrativa ya es de HOY y de la versión actual, NO regenerar (ahorra
-      // una llamada Sonnet por carga). Solo se refresca una vez al día (o si cambió _NARR_VER).
-      const _narrFresh = o.narrative && o._narrVer === _NARR_VER && o.ts &&
-        (new Date(o.ts).toDateString() === new Date().toDateString());
-      if (!_narrFresh) {
-        try { const narr = await generateOutlookNarrative(o); if (narr) { o.narrative = narr; o._narrVer = _NARR_VER; o.ts = Date.now(); _renderWeeklyOutlook(o); localStorage.setItem(key, JSON.stringify(o)); try { if (window.cloudPush) window.cloudPush(); } catch(e){} } } catch(e) {}
-      }
-      return o;
-    } }
-  } catch(e) {}
-
-  // 2) Refrescar fuentes gratuitas (calendario de resultados Finnhub) → puebla NEXT_WEEK_NEWS.
-  try { if (typeof _buildWeekCatalysts === 'function') await _buildWeekCatalysts(); } catch(e) {}
-
-  // 3) Construir outlook estructurado (earnings + macro determinista, incl. jobless claims semanales).
-  const data = _buildFallbackOutlookData();
-  data.ts = Date.now();
-  data._weekKey = _weekKey(1);
-  try { if (typeof portfolioTickerHash === 'function') data._portfolioHash = portfolioTickerHash(); } catch(e) {}
-
-  // 4) Pinta los días de inmediato (rápido), antes del análisis IA.
-  _renderWeeklyOutlook(data);
-
-  // 5) Párrafo de análisis IA debajo de los días (research institucional). No bloquea el render.
-  // Reusa la narrativa de HOY si ya existe en caché (mismo week + versión) → NO regenerar (ahorra Sonnet).
-  let _priorNarr = null;
-  try {
-    const _pr = JSON.parse(localStorage.getItem(key) || 'null');
-    if (_pr && _pr.narrative && _pr._narrVer === _NARR_VER && _pr._weekKey === _weekKey(1) && _pr.ts &&
-        new Date(_pr.ts).toDateString() === new Date().toDateString()) _priorNarr = _pr.narrative;
-  } catch(e) {}
-  if (_priorNarr) {
-    data.narrative = _priorNarr; data._narrVer = _NARR_VER; _renderWeeklyOutlook(data);
-  } else {
-    // Fallback determinista si el proxy no está disponible (Netlify sin función configurada).
-    try {
-      const narr = await generateOutlookNarrative(data);
-      const useNarr = narr || _generateStaticNarrative(data);
-      if (useNarr) { data.narrative = useNarr; data._narrVer = _NARR_VER; _renderWeeklyOutlook(data); }
-    } catch(e) {
-      const useNarr = _generateStaticNarrative(data);
-      if (useNarr) { data.narrative = useNarr; data._narrVer = _NARR_VER; _renderWeeklyOutlook(data); }
-    }
-  }
-
-  // 6) Guardar (con narrativa si se obtuvo) solo si hay eventos reales.
-  try {
-    const hasEvents = data.days.some(d => (d.events||[]).length);
-    if (hasEvents) { localStorage.setItem(key, JSON.stringify(data)); try { if (window.cloudPush) window.cloudPush(); } catch(e){} }
-  } catch(e) {}
-  _weekOutlookGenerated = _weekKey(1);
-  return data;
-}
+// Cadena del outlook por-usuario eliminada (_generateStaticNarrative, generateOutlookNarrative,
+// shouldRefreshOutlook, invalidateOutlookCache, updateOutlookUI, generateNextWeekOutlook):
+// solo la llamaba el cuerpo inalcanzable de refreshNextWeekOutlook. La narrativa la sirve
+// SharedOutlook desde la nube.
 
 // Orquestador: si está fresco (< 24h y misma semana) solo pinta; si no, invalida y regenera.
 async function refreshNextWeekOutlook(force) {
@@ -22459,31 +22312,9 @@ async function refreshNextWeekOutlook(force) {
   // en su próxima apertura/refresco. Auto-gateado por TTL + lock (no por dispositivo).
   try { if (window.SharedOutlook) SharedOutlook.sync(); } catch(e) {}
   return; // Generación/render por-usuario desactivada: la narrativa la sirve SharedOutlook (nube).
-  if (!force && !shouldRefreshOutlook()) {
-    updateOutlookUI();
-    // Si el outlook en cache aun no tiene analisis IA, generalo una vez (sin forzar todo el pipeline).
-    try {
-      const k = 'weekly_outlook_' + _weekKey(1);
-      const raw = localStorage.getItem(k);
-      if (raw && location.protocol !== 'file:') {
-        const o = JSON.parse(raw);
-        // Regenera el análisis IA si: (a) no existe, o (b) es de una versión de estilo
-        // anterior (humanización) → fuerza una regeneración con el prompt humano nuevo.
-        if (o && (!o.narrative || o._narrVer !== _NARR_VER)) {
-          generateOutlookNarrative(o).then(narr => {
-            const useNarr = narr || _generateStaticNarrative(o);
-            if (useNarr) { o.narrative = useNarr; o._narrVer = _NARR_VER; o.ts = o.ts || Date.now(); _renderWeeklyOutlook(o); try { localStorage.setItem(k, JSON.stringify(o)); } catch(e) {} }
-          }).catch(() => {
-            const useNarr = _generateStaticNarrative(o);
-            if (useNarr) { o.narrative = useNarr; o._narrVer = _NARR_VER; _renderWeeklyOutlook(o); }
-          });
-        }
-      }
-    } catch(e) {}
-    return;
-  }
-  invalidateOutlookCache();
-  await generateNextWeekOutlook();
+  // El pipeline por-usuario que seguía (shouldRefreshOutlook/updateOutlookUI/
+  // generateOutlookNarrative/invalidateOutlookCache/generateNextWeekOutlook) era inalcanzable
+  // tras el return de arriba y se eliminó.
 }
 
 // Programa el refresh DIARIO a las 00:00 ET (cron 0 0 * * *, America/New_York) + chequeo
@@ -23458,7 +23289,7 @@ async function aiPortExtract(){
     const _posCount = Array.isArray(finalData.positions) ? finalData.positions.filter(p=>p&&p.ticker).length : 0;
     _aiOpenReviewEditor(_posCount);   // revisión obligatoria — NO aplica solo
   } catch(e) {
-    reportError('IA · importar portafolio', e, { userMsg: 'Error al importar: ' + e.message });
+    pvReportError('IA · importar portafolio', e, { userMsg: 'Error al importar: ' + e.message });
   } finally {
     if (btn) { btn.disabled = false; btn.innerHTML = _btnOrigHTML || '<span class="material-symbols-outlined" style="font-size:15px">auto_awesome</span> Aplicar al portafolio'; }
   }
@@ -23705,159 +23536,18 @@ function _chatEscape(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 function _chatMarkdown(s){
   let h=_chatEscape(s);
   h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
-  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // onclick → en nativo abre el navegador in-app (SFSafariViewController) en vez de dejar al
+  // usuario atrapado en una WKWebView de terceros sin barra de navegación.
+  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener">$1</a>');
   h=h.replace(/^[\-•]\s+(.*)$/gm,'<li>$1</li>');
   h=h.replace(/(<li>[\s\S]*?<\/li>)/g,'<ul>$1</ul>');
   h=h.split(/\n{2,}/).map(p=>p.match(/^<ul>/)?p:'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('');
   return h;
 }
 
-function _chatAddMsg(role, html, sources){
-  const wrap=document.getElementById('chatMessages');
-  const div=document.createElement('div');
-  div.className='chat-msg '+(role==='user'?'user':'bot');
-  let srcHtml='';
-  if(sources&&sources.length){
-    srcHtml='<div class="chat-sources">Fuentes: '+
-      sources.slice(0,3).map((s,i)=>`<a href="${s.url}" target="_blank" rel="noopener">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
-      '</div>';
-  }
-  div.innerHTML=
-    `<div class="chat-avatar ${role==='user'?'user':'bot'}">${role==='user'?'Tú':'IA'}</div>`+
-    `<div class="chat-bubble">${role==='user'?_chatEscape(html):_chatMarkdown(html)}${srcHtml}</div>`;
-  wrap.appendChild(div);
-  wrap.scrollTop=wrap.scrollHeight;
-  requestAnimationFrame(()=>{
-    const r=div.getBoundingClientRect(); const vh=window.innerHeight||document.documentElement.clientHeight;
-    if(r.bottom>vh-40) window.scrollBy({top:r.bottom-vh+80,behavior:'smooth'});
-  });
-  return div;
-}
-
-
-async function chatSend(){
-  if(_chatBusy) return;
-  if(Date.now()-_chatLastSent<_CHAT_COOLDOWN) return;
-  if(location.protocol==='file:' && !window._aiKeyAvailable()){
-    _chatAddMsg('bot','No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.');
-    return;
-  }
-  const input=document.getElementById('chatInput');
-  const text=(input.value||'').trim();
-  if(!text) return;
-  const key=_ensureApiKey();
-  if(!key){ _chatAddMsg('bot','Falta tu Anthropic API key.'); return; }
-
-  // Límite de gasto semanal alcanzado → no se puede chatear hasta el próximo lunes
-  if(_chatBlocked()){
-    const sugg=document.getElementById('chatSuggestions'); if(sugg) sugg.style.display='none';
-    _chatAddMsg('user',text); input.value=''; input.style.height='auto';
-    _chatAddMsg('bot',`Has alcanzado tu límite semanal de uso (**$${_WEEKLY_LIMIT.toFixed(2)}**). El chat se reactivará automáticamente el próximo lunes.`);
-    return;
-  }
-
-  // Serve from cache when possible (zero API cost)
-  const cached=_chatCacheGet(text);
-  if(cached){
-    const sugg=document.getElementById('chatSuggestions'); if(sugg) sugg.style.display='none';
-    _chatAddMsg('user',text); input.value=''; input.style.height='auto';
-    _chatAddMsg('bot',cached.answer);
-    CHAT_HISTORY.push({role:'user',content:text},{role:'assistant',content:cached.answer});
-    if(CHAT_HISTORY.length>8) CHAT_HISTORY.splice(0,2);
-    return;
-  }
-
-  const sugg=document.getElementById('chatSuggestions'); if(sugg) sugg.style.display='none';
-  _chatAddMsg('user',text);
-  CHAT_HISTORY.push({role:'user',content:text});
-  input.value=''; input.style.height='auto';
-  _chatLastSent=Date.now();
-
-  _chatBusy=true;
-  document.getElementById('chatSendBtn').disabled=true;
-  const _typing=document.getElementById('chatTyping');
-  _typing.classList.add('show');
-  document.getElementById('chatMessages').appendChild(_typing);
-  _typing.scrollIntoView({block:'nearest'});
-
-  try {
-    const ctx=_chatSmartContext(text);
-    const system=`Eres un inversor profesional con más de 20 años de experiencia en los mercados de renta variable, con un track record real y un rendimiento anual sobresaliente (consistentemente por encima del S&P 500). Eres un experto en acciones: dominas valuación (P/E, EV/EBITDA, DCF, PEG), análisis de fundamentales, lectura de earnings, dinámicas de sector, ciclos de mercado y gestión de riesgo. Has vivido el dot-com, la crisis de 2008, el COVID y el boom de la IA. Hablas como alguien que ha ganado y perdido dinero de verdad.
-
-PERSONALIDAD Y TONO:
-- Habla en primera persona, con la seguridad y franqueza de un veterano: directo, sin rodeos, con criterio propio. Da TU opinión, no resúmenes neutrales de Wikipedia.
-- Usa el lenguaje natural del mundo de la inversión (moat, margen de seguridad, asimetría riesgo/recompensa, "el mercado ya lo tiene priceado", "conviction", "comprar el miedo", etc.) sin sonar acartonado.
-- Sé concreto: cuando opines sobre una acción, da tu lectura de la tesis, los riesgos reales y a qué precio/valuación te parece atractiva o cara. Aporta números cuando ayuden.
-- No seas wishy-washy. Si algo te parece caro, dilo. Si una tesis te convence, comprométete. Pero reconoce la incertidumbre como lo haría un profesional honesto.
-- Responde SIEMPRE en español, con tono natural y conversacional. Extensión típica 4-7 frases; alárgate solo si la pregunta lo amerita.
-- Cierra a veces con una conclusión accionable o un nivel a vigilar, como haría un inversor real.
-
-LÍMITES:
-- No des garantías de rentabilidad ni promesas absolutas; el mercado siempre tiene riesgo. Pero opina con convicción dentro de ese marco.
-- No repitas literalmente los datos ya visibles en pantalla; intérpretalos.
-
-ESTILO (obligatorio):
-- Da la respuesta directamente, sin narrar tu proceso. NUNCA digas "no tengo ese dato", "no está visible", "voy a buscarlo" o "déjame buscar". Entrega la información o el análisis como si ya lo supieras.
-- No menciones de dónde sacas la información (ni la página ni internet).
-
-FUENTES DE DATOS (uso interno, nunca lo menciones):
-1. PRIMERO usa los datos del CONTEXTO de abajo (perfil de empresa, moat, catalizadores, riesgos, competidores, TAM, noticias y datos del portafolio). Casi toda pregunta sobre las empresas del portafolio se responde con esto.
-2. Si un dato puntual no está en el contexto (ej. precio exacto de hoy, un ratio específico, una noticia muy reciente), búscalo en silencio y responde directamente con la cifra, sin avisar que la buscaste.
-
-PERSONALIZACIÓN (obligatorio):
-- El CONTEXTO incluye el PERFIL DEL USUARIO (nombre, perfil de riesgo del test —capacidad vs disposición—, horizonte, énfasis, estrategia declarada, topes sugeridos) y su CARTERA REAL (posiciones, pesos, beta, concentración top-3, exposición tech, sectores, cash).
-- Adapta SIEMPRE tu respuesta a ESE perfil y a ESAS posiciones concretas. No respondas en abstracto: cuando opines sobre una acción o decisión, conéctala con SU cartera (solapamientos, concentración, beta, exposición sectorial) y con SU tolerancia al riesgo y horizonte.
-- Si hay un DESAJUSTE entre su perfil de riesgo y su cartera (p. ej. beta o tech por encima de su tope, sobreexposición frente a su capacidad), díselo con franqueza y prioriza el ajuste.
-- Usa su nombre de forma natural si está disponible. Si aún NO completó el test de perfil, responde con lo que sabes de su cartera y sugiérele una vez completar el test para afinar el análisis.
-- No vuelques los números crudos del contexto; interprétalos en función de SU situación.
-
-COHERENCIA (obligatorio — no te contradigas con lo que el usuario ve en la app):
-- El CONTEXTO puede incluir un PLAN DE REBALANCEO y el análisis "Portiv Intelligence". Tus recomendaciones NO pueden ir en contra: si el plan dice AUMENTAR un ticker, no sugieras venderlo; si dice REDUCIR, no digas que lo cargue más; si dice MANTENER, no propongas moverlo sin una razón nueva y explícita.
-- Si el análisis "Portiv Intelligence" concluye que la cartera ENCAJA con su perfil, no la llames "demasiado agresiva"; si detecta un desajuste, alinéate con ese desajuste.
-- Puedes añadir matices, contexto o el porqué con tu criterio, pero la DIRECCIÓN por ticker y el VEREDICTO de encaje deben coincidir con el plan y el análisis.
-
-CONTEXTO (datos ya cargados en la página):
-${ctx}`;
-    const histSlice=CHAT_HISTORY.slice(-4); // max 2 exchanges
-    // Web search SOLO si la pregunta pide datos en vivo → la mayoría se resuelve con el contexto local (sin costo de búsqueda)
-    // Chat: usa el proxy de IA server-side (anthropic-proxy).
-    // Convierte el historial de mensajes a un prompt de texto (formato cli).
-    const convText = histSlice.map(m => (m.role==='user'?'Usuario':'Asistente')+': '+m.content).join('\n');
-    const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (el proxy topa en max_uses:1)
-    const body={model:_aiQualityModel(AI_MODELS.reasoning),max_tokens:1500,system,prompt:convText,allowed_tools:_needsWeb?['websearch']:undefined};
-
-    const res=await _aiFetch({
-      method:'POST',
-      headers:{'content-type':'application/json'},
-      body:JSON.stringify(body)
-    }, true);   // essential: el chat SÍ puede usar la API de pago
-    if(!res.ok){
-      const err=await res.json().catch(()=>({error:{message:'Error '+res.status}}));
-      throw new Error(err.error?.message||('Error '+res.status));
-    }
-    const data=await res.json();
-    try{ _tokAdd(data.usage, body.model, 'chat'); }catch(e){}   // costo real (chat) — solo suma en path API
-
-    let answer=data.text||'';
-    if(!answer && Array.isArray(data.content)) data.content.forEach(b=>{if(b.type==='text') answer+=b.text;});
-    answer=answer.trim()||'No pude generar una respuesta.';
-
-    _chatCacheSet(text,answer);
-    CHAT_HISTORY.push({role:'assistant',content:answer});
-    if(CHAT_HISTORY.length>8) CHAT_HISTORY.splice(0,2);
-
-    document.getElementById('chatTyping').classList.remove('show');
-    _chatAddMsg('bot',answer,_needsWeb?data.sources:undefined);   // fuentes solo si hubo búsqueda; nunca inventadas
-  } catch(e){
-    reportError('IA · chat asistente', e, { toast: false });
-    document.getElementById('chatTyping').classList.remove('show');
-    _chatAddMsg('bot','Error: '+e.message);
-  } finally {
-    _chatBusy=false;
-    document.getElementById('chatSendBtn').disabled=false;
-    document.getElementById('chatTyping').classList.remove('show');
-  }
-}
+// chatSend() y _chatAddMsg() eliminados: apuntaban a #chatInput/#chatSendBtn/#chatTyping/
+// #chatMessages/#chatSuggestions, que no existen en el DOM. El chat vivo es aiChatSend()
+// con los IDs aiChat*. _chatBlocked/_chatCacheGet/_chatSmartContext SÍ los usa aiChatSend.
 
 // ═══════════════════════════════════════════════════
 //  AI ANALYST TAB — nuevo diseño del chat
@@ -23890,7 +23580,7 @@ function _aiChatAddMsg(role, html, sources){
   let srcHtml = '';
   if(sources && sources.length){
     srcHtml = '<div class="chat-sources" style="margin-top:8px;padding-top:8px;border-top:1px solid #e8eaf0;font-size:10px;color:#8a96a3;">Fuentes: '+
-      sources.slice(0,3).map((s,i)=>`<a href="${s.url}" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
+      sources.slice(0,3).map((s,i)=>`<a href="${s.url}" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
       '</div>';
   }
   if(role === 'user'){
@@ -24035,7 +23725,7 @@ ${ctx}`;
     _aiChatAddMsg('bot', answer, _needsWeb?data.sources:undefined);   // fuentes solo si hubo búsqueda; nunca inventadas
     _aiRenderTokenBadge();
   } catch(e){
-    reportError('IA · analista', e, { toast: false });
+    pvReportError('IA · analista', e, { toast: false });
     if(_typing) _typing.classList.remove('show');
     _aiChatAddMsg('bot','Error: '+e.message);
   } finally {
@@ -25129,7 +24819,12 @@ const PORTIV_NEWS = {
       };
       try { return _openOutlookEvent(ekey, okey); } catch(e){}
     }
-    alert(`${ev.title}\n\n${ev.summary}\n\n${ev.marketImpact}\nTickers: ${(ev.tickers||[]).join(', ')}`);
+    // Fallback cuando el evento no tiene ficha propia. Antes era un alert() con \n crudos:
+    // en iOS sale como diálogo del sistema con el nombre del bundle en el título.
+    var _tk = (ev.tickers||[]).join(', ');
+    var _msg = [ev.title, ev.summary, ev.marketImpact, _tk ? ('Tickers: ' + _tk) : ''].filter(Boolean).join(' · ');
+    try { if (typeof showToast === 'function') { showToast(_msg, 'var(--text2)'); return; } } catch(e){}
+    try { alert(_msg); } catch(e){}
   },
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -25663,7 +25358,7 @@ function profLoad(overrideEmail) {
   if (uEl && data.username) uEl.value = data.username;
   if (nEl && data.fullName) nEl.value = data.fullName;
   if (overrideEmail) {
-    const eEl = document.getElementById('profEmail'); if (eEl) eEl.value = overrideEmail;
+    // (#profEmail no existe; el elemento real es #profEmailDisplay, justo debajo)
     const ed  = document.getElementById('profEmailDisplay'); if (ed) ed.textContent = overrideEmail;
   }
   profSetCurrency(data.currency || 'USD');
@@ -26150,6 +25845,7 @@ function init() {
 
     // ── Redibujado horario explícito: nuevo bucket 1D aparece al cambiar de hora ────
     setInterval(() => {
+      if (document.hidden) return;   // único de los 13 intervalos sin guarda de visibilidad
       try {
         if (typeof PORTIV_CHART !== 'undefined') PORTIV_CHART.record();
         if (typeof _redrawActiveChart === 'function') _redrawActiveChart();
@@ -26202,7 +25898,7 @@ function init() {
       if (mins < 8*60) return;                  // solo desde 08:00 ET
       const key = 'news_monday_' + (P ? P.weekId(0) : new Date().toDateString());
       if (localStorage.getItem(key)) return;    // ya corrió esta semana
-      localStorage.setItem(key, '1');
+      _lsSet(key, '1');
       _pvLog('[News] Refresh lunes 08:00 ET disparado');
       _refreshNewsWeekDates();
       autoUpdateNews(true);   // lunes 08:00 ET (1×/semana, ya gated por flag) → fuerza feed nuevo
@@ -26234,6 +25930,19 @@ if (document.readyState === 'loading') {
   @keyframes pvMenuIn { from{opacity:0;transform:translateY(-8px) scale(.97);} to{opacity:1;transform:none;} }
   @keyframes authSpin{to{transform:rotate(360deg)}}
   #authOverlay{transition:opacity .34s cubic-bezier(.4,0,.2,1);}
+  /* ── INVARIANTE: invisible ⇒ NO recibe clics ─────────────────────────────────
+     El overlay es fijo, ocupa toda la pantalla y vive en z-index 100000. Antes su
+     visibilidad se pilotaba con `opacity` en línea y su `display:none` llegaba 340 ms
+     después, dentro de un setTimeout. En el hueco entre "opacity:0" y "display:none"
+     —y también entre el `display:flex` de showOverlay() y el requestAnimationFrame que
+     subía la opacidad— el overlay quedaba TRANSPARENTE pero seguía capturando cada clic:
+     la app se veía perfecta y no respondía a nada. En una pestaña de fondo (Chrome
+     descarta los rAF) o en un WebView en pausa (Safari iOS) ese hueco no dura un frame,
+     dura hasta que el usuario vuelve → pantalla congelada.
+     Atando `pointer-events` a la MISMA variable que la opacidad, ese estado deja de
+     existir: si no se ve, no bloquea. `display` pasa a ser solo limpieza cosmética. */
+  #authOverlay[data-visible="0"]{opacity:0;pointer-events:none;}
+  #authOverlay[data-visible="1"]{opacity:1;pointer-events:auto;}
   #authCard{animation:pvCardIn .45s cubic-bezier(.2,.7,.2,1) both;}
   #authOverlay .pv-form{animation:pvFormIn .3s cubic-bezier(.2,.7,.2,1) both;}
 
@@ -26279,7 +25988,7 @@ if (document.readyState === 'loading') {
   #acctMenu .pv-in::placeholder{color:#9aa3b2;}
   #acctMenu .pv-in:focus{background:#fff;border-color:#208AEF;box-shadow:0 0 0 3px rgba(32,138,239,0.15);}
 </style>
-<div id="authOverlay" style="display:flex;position:fixed;inset:0;z-index:100000;background:#f4f6fb;align-items:center;justify-content:center;padding:24px;font-family:var(--font,system-ui,-apple-system,sans-serif);">
+<div id="authOverlay" data-visible="1" style="display:flex;position:fixed;inset:0;z-index:100000;background:#f4f6fb;align-items:center;justify-content:center;padding:24px;font-family:var(--font,system-ui,-apple-system,sans-serif);">
  <div style="display:flex;flex-direction:column;align-items:center;gap:20px;width:100%;max-width:440px;">
   <div id="authCard" style="width:100%;background:#fff;border:1px solid #eef1f6;border-radius:22px;padding:38px 38px 34px;box-shadow:0 28px 70px rgba(11,28,48,0.12);box-sizing:border-box;">
 
@@ -26401,9 +26110,9 @@ if (document.readyState === 'loading') {
   </div>
 
   <div class="av-foot">
-    <a href="terminos.html" target="_blank" rel="noopener">Términos</a>
-    <a href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
-    <a href="reembolsos.html" target="_blank" rel="noopener">Reembolsos</a>
+    <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
+    <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
+    <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
   </div>
  </div>
 </div>
@@ -26417,15 +26126,18 @@ if (document.readyState === 'loading') {
   <div style="padding:16px 16px 12px;border-bottom:1px solid rgba(0,0,0,0.07);">
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a93a3;font-weight:700;">Mi cuenta</div>
     <div id="acctEmail" style="font-size:14px;color:#0b1220;margin-top:5px;word-break:break-all;">—</div>
+    <div id="acctPlan" style="font-size:12px;color:#8a93a3;margin-top:3px;font-weight:600;">—</div>
   </div>
   <div style="padding:6px;">
-    <div class="acct-item" onclick="_acctTogglePwd()">Cambiar contraseña</div>
+    <div class="acct-item" id="acctPwdItem" onclick="_acctTogglePwd()">Cambiar contraseña</div>
     <div id="acctPwdForm" style="display:none;padding:6px 8px 10px;">
       <input id="acctNewPwd" class="pv-in" type="password" autocomplete="new-password" placeholder="Nueva contraseña" style="height:44px;font-size:14px;margin-bottom:8px;">
       <input id="acctNewPwd2" class="pv-in" type="password" autocomplete="new-password" placeholder="Repite la contraseña" style="height:44px;font-size:14px;margin-bottom:8px;">
       <button id="acctPwdBtn" class="pv-btn" onclick="_acctChangePwd()" style="height:44px;font-size:14px;">Actualizar contraseña</button>
       <div id="acctPwdMsg" style="font-size:12px;text-align:center;margin-top:8px;min-height:14px;color:#15a05f;"></div>
     </div>
+    <div class="acct-item" id="acctManageSub" style="display:none" onclick="_pvManageSubscription()">Gestionar suscripción</div>
+    <div class="acct-item" onclick="_pvRestorePurchases()">Restaurar compras</div>
     <div class="acct-item" onclick="_acctHelp()">Ayuda</div>
   </div>
   <div style="padding:6px;border-top:1px solid rgba(0,0,0,0.07);">
@@ -26434,10 +26146,19 @@ if (document.readyState === 'loading') {
   </div>
 </div>
 
+<!-- SDK de Supabase. Estaba en el <head>, donde bloqueaba el parseo de TODO el documento —
+     incluido el #authOverlay de arriba, lo único que puede pintarse mientras `app-locked`
+     mantiene el body oculto. Aquí abajo el navegador ya pintó el overlay ("Cargando…"/login)
+     antes de detenerse por este script. Sigue siendo síncrono y sigue estando ANTES del IIFE
+     de auth, así que window.supabase está garantizado cuando ese IIFE crea el cliente.
+     Se precarga desde el <head> con <link rel="preload" as="script"> → la descarga arranca
+     igual de temprano que antes. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
 <script>
 (function(){
   var SUPABASE_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co';
-  var SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpibGhpZnN6bGhkZ2tobnltd2poIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODIxNjIzMTgsImV4cCI6MjA5NzczODMxOH0.Oc5gM9b5Bkxm9ef8Nfifz3KOmaDcMThLisfeCQwbiPo';
+  var SUPABASE_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
   var LS_KEY = 'portfolio_state_v4';
   // Estado vacío puro: TODAS las cuentas (incluida la del propietario) arrancan aquí.
   // El portafolio real se carga únicamente desde la fila de Supabase de cada cuenta.
@@ -26692,15 +26413,38 @@ if (document.readyState === 'loading') {
     }
   };
 
+  // ── Overlay: una sola fuente de verdad ───────────────────────────────────────
+  // `data-visible` manda; el CSS ata opacidad Y pointer-events al mismo valor, así que
+  // el overlay JAMÁS puede quedar transparente-pero-bloqueando (ver el bloque INVARIANTE
+  // en el CSS). Además:
+  //  · `_ovGen` invalida los callbacks en vuelo: un hideOverlay() seguido de un
+  //    showOverlay() dentro de los 340 ms de la transición ya no deja que el setTimeout
+  //    viejo apague un overlay que el ciclo nuevo quería encendido (ni al revés).
+  //  · La opacidad ya no se anima con requestAnimationFrame: se fuerza un reflow y la
+  //    transición CSS arranca sola. En una pestaña de fondo los rAF no corren, y de ahí
+  //    salía el estado invisible permanente.
+  var _ovGen = 0, _ovTimer = null;
   function showOverlay(){
-    var wasHidden = overlay.style.display === 'none';
-    overlay.style.display = 'flex';
-    if (wasHidden) { overlay.style.opacity = '0'; requestAnimationFrame(function(){ overlay.style.opacity = '1'; }); }
-    else { overlay.style.opacity = '1'; }
+    _ovGen++;
+    if (_ovTimer) { clearTimeout(_ovTimer); _ovTimer = null; }
+    overlay.style.opacity = '';            // el estado lo define el atributo, no el estilo en línea
+    if (overlay.style.display === 'none') {
+      overlay.setAttribute('data-visible', '0');
+      overlay.style.display = 'flex';
+      void overlay.offsetHeight;           // reflow: da un punto de partida real a la transición
+    }
+    overlay.setAttribute('data-visible', '1');
   }
   function hideOverlay(){
-    overlay.style.opacity = '0';
-    setTimeout(function(){ overlay.style.display = 'none'; overlay.style.opacity = ''; }, 340);
+    var gen = ++_ovGen;
+    overlay.style.opacity = '';
+    overlay.setAttribute('data-visible', '0');   // desde aquí ya no bloquea clics, pase lo que pase
+    if (_ovTimer) clearTimeout(_ovTimer);
+    _ovTimer = setTimeout(function(){
+      _ovTimer = null;
+      if (gen !== _ovGen) return;                // hubo un showOverlay() después → no lo apagues
+      overlay.style.display = 'none';
+    }, 380);
   }
   // Revela la app ya gateada: quita el bloqueo del body y desvanece el overlay.
   function revealApp(){
@@ -26709,6 +26453,10 @@ if (document.readyState === 'loading') {
     try { if (typeof window._pvMaybeShowQuiz === 'function') window._pvMaybeShowQuiz(); } catch(e){}
     try { document.documentElement.classList.remove('app-locked'); } catch(e){}
     hideOverlay();
+    // Candado de suscripción: se evalúa DESPUÉS de revelar y sin await. Si se hiciera
+    // antes, una consulta lenta dejaría la app en negro; y si fallara, nadie entraría.
+    // El bloqueo real es el 403 del servidor — esto sólo lo explica en pantalla.
+    try { if (typeof window._pvSubGate === 'function') window._pvSubGate(); } catch(e){}
   }
 
   // Re-lee el estado desde localStorage y vuelve a pintar, SIN recargar el documento.
@@ -26858,6 +26606,7 @@ if (document.readyState === 'loading') {
     // TOKEN_REFRESHED) no repite la llamada de red. No se hace `await`: un fallo del SDK
     // no puede retrasar ni romper la entrada del usuario. `__pvPendingIapUid` cubre el
     // arranque en frío, donde portiv-iap.js (defer) aún no ha cargado al llegar aquí.
+    // En el build web PortivIAP no existe (solo se inyecta en nativo) → no-op.
     try {
       var _iapUid = (s.user && s.user.id) || '';
       if (_iapUid) {
@@ -26872,9 +26621,6 @@ if (document.readyState === 'loading') {
     // Sin esto, la generación corría como anónimo, la escritura la bloqueaba RLS y nunca
     // persistía → cada dispositivo regeneraba (bug de "se genera dos veces" + costo N×).
     window._pvAuthReady = true;
-    // Candado de suscripción: se evalúa en cuanto hay sesión. No se espera (await) a
-    // propósito — la carga de la nube no debe quedar detrás de una consulta de red.
-    try { if (typeof window._pvSubGate === 'function') window._pvSubGate(); } catch(e){}
     try { if (window._sharedFlushPending) window._sharedFlushPending(); } catch(e){}   // sube a la nube lo generado antes del login
     // ── AISLAMIENTO POR CUENTA ──────────────────────────────────────────────────────────
     // Si este navegador estaba ligado a OTRA cuenta (o a una versión de binding anterior),
@@ -26912,9 +26658,19 @@ if (document.readyState === 'loading') {
     _wlClearLocal(); _newsClearLocal();
     try {
       var uname = (s.user && s.user.user_metadata && (s.user.user_metadata.username || s.user.user_metadata.full_name || s.user.user_metadata.name)) || '';
-      var a = document.getElementById('navAvatar'); if (a) a.textContent = (uname || em || '?').slice(0,2).toUpperCase();
+      // No existe #navAvatar en el markup: el único avatar es #navAvatarMobile, que traía
+      // las iniciales "ST" en duro para todo el mundo porque este set nunca encontraba nada.
+      var a = document.getElementById('navAvatarMobile'); if (a) a.textContent = (uname || em || '?').slice(0,2).toUpperCase();
       var ae = document.getElementById('acctEmail'); if (ae) ae.textContent = uname ? ('@' + uname) : (em || '—');
+      // "Cambiar contraseña" con login social no tiene sentido: quien entró con Apple o
+      // Google no tiene contraseña que cambiar, y el revisor de Apple entra justamente
+      // con Sign in with Apple. Se oculta salvo proveedor = email.
+      var _prov = (s.user && s.user.app_metadata && s.user.app_metadata.provider) || 'email';
+      var pwi = document.getElementById('acctPwdItem');
+      if (pwi) pwi.style.display = (_prov === 'email') ? '' : 'none';
+      if (_prov !== 'email') { var pwf = document.getElementById('acctPwdForm'); if (pwf) pwf.style.display = 'none'; }
     } catch(e){}
+    try { if (typeof window._pvRenderAcctPlan === 'function') window._pvRenderAcctPlan(); } catch(e){}
 
     try {
       // FIX perf: las dos lecturas del gate (`profiles` y `profile_caches`) son INDEPENDIENTES
@@ -27281,12 +27037,73 @@ if (document.readyState === 'loading') {
     return Promise.resolve();
   };
 
+  // Apple exige un punto de restauración EXPLÍCITO para suscripciones auto-renovables,
+  // alcanzable sin volver a pasar por el paywall (Guideline 3.1.1). Antes no existía
+  // ninguno: `restored` sólo llegaba como resultado dentro de presentPaywall().
+  // El estado Pro NUNCA se escribe aquí en cliente: restore() sólo hace que StoreKit y
+  // RevenueCat vuelvan a coincidir; quien decide sigue siendo Supabase vía
+  // _pvEntitlementSync() (Edge Function) + _pvSubGate() (lee la fila de `subscriptions`).
+  window._pvRestorePurchases = async function(){
+    try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
+
+    // Web: Paddle no tiene "restaurar". El entitlement vive en Supabase, así que lo único
+    // honesto es releer el estado del servidor y refrescar el gate.
+    if (!window._pvIsNativeApp()) {
+      try { if (typeof window._pvSubGate === 'function') await window._pvSubGate(); } catch(e){}
+      try { showToast('Suscripción sincronizada.', 'var(--text2)'); } catch(e){}
+      return;
+    }
+
+    var iap = window.PortivIAP;
+    if (!iap || typeof iap.restore !== 'function'){
+      try { showToast('No se pudo contactar con la App Store. Inténtalo de nuevo.', 'var(--red)'); } catch(e){}
+      return;
+    }
+
+    try {
+      // Vincula ANTES de restaurar: sin logIn el entitlement queda en un ID anónimo
+      // y el webhook nunca lo cruza con la cuenta de Supabase.
+      if (window.__pvUserId && window.__pvUserId !== 'local' && typeof iap.login === 'function') {
+        try { await iap.login(window.__pvUserId); } catch(e){}
+      }
+      var r = await iap.restore();                       // devuelve boolean isPro
+      var isPro = (r && typeof r === 'object') ? !!r.isPro : !!r;
+      if (isPro) {
+        try { showToast('¡Listo! Tu suscripción Portiv Pro está activa.', 'var(--green, #16a34a)'); } catch(e){}
+        try { if (typeof window._pvEntitlementSync === 'function') await window._pvEntitlementSync(true); } catch(e){}
+        try { if (typeof window._pvSubGate === 'function') await window._pvSubGate(); } catch(e){}
+      } else {
+        try { showToast('No encontramos una suscripción activa en este ID de Apple.', 'var(--text2)'); } catch(e){}
+      }
+    } catch(e){
+      try { showToast('No se pudo restaurar. Inténtalo más tarde.', 'var(--red)'); } catch(_){}
+    }
+  };
+
+  // Guideline 3.1.2: la app debe ofrecer una salida a la gestión/cancelación de la
+  // suscripción. En iOS eso es la pantalla nativa de Apple; en web, la política de
+  // reembolsos (Paddle gestiona la baja desde el email de compra).
+  window._pvManageSubscription = function(){
+    try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
+    if (window._pvIsNativeApp()){
+      // Deep link oficial de Apple. Se prefiere App.openUrl: un location.href a un esquema
+      // no-http desde WKWebView lo bloquea la propia webview en vez de delegarlo al sistema.
+      try {
+        var C = window.Capacitor && window.Capacitor.Plugins;
+        if (C && C.App && typeof C.App.openUrl === 'function') {
+          C.App.openUrl({ url: 'itms-apps://apps.apple.com/account/subscriptions' });
+          return;
+        }
+      } catch(e){}
+      try { window.location.href = 'itms-apps://apps.apple.com/account/subscriptions'; } catch(e){}
+      return;
+    }
+    window._pvOpenExternal('reembolsos.html');
+  };
+
   function showLogin(purge){
     session = null;
     window._pvAuthReady = false;
-    // Sin sesión no hay a quién bloquear: el muro del candado se retira o taparía
-    // la propia pantalla de login (encierro total, sin salida posible).
-    try { if (typeof window._pvSubUnblock === 'function') window._pvSubUnblock(); } catch(e){}
     if (purge === false) {
       var _b0 = document.getElementById('authBoot'); if (_b0) _b0.style.display = 'none';
       var _b1 = document.getElementById('authBody'); if (_b1) _b1.style.display = 'block';
@@ -27398,9 +27215,15 @@ if (document.readyState === 'loading') {
   };
 
   // ── Menú de cuenta ──
-  window._acctToggle = function(e){ if (e) e.stopPropagation(); var m = document.getElementById('acctMenu'); m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none'; };
+  window._acctToggle = function(e){ if (e) e.stopPropagation(); var m = document.getElementById('acctMenu'); var _open = (m.style.display === 'none' || !m.style.display); m.style.display = _open ? 'block' : 'none'; if (_open) { try { window._pvRenderAcctPlan && window._pvRenderAcctPlan(); } catch(_){} } };
   window._acctTogglePwd = function(){ var f = document.getElementById('acctPwdForm'); f.style.display = f.style.display === 'none' ? 'block' : 'none'; };
-  window._acctHelp = function(){ try { if (typeof window.showToast === 'function') { window.showToast('Ayuda y chatbot: próximamente 🚧', 'var(--blue, #208AEF)'); return; } } catch(e){} alert('Ayuda y chatbot: próximamente.'); };
+  // Antes anunciaba una función futura ("Ayuda y chatbot: próximamente"). Un botón visible
+  // que promete algo que no existe es rechazo por Guideline 2.1 (App Completeness), y es uno
+  // de los ítems que el revisor sí pulsa. Ahora abre soporte real.
+  window._acctHelp = function(){
+    try { var m = document.getElementById('acctMenu'); if (m) m.style.display = 'none'; } catch(e){}
+    window._pvOpenExternal('soporte.html');
+  };
   window._acctChangePwd = async function(){
     var p1 = (document.getElementById('acctNewPwd').value || '').trim();
     var p2 = (document.getElementById('acctNewPwd2').value || '').trim();
@@ -27499,7 +27322,7 @@ if (document.readyState === 'loading') {
   document.addEventListener('click', function(e){
     var m = document.getElementById('acctMenu');
     if (m && m.style.display === 'block') {
-      var av = document.getElementById('navAvatar');
+      var av = document.getElementById('navAvatarMobile');
       if (!m.contains(e.target) && e.target !== av) m.style.display = 'none';
     }
   });
@@ -27541,12 +27364,10 @@ if (document.readyState === 'loading') {
 function _btActive(btn){
   document.querySelectorAll('.bottom-tab').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  // Sync mobile avatar with main
-  try { var av=document.getElementById('navAvatar'); var avm=document.getElementById('navAvatarMobile'); if(av&&avm) avm.textContent=av.textContent; } catch(e){}
+  // El espejo #navAvatar → #navAvatarMobile se eliminó: no hay avatar de escritorio,
+  // #navAvatarMobile ES el único, y ahora lo rellena directamente el bloque de sesión.
 }
-// Sync mobile avatar on load
 document.addEventListener('DOMContentLoaded', function(){
-  try { var av=document.getElementById('navAvatar'); var avm=document.getElementById('navAvatarMobile'); if(av&&avm) { var obs=new MutationObserver(function(){ avm.textContent=av.textContent; }); obs.observe(av,{childList:true,characterData:true,subtree:true}); } } catch(e){}
   // Sync bottom-nav active state with showTab
   const origShowTab = window.showTab;
   if (origShowTab) {
@@ -27642,15 +27463,25 @@ document.addEventListener('DOMContentLoaded', function(){
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#04162c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
           <span>Sin pago ahora</span>
         </div>
+        <div id="pwPlans" style="display:flex;gap:9px;margin-bottom:14px" role="group" aria-label="Plan">
+          <button type="button" data-plan="monthly" aria-pressed="true" onclick="_pvSelectPlan('monthly')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid #04162c;background:#f8f9ff;">
+            <div class="pw-feat-t">Mensual</div>
+            <div class="pw-feat-d">USD 4.99/mes · 30 días gratis</div>
+          </button>
+          <button type="button" data-plan="annual" aria-pressed="false" onclick="_pvSelectPlan('annual')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid var(--st-surface-cont, #e5eeff);background:transparent;">
+            <div class="pw-feat-t">Anual</div>
+            <div class="pw-feat-d">USD 49.99/año · ahorra ~17%</div>
+          </button>
+        </div>
         <button class="pw-btn" onclick="_pvStartCheckout()">Comenzar ahora</button>
-        <div class="pw-price"><b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b></div>
+        <div class="pw-price" id="pwPriceNote"><b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b></div>
         <div class="pw-fine">Cancela cuando quieras · Sin compromisos</div>
         <div class="pw-legal">
-          <a href="terminos.html" target="_blank" rel="noopener">Términos</a>
+          <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
           <span class="pw-legal-sep">·</span>
-          <a href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
+          <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
           <span class="pw-legal-sep">·</span>
-          <a href="reembolsos.html" target="_blank" rel="noopener">Reembolsos</a>
+          <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
         </div>
       </div>
     </div>
@@ -27662,10 +27493,27 @@ document.addEventListener('DOMContentLoaded', function(){
   // overlay web — y ese overlay abre Paddle Checkout. Un método de pago externo dentro de la
   // app de iOS es rechazo directo en App Review (Guideline 3.1.1), además de prometer un
   // "1 mes gratis" hardcodeado que ahí no lo concede nadie. En nativo no hay plan B: o el
-  // paywall de StoreKit, o un error honesto.
+  // paywall de StoreKit, o un error honesto. En el build web esto siempre devuelve false.
   window._pvIsNativeApp = function(){
     try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }
     catch(e){ return false; }
+  };
+
+  // Abre una URL legal/externa de forma que funcione EN LOS DOS builds.
+  // Nativo: @capacitor/browser (SFSafariViewController in-app, mantiene al usuario dentro
+  // de la app — requisito de facto de App Review). Web: pestaña nueva de siempre.
+  // Un target="_blank" con href RELATIVO dentro de WKWebView no abre nada útil: se pierde
+  // o intenta capacitor://localhost/terminos.html en Safari y falla → "the links did not work".
+  window._pvOpenExternal = function(path){
+    var abs = /^https?:/i.test(path) ? path : ('https://portivapp.com/' + String(path).replace(/^\//,''));
+    try {
+      if (window._pvIsNativeApp() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+        window.Capacitor.Plugins.Browser.open({ url: abs, presentationStyle: 'popover' });
+        return false;
+      }
+    } catch(e){}
+    try { window.open(abs, '_blank', 'noopener'); } catch(e){ location.href = abs; }
+    return false;
   };
   window._pvShowPaywall = function(){
     var _nat = window._pvIsNativeApp();
@@ -27711,32 +27559,100 @@ document.addEventListener('DOMContentLoaded', function(){
     // El quiz de perfil vive DEBAJO del paywall (z-index 12000 los dos). Al cerrar el
     // paywall se hacía showTab('portfolio') pero el quiz seguía tapando la pantalla:
     // el usuario se quedaba mirando la tarjeta del perfil sin salida. Mismo motivo que
-    // en _pvConfirmTrial, pero por el camino de "no continué".
+    // en _pvConfirmTrial, pero por el camino de "no pagué".
     try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
     try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+  };
+  // Cierre del checkout SIN pago completado. Se separa de _pvClosePaywall porque aquí sí
+  // hay que explicar por qué no pasó nada: sin mensaje, cerrar Paddle y volver al perfil
+  // es indistinguible de un fallo de la app.
+  window._pvAbortCheckout = function(wasError){
+    try { window._pvClosePaywall(); } catch(e){}
+    var msg = wasError
+      ? 'No se pudo procesar el pago. Inténtalo de nuevo desde Portafolio → Conectar mi broker.'
+      : 'Pago no completado. Puedes retomarlo cuando quieras desde Portafolio → Conectar mi broker.';
+    // showToast() y no toast(): el helper `toast` es local del IIFE de SnapTrade y no
+    // existe en este ámbito, así que la llamada se perdía en silencio.
+    try { if (typeof showToast === 'function') showToast(msg, wasError ? 'var(--red)' : 'var(--text2)'); else alert(msg); } catch(e){ try{ alert(msg); }catch(_){} }
   };
   // "Comenzar ahora" en la pantalla de prueba gratis: recién AQUÍ arranca el análisis de
   // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
   // overlay sin cambiar de tab — _analyzeOnboarding() hace showTab('portfolio') solo
   // cuando el análisis realmente termina.
-  // "Comenzar ahora" del paywall. En ESTE bundle (Capacitor/iOS) el cobro pasa SIEMPRE por
-  // StoreKit vía RevenueCat: Paddle es un método de pago externo y Apple lo rechaza
-  // (Guideline 3.1.1). Por eso el build de iOS no incluye paddle.js.
-  //
-  // Antes esta función conservaba, después del guard nativo, todo el camino de Paddle
-  // Checkout (lectura de PADDLE_PRICES, un priceId de respaldo en duro y Paddle.Checkout.open).
-  // Era código MUERTO y además roto: en este bundle no existen ni el script de Paddle ni la
-  // llamada a Paddle.Initialize, así que si alguna vez se hubiera alcanzado habría lanzado.
-  // Se sustituye por la ruta nativa única. El sistema de suscripción NO cambia: sigue siendo
-  // el mismo paywall de RevenueCat (_pvShowPaywall → PortivIAP.presentPaywall) que ya se usaba;
-  // solo se elimina la bifurcación que nunca se tomaba.
-  //
-  // El paywall NO se cierra aquí ni se llama a snapConnect(): eso ocurre en _pvConfirmTrial(),
-  // que dispara el listener de compra de RevenueCat cuando StoreKit confirma la transacción.
+  // Plan elegido en el toggle del paywall. 'monthly' | 'annual'.
+  var _pvSelectedPlan = 'monthly';
+  // Estilos del toggle: solo tokens ya usados por el paywall (#04162c, #74777e, #e5eeff).
+  function _pvPlanStyle(sel){
+    return 'flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;'
+      + 'border-radius:14px;transition:border-color .15s,background .15s;'
+      + (sel
+          ? 'border:2px solid #04162c;background:#f8f9ff;'
+          : 'border:2px solid var(--st-surface-cont, #e5eeff);background:transparent;');
+  }
+  window._pvSelectPlan = function(plan){
+    _pvSelectedPlan = (plan === 'annual') ? 'annual' : 'monthly';
+    try {
+      var btns = document.querySelectorAll('#pwPlans [data-plan]');
+      for (var i=0;i<btns.length;i++){
+        var on = btns[i].getAttribute('data-plan') === _pvSelectedPlan;
+        btns[i].setAttribute('style', _pvPlanStyle(on));
+        btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+      }
+      var p = document.getElementById('pwPriceNote');
+      if (p) p.innerHTML = (_pvSelectedPlan === 'annual')
+        ? 'USD 49.99 <b>al año</b> · ahorra ~17%'
+        : '<b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b>';
+    } catch(e){}
+  };
+  // "Comenzar ahora": abre Paddle Checkout (LIVE). El paywall NO se cierra
+  // ni se llama snapConnect() aquí — eso ocurre SOLO tras checkout.completed
+  // (ver eventCallback en la init de Paddle en <head>), que además cierra el
+  // paywall y conecta el broker vía _pvConfirmTrial().
   window._pvStartCheckout = async function(){
-    try { window._pvShowPaywall(); } catch(e){
-      try { alert('No se pudo abrir la suscripción. Inténtalo de nuevo en un momento.'); } catch(_){}
+    // En iOS el cobro SIEMPRE pasa por StoreKit. Paddle es un método de pago externo y
+    // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
+    // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
+    if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
+    // Nuevo intento → el flag de "ya pagué" del intento anterior no debe sobrevivir.
+    try { _pvCheckoutCompleted = false; } catch(e){}
+    // Paddle.js ya no viene en el <head>: se descarga aquí la primera vez (~300 ms). Si el
+    // CDN falla, se muestra EXACTAMENTE el mismo aviso que cuando Paddle no estaba listo.
+    try { if (typeof window._ensurePaddle === 'function') await window._ensurePaddle(); } catch(e){}
+    if (!window.Paddle || !window.Paddle.Checkout) {
+      var _mp = 'El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.';
+      try { if (typeof showToast === 'function') { showToast(_mp, 'var(--red)'); return; } } catch(e){}
+      try { alert(_mp); } catch(e){}
+      return;
+    }
+    var email = null, uid = null;
+    try {
+      var sb = window.sbClient;
+      if (sb && sb.auth) { var r = await sb.auth.getUser(); if (r && r.data && r.data.user) { email = r.data.user.email; uid = r.data.user.id; } }
+    } catch(e){}
+    if ((!email || !uid) && typeof session !== 'undefined' && session && session.user) {
+      email = email || session.user.email; uid = uid || session.user.id;
+    }
+    // Sin uid no hay custom_data.supabase_user_id → el webhook de Paddle no sabe a quién
+    // otorgar el entitlement y el usuario pagaría sin recibir nada. Se aborta ANTES de cobrar.
+    if (!uid) {
+      var m1 = 'Necesitas iniciar sesión antes de suscribirte.';
+      try { if (typeof showToast === 'function') showToast(m1, 'var(--red)'); else alert(m1); } catch(e){ try{ alert(m1); }catch(_){} }
+      return;
+    }
+    var priceId = window.PADDLE_PRICES && window.PADDLE_PRICES[_pvSelectedPlan];
+    // Sin priceId conocido, Paddle abriría un checkout vacío o con el precio equivocado.
+    if (!priceId) {
+      var m2 = 'No se pudo cargar el plan. Recarga la página e inténtalo de nuevo.';
+      try { if (typeof showToast === 'function') showToast(m2, 'var(--red)'); else alert(m2); } catch(e){ try{ alert(m2); }catch(_){} }
+      return;
+    }
+    var opts = { items: [{ priceId: priceId, quantity: 1 }], customData: { supabase_user_id: uid } };
+    if (email) opts.customer = { email: email };
+    try { Paddle.Checkout.open(opts); } catch(e){
+      var _mc = 'No se pudo abrir el checkout. Intenta de nuevo.';
+      try { if (typeof showToast === 'function') { showToast(_mc, 'var(--red)'); return; } } catch(_){}
+      try { alert(_mc); } catch(_){}
     }
   };
   window._pvConfirmTrial = function(){
@@ -27749,11 +27665,10 @@ document.addEventListener('DOMContentLoaded', function(){
     // parece que no pasó nada.
     try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
-    // Quita el muro del candado en cuanto la compra se confirma, sin esperar al recheck.
-    try { if (typeof window._pvSubUnblock === 'function') window._pvSubUnblock(); } catch(e){}
-    // El webhook de RevenueCat tarda en escribir `subscriptions`. Llamar a snapConnect()
-    // de inmediato devolvía 403 subscription_required — un error justo después de pagar.
-    // _pvAwaitEntitlement sondea con techo y conecta el broker en cuanto hay entitlement.
+    // NO se llama snapConnect() directo: el webhook de Paddle tarda ~1-3 s en escribir el
+    // entitlement, y si conectamos antes la Edge Function responde 403 subscription_required
+    // justo después de que el usuario pagó — el peor momento posible para un error. Se espera
+    // a que el entitlement aparezca (con techo) y recién entonces se conecta.
     try {
       if (typeof window._pvAwaitEntitlement === 'function') { window._pvAwaitEntitlement(); return; }
     } catch(e){}
@@ -27763,44 +27678,38 @@ document.addEventListener('DOMContentLoaded', function(){
 
 <script>
 /* ═══════════════════════════════════════════════════════════════
-   CANDADO DE SUSCRIPCIÓN (UI) — versión iOS · banner + bloqueo duro
+   CANDADO DE SUSCRIPCIÓN (UI) — banner + bloqueo duro + cambio de tarjeta
    ───────────────────────────────────────────────────────────────
    IMPORTANTE: esto es SOLO experiencia de usuario. El candado real vive en el
-   servidor (has_active_entitlement(uid) → las Edge Functions responden 403
-   subscription_required). Forzar el DOM desde el inspector no da acceso a nada:
-   sin entitlement no hay datos de broker.
-
-   Diferencias con la versión web (deliberadas, no son copias a medias):
-     • El cobro va por StoreKit/RevenueCat, no por Paddle → el CTA abre el paywall
-       nativo, y hay botón "Restaurar compras" (obligatorio de facto en iOS: quien
-       pagó en otro dispositivo NO puede quedar encerrado).
-     • Se consulta TAMBIÉN PortivIAP.isPro(). Si StoreKit dice que hay compra viva,
-       no se bloquea aunque la fila de `subscriptions` aún no exista: el webhook de
-       RevenueCat puede tardar, y encerrar a alguien que acaba de pagar es el peor
-       fallo posible (y motivo de rechazo en App Review).
-     • Re-chequeo también en el evento `resume` de Capacitor: en el WKWebView el
-       `visibilitychange` no siempre dispara al volver de segundo plano.
+   servidor (has_active_entitlement(uid) → Edge Functions responden 403
+   subscription_required). Forzar el DOM desde la consola no da acceso a nada:
+   sin entitlement no hay datos de broker ni IA. Aquí sólo se explica al usuario
+   por qué está bloqueado y se le da el camino para arreglarlo.
 ═══════════════════════════════════════════════════════════════ */
 (function(){
-  // Interruptor del bloqueo VISUAL. En false la app no se tapa nunca (el servidor
-  // sigue devolviendo 403 igual: esto no regala acceso, sólo quita el muro).
+  // Interruptor del bloqueo VISUAL. En false la app no se tapa nunca (el servidor sigue
+  // devolviendo 403 igual: esto no regala acceso a nada, sólo deja de mostrar el muro).
+  // Ponlo en false si alguna vez hay usuarios reales sin forma de pagar todavía.
   var ENFORCE = true;
 
-  // Mismo bypass que la función SQL has_active_entitlement. Se duplica a propósito:
-  // si sólo estuviera en el servidor, el dueño vería el muro en pantalla aunque las
-  // llamadas le funcionaran.
+  // Mismo bypass que la función SQL. Se duplica a propósito: si sólo estuviera en el
+  // servidor, el dueño vería el bloqueo en pantalla aunque las llamadas le funcionaran.
   var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
 
+  // Estados de Paddle/RevenueCat que SIGUEN dando acceso. 'past_due' entra aquí a
+  // propósito: Paddle reintenta el cobro varios días y cortar al primer rechazo
+  // expulsaría a un cliente que sólo tiene la tarjeta vencida. Se le avisa, no se le echa.
+  var STATUS_OK    = { active:1, trialing:1, grace:1, past_due:1, canceled:1 };
   // 'canceled' con entitlement_active=true = canceló la renovación pero conserva el
-  // acceso hasta fin de periodo. 'grace' = Apple está reintentando el cobro. En ambos
-  // se avisa, no se echa: cortar al primer tropiezo expulsa a clientes que sí pagan.
-  var STATUS_WARN = { grace:1, canceled:1, past_due:1 };
+  // acceso hasta fin de periodo. Cuando expire llegará otro evento con active=false.
+  var STATUS_WARN  = { past_due:1, canceled:1 };
 
+  var _last = null;      // último estado conocido (evita repintar en cada recheck)
   var _busy = false;
 
   // El email se pide a Supabase y no a la variable `session` del módulo de auth: esa
-  // vive en el ámbito de su IIFE y aquí saldría undefined, lo que rompería el bypass
-  // del dueño y bloquearía justo a quien nunca debe bloquearse.
+  // vive en el ámbito de su IIFE y desde aquí sale undefined, lo que haría fallar el
+  // bypass del dueño y bloquearía justo a quien nunca debe bloquearse.
   async function _isOwner(){
     try {
       var sb = window.sbClient;
@@ -27811,17 +27720,25 @@ document.addEventListener('DOMContentLoaded', function(){
     } catch(e){ return false; }
   }
 
-  // Compra viva según StoreKit (caché local del SDK de RevenueCat). Es la red de
-  // seguridad para el hueco entre "Apple cobró" y "el webhook escribió la fila".
-  async function _nativePro(){
-    try {
-      var iap = window.PortivIAP;
-      if (!iap || typeof iap.isPro !== 'function') return false;
-      var v = iap.isPro();
-      if (v && typeof v.then === 'function') v = await v;
-      return v === true;
-    } catch(e){ return false; }
-  }
+  // Reconciliación con RevenueCat vía Edge Function. Anti-tormenta: sin el throttle,
+  // _pvSubGate() corre en cada visibilitychange y en cada appStateChange → volver a
+  // la app 10 veces serían 10 llamadas a la API de RevenueCat.
+  // stCall() ya adjunta el access_token y normaliza los errores con .status.
+  window._pvEntitlementSync = (function(){
+    var _last = 0, _inflight = null;
+    return function(force){
+      var now = Date.now();
+      if (!force && (now - _last) < 30000) return Promise.resolve(null);
+      if (_inflight) return _inflight;
+      _last = now;
+      _inflight = (typeof window.stCall === 'function'
+          ? window.stCall('entitlement-sync', {})
+          : Promise.resolve(null))
+        .catch(function(){ return null; })
+        .then(function(r){ _inflight = null; return r; });
+      return _inflight;
+    };
+  })();
 
   // Lee la fila propia de `subscriptions`. La RLS sólo deja ver la del usuario
   // autenticado, así que no hace falta filtrar por uid a mano.
@@ -27829,26 +27746,64 @@ document.addEventListener('DOMContentLoaded', function(){
     if (await _isOwner()) return { active:true, status:'owner', owner:true };
     var sb = window.sbClient;
     if (!sb) return null;
-    var row = null;
+    var srv = null;
     try {
       var r = await sb.from('subscriptions')
         .select('entitlement_active,status,expires_at,will_renew')
         .maybeSingle();
-      // Fallo de red / RLS → null y el llamador NO bloquea. Mismo criterio fail-open
-      // que requireEntitlement en el servidor: una caída nuestra no deja fuera a
-      // alguien que sí pagó.
+      // Fallo de red / RLS: se devuelve null y el llamador NO bloquea. Mismo criterio
+      // fail-open que requireEntitlement en el servidor: una caída nuestra no debe
+      // dejar fuera a alguien que sí pagó.
       if (r && r.error) return null;
-      row = (r && r.data) || null;
+      var d = (r && r.data) || null;
+      srv = d ? {
+        active: d.entitlement_active === true,
+        status: d.status || 'never',
+        expiresAt: d.expires_at || null,
+        willRenew: d.will_renew
+      } : { active:false, status:'never' };
     } catch(e){ return null; }
 
-    if (row && row.entitlement_active === true) {
-      return { active:true, status: row.status || 'active', expiresAt: row.expires_at || null, willRenew: row.will_renew };
+    // ── Camino rápido nativo (iOS) ─────────────────────────────────────────
+    // Sin esto, el hueco entre el pago en StoreKit y la llegada del webhook
+    // (segundos, minutos, o infinito si el webhook se perdió) le muestra el muro
+    // de "necesitas una suscripción" a alguien que ACABA de pagar: rechazo seguro
+    // en App Review y reembolso seguro en producción.
+    //
+    // El acceso optimista no es un agujero: las Edge Functions siguen respondiendo
+    // 403 hasta que la fila exista. Sólo evita el muro mientras se reconcilia.
+    // Y sólo se consulta cuando el servidor dice que NO: si el servidor dice que
+    // sí, gana el servidor — es quien sabe de revocaciones y reembolsos.
+    //
+    // portiv-iap.js NO expone getCustomerInfo(). Su API pública es
+    // refresh() → Promise<boolean isPro> (que por dentro sí llama a
+    // getCustomerInfo del SDK) e isPro() → boolean cacheado. En web no existe
+    // PortivIAP, por eso todo va detrás de _pvIsNativeApp().
+    if (!srv.active && window._pvIsNativeApp && window._pvIsNativeApp()) {
+      try {
+        var iap = window.PortivIAP, storeKitPro = false;
+        if (iap && typeof iap.refresh === 'function')     storeKitPro = !!(await iap.refresh());
+        else if (iap && typeof iap.isPro === 'function')  storeKitPro = !!iap.isPro();
+        if (storeKitPro) {
+          try { window._pvEntitlementSync(); } catch(_){}   // reconcilia sin bloquear
+          return { active:true, status:'active', source:'storekit',
+                   expiresAt: srv.expiresAt || null, willRenew: true };
+        }
+      } catch(_){}
     }
-    // Sin fila (o inactiva) pero StoreKit dice que hay compra → se respeta la compra.
-    if (await _nativePro()) return { active:true, status:'store_pending', store:true };
-    if (!row) return { active:false, status:'never' };
-    return { active:false, status: row.status || 'never', expiresAt: row.expires_at || null, willRenew: row.will_renew };
+    return srv;
   };
+
+  // Fecha de fin de acceso para el banner de "cancelada". Sin ella el mensaje
+  // "hasta el fin del periodo" no le dice al usuario nada accionable.
+  function _fmtDate(iso){
+    if (!iso) return null;
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return null;
+      return d.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' });
+    } catch(e){ return null; }
+  }
 
   // ── Banner superior ──────────────────────────────────────────────────────
   function _banner(kind, text, ctaLabel, onCta){
@@ -27856,11 +27811,10 @@ document.addEventListener('DOMContentLoaded', function(){
     if (!b) {
       b = document.createElement('div');
       b.id = 'pvSubBanner';
-      // padding-top del notch: en iPhone el banner quedaba debajo de la isla dinámica.
       b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:12800;display:flex;'
         + 'align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;'
-        + 'padding:calc(11px + env(safe-area-inset-top)) 16px 11px;font-size:14px;font-weight:600;'
-        + 'line-height:1.35;box-shadow:0 2px 12px rgba(0,0,0,.13);transform:translateY(-100%);'
+        + 'padding:11px 16px;font-size:14px;font-weight:600;line-height:1.35;'
+        + 'box-shadow:0 2px 12px rgba(0,0,0,.13);transform:translateY(-100%);'
         + 'transition:transform .28s cubic-bezier(.22,1,.36,1);';
       document.body.appendChild(b);
     }
@@ -27894,8 +27848,8 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   // ── Bloqueo duro ─────────────────────────────────────────────────────────
-  // z-index 12500: por encima del quiz y del paywall (12000) pero por DEBAJO del
-  // toast (13000) — si algo falla al restaurar, el mensaje tiene que verse.
+  // z-index 12500: por encima del quiz y del paywall (12000), pero por DEBAJO del
+  // toast (13000) — si algo falla al reintentar el pago, el mensaje tiene que verse.
   function _block(title, body, ctaLabel){
     var o = document.getElementById('pvSubBlock');
     if (!o) {
@@ -27916,18 +27870,16 @@ document.addEventListener('DOMContentLoaded', function(){
         + '<p id="pvSubBlockBody" style="margin:0 0 22px;font-size:14.5px;line-height:1.5;color:#5b6c85;"></p>'
         + '<button id="pvSubBlockCta" style="width:100%;height:50px;border:none;border-radius:13px;'
         + 'background:#12d18e;color:#04231a;font-size:15.5px;font-weight:800;cursor:pointer;"></button>'
-        + '<button id="pvSubBlockRestore" style="width:100%;height:44px;margin-top:9px;border:none;'
-        + 'background:none;color:#0f1d35;font-size:13.5px;font-weight:700;cursor:pointer;">Restaurar compras</button>'
-        + '<button id="pvSubBlockOut" style="width:100%;height:40px;border:none;'
+        + '<button id="pvSubBlockOut" style="width:100%;height:44px;margin-top:9px;border:none;'
         + 'background:none;color:#8a97a8;font-size:13.5px;font-weight:600;cursor:pointer;">Cerrar sesión</button>'
         + '</div>';
       document.body.appendChild(o);
       // Sin esta salida el usuario sin suscripción queda encerrado sin forma de
       // cambiar de cuenta — y la cuenta correcta puede ser justo la que sí pagó.
       o.querySelector('#pvSubBlockOut').onclick = function(){
+        try { if (typeof window._authSignout === 'function') { window._authSignout(); return; } } catch(e){}
         try { window.sbClient.auth.signOut().then(function(){ return window._pvIapLogout(); }).then(function(){ location.reload(); }); } catch(e){ location.reload(); }
       };
-      o.querySelector('#pvSubBlockRestore').onclick = function(){ window._pvRestorePurchases(); };
       o.querySelector('#pvSubBlockCta').onclick = function(){ window._pvRetryPayment(); };
     }
     o.querySelector('#pvSubBlockTitle').textContent = title;
@@ -27941,58 +27893,99 @@ document.addEventListener('DOMContentLoaded', function(){
     if (o) o.style.display = 'none';
     document.body.style.overflow = '';
   }
-  window._pvSubUnblock = function(){ _unblock(); _bannerHide(); };
 
-  // En iOS el pago SIEMPRE pasa por StoreKit: el CTA abre el paywall nativo de
-  // RevenueCat. Cambiar la tarjeta o cancelar se hace en Ajustes de iOS — no
-  // podemos (ni debemos) replicarlo dentro de la app.
+  // Reabrir el checkout es la vía de "cambiar tarjeta" que funciona sin endpoint nuevo:
+  // Paddle pide método de pago otra vez y el cobro corregido genera transaction.completed,
+  // que el webhook convierte en entitlement. La URL nativa de "update payment method" de
+  // Paddle exige llamar a su API con la secret key — no puede salir del navegador.
+  // En iOS el método de pago vive en Ajustes → Apple ID → Suscripciones. No hay
+  // endpoint nuestro que pueda cambiarlo, y ofrecer un checkout web dentro de la
+  // app es Guideline 3.1.1 (rechazo directo).
+  var APPLE_SUBS_URL = 'itms-apps://apps.apple.com/account/subscriptions';
+  function _openAppleSubs(){
+    // location.href y no window.open: iOS intercepta el esquema itms-apps y abre
+    // la app de Ajustes/App Store sin descargar la WebView. window.open('_system')
+    // depende de que InAppBrowser esté instalado y falla en silencio si no lo está.
+    try { location.href = APPLE_SUBS_URL; return true; } catch(e){}
+    try { window.open(APPLE_SUBS_URL, '_system'); return true; } catch(e){}
+    return false;
+  }
+
   window._pvRetryPayment = function(){
     if (_busy) return; _busy = true;
     setTimeout(function(){ _busy = false; }, 1200);
-    try { if (typeof window._pvShowPaywall === 'function') { window._pvShowPaywall(); return; } } catch(e){}
-    try { showToast('No se pudo abrir la suscripción. Cierra y vuelve a abrir la app.', 'var(--red)'); } catch(_){}
-  };
 
-  // Restaurar: quien pagó en otro dispositivo (o reinstaló) recupera el acceso sin
-  // volver a pagar. Tras restaurar se re-evalúa el candado en vez de asumir el éxito.
-  window._pvRestorePurchases = async function(){
-    var iap = window.PortivIAP;
-    if (!iap || typeof iap.restore !== 'function') {
-      try { showToast('Restaurar no está disponible en esta versión.', 'var(--red)'); } catch(e){}
+    // ── iOS nativo ────────────────────────────────────────────────────────
+    // 'paused' y 'past_due' se arreglan en Ajustes (reanudar la suscripción /
+    // corregir el método de pago que Apple está reintentando).
+    // 'never' / 'expired' / 'refunded' / 'transferred' se arreglan comprando →
+    // paywall de StoreKit.
+    if (window._pvIsNativeApp && window._pvIsNativeApp()) {
+    // 'canceled' sigue activa hasta fin de periodo: lo que quiere es reactivar la
+    // renovación, que es un interruptor de Ajustes. Mandarlo al paywall le vendería
+    // una compra duplicada.
+      var _st = (_last && _last.status) || '';
+      if (_st === 'paused' || _st === 'past_due' || _st === 'canceled') { _openAppleSubs(); return; }
+      try { if (typeof window._pvShowPaywall === 'function') { window._pvShowPaywall(); return; } } catch(e){}
+      _openAppleSubs();
       return;
     }
+
+    // ── Web (Paddle) — sin cambios ────────────────────────────────────────
     try {
-      try { if (window.__pvUserId && window.__pvUserId !== 'local' && iap.login) iap.login(window.__pvUserId); } catch(e){}
-      await iap.restore();
-      if (await _nativePro()) {
-        _unblock(); _bannerHide();
-        try { showToast('Compra restaurada.'); } catch(e){}
-        try { window.snapRefresh && window.snapRefresh({ silent:true }); } catch(e){}
-        return;
-      }
-      try { showToast('No encontramos una suscripción activa en esta cuenta de Apple.', 'var(--text2)'); } catch(e){}
-    } catch(e){
-      try { showToast('No se pudo restaurar. Inténtalo de nuevo.', 'var(--red)'); } catch(_){}
-    }
+      if (typeof window._pvStartCheckout === 'function') { window._pvStartCheckout(); return; }
+      if (typeof window._pvOpenPaywall === 'function') { window._pvOpenPaywall(); return; }
+    } catch(e){}
+    try { showToast('No se pudo abrir el pago. Recarga la página e inténtalo de nuevo.', 'var(--red)'); } catch(_){}
+  };
+
+  // Guideline 3.1.2: el menú de cuenta tenía que decir si el usuario es Pro y ofrecer
+  // una salida a gestionar/cancelar. El estado se LEE del servidor (_last viene de
+  // _pvSubStatus, que lee la fila de `subscriptions`); no hay bandera local editable.
+  window._pvRenderAcctPlan = async function(){
+    var el = document.getElementById('acctPlan');
+    var mg = document.getElementById('acctManageSub');
+    if (!el && !mg) return;
+    var st = _last;
+    if (!st) { try { st = await window._pvSubStatus(); } catch(e){ st = null; } if (st) _last = st; }
+    var _nat = !!(window._pvIsNativeApp && window._pvIsNativeApp());
+    var active = !!(st && st.active);
+    if (el) el.textContent = active
+      ? (_nat ? 'Portiv Pro · renovación gestionada por Apple' : 'Portiv Pro')
+      : 'Plan gratuito';
+    if (mg) mg.style.display = active ? '' : 'none';
   };
 
   // ── Evaluación + pintado ────────────────────────────────────────────────
   window._pvSubGate = async function(){
     var st = await window._pvSubStatus();
     if (!st) return null;                       // fail-open (ver _pvSubStatus)
-
+    _last = st;
+    try { window._pvRenderAcctPlan(); } catch(e){}
     if (st.active && !STATUS_WARN[st.status]) { _bannerHide(); _unblock(); return st; }
+
+    var _nat = !!(window._pvIsNativeApp && window._pvIsNativeApp());
 
     if (st.active && STATUS_WARN[st.status]) {
       _unblock();
-      if (st.status === 'grace' || st.status === 'past_due') {
+      if (st.status === 'past_due') {
+        // En iOS quien reintenta el cobro es Apple, y el método de pago se
+        // corrige en Ajustes. Prometer "actualiza tu tarjeta" apuntando a un
+        // checkout nuestro sería mentir y además es Guideline 3.1.1.
         _banner('danger',
-          'Apple no pudo cobrar tu suscripción. Revisa tu método de pago para no perder el acceso.',
-          'Ver suscripción', window._pvRetryPayment);
+          _nat
+            ? 'Apple no pudo cobrar tu suscripción. Actualiza tu método de pago para no perder el acceso.'
+            : 'No pudimos cobrar tu suscripción. Actualiza tu tarjeta para no perder el acceso.',
+          _nat ? 'Gestionar suscripción' : 'Actualizar tarjeta', window._pvRetryPayment);
       } else {
+        // Canceló la renovación pero el periodo ya está pagado. Se le dice hasta
+        // cuándo: sin la fecha, "hasta el fin del periodo" no informa de nada.
+        var _f = _fmtDate(st.expiresAt);
         _banner('warn',
-          'Tu suscripción está cancelada. Conservas el acceso hasta el fin del periodo.',
-          'Reactivar', window._pvRetryPayment);
+          _f
+            ? ('Tu suscripción está cancelada. Conservas el acceso hasta el ' + _f + '.')
+            : 'Tu suscripción está cancelada. Conservas el acceso hasta el fin del periodo.',
+          _nat ? 'Gestionar suscripción' : 'Reactivar', window._pvRetryPayment);
       }
       return st;
     }
@@ -28000,10 +27993,29 @@ document.addEventListener('DOMContentLoaded', function(){
     // Sin entitlement → bloqueo duro.
     _bannerHide();
     if (!ENFORCE) { _unblock(); return st; }
-    if (st.status === 'grace' || st.status === 'past_due' || st.status === 'expired') {
-      _block('Tu suscripción terminó',
-        'Se suspendió el acceso y cerramos la conexión con tu broker para no cobrarte de más. Reactívala y todo vuelve donde estaba.',
-        'Reactivar suscripción');
+
+    if (st.status === 'refunded') {
+      _block('Tu suscripción fue reembolsada',
+        'Se procesó un reembolso y el acceso quedó cerrado. Puedes volver a suscribirte cuando quieras.',
+        'Suscribirme de nuevo');
+    } else if (st.status === 'paused') {
+      _block('Tu suscripción está pausada',
+        'Reanúdala desde los ajustes de suscripciones de tu iPhone para recuperar el acceso.',
+        'Abrir ajustes de suscripción');
+    } else if (st.status === 'transferred') {
+      _block('Esta suscripción se movió a otra cuenta',
+        'La compra quedó asociada a otro Apple ID. Suscríbete de nuevo para seguir usando Portiv.',
+        'Suscribirme');
+    } else if (st.status === 'past_due' || st.status === 'expired') {
+      if (_nat) {
+        _block('Tu suscripción no está activa',
+          'Apple no pudo renovar tu suscripción y el acceso quedó suspendido. Revisa tu método de pago en los ajustes de suscripciones de tu iPhone, o suscríbete de nuevo.',
+          'Gestionar suscripción');
+      } else {
+        _block('Tu pago fue rechazado',
+          'No pudimos cobrar tu suscripción y el acceso quedó suspendido. Actualiza tu tarjeta y el cobro se reintenta al instante.',
+          'Cambiar tarjeta y pagar');
+      }
     } else {
       _block('Necesitas una suscripción activa',
         'Portiv conecta con tu broker y analiza tu portafolio en tiempo real. Activa tu suscripción para entrar.',
@@ -28012,43 +28024,81 @@ document.addEventListener('DOMContentLoaded', function(){
     return st;
   };
 
-  // Tras pagar, el webhook de RevenueCat tarda en escribir la fila. Se sondea con
-  // techo en vez de asumir que ya está: sin esto, snapConnect() sale 403 justo
-  // después del pago y el usuario ve un error habiendo pagado.
+  // Tras pagar, el webhook de Paddle tarda en escribir la fila. Se sondea con techo en
+  // vez de asumir que ya está: sin esto, snapConnect() sale 403 justo después del pago.
   window._pvAwaitEntitlement = async function(){
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Confirmando tu suscripción…'); } catch(e){}
-    var n = 0;
-    while (n < 20) {
+
+    // Primero se PREGUNTA en vez de esperar. entitlement-sync consulta a RevenueCat
+    // por el estado real y reescribe la fila: resuelve en una sola llamada el caso
+    // normal (compra recién hecha, webhook aún en camino) y también el que el
+    // sondeo nunca resolvería — el webhook que se perdió del todo. El bucle de
+    // abajo queda como respaldo para el resto.
+    //
+    // SÓLO en nativo. En el build web quien paga es Paddle y RevenueCat no sabe
+    // nada de ese usuario: preguntarle devolvería "nunca compró" sobre alguien
+    // que acaba de pagar. El flujo de Paddle se queda exactamente como estaba.
+    if (window._pvIsNativeApp && window._pvIsNativeApp()) {
+      try { await window._pvEntitlementSync(true); } catch(e){}
+    }
+
+    var t0 = 0;
+    while (t0 < 20) {
       var st = await window._pvSubStatus();
       if (st && st.active) { _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
       await new Promise(function(r){ setTimeout(r, 1000); });
-      n++;
+      t0++;
     }
-    // 20 s sin entitlement: el cobro pudo salir bien y el webhook ir con retraso, así
-    // que NO se afirma que el pago falló. Se deja el camino abierto, no un callejón.
+    // 20 s sin entitlement: el cobro pudo salir bien y el webhook ir con retraso, así que
+    // NO se afirma que el pago falló. Se deja el camino abierto en vez de un callejón.
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(false); } catch(e){}
     try { showToast('Pago recibido. Estamos confirmando tu suscripción, puede tardar un minuto.', 'var(--text2)'); } catch(e){}
     setTimeout(function(){ try { window._pvSubGate(); } catch(e){} }, 15000);
     return false;
   };
 
-  // ── Re-chequeo ───────────────────────────────────────────────────────────
-  // Una suscripción puede expirar con la app abierta en segundo plano días enteros.
-  function _recheck(){
+  // Recheck al volver a la pestaña: una suscripción puede expirar con la app abierta.
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState !== 'visible') return;
     if (!window._pvAuthReady) return;
     try { window._pvSubGate(); } catch(e){}
-  }
-  document.addEventListener('visibilitychange', function(){
-    if (document.visibilityState === 'visible') _recheck();
   });
-  // En WKWebView el visibilitychange no siempre dispara al volver de segundo plano:
-  // el evento fiable en Capacitor es appStateChange.
+
+  // En Capacitor, `visibilitychange` no siempre dispara al volver del multitarea,
+  // y ése es EXACTAMENTE el momento en que el usuario vuelve de haber cancelado
+  // en Ajustes → Apple ID → Suscripciones. También cubre volver del paywall nativo.
   try {
-    var _A = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) || null;
-    if (_A && typeof _A.addListener === 'function') {
-      _A.addListener('appStateChange', function(s){ if (s && s.isActive) _recheck(); });
+    if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+      window.Capacitor.Plugins.App.addListener('appStateChange', function(st){
+        if (!st || !st.isActive) return;
+        if (!window._pvAuthReady) return;
+        try { window._pvEntitlementSync(); } catch(e){}
+        try { window._pvSubGate(); } catch(e){}
+      });
     }
   } catch(e){}
+
+  // customerInfoUpdateListener de RevenueCat, expuesto por portiv-iap.js como
+  // onChange(). Dispara en cuanto StoreKit notifica un cambio — normalmente
+  // antes de que el webhook llegue al servidor.
+  //
+  // Se reintenta porque portiv-iap.js se inyecta en el arranque nativo y puede
+  // no estar cargado todavía cuando corre este script: un registro a una sola
+  // pasada se perdería en silencio y el listener nunca existiría.
+  (function _bindIapOnChange(tries){
+    if (!(window._pvIsNativeApp && window._pvIsNativeApp())) return;   // en web no hay nada que atar
+    try {
+      if (window.PortivIAP && typeof window.PortivIAP.onChange === 'function') {
+        window.PortivIAP.onChange(function(){
+          if (!window._pvAuthReady) return;
+          try { window._pvEntitlementSync(); } catch(e){}
+          try { window._pvSubGate(); } catch(e){}
+        });
+        return;
+      }
+    } catch(e){}
+    if ((tries || 0) < 20) setTimeout(function(){ _bindIapOnChange((tries || 0) + 1); }, 500);
+  })(0);
 })();
 </script>
 
@@ -28422,13 +28472,12 @@ document.addEventListener('DOMContentLoaded', function(){
       // 12000, así que el error quedaba tapado y el fallo se veía como "la pantalla se quedó
       // parada tras pagar". El error se pinta ahora sobre el propio overlay, con reintento.
       var _m = (e && e.message) || 'No se pudo iniciar la conexión.';
-      // 'subscription_required' es el candado del servidor, NO un fallo de SnapTrade.
-      // Pintarlo como error de conexión con botón "Reintentar" mandaba al usuario a un
-      // bucle: reintentar sin suscripción devuelve 403 siempre. Se le muestra el camino.
-      if(/subscription_required/i.test(String(_m))){
+      // 'subscription_required' es el 403 del candado del servidor, no un fallo de SnapTrade.
+      // Mostrar el código crudo con un botón "Reintentar" era engañoso: reintentar nunca
+      // iba a funcionar. Se deriva al bloqueo de suscripción, que sí ofrece la salida real.
+      if (/subscription_required/i.test(String(_m))) {
         try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
-        try{ if(window._pvSubGate){ window._pvSubGate(); return; } }catch(_){}
-        try{ if(window._pvShowPaywall){ window._pvShowPaywall(); return; } }catch(_){}
+        try{ if(window._pvSubGate) { window._pvSubGate(); return; } }catch(_){}
       }
       try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
       try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
@@ -28750,7 +28799,7 @@ document.addEventListener('DOMContentLoaded', function(){
         try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
         try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
-        _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
+        _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
       }
     }).catch(function(){
       if(_snapHistoryTries < _SNAP_HIST_MAX){
@@ -28762,25 +28811,13 @@ document.addEventListener('DOMContentLoaded', function(){
       } else {
         try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
-        _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
+        _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
       }
     });
   }
 
-  // ── Value / Performance header toggle (chart stays the premium value chart) ──
-  function _setPerfMode(m){
-    _perfMode = m;
-    var t = document.getElementById('snapPerfToggle'); if(t){ Array.prototype.forEach.call(t.querySelectorAll('button'),function(b){ b.classList.toggle('on', b.getAttribute('data-mode')===m); }); }
-    try{ var el=document.getElementById('perf-total'); if(!el) return;
-      var tot = (typeof calcTotals==='function')?calcTotals().total:null;
-      if(m==='performance'){
-        var base = (typeof INITIAL_CAPITAL!=='undefined' && INITIAL_CAPITAL>0)?INITIAL_CAPITAL:null;
-        if(tot!=null && base){ var pct=((tot/base)-1)*100; el.dataset.snapOrig=el.dataset.snapOrig||el.textContent;
-          el.textContent = (pct>=0?'+':'')+pct.toFixed(2)+'%'; }
-      }else if(el.dataset.snapOrig!=null){ el.textContent = el.dataset.snapOrig; delete el.dataset.snapOrig;
-        try{ if(typeof _updatePerfTotals==='function') _updatePerfTotals(); }catch(e){} }
-    }catch(e){}
-  }
+  // _setPerfMode() eliminada: sin un solo call-site, y su #snapPerfToggle nunca se inyecta
+  // (el toggle Value/Performance se retiró del portafolio).
 
   // ── UI plumbing (all defensive — no-op if a target is absent) ──
   function _setBusy(b){ Array.prototype.forEach.call(document.querySelectorAll('[data-snap-connect]'),function(btn){
@@ -28843,12 +28880,13 @@ document.addEventListener('DOMContentLoaded', function(){
   function _isSubReason(r){
     return !!r && r !== 'manual' && /trial_expired|subscription_/i.test(String(r));
   }
-  // "Reactivar" abre el paywall. Nunca llama a snapConnect() directamente: sin
+  // "Reactivar" reabre el checkout. Nunca llama a snapConnect() directamente: sin
   // entitlement la Edge Function responde 403 y el usuario vería un error en vez
   // del camino para arreglarlo. Tras pagar, _pvAwaitEntitlement conecta el broker.
   function _bindResubButtons(){ Array.prototype.forEach.call(document.querySelectorAll('[data-snap-resub]'),function(btn){
       if(btn._snapResubBound) return; btn._snapResubBound=true;
       btn.addEventListener('click', function(ev){ ev.preventDefault();
+        try{ if(typeof window._pvRetryPayment==='function'){ window._pvRetryPayment(); return; } }catch(e){}
         try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
         try{ snapConnect(); }catch(e){}
       }); }); }

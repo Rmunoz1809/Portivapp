@@ -3768,6 +3768,7 @@ var _pvCheckoutCompleted = false;
         </button>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
+      <div class="pv-ai-foot" style="margin-top:8px;padding-top:8px;text-align:center;">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
     </div>
 
   </div>
@@ -4281,6 +4282,7 @@ var _pvCheckoutCompleted = false;
             <div class="rap-sub-row" style="margin-top:10px"><span>Valoración</span><span class="rap-sub-tag" id="r-val-score">—</span></div>
             <div class="rap-bar"><div class="rap-bar-fill" id="r-val-bar"></div></div>
           </div>
+          <div class="pv-ai-foot">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
         </div>
       </div>
     </div>
@@ -6086,7 +6088,7 @@ async function renderSettings(){
         <div id="nmMktBody"></div>
       </div>
       <!-- Link original -->
-      <a id="nmLink" href="#" target="_blank" rel="noopener noreferrer" style="display:none;margin-top:22px;font-size:13px;font-weight:700;color:var(--blue);text-decoration:none;">Ver noticia original ↗</a>
+      <a id="nmLink" href="#" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener noreferrer" style="display:none;margin-top:22px;font-size:13px;font-weight:700;color:var(--blue);text-decoration:none;">Ver noticia original ↗</a>
       <!-- Legacy hidden refs (JS compat) -->
       <div id="nmSource" style="display:none"></div>
       <div id="nmDates" style="display:none"></div>
@@ -9042,6 +9044,21 @@ function renderTable(T) {
       return !!(ae && tbody.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
     }catch(e){ return false; }
   })();
+  // Empty state. Un usuario recién registrado que NO conecta broker veía un dashboard
+  // entero en ceros con la tabla vacía y ninguna ruta visible para empezar — eso es
+  // "app incompleta" para un revisor (Guideline 2.1), que además no va a conectar una
+  // cuenta real de Schwab. Aquí se le ofrecen las dos rutas que NO requieren broker.
+  if (!HOLDINGS.length) {
+    html = `<tr><td colspan="13" style="padding:38px 20px;text-align:center;">
+      <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:6px;">Todavía no tienes posiciones</div>
+      <div style="font-size:13px;color:var(--text3);line-height:1.6;max-width:420px;margin:0 auto 16px;">Conecta tu broker para importarlas automáticamente, sube una captura de pantalla y deja que la IA las extraiga, o añádelas a mano.</div>
+      <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
+        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Conectar broker</button>
+        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Subir captura</button>
+        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Añadir manualmente</button>
+      </div>
+    </td></tr>` + html;
+  }
   if (!_typing) tbody.innerHTML = html;
 
   // ── Positions Total (footer) ──
@@ -19597,6 +19614,7 @@ ${S(11, 'OPINIÓN FINAL DEL INVERSOR', ratingClr, `
     'Free cash flow: ¿la empresa sigue generando caja neta positiva?',
     (pe>40)?'Múltiplo P/E: ¿se expande o se contrae con el mercado?':`Crecimiento de EPS: ¿justifica el múltiplo de ${xf(pe)}?`,
   ].map(m=>`<div style="font-size:11px;color:var(--text2);padding:3px 0;border-bottom:1px solid var(--border)">▸ ${m}</div>`).join('')}
+  <div class="pv-ai-foot">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
 `)}
 
 ${S(12, '5 PUNTOS CLAVE + PUNTUACIÓN FINAL', 'var(--text3)', `
@@ -20670,8 +20688,8 @@ function renderWatchlist() {
             <span class="wl2-footer-market" style="color:${mktOpen?'#0A7A52':'#9aa6b8'}">${mktOpen?'NYSE/NASDAQ Open':'Market Closed'}</span>
           </div>
           <div class="wl2-footer-right">
-            <a class="wl2-footer-link" href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
-            <a class="wl2-footer-link" href="terminos.html" target="_blank" rel="noopener">Términos</a>
+            <a class="wl2-footer-link" href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
+            <a class="wl2-footer-link" href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
           </div>
         </div>
       </div>`;
@@ -23518,7 +23536,9 @@ function _chatEscape(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;
 function _chatMarkdown(s){
   let h=_chatEscape(s);
   h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
-  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // onclick → en nativo abre el navegador in-app (SFSafariViewController) en vez de dejar al
+  // usuario atrapado en una WKWebView de terceros sin barra de navegación.
+  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener">$1</a>');
   h=h.replace(/^[\-•]\s+(.*)$/gm,'<li>$1</li>');
   h=h.replace(/(<li>[\s\S]*?<\/li>)/g,'<ul>$1</ul>');
   h=h.split(/\n{2,}/).map(p=>p.match(/^<ul>/)?p:'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('');
@@ -23560,7 +23580,7 @@ function _aiChatAddMsg(role, html, sources){
   let srcHtml = '';
   if(sources && sources.length){
     srcHtml = '<div class="chat-sources" style="margin-top:8px;padding-top:8px;border-top:1px solid #e8eaf0;font-size:10px;color:#8a96a3;">Fuentes: '+
-      sources.slice(0,3).map((s,i)=>`<a href="${s.url}" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
+      sources.slice(0,3).map((s,i)=>`<a href="${s.url}" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
       '</div>';
   }
   if(role === 'user'){
@@ -24799,7 +24819,12 @@ const PORTIV_NEWS = {
       };
       try { return _openOutlookEvent(ekey, okey); } catch(e){}
     }
-    alert(`${ev.title}\n\n${ev.summary}\n\n${ev.marketImpact}\nTickers: ${(ev.tickers||[]).join(', ')}`);
+    // Fallback cuando el evento no tiene ficha propia. Antes era un alert() con \n crudos:
+    // en iOS sale como diálogo del sistema con el nombre del bundle en el título.
+    var _tk = (ev.tickers||[]).join(', ');
+    var _msg = [ev.title, ev.summary, ev.marketImpact, _tk ? ('Tickers: ' + _tk) : ''].filter(Boolean).join(' · ');
+    try { if (typeof showToast === 'function') { showToast(_msg, 'var(--text2)'); return; } } catch(e){}
+    try { alert(_msg); } catch(e){}
   },
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -26085,9 +26110,9 @@ if (document.readyState === 'loading') {
   </div>
 
   <div class="av-foot">
-    <a href="terminos.html" target="_blank" rel="noopener">Términos</a>
-    <a href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
-    <a href="reembolsos.html" target="_blank" rel="noopener">Reembolsos</a>
+    <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
+    <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
+    <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
   </div>
  </div>
 </div>
@@ -26101,15 +26126,18 @@ if (document.readyState === 'loading') {
   <div style="padding:16px 16px 12px;border-bottom:1px solid rgba(0,0,0,0.07);">
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8a93a3;font-weight:700;">Mi cuenta</div>
     <div id="acctEmail" style="font-size:14px;color:#0b1220;margin-top:5px;word-break:break-all;">—</div>
+    <div id="acctPlan" style="font-size:12px;color:#8a93a3;margin-top:3px;font-weight:600;">—</div>
   </div>
   <div style="padding:6px;">
-    <div class="acct-item" onclick="_acctTogglePwd()">Cambiar contraseña</div>
+    <div class="acct-item" id="acctPwdItem" onclick="_acctTogglePwd()">Cambiar contraseña</div>
     <div id="acctPwdForm" style="display:none;padding:6px 8px 10px;">
       <input id="acctNewPwd" class="pv-in" type="password" autocomplete="new-password" placeholder="Nueva contraseña" style="height:44px;font-size:14px;margin-bottom:8px;">
       <input id="acctNewPwd2" class="pv-in" type="password" autocomplete="new-password" placeholder="Repite la contraseña" style="height:44px;font-size:14px;margin-bottom:8px;">
       <button id="acctPwdBtn" class="pv-btn" onclick="_acctChangePwd()" style="height:44px;font-size:14px;">Actualizar contraseña</button>
       <div id="acctPwdMsg" style="font-size:12px;text-align:center;margin-top:8px;min-height:14px;color:#15a05f;"></div>
     </div>
+    <div class="acct-item" id="acctManageSub" style="display:none" onclick="_pvManageSubscription()">Gestionar suscripción</div>
+    <div class="acct-item" onclick="_pvRestorePurchases()">Restaurar compras</div>
     <div class="acct-item" onclick="_acctHelp()">Ayuda</div>
   </div>
   <div style="padding:6px;border-top:1px solid rgba(0,0,0,0.07);">
@@ -26634,7 +26662,15 @@ if (document.readyState === 'loading') {
       // las iniciales "ST" en duro para todo el mundo porque este set nunca encontraba nada.
       var a = document.getElementById('navAvatarMobile'); if (a) a.textContent = (uname || em || '?').slice(0,2).toUpperCase();
       var ae = document.getElementById('acctEmail'); if (ae) ae.textContent = uname ? ('@' + uname) : (em || '—');
+      // "Cambiar contraseña" con login social no tiene sentido: quien entró con Apple o
+      // Google no tiene contraseña que cambiar, y el revisor de Apple entra justamente
+      // con Sign in with Apple. Se oculta salvo proveedor = email.
+      var _prov = (s.user && s.user.app_metadata && s.user.app_metadata.provider) || 'email';
+      var pwi = document.getElementById('acctPwdItem');
+      if (pwi) pwi.style.display = (_prov === 'email') ? '' : 'none';
+      if (_prov !== 'email') { var pwf = document.getElementById('acctPwdForm'); if (pwf) pwf.style.display = 'none'; }
     } catch(e){}
+    try { if (typeof window._pvRenderAcctPlan === 'function') window._pvRenderAcctPlan(); } catch(e){}
 
     try {
       // FIX perf: las dos lecturas del gate (`profiles` y `profile_caches`) son INDEPENDIENTES
@@ -27001,6 +27037,70 @@ if (document.readyState === 'loading') {
     return Promise.resolve();
   };
 
+  // Apple exige un punto de restauración EXPLÍCITO para suscripciones auto-renovables,
+  // alcanzable sin volver a pasar por el paywall (Guideline 3.1.1). Antes no existía
+  // ninguno: `restored` sólo llegaba como resultado dentro de presentPaywall().
+  // El estado Pro NUNCA se escribe aquí en cliente: restore() sólo hace que StoreKit y
+  // RevenueCat vuelvan a coincidir; quien decide sigue siendo Supabase vía
+  // _pvEntitlementSync() (Edge Function) + _pvSubGate() (lee la fila de `subscriptions`).
+  window._pvRestorePurchases = async function(){
+    try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
+
+    // Web: Paddle no tiene "restaurar". El entitlement vive en Supabase, así que lo único
+    // honesto es releer el estado del servidor y refrescar el gate.
+    if (!window._pvIsNativeApp()) {
+      try { if (typeof window._pvSubGate === 'function') await window._pvSubGate(); } catch(e){}
+      try { showToast('Suscripción sincronizada.', 'var(--text2)'); } catch(e){}
+      return;
+    }
+
+    var iap = window.PortivIAP;
+    if (!iap || typeof iap.restore !== 'function'){
+      try { showToast('No se pudo contactar con la App Store. Inténtalo de nuevo.', 'var(--red)'); } catch(e){}
+      return;
+    }
+
+    try {
+      // Vincula ANTES de restaurar: sin logIn el entitlement queda en un ID anónimo
+      // y el webhook nunca lo cruza con la cuenta de Supabase.
+      if (window.__pvUserId && window.__pvUserId !== 'local' && typeof iap.login === 'function') {
+        try { await iap.login(window.__pvUserId); } catch(e){}
+      }
+      var r = await iap.restore();                       // devuelve boolean isPro
+      var isPro = (r && typeof r === 'object') ? !!r.isPro : !!r;
+      if (isPro) {
+        try { showToast('¡Listo! Tu suscripción Portiv Pro está activa.', 'var(--green, #16a34a)'); } catch(e){}
+        try { if (typeof window._pvEntitlementSync === 'function') await window._pvEntitlementSync(true); } catch(e){}
+        try { if (typeof window._pvSubGate === 'function') await window._pvSubGate(); } catch(e){}
+      } else {
+        try { showToast('No encontramos una suscripción activa en este ID de Apple.', 'var(--text2)'); } catch(e){}
+      }
+    } catch(e){
+      try { showToast('No se pudo restaurar. Inténtalo más tarde.', 'var(--red)'); } catch(_){}
+    }
+  };
+
+  // Guideline 3.1.2: la app debe ofrecer una salida a la gestión/cancelación de la
+  // suscripción. En iOS eso es la pantalla nativa de Apple; en web, la política de
+  // reembolsos (Paddle gestiona la baja desde el email de compra).
+  window._pvManageSubscription = function(){
+    try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
+    if (window._pvIsNativeApp()){
+      // Deep link oficial de Apple. Se prefiere App.openUrl: un location.href a un esquema
+      // no-http desde WKWebView lo bloquea la propia webview en vez de delegarlo al sistema.
+      try {
+        var C = window.Capacitor && window.Capacitor.Plugins;
+        if (C && C.App && typeof C.App.openUrl === 'function') {
+          C.App.openUrl({ url: 'itms-apps://apps.apple.com/account/subscriptions' });
+          return;
+        }
+      } catch(e){}
+      try { window.location.href = 'itms-apps://apps.apple.com/account/subscriptions'; } catch(e){}
+      return;
+    }
+    window._pvOpenExternal('reembolsos.html');
+  };
+
   function showLogin(purge){
     session = null;
     window._pvAuthReady = false;
@@ -27115,9 +27215,15 @@ if (document.readyState === 'loading') {
   };
 
   // ── Menú de cuenta ──
-  window._acctToggle = function(e){ if (e) e.stopPropagation(); var m = document.getElementById('acctMenu'); m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none'; };
+  window._acctToggle = function(e){ if (e) e.stopPropagation(); var m = document.getElementById('acctMenu'); var _open = (m.style.display === 'none' || !m.style.display); m.style.display = _open ? 'block' : 'none'; if (_open) { try { window._pvRenderAcctPlan && window._pvRenderAcctPlan(); } catch(_){} } };
   window._acctTogglePwd = function(){ var f = document.getElementById('acctPwdForm'); f.style.display = f.style.display === 'none' ? 'block' : 'none'; };
-  window._acctHelp = function(){ try { if (typeof window.showToast === 'function') { window.showToast('Ayuda y chatbot: próximamente 🚧', 'var(--blue, #208AEF)'); return; } } catch(e){} alert('Ayuda y chatbot: próximamente.'); };
+  // Antes anunciaba una función futura ("Ayuda y chatbot: próximamente"). Un botón visible
+  // que promete algo que no existe es rechazo por Guideline 2.1 (App Completeness), y es uno
+  // de los ítems que el revisor sí pulsa. Ahora abre soporte real.
+  window._acctHelp = function(){
+    try { var m = document.getElementById('acctMenu'); if (m) m.style.display = 'none'; } catch(e){}
+    window._pvOpenExternal('soporte.html');
+  };
   window._acctChangePwd = async function(){
     var p1 = (document.getElementById('acctNewPwd').value || '').trim();
     var p2 = (document.getElementById('acctNewPwd2').value || '').trim();
@@ -27371,11 +27477,11 @@ document.addEventListener('DOMContentLoaded', function(){
         <div class="pw-price" id="pwPriceNote"><b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b></div>
         <div class="pw-fine">Cancela cuando quieras · Sin compromisos</div>
         <div class="pw-legal">
-          <a href="terminos.html" target="_blank" rel="noopener">Términos</a>
+          <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
           <span class="pw-legal-sep">·</span>
-          <a href="privacidad.html" target="_blank" rel="noopener">Privacidad</a>
+          <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
           <span class="pw-legal-sep">·</span>
-          <a href="reembolsos.html" target="_blank" rel="noopener">Reembolsos</a>
+          <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
         </div>
       </div>
     </div>
@@ -27391,6 +27497,23 @@ document.addEventListener('DOMContentLoaded', function(){
   window._pvIsNativeApp = function(){
     try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }
     catch(e){ return false; }
+  };
+
+  // Abre una URL legal/externa de forma que funcione EN LOS DOS builds.
+  // Nativo: @capacitor/browser (SFSafariViewController in-app, mantiene al usuario dentro
+  // de la app — requisito de facto de App Review). Web: pestaña nueva de siempre.
+  // Un target="_blank" con href RELATIVO dentro de WKWebView no abre nada útil: se pierde
+  // o intenta capacitor://localhost/terminos.html en Safari y falla → "the links did not work".
+  window._pvOpenExternal = function(path){
+    var abs = /^https?:/i.test(path) ? path : ('https://portivapp.com/' + String(path).replace(/^\//,''));
+    try {
+      if (window._pvIsNativeApp() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+        window.Capacitor.Plugins.Browser.open({ url: abs, presentationStyle: 'popover' });
+        return false;
+      }
+    } catch(e){}
+    try { window.open(abs, '_blank', 'noopener'); } catch(e){ location.href = abs; }
+    return false;
   };
   window._pvShowPaywall = function(){
     var _nat = window._pvIsNativeApp();
@@ -27497,7 +27620,9 @@ document.addEventListener('DOMContentLoaded', function(){
     // CDN falla, se muestra EXACTAMENTE el mismo aviso que cuando Paddle no estaba listo.
     try { if (typeof window._ensurePaddle === 'function') await window._ensurePaddle(); } catch(e){}
     if (!window.Paddle || !window.Paddle.Checkout) {
-      try { alert('El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.'); } catch(e){}
+      var _mp = 'El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.';
+      try { if (typeof showToast === 'function') { showToast(_mp, 'var(--red)'); return; } } catch(e){}
+      try { alert(_mp); } catch(e){}
       return;
     }
     var email = null, uid = null;
@@ -27524,7 +27649,11 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     var opts = { items: [{ priceId: priceId, quantity: 1 }], customData: { supabase_user_id: uid } };
     if (email) opts.customer = { email: email };
-    try { Paddle.Checkout.open(opts); } catch(e){ try{ alert('No se pudo abrir el checkout. Intenta de nuevo.'); }catch(_){} }
+    try { Paddle.Checkout.open(opts); } catch(e){
+      var _mc = 'No se pudo abrir el checkout. Intenta de nuevo.';
+      try { if (typeof showToast === 'function') { showToast(_mc, 'var(--red)'); return; } } catch(_){}
+      try { alert(_mc); } catch(_){}
+    }
   };
   window._pvConfirmTrial = function(){
     // iOS: sin checkout web (Paddle). Cierra el paywall y arranca la conexión del broker.
@@ -27591,12 +27720,33 @@ document.addEventListener('DOMContentLoaded', function(){
     } catch(e){ return false; }
   }
 
+  // Reconciliación con RevenueCat vía Edge Function. Anti-tormenta: sin el throttle,
+  // _pvSubGate() corre en cada visibilitychange y en cada appStateChange → volver a
+  // la app 10 veces serían 10 llamadas a la API de RevenueCat.
+  // stCall() ya adjunta el access_token y normaliza los errores con .status.
+  window._pvEntitlementSync = (function(){
+    var _last = 0, _inflight = null;
+    return function(force){
+      var now = Date.now();
+      if (!force && (now - _last) < 30000) return Promise.resolve(null);
+      if (_inflight) return _inflight;
+      _last = now;
+      _inflight = (typeof window.stCall === 'function'
+          ? window.stCall('entitlement-sync', {})
+          : Promise.resolve(null))
+        .catch(function(){ return null; })
+        .then(function(r){ _inflight = null; return r; });
+      return _inflight;
+    };
+  })();
+
   // Lee la fila propia de `subscriptions`. La RLS sólo deja ver la del usuario
   // autenticado, así que no hace falta filtrar por uid a mano.
   window._pvSubStatus = async function(){
     if (await _isOwner()) return { active:true, status:'owner', owner:true };
     var sb = window.sbClient;
     if (!sb) return null;
+    var srv = null;
     try {
       var r = await sb.from('subscriptions')
         .select('entitlement_active,status,expires_at,will_renew')
@@ -27606,15 +27756,54 @@ document.addEventListener('DOMContentLoaded', function(){
       // dejar fuera a alguien que sí pagó.
       if (r && r.error) return null;
       var d = (r && r.data) || null;
-      if (!d) return { active:false, status:'never' };
-      return {
+      srv = d ? {
         active: d.entitlement_active === true,
         status: d.status || 'never',
         expiresAt: d.expires_at || null,
         willRenew: d.will_renew
-      };
+      } : { active:false, status:'never' };
     } catch(e){ return null; }
+
+    // ── Camino rápido nativo (iOS) ─────────────────────────────────────────
+    // Sin esto, el hueco entre el pago en StoreKit y la llegada del webhook
+    // (segundos, minutos, o infinito si el webhook se perdió) le muestra el muro
+    // de "necesitas una suscripción" a alguien que ACABA de pagar: rechazo seguro
+    // en App Review y reembolso seguro en producción.
+    //
+    // El acceso optimista no es un agujero: las Edge Functions siguen respondiendo
+    // 403 hasta que la fila exista. Sólo evita el muro mientras se reconcilia.
+    // Y sólo se consulta cuando el servidor dice que NO: si el servidor dice que
+    // sí, gana el servidor — es quien sabe de revocaciones y reembolsos.
+    //
+    // portiv-iap.js NO expone getCustomerInfo(). Su API pública es
+    // refresh() → Promise<boolean isPro> (que por dentro sí llama a
+    // getCustomerInfo del SDK) e isPro() → boolean cacheado. En web no existe
+    // PortivIAP, por eso todo va detrás de _pvIsNativeApp().
+    if (!srv.active && window._pvIsNativeApp && window._pvIsNativeApp()) {
+      try {
+        var iap = window.PortivIAP, storeKitPro = false;
+        if (iap && typeof iap.refresh === 'function')     storeKitPro = !!(await iap.refresh());
+        else if (iap && typeof iap.isPro === 'function')  storeKitPro = !!iap.isPro();
+        if (storeKitPro) {
+          try { window._pvEntitlementSync(); } catch(_){}   // reconcilia sin bloquear
+          return { active:true, status:'active', source:'storekit',
+                   expiresAt: srv.expiresAt || null, willRenew: true };
+        }
+      } catch(_){}
+    }
+    return srv;
   };
+
+  // Fecha de fin de acceso para el banner de "cancelada". Sin ella el mensaje
+  // "hasta el fin del periodo" no le dice al usuario nada accionable.
+  function _fmtDate(iso){
+    if (!iso) return null;
+    try {
+      var d = new Date(iso);
+      if (isNaN(d.getTime())) return null;
+      return d.toLocaleDateString('es-ES', { day:'2-digit', month:'2-digit', year:'numeric' });
+    } catch(e){ return null; }
+  }
 
   // ── Banner superior ──────────────────────────────────────────────────────
   function _banner(kind, text, ctaLabel, onCta){
@@ -27709,9 +27898,40 @@ document.addEventListener('DOMContentLoaded', function(){
   // Paddle pide método de pago otra vez y el cobro corregido genera transaction.completed,
   // que el webhook convierte en entitlement. La URL nativa de "update payment method" de
   // Paddle exige llamar a su API con la secret key — no puede salir del navegador.
+  // En iOS el método de pago vive en Ajustes → Apple ID → Suscripciones. No hay
+  // endpoint nuestro que pueda cambiarlo, y ofrecer un checkout web dentro de la
+  // app es Guideline 3.1.1 (rechazo directo).
+  var APPLE_SUBS_URL = 'itms-apps://apps.apple.com/account/subscriptions';
+  function _openAppleSubs(){
+    // location.href y no window.open: iOS intercepta el esquema itms-apps y abre
+    // la app de Ajustes/App Store sin descargar la WebView. window.open('_system')
+    // depende de que InAppBrowser esté instalado y falla en silencio si no lo está.
+    try { location.href = APPLE_SUBS_URL; return true; } catch(e){}
+    try { window.open(APPLE_SUBS_URL, '_system'); return true; } catch(e){}
+    return false;
+  }
+
   window._pvRetryPayment = function(){
     if (_busy) return; _busy = true;
     setTimeout(function(){ _busy = false; }, 1200);
+
+    // ── iOS nativo ────────────────────────────────────────────────────────
+    // 'paused' y 'past_due' se arreglan en Ajustes (reanudar la suscripción /
+    // corregir el método de pago que Apple está reintentando).
+    // 'never' / 'expired' / 'refunded' / 'transferred' se arreglan comprando →
+    // paywall de StoreKit.
+    if (window._pvIsNativeApp && window._pvIsNativeApp()) {
+    // 'canceled' sigue activa hasta fin de periodo: lo que quiere es reactivar la
+    // renovación, que es un interruptor de Ajustes. Mandarlo al paywall le vendería
+    // una compra duplicada.
+      var _st = (_last && _last.status) || '';
+      if (_st === 'paused' || _st === 'past_due' || _st === 'canceled') { _openAppleSubs(); return; }
+      try { if (typeof window._pvShowPaywall === 'function') { window._pvShowPaywall(); return; } } catch(e){}
+      _openAppleSubs();
+      return;
+    }
+
+    // ── Web (Paddle) — sin cambios ────────────────────────────────────────
     try {
       if (typeof window._pvStartCheckout === 'function') { window._pvStartCheckout(); return; }
       if (typeof window._pvOpenPaywall === 'function') { window._pvOpenPaywall(); return; }
@@ -27719,23 +27939,53 @@ document.addEventListener('DOMContentLoaded', function(){
     try { showToast('No se pudo abrir el pago. Recarga la página e inténtalo de nuevo.', 'var(--red)'); } catch(_){}
   };
 
+  // Guideline 3.1.2: el menú de cuenta tenía que decir si el usuario es Pro y ofrecer
+  // una salida a gestionar/cancelar. El estado se LEE del servidor (_last viene de
+  // _pvSubStatus, que lee la fila de `subscriptions`); no hay bandera local editable.
+  window._pvRenderAcctPlan = async function(){
+    var el = document.getElementById('acctPlan');
+    var mg = document.getElementById('acctManageSub');
+    if (!el && !mg) return;
+    var st = _last;
+    if (!st) { try { st = await window._pvSubStatus(); } catch(e){ st = null; } if (st) _last = st; }
+    var _nat = !!(window._pvIsNativeApp && window._pvIsNativeApp());
+    var active = !!(st && st.active);
+    if (el) el.textContent = active
+      ? (_nat ? 'Portiv Pro · renovación gestionada por Apple' : 'Portiv Pro')
+      : 'Plan gratuito';
+    if (mg) mg.style.display = active ? '' : 'none';
+  };
+
   // ── Evaluación + pintado ────────────────────────────────────────────────
   window._pvSubGate = async function(){
     var st = await window._pvSubStatus();
     if (!st) return null;                       // fail-open (ver _pvSubStatus)
     _last = st;
+    try { window._pvRenderAcctPlan(); } catch(e){}
     if (st.active && !STATUS_WARN[st.status]) { _bannerHide(); _unblock(); return st; }
+
+    var _nat = !!(window._pvIsNativeApp && window._pvIsNativeApp());
 
     if (st.active && STATUS_WARN[st.status]) {
       _unblock();
       if (st.status === 'past_due') {
+        // En iOS quien reintenta el cobro es Apple, y el método de pago se
+        // corrige en Ajustes. Prometer "actualiza tu tarjeta" apuntando a un
+        // checkout nuestro sería mentir y además es Guideline 3.1.1.
         _banner('danger',
-          'No pudimos cobrar tu suscripción. Actualiza tu tarjeta para no perder el acceso.',
-          'Actualizar tarjeta', window._pvRetryPayment);
+          _nat
+            ? 'Apple no pudo cobrar tu suscripción. Actualiza tu método de pago para no perder el acceso.'
+            : 'No pudimos cobrar tu suscripción. Actualiza tu tarjeta para no perder el acceso.',
+          _nat ? 'Gestionar suscripción' : 'Actualizar tarjeta', window._pvRetryPayment);
       } else {
+        // Canceló la renovación pero el periodo ya está pagado. Se le dice hasta
+        // cuándo: sin la fecha, "hasta el fin del periodo" no informa de nada.
+        var _f = _fmtDate(st.expiresAt);
         _banner('warn',
-          'Tu suscripción está cancelada. Conservas el acceso hasta el fin del periodo.',
-          'Reactivar', window._pvRetryPayment);
+          _f
+            ? ('Tu suscripción está cancelada. Conservas el acceso hasta el ' + _f + '.')
+            : 'Tu suscripción está cancelada. Conservas el acceso hasta el fin del periodo.',
+          _nat ? 'Gestionar suscripción' : 'Reactivar', window._pvRetryPayment);
       }
       return st;
     }
@@ -27743,10 +27993,29 @@ document.addEventListener('DOMContentLoaded', function(){
     // Sin entitlement → bloqueo duro.
     _bannerHide();
     if (!ENFORCE) { _unblock(); return st; }
-    if (st.status === 'past_due' || st.status === 'expired') {
-      _block('Tu pago fue rechazado',
-        'No pudimos cobrar tu suscripción y el acceso quedó suspendido. Actualiza tu tarjeta y el cobro se reintenta al instante.',
-        'Cambiar tarjeta y pagar');
+
+    if (st.status === 'refunded') {
+      _block('Tu suscripción fue reembolsada',
+        'Se procesó un reembolso y el acceso quedó cerrado. Puedes volver a suscribirte cuando quieras.',
+        'Suscribirme de nuevo');
+    } else if (st.status === 'paused') {
+      _block('Tu suscripción está pausada',
+        'Reanúdala desde los ajustes de suscripciones de tu iPhone para recuperar el acceso.',
+        'Abrir ajustes de suscripción');
+    } else if (st.status === 'transferred') {
+      _block('Esta suscripción se movió a otra cuenta',
+        'La compra quedó asociada a otro Apple ID. Suscríbete de nuevo para seguir usando Portiv.',
+        'Suscribirme');
+    } else if (st.status === 'past_due' || st.status === 'expired') {
+      if (_nat) {
+        _block('Tu suscripción no está activa',
+          'Apple no pudo renovar tu suscripción y el acceso quedó suspendido. Revisa tu método de pago en los ajustes de suscripciones de tu iPhone, o suscríbete de nuevo.',
+          'Gestionar suscripción');
+      } else {
+        _block('Tu pago fue rechazado',
+          'No pudimos cobrar tu suscripción y el acceso quedó suspendido. Actualiza tu tarjeta y el cobro se reintenta al instante.',
+          'Cambiar tarjeta y pagar');
+      }
     } else {
       _block('Necesitas una suscripción activa',
         'Portiv conecta con tu broker y analiza tu portafolio en tiempo real. Activa tu suscripción para entrar.',
@@ -27759,6 +28028,20 @@ document.addEventListener('DOMContentLoaded', function(){
   // vez de asumir que ya está: sin esto, snapConnect() sale 403 justo después del pago.
   window._pvAwaitEntitlement = async function(){
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Confirmando tu suscripción…'); } catch(e){}
+
+    // Primero se PREGUNTA en vez de esperar. entitlement-sync consulta a RevenueCat
+    // por el estado real y reescribe la fila: resuelve en una sola llamada el caso
+    // normal (compra recién hecha, webhook aún en camino) y también el que el
+    // sondeo nunca resolvería — el webhook que se perdió del todo. El bucle de
+    // abajo queda como respaldo para el resto.
+    //
+    // SÓLO en nativo. En el build web quien paga es Paddle y RevenueCat no sabe
+    // nada de ese usuario: preguntarle devolvería "nunca compró" sobre alguien
+    // que acaba de pagar. El flujo de Paddle se queda exactamente como estaba.
+    if (window._pvIsNativeApp && window._pvIsNativeApp()) {
+      try { await window._pvEntitlementSync(true); } catch(e){}
+    }
+
     var t0 = 0;
     while (t0 < 20) {
       var st = await window._pvSubStatus();
@@ -27780,6 +28063,42 @@ document.addEventListener('DOMContentLoaded', function(){
     if (!window._pvAuthReady) return;
     try { window._pvSubGate(); } catch(e){}
   });
+
+  // En Capacitor, `visibilitychange` no siempre dispara al volver del multitarea,
+  // y ése es EXACTAMENTE el momento en que el usuario vuelve de haber cancelado
+  // en Ajustes → Apple ID → Suscripciones. También cubre volver del paywall nativo.
+  try {
+    if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) {
+      window.Capacitor.Plugins.App.addListener('appStateChange', function(st){
+        if (!st || !st.isActive) return;
+        if (!window._pvAuthReady) return;
+        try { window._pvEntitlementSync(); } catch(e){}
+        try { window._pvSubGate(); } catch(e){}
+      });
+    }
+  } catch(e){}
+
+  // customerInfoUpdateListener de RevenueCat, expuesto por portiv-iap.js como
+  // onChange(). Dispara en cuanto StoreKit notifica un cambio — normalmente
+  // antes de que el webhook llegue al servidor.
+  //
+  // Se reintenta porque portiv-iap.js se inyecta en el arranque nativo y puede
+  // no estar cargado todavía cuando corre este script: un registro a una sola
+  // pasada se perdería en silencio y el listener nunca existiría.
+  (function _bindIapOnChange(tries){
+    if (!(window._pvIsNativeApp && window._pvIsNativeApp())) return;   // en web no hay nada que atar
+    try {
+      if (window.PortivIAP && typeof window.PortivIAP.onChange === 'function') {
+        window.PortivIAP.onChange(function(){
+          if (!window._pvAuthReady) return;
+          try { window._pvEntitlementSync(); } catch(e){}
+          try { window._pvSubGate(); } catch(e){}
+        });
+        return;
+      }
+    } catch(e){}
+    if ((tries || 0) < 20) setTimeout(function(){ _bindIapOnChange((tries || 0) + 1); }, 500);
+  })(0);
 })();
 </script>
 
@@ -28480,7 +28799,7 @@ document.addEventListener('DOMContentLoaded', function(){
         try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
         try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
-        _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
+        _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
       }
     }).catch(function(){
       if(_snapHistoryTries < _SNAP_HIST_MAX){
@@ -28492,7 +28811,7 @@ document.addEventListener('DOMContentLoaded', function(){
       } else {
         try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
-        _perfNote('El historial de rendimiento de tu broker estará disponible próximamente.');
+        _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
       }
     });
   }
