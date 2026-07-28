@@ -2,6 +2,18 @@
 <html lang="es" class="app-locked">
 <head>
 <meta charset="UTF-8">
+<!-- Handshake TCP+TLS adelantado al único origen remoto que el arranque SIEMPRE toca
+     (Supabase, para auth/gate). Va aquí arriba, antes de cualquier <style>, para que el
+     navegador lo vea en el primer trozo del HTML.
+     (En este bundle NO hay preconnect a jsdelivr: el SDK de Supabase y Chart.js se sirven
+     desde vendor/ dentro del .app, así que ese origen no se contacta nunca.) -->
+<link rel="preconnect" href="https://zblhifszlhdgkhnymwjh.supabase.co" crossorigin>
+<!-- Las fuentes son locales pero el navegador solo las descubre tras parsear fonts.css.
+     Con el preload arrancan en paralelo al CSS, no después. Solo los dos woff2 que se usan
+     en el primer paint (Inter latin del texto, Material Symbols de los iconos del shell);
+     los subsets latin-ext y Manrope se cargan por demanda como hasta ahora. -->
+<link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/material-symbols.woff2" as="font" type="font/woff2" crossorigin>
 <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
@@ -167,10 +179,32 @@
 <title>Portafolio — Plataforma de Inversión</title>
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
-<!-- Chart.js LOCAL por el mismo motivo que Supabase: dentro del .app, sin red. Este sí llevaba
-     defer (no bloqueaba el parser), pero sin CDN las gráficas quedaban vacías al abrir la app
-     sin cobertura. Va local para que la app funcione entera offline, no a medias. -->
-<script defer src="vendor/chart-4.4.0.umd.min.js"></script>
+<!-- Chart.js LOCAL por el mismo motivo que Supabase: dentro del .app, sin red. Sin CDN las
+     gráficas quedaban vacías al abrir la app sin cobertura. Va local para que la app funcione
+     entera offline, no a medias.
+     YA NO se carga aquí en el <head>. Son ~200 KB que el login no necesita para nada: el
+     primer gráfico aparece después del gate de cuenta, y muchas sesiones (login fallido, abrir
+     solo Noticias/Ajustes) no dibujan ninguno. Aunque el fichero sea local (sin coste de red),
+     descargarlo y sobre todo PARSEARLO/EJECUTARLO en el arranque compite por el hilo principal
+     con el primer paint. Se carga bajo demanda con _ensureChartJs(), que llaman las tres
+     funciones que crean un Chart. La ruta sigue siendo vendor/ → sigue funcionando offline. -->
+<script>
+window._ensureChartJs = (function(){
+  var _p = null;
+  return function(){
+    if (window.Chart) return Promise.resolve();
+    if (_p) return _p;
+    _p = new Promise(function(res, rej){
+      var s = document.createElement('script');
+      s.src = 'vendor/chart-4.4.0.umd.min.js';
+      s.onload  = function(){ res(); };
+      s.onerror = function(){ _p = null; rej(new Error('chartjs')); };
+      document.head.appendChild(s);
+    });
+    return _p;
+  };
+})();
+</script>
 <style>
   :root {
     /* ══ Stitch design tokens (exact match) ══ */
@@ -5468,6 +5502,9 @@ function changeLanguage(lang, opts){
     // Re-aplica el diccionario por si algún render reescribió un elemento tageado.
     try { _applyI18nDom(translations[lang]); } catch(e){}
   }
+  // Conecta/desconecta el MutationObserver de traducción según el idioma recién elegido
+  // (en español ni se conecta → cero callbacks durante los renders).
+  try { if (typeof window._syncTranslationObserver === 'function') window._syncTranslationObserver(); } catch(e){}
   // Traduce de inmediato el contenido ya visible (no espera al MutationObserver).
   try { if (typeof _translatePageToEnglish === 'function') _translatePageToEnglish(document.body); } catch(e){}
 }
@@ -5709,8 +5746,22 @@ window._translatePageToEnglish = _translatePageToEnglish;
   // Observa también cambios de `class` (attributeFilter): cambiar de pestaña alterna la clase
   // `.visible` en los `.page` — sin esto, entrar a una pestaña ya renderizada en español no
   // dispararía la traducción (el observer solo veía childList/characterData).
-  const boot = () => obs.observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class'] });
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  // CONEXIÓN CONDICIONAL. Antes el observer se conectaba SIEMPRE y era el callback el que
+  // hacía `if (getLang() !== 'en') return;` — pero el callback se invoca igual, y en español
+  // (el 99% de los arranques) eso son miles de invocaciones durante el render inicial, porque
+  // observa childList + subtree + characterData + attributes. Ahora, en español, el observer
+  // ni siquiera está conectado: coste real cero. En inglés el comportamiento es idéntico.
+  let _obsOn = false;
+  const _connect = () => {
+    if (_obsOn || !document.body) return;
+    obs.observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class'] });
+    _obsOn = true;
+  };
+  const _disconnect = () => { if (!_obsOn) return; obs.disconnect(); _obsOn = false; };
+  // Punto único: lo llama el boot y también changeLanguage() al cambiar de idioma.
+  const _sync = () => { getLang() === 'en' ? _connect() : _disconnect(); };
+  window._syncTranslationObserver = _sync;
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _sync); else _sync();
 })();
 
 function _initFhKeyField(){
@@ -6403,8 +6454,47 @@ const AI_MODELS = {
   narrative:  'claude-sonnet-5',
 };
 
+// ── Pre-calentamiento de briefs "Cómo afecta al mercado" ─────────────────────────
+// Antes estaba apagado con literales (`if(!false) return`, `_subActive = false`,
+// `if(true||…) return`) desperdigados por cuatro funciones — imposible de razonar y de
+// activar. Ahora hay un único interruptor.
+//   'off'      → nada (comportamiento anterior)
+//   'hover'    → solo prefetch por intención (hover/touch en una tarjeta). Coste ~0.
+//   'feed'     → hover + pre-genera las primeras N noticias del feed en idle.
+// ALCANCE: PREWARM_MODE gobierna el prefetch por hover y el prewarm del FEED (acotado a
+// PREWARM_FEED_MAX). El bulk del outlook (_prewarmOutlookEvents, hasta 60 eventos con
+// web_search) y la pregen de "por qué se movió" siguen además bajo _CONSERVE_CLAUDE_QUOTA:
+// ahí el gasto no está acotado y la guarda de cuota manda.
+const PREWARM_MODE = 'feed';
+const PREWARM_FEED_MAX = 5;   // tope duro de noticias pre-generadas por sesión
+
 window._aiKeyAvailable = function(){ return false; };   // key en cliente eliminada; IA solo via proxy server-side
 
+
+// ── Caché en memoria del access token ────────────────────────────────────────
+// `_sbc.auth.getSession()` se llamaba en CADA petición de IA (_aiFetch y _aiFetchVision).
+// En una ráfaga (prewarm de briefs, traducción, chat) eso son N lecturas/parseos de
+// localStorage seguidos. Con la caché, la ráfaga paga una sola.
+let _tokCache = { tok: null, exp: 0 };
+async function _pvAccessToken(){
+  const now = Date.now();
+  if (_tokCache.tok && now < _tokCache.exp) return _tokCache.tok;
+  try {
+    const _sbc = window.sbClient;
+    if (!_sbc) return null;
+    const _gs = await _sbc.auth.getSession();
+    const _s = _gs && _gs.data && _gs.data.session;
+    if (_s && _s.access_token) {
+      // 60 s de TTL: corto para que un refresh de token se recoja rápido, largo para
+      // que una ráfaga de llamadas IA (prewarm, traducción) no repita getSession().
+      _tokCache = { tok: _s.access_token, exp: now + 60000 };
+      return _s.access_token;
+    }
+  } catch(e){}
+  return null;
+}
+// Invalidación explícita — la llama onAuthStateChange en SIGNED_OUT y TOKEN_REFRESHED.
+window._pvTokCacheClear = function(){ _tokCache = { tok: null, exp: 0 }; };
 
 // Enruta la IA de texto al proxy server-side de Supabase (anthropic-proxy).
 async function _aiFetch(opts, essential) {
@@ -6435,11 +6525,11 @@ async function _aiFetch(opts, essential) {
     try {
       // Envía el ACCESS TOKEN del usuario (no la anon key) para que el proxy pueda
       // identificarlo (auth.getUser) y aplicar el gate + presupuesto por usuario.
-      // getSession() lee de localStorage (rápido) y es fiable en este scope
-      // (la var `session` vive dentro del IIFE de auth y aquí no es accesible).
+      // _pvAccessToken() encapsula el getSession() (que lee de localStorage) con una caché
+      // de 60 s — la var `session` vive dentro del IIFE de auth y aquí no es accesible.
       // Si no hay sesión, cae a la anon key (comportamiento previo).
       let _uTok = _AI_SB_ANON;
-      try { const _sbc = window.sbClient; if (_sbc) { const _gs = await _sbc.auth.getSession(); const _s = _gs && _gs.data && _gs.data.session; if (_s && _s.access_token) _uTok = _s.access_token; } } catch(e){}
+      try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
       if (r.ok) return r;
       _sbErr = r;
@@ -6472,7 +6562,7 @@ async function _aiFetchVision(opts) {
   if (typeof _aiSbOn === 'function' && _aiSbOn()) {
     try {
       let _uTok = _AI_SB_ANON;
-      try { const _sbc = window.sbClient; if (_sbc) { const _gs = await _sbc.auth.getSession(); const _s = _gs && _gs.data && _gs.data.session; if (_s && _s.access_token) _uTok = _s.access_token; } } catch(e){}
+      try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
       if (r.ok) return r;
       _sbErr = r;
@@ -6713,7 +6803,10 @@ function savePortfolio() {
   } catch(e) { reportError('Portafolio · guardar estado (localStorage)', e, { userMsg: 'No se pudo guardar el portafolio: ' + e.message }); }
 }
 
-(function loadSavedPortfolio() {
+// Era un IIFE anónimo de un solo uso. Ahora es una función CON NOMBRE que además se invoca
+// inmediatamente igual que antes: el gate de cuenta (_pvReinitFromLocal) necesita volver a
+// ejecutar EXACTAMENTE esta misma lógica de carga tras reescribir LS_KEY, sin duplicarla.
+function loadSavedPortfolio() {
   try {
     // Actualiza la versión del seed sin borrar datos del usuario.
     // El backup nunca se borra — sirve como recuperación si el estado principal desaparece.
@@ -6754,7 +6847,9 @@ function savePortfolio() {
     if (Array.isArray(s.txLog))     TX_LOG = s.txLog;
     sanitizeHoldings();
   } catch(e) { reportError('Portafolio · cargar estado (localStorage)', e, { userMsg: 'No se pudo cargar el portafolio guardado: ' + e.message }); }
-})();
+}
+loadSavedPortfolio();
+window._pvLoadSavedPortfolio = loadSavedPortfolio;
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Active drawer state
@@ -8944,6 +9039,9 @@ function buildDrawer(idx, T) {
 }
 
 function renderDonut(T) {
+  // chart.js se carga bajo demanda (ya no viene en el <head>). Si aún no está, se pide y se
+  // re-entra a esta misma función cuando llegue — así el resto del render no se bloquea.
+  if (!window.Chart) { try { window._ensureChartJs().then(() => renderDonut(T)).catch(()=>{}); } catch(e){} return; }
   const real  = HOLDINGS.map(h => calcH(h).mktVal);          // valores reales (para tooltip/leyenda)
   const equal = real; // segmentos PROPORCIONALES al % real de cada posición
   if (donutChart) { donutChart._realVals = real; donutChart.data.datasets[0].data = equal; donutChart.update('none'); return; }
@@ -9489,11 +9587,24 @@ function _composeNewsExt(o) {
 
 // Adapta una noticia (_newsCache) al shape de "evento" que consume _genEventResult →
 // category 'other' usa el path de "brief" IA (cómo afecta), no el de resultado macro.
+// El campo `description` NO es cosmético: _fetchEventBrief_impl solo activa `web_search`
+// cuando faltan `description` Y `summary` — y esa búsqueda añade 2-5 s y ~$0.01 al brief.
+// Se mapean todas las variantes del resumen del feed: `ext` (WEEKLY_NEWS/DAILY_NEWS),
+// `detail` (macro/earnings de THIS_WEEK_NEWS) y `summary`.
+let _newsNoDescWarned = false;
 function _newsAsEvent(n){
+  const _desc = n.ext || n.detail || n.summary || '';
+  // Un item sin resumen es un bug de datos AGUAS ARRIBA (el generador de noticias no produjo
+  // resumen), no del brief: se avisa UNA sola vez por sesión y se sigue — el brief caerá a
+  // web_search, que es lento y caro pero da un resultado correcto.
+  if (!_desc && !_newsNoDescWarned) {
+    _newsNoDescWarned = true;
+    try { console.warn('[news] item sin resumen (ext/detail/summary vacíos) → su brief usará web_search:', n && (n.h || n.headline)); } catch(e){}
+  }
   return {
     category: 'other',
     title: n.h || n.headline || '',
-    description: n.ext || n.detail || n.summary || '',
+    description: _desc,
     tickers: (n.impact||'').split(',').map(t=>t.trim()).filter(t=>t && /^[A-Z.]+$/.test(t)),
     _date: n.date || n.day || null,
   };
@@ -9869,7 +9980,10 @@ ${jsonSpec}`;
     // el sitio DESPLEGADO (API de pago) NO se pre-genera especulativamente: el "por qué" se
     // arma ON-DEMAND al abrir el detalle del mover (PORTIV_WHY.gen) → misma calidad, cero
     // gasto en movers que el usuario nunca abre.
-    try { if (true || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
+    // El `true ||` incondicional se sustituyó por PREWARM_MODE. Las guardas de gasto quedan
+    // INTACTAS: esto es pre-generación en BULK (batch de movers), así que _CONSERVE_CLAUDE_QUOTA
+    // lo sigue bloqueando mientras esté en true.
+    try { if (PREWARM_MODE === 'off' || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
     const c=this._load();
     let movers=holdings.filter(h=>Math.abs(h.dayChgPct||0)>=1.5).slice(0,5)
                          .filter(h=> !(c[this._key(h.ticker)] && c[this._key(h.ticker)].contexto));  // omite los ya cacheados en local
@@ -10355,6 +10469,9 @@ async function _eventSharedGet(cacheKey){
 // briefs corre al CARGAR (antes de _pvAuthReady) → RLS bloqueaba la escritura → quedaba solo en
 // local → el otro dispositivo regeneraba. Ahora se encola y se sube en cuanto hay sesión.
 async function _eventSharedSet(cacheKey, dataObj){ return _sharedAISet(cacheKey, dataObj); }
+// Claves que YA sabemos que la nube no tiene en esta sesión → no repetir el round trip.
+// Se consulta y se puebla en _fetchEventBrief_impl; se limpia al subir el brief generado.
+const _sharedMiss = new Set();
 
 // ── Caché COMPARTIDO genérico en la nube (misma tabla shared_analysis) ────────────
 //    Para contenido IA GENÉRICO idéntico para todos (resúmenes de noticia, análisis de
@@ -10575,7 +10692,16 @@ async function _fetchEventBrief(ev){
 }
 async function _fetchEventBrief_impl(ev, key){
   // Nube compartida: si otro usuario ya generó este brief, léelo (genérico → válido para todos).
-  const _shared = await _eventSharedGet(key);
+  // CACHÉ DE NEGATIVOS (_sharedMiss): la lectura a Supabase cuesta un round trip de ~300-500 ms
+  // y, si la nube no lo tiene, ese tiempo se paga para nada. Una clave que falló en esta sesión
+  // no se vuelve a consultar. Importa sobre todo en el prewarm, que encadena 5+ claves seguidas.
+  // Es a propósito por SESIÓN: si otro usuario sube ese brief mientras tanto, esta pestaña lo
+  // regenera (y el _eventSharedSet de abajo lo deduplica igual en la nube).
+  let _shared = null;
+  if (!_sharedMiss.has(key)) {
+    _shared = await _eventSharedGet(key);
+    if (!_shared) _sharedMiss.add(key);
+  }
   if (_shared) { _nmAiSet(key, _shared, 30*24*60*60*1000); return _shared; }
   const _tkList = (ev.tickers_affected || ev.tickers || []).map(t=>String(t).trim().toUpperCase()).filter(Boolean);
   const PROMPT = `Explica BREVEMENTE cómo afecta esta noticia al mercado. NO copies ni parafrasees el titular: interpreta el impacto.
@@ -10617,6 +10743,7 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
     if (!data || !data.resumen) return null;
     // Interpretación de un titular fijo → no cambia. Cache 30 días.
     _nmAiSet(key, data, 30 * 24 * 60 * 60 * 1000);
+    _sharedMiss.delete(key);      // ya existe en la nube → la caché de negativos deja de aplicar
     _eventSharedSet(key, data);   // compartir para todos (una sola generación global)
     return data;
   } catch(e) { return null; }
@@ -10724,7 +10851,10 @@ async function _prewarmOutlookEvents() {
   // de suscripción es gratis → se permite. En el sitio DESPLEGADO (API de pago) NO pre-cargamos
   // en background: el contexto se genera SOLO cuando el usuario abre el evento (on-demand),
   // evitando gasto silencioso. No se pierde función, solo el primer click tarda un poco más.
-  try { if (true || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
+  // El `true ||` que apagaba esto incondicionalmente se sustituyó por PREWARM_MODE. Las guardas
+  // de gasto quedan INTACTAS: este prewarm es en BULK (hasta 60 eventos, con web_search por
+  // evento), así que _CONSERVE_CLAUDE_QUOTA lo sigue bloqueando mientras esté en true.
+  try { if (PREWARM_MODE === 'off' || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return; } catch(e){}
   // Tope semanal del bucket 'intel' → aunque sea el path local, si se llega al tope no se
   // sigue precalentando en background (protege el gasto en el path de pago si se usara).
   try { if (typeof _intelBlocked === 'function' && _intelBlocked()) return; } catch(e){}
@@ -10777,7 +10907,7 @@ async function _prewarmOutlookEvents() {
   // eventos (noticias/opinión + todos los impactos + futuros) para que "Cómo afecta al mercado"
   // ya esté listo sin que el usuario abra cada evento. Sin suscripción (API de pago) se conserva
   // el filtro conservador (solo alto impacto pasado/hoy) para no gastar en background.
-  const _subActive = false && !(typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA);
+  const _subActive = (PREWARM_MODE === 'feed') && !(typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA);
   const pending = all.filter(({ ev }) => {
     if (isNewsEv(ev)) {
       if (!_subActive) return false;                      // sin suscripción → brief bajo demanda
@@ -10854,9 +10984,13 @@ function _prefetchMarketContext(ev){
   try {
     if (!ev || !ev.title) return;
     if (location.protocol === 'file:' && (!window._aiKeyAvailable || !window._aiKeyAvailable())) return;
-    // El prefetch por hover es especulativo: SOLO con proxy local (gratis) o bajo el tope de
-    // 'intel'. En el path de pago el click abre el detalle y lo genera on-demand (misma calidad).
-    if (true || (typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING) || (typeof _CONSERVE_CLAUDE_QUOTA!=='undefined' && _CONSERVE_CLAUDE_QUOTA)) return;
+    // El prefetch por hover es especulativo pero de coste ~0: solo se dispara sobre la tarjeta
+    // que el usuario está tocando, es idempotente por cacheKey y no precachea macro futuro.
+    // Por eso lo gobierna PREWARM_MODE (antes había un `true ||` que lo apagaba siempre) y NO
+    // _CONSERVE_CLAUDE_QUOTA — esa guarda protege la pre-generación EN BULK, no una intención
+    // explícita del usuario. Se conservan el tope semanal de 'intel' y la facturación forzada.
+    if (PREWARM_MODE === 'off') return;
+    if ((typeof _intelBlocked==='function' && _intelBlocked()) || (typeof _FORCE_API_KEY_BILLING!=='undefined' && _FORCE_API_KEY_BILLING)) return;
     const isNews = (ev.category || '') === 'other';
     const key = isNews ? _briefCacheKey(ev) : _eventCacheKey(ev);
     if (_nmAiGet(key)) return;                  // ya cacheado → nada que hacer
@@ -10887,9 +11021,13 @@ window._prefetchOutlookEvent = _prefetchOutlookEvent;
 let _prewarmFeedRunning = false;
 async function _prewarmFeedNews(){
   if (_prewarmFeedRunning) return;
-  if (!false) return;   // solo con suscripción (background gratis)
+  // El `if (!false) return;` que lo apagaba siempre se sustituyó por PREWARM_MODE. Este prewarm
+  // está ACOTADO a PREWARM_FEED_MAX briefs por sesión (Haiku, max_tokens:550, y sin web_search
+  // cuando la noticia trae `description` → ~$0.0005 cada uno), así que NO lo gobierna
+  // _CONSERVE_CLAUDE_QUOTA (esa guarda protege la pre-generación en bulk sin tope). La
+  // facturación forzada sí lo sigue bloqueando.
+  if (PREWARM_MODE !== 'feed') return;
   if (typeof _FORCE_API_KEY_BILLING !== 'undefined' && _FORCE_API_KEY_BILLING) return;   // facturación forzada a API key → no pre-generar en bulk, solo on-demand
-  if (typeof _CONSERVE_CLAUDE_QUOTA !== 'undefined' && _CONSERVE_CLAUDE_QUOTA) return;   // conservar cuota del plan → no pre-generar en bulk, solo on-demand
   if (typeof _fetchEventBrief !== 'function' || typeof _newsAsEvent !== 'function') return;
   const pools = [];
   [ (typeof DAILY_NEWS!=='undefined'?DAILY_NEWS:null),
@@ -10906,10 +11044,13 @@ async function _prewarmFeedNews(){
     if (seen.has(k)) continue; seen.add(k);
     if (_nmAiGet(k)) continue;   // ya cacheado (local o adoptado de la nube)
     queue.push(ev);
+    if (queue.length >= PREWARM_FEED_MAX) break;   // TOPE DURO explícito de gasto por sesión
   }
   if (!queue.length) return;
   _prewarmFeedRunning = true;
-  const CONCURRENCY = 4; let _aborted = false;
+  // CONCURRENCY 2 (antes 4): el prewarm es de FONDO y no debe competir por conexiones ni por
+  // el rate limit del proxy con las llamadas que el usuario está esperando en pantalla.
+  const CONCURRENCY = 2; let _aborted = false;
   const work = queue.slice();
   const worker = async () => {
     while (work.length && !_aborted){
@@ -14000,6 +14141,8 @@ function PV_isMobile(){ return window.matchMedia('(max-width:899px)').matches; }
 // quedaba en modo escritorio con ejes, desalineado del bottom-nav del CSS).
 function _PERF_MOB(){ return PV_isMobile(); }
 function initPerfChart() {
+  // chart.js se carga bajo demanda (ya no viene en el <head>) → se pide y se re-entra.
+  if (!window.Chart) { try { window._ensureChartJs().then(() => initPerfChart()).catch(()=>{}); } catch(e){} return; }
   // ── ANTI-FLASH (arranque en frío) ── Si en una sesión previa el usuario tenía un broker
   //    conectado (flag persistido), la serie REAL densa llegará por snapHistory en ~1s. Marca
   //    PENDING ANTES del primer pintado para que generate() NO dibuje la reconstrucción Yahoo
@@ -14861,6 +15004,9 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
 // fuente LICENCIADA — Finnhub free (/quote, métricas, /stock/candle si algún día hay plan),
 // SnapTrade (broker) o snapshots propios. Reactivar velas: reimplementar aquí contra una
 // fuente con licencia comercial (nunca Yahoo).
+// DESACTIVADO: el stub se conserva por si algún consumidor lo referencia, pero sus llamadas en
+// el camino crítico (el Promise.all de action:'info' y el respaldo de action:'quote' en apiCall)
+// se ELIMINARON — solo añadían un turno de espera para recibir null.
 async function _yhChart(ticker, range, interval, timeoutMs){ return null; }
 
 // ── Alpaca Market Data — velas CON licencia comercial (feed IEX) ──────────────────────────
@@ -15025,81 +15171,57 @@ async function apiCall(params, timeoutMs = 15000) {
           try { _quoteCachePut(sym, d.c, d.d || 0, d.dp || 0, 'fh'); } catch(e){}
           return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0 };
         }
-      } catch(e) { /* respaldo Yahoo */ }
-      try {
-        const y = await _yhChart(sym, '1d', '1d', timeoutMs);
-        const m = y && y.meta;
-        if (m && typeof m.regularMarketPrice === 'number' && m.regularMarketPrice > 0) {
-          const prev = (typeof m.chartPreviousClose === 'number' && m.chartPreviousClose > 0) ? m.chartPreviousClose
-                     : (typeof m.previousClose === 'number' && m.previousClose > 0) ? m.previousClose : null;
-          const chg = prev != null ? m.regularMarketPrice - prev : 0;
-          const pct = (prev != null && prev > 0) ? chg / prev * 100 : 0;
-          try { _quoteCachePut(sym, m.regularMarketPrice, chg, pct, 'yh'); } catch(e){}
-          return { symbol: sym, regularMarketPrice: m.regularMarketPrice, regularMarketChange: chg, regularMarketChangePercent: pct };
-        }
-      } catch(e) {}
-      reportQuiet('Datos · cotización de '+sym+' (Finnhub+Yahoo fallaron)', new Error('sin datos'));
+      } catch(e) { /* sin respaldo: ver abajo */ }
+      // El RESPALDO Yahoo se eliminó: _yhChart es hoy un stub que devuelve null siempre (ver
+      // su definición), así que este bloque solo añadía una llamada muerta al camino crítico.
+      reportQuiet('Datos · cotización de '+sym+' (Finnhub falló)', new Error('sin datos'));
       return { symbol: sym, regularMarketPrice: 0, regularMarketChange: 0, regularMarketChangePercent: 0 };
     }));
     return { quoteResponse: { result: results } };
   }
 
   if (action === 'info') {
-    const [profile, quote, metricsData, recoData, priceTarget, yh] = await Promise.all([
+    const [profile, quote, metricsData, recoData, priceTarget] = await Promise.all([
       fhFetch(`/stock/profile2?symbol=${ticker}`, timeoutMs).catch(() => null),
       fhFetch(`/quote?symbol=${ticker}`, timeoutMs).catch(() => null),
       fhFetch(`/stock/metric?symbol=${ticker}&metric=all`, timeoutMs).catch(() => null),
       fhFetch(`/stock/recommendation?symbol=${ticker}`, timeoutMs).catch(() => null),
       fhFetch(`/stock/price-target?symbol=${ticker}`, timeoutMs).catch(() => null),
-      _yhChart(ticker, '1d', '1d', timeoutMs).catch(() => null),   // precio/52s en vivo desde Yahoo
     ]);
-    // Precio en vivo: Yahoo primero (mismos números que Yahoo); Finnhub de respaldo.
-    var _yMeta  = (yh && yh.meta) || null;
-    var _yPrice = (_yMeta && typeof _yMeta.regularMarketPrice === 'number' && _yMeta.regularMarketPrice > 0) ? _yMeta.regularMarketPrice : null;
+    // Precio en vivo: Finnhub. Aquí había una 6ª llamada (_yhChart → precio/52s de Yahoo) y las
+    // ramas que consumían su meta (_yMeta/_yPrice, y el reintento serial contra Yahoo). _yhChart
+    // es hoy un stub que devuelve null siempre, así que solo añadía latencia muerta a la ráfaga.
     var _q2 = quote;   // cotización Finnhub efectiva (el reintento serial puede reemplazarla)
-    var _px = _yPrice || (_q2 && _q2.c) || 0;
+    var _px = (_q2 && _q2.c) || 0;
     if (!_px) {
-      // REINTENTO SERIAL antes de declarar "no encontrado". La ráfaga de 6 llamadas en
-      // paralelo de este bloque provoca rechazos transitorios (403/429) del proxy compartido;
-      // una sola cotización, ya fuera de la ráfaga, casi siempre SÍ responde. Esto elimina el
-      // falso "Ticker no encontrado" en símbolos válidos (NFLX, FRCOY, …). Primero Finnhub
-      // (barato) y, si aún falla, Yahoo (que también trae el cierre previo para el % del día).
+      // REINTENTO SERIAL antes de declarar "no encontrado". La ráfaga de llamadas en paralelo
+      // de este bloque provoca rechazos transitorios (403/429) del proxy compartido; una sola
+      // cotización, ya fuera de la ráfaga, casi siempre SÍ responde. Esto elimina el falso
+      // "Ticker no encontrado" en símbolos válidos (NFLX, FRCOY, …).
       try {
         var _rq = await fhFetch(`/quote?symbol=${ticker}`, timeoutMs);
         if (_rq && typeof _rq.c === 'number' && _rq.c > 0) { _q2 = _rq; _px = _rq.c; }
       } catch(_e) {}
-      if (!_px) {
-        try {
-          var _ry = await _yhChart(ticker, '1d', '1d', timeoutMs);
-          var _rm = _ry && _ry.meta;
-          if (_rm && typeof _rm.regularMarketPrice === 'number' && _rm.regularMarketPrice > 0) {
-            _yMeta = _rm; _yPrice = _rm.regularMarketPrice; _px = _yPrice;
-          }
-        } catch(_e) {}
-      }
     }
     if (!_px) {
       throw new Error(`Ticker "${ticker}" no encontrado. Verifica el símbolo.`);
     }
-    var _yPrev = (_yMeta && typeof _yMeta.chartPreviousClose === 'number' && _yMeta.chartPreviousClose > 0) ? _yMeta.chartPreviousClose : null;
     var _dChg, _dPct;
     // ── CAMBIO DEL DÍA: FUENTE ÚNICA (concuerda con el watchlist) ──────────────────────────────
     // El watchlist (apiCall action:'quote'), el refresco en vivo (_refreshResearchPrice) y el
     // alta de watchlist usan Finnhub dp. El detalle usaba Yahoo (chartPreviousClose) → % DISTINTO
     // para la misma acción (p.ej. NFLX −7.26% en watchlist vs +2.93% en el detalle). Se unifica:
-    // Finnhub dp PRIMERO (mismo proveedor que el resto), Yahoo de respaldo. El $ del día se deriva
-    // del % contra el precio MOSTRADO (_px) → % y $ siempre consistentes con el precio en pantalla.
+    // Finnhub dp es hoy la ÚNICA fuente (el respaldo Yahoo se retiró con _yhChart). El $ del día
+    // se deriva del % contra el precio MOSTRADO (_px) → % y $ siempre consistentes con la pantalla.
     const _fhOk = _q2 && typeof _q2.c === 'number' && _q2.c > 0;
     if (_fhOk) {
       _dPct = (typeof _q2.dp === 'number' && isFinite(_q2.dp)) ? _q2.dp : 0;
       _dChg = (_dPct !== 0) ? +(_px - _px / (1 + _dPct / 100)).toFixed(2)
              : ((typeof _q2.d === 'number' && isFinite(_q2.d)) ? _q2.d : 0);
-    } else if (_yPrice && _yPrev) {
-      _dChg = _yPrice - _yPrev; _dPct = _dChg / _yPrev * 100;
     } else {
       _dChg = 0; _dPct = 0;
     }
-    try { _quoteCachePut(ticker, _px, _dChg, _dPct, _fhOk ? 'fh' : 'yh'); } catch(e){}
+    try { _quoteCachePut(ticker, _px, _dChg, _dPct, 'fh'); } catch(e){}
     // Si el perfil no cargó (proxy lento/429), NO etiquetar como "ETF" — eso era un
     // mislabel: una acción normal aparecía como ETF. Dejar sector vacío; el tipo real ETF
     // se detecta por la lista de tickers conocidos más abajo (quoteType).
@@ -15146,8 +15268,10 @@ async function apiCall(params, timeoutMs = 15000) {
       beta:            m.beta    ?? null,
       trailingEps:     m.epsTTM ?? m.epsBasicExclExtraItemsTTM ?? null,
       priceToBook:     m.pbAnnual ?? m.pbQuarterly ?? m.pb ?? null,
-      fiftyTwoWeekHigh: (_yMeta && _yMeta.fiftyTwoWeekHigh) || m['52WeekHigh'] || null,
-      fiftyTwoWeekLow:  (_yMeta && _yMeta.fiftyTwoWeekLow)  || m['52WeekLow']  || null,
+      // Los 52s venían de la meta de Yahoo con respaldo Finnhub; retirado _yhChart, Finnhub es
+      // la única fuente (la meta de Yahoo siempre era null desde que _yhChart pasó a stub).
+      fiftyTwoWeekHigh: m['52WeekHigh'] || null,
+      fiftyTwoWeekLow:  m['52WeekLow']  || null,
       dividendYield:   m.currentDividendYieldTTM != null ? m.currentDividendYieldTTM / 100 : null,
       revenueGrowth:   m.revenueGrowthTTMYoy != null ? m.revenueGrowthTTMYoy / 100 : null,
       earningsGrowth:  m.epsGrowthTTMYoy    != null ? m.epsGrowthTTMYoy / 100    : null,
@@ -16337,6 +16461,15 @@ async function _fetchResearch(ticker) {
     // en vez de esperar a que termine todo el bloque de fundamentales. Antes era secuencial
     // (info → luego history), sumando ambas latencias en vez de solaparlas.
     const _histPromise = apiCall({action:'history', ticker, period:'1mo'}, 8000).catch(() => ({timestamps:[], closes:[]}));
+    // FIX perf: `info` TAMPOCO depende de _eKey ni de EPS → se lanza YA, junto al histórico,
+    // en vez de esperar al `await EPS.fetch`. Trade-off DELIBERADO: si luego aciertan las
+    // cachés (local o compartida), estos 5 fetches a Finnhub se desperdician. Es aceptable —
+    // el rate limit de Finnhub es por minuto, no por request, y el ahorro de latencia (dejar
+    // de encadenar EPS.fetch → info) lo justifica.
+    // El .then(v=>({v}), e=>({e})) convierte el rechazo en valor: sin esto, un ticker inválido
+    // provocaría un unhandled rejection cuando la promesa NO llega a consumirse (cache hit).
+    // El error se re-lanza abajo, en el punto donde hoy se consumía.
+    const _infoPromise = apiCall({action:'info', ticker}).then(v => ({v}), e => ({e}));
     // EPS primero → clave de invalidación por earnings (refresca al reportar).
     try { if (typeof EPS !== 'undefined') await EPS.fetch(ticker); } catch(e){}
     const _eKey = _analysisEarningsKey(ticker);
@@ -16350,9 +16483,17 @@ async function _fetchResearch(ticker) {
       if (_sh && _sh.info) { info = _sh.info; overview = _sh.overview || null; _analysisLocalSet(ticker, info, overview, _eKey); }
     }
     if (!info) {                                                        // 3) yfinance → poblar caches
-      info = await apiCall({action:'info', ticker});
+      // FIX perf: info (ya en vuelo desde arriba) y overview en PARALELO — antes eran dos
+      // `await` encadenados y se sumaban las dos latencias. La validación de longName se hace
+      // DESPUÉS de resolver ambos: si info es inválido se lanza el mismo error de siempre y el
+      // overview ya resuelto simplemente se descarta.
+      const [_ir, _ov] = await Promise.all([
+        _infoPromise,
+        apiCall({action:'overview', ticker}).catch(() => ({overview: null})),
+      ]);
+      if (_ir.e) throw _ir.e;
+      info = _ir.v;
       if (!info || !info.longName) throw new Error(`Ticker "${ticker}" no encontrado. Verifica el símbolo.`);
-      const _ov = await apiCall({action:'overview', ticker}).catch(() => ({overview: null}));
       overview = _ov?.overview || null;
       _analysisLocalSet(ticker, info, overview, _eKey);
       _analysisSharedSet(ticker, info, overview, _eKey);               // compartir para todos
@@ -16364,40 +16505,35 @@ async function _fetchResearch(ticker) {
     // ── CARGA COMPLETA ANTES DE ABRIR ──────────────────────────────────────────────
     // Ahora que yh-proxy trae el histórico REAL en ~0.4s, esperamos el 1M REAL ANTES de
     // revelar la acción → la gráfica sale correcta desde el primer frame, sin el "flash"
-    // de la curva estimada. Cap de 3.5s: si Yahoo tardara, caemos a la reconstrucción para
-    // no colgar la vista (el real se cambia luego en segundo plano).
+    // de la curva estimada. Cap de 1.2s (antes 3.5s): si el histórico tardara, caemos a la
+    // reconstrucción para no colgar la vista. Bajarlo es seguro porque la rama `else` de
+    // abajo (_initReal === false) reengancha _histPromise en 2º plano, redibuja la gráfica
+    // y persiste el snapshot en cuanto llega el dato real.
     $('researchLoadingTxt').textContent = 'Cargando gráfica...';
     let _initChart = null, _initReal = false;
     try {
-      const _h = await Promise.race([_histPromise, new Promise(r => setTimeout(() => r(null), 3500))]);
+      const _h = await Promise.race([_histPromise, new Promise(r => setTimeout(() => r(null), 1200))]);
       const _hcl = (_h && _h.closes) ? _h.closes.filter(c => c != null) : [];
       if (_hcl.length >= 2) { _initChart = _h; _initReal = true; _chartLSset(ticker, '1mo', _h); }
     } catch(e){}
     if (!_initChart) _initChart = { timestamps: [], closes: [], _synthetic: true };
     researchChartCache['1mo'] = _initChart;
-    // Precalienta el RESTO de períodos (1D/1W/3M/6M/1A/YTD/5A) ANTES de abrir, para que
-    // cambiar de fecha sea instantáneo y con data real. Cap de 3s → no penaliza la espera si
-    // algún período tarda; los que no lleguen se cargan al pulsarlos.
-    $('researchLoadingTxt').textContent = 'Cargando todas las gráficas...';
-    try { await Promise.race([_prefetchAllResearchPeriods(ticker, info), new Promise(r => setTimeout(r, 3000))]); } catch(e){}
-    // ── ANÁLISIS ANTES DE REVELAR ──────────────────────────────────────────────
-    // El usuario NO quiere ver "cargando gráfica → luego Analizando…": la pantalla de
-    // carga debe quedarse hasta que el análisis TAMBIÉN esté listo, y entonces revelar
-    // todo completo de una vez. Pre-ensamblamos el análisis aquí (con el overlay aún
-    // visible) y lo dejamos en caché → al revelar, _upgradeAnalysisToAI lo pinta al
-    // instante desde ese caché, sin el spinner "Analizando…". Cap de 12s: si la narrativa/
-    // insiders tardaran, revelamos igual (el análisis se completa en 2º plano) para no colgar.
-    if (!_isEtfTicker(ticker, info)) {
-      $('researchLoadingTxt').textContent = 'Cargando análisis...';
-      try {
-        const _a = await Promise.race([
-          _assembleAnalysis(ticker, info),
-          new Promise(r => setTimeout(() => r(null), 12000)),
-        ]);
-        if (_a && currentResearchTicker === ticker) _qualSet(ticker, _a, _eKey);
-      } catch(e){}
-    }
-    // Revelar la acción ya con las gráficas Y el análisis listos.
+    // Precalienta el RESTO de períodos (1D/1W/3M/6M/1A/YTD/5A) para que cambiar de fecha sea
+    // instantáneo y con data real. FIRE-AND-FORGET: ya NO se espera (antes había un
+    // `await Promise.race(..., 3000)` que retenía la pantalla de carga hasta 3 s sin aportar
+    // nada al primer render, que solo usa 1mo). Es seguro porque _prefetchAllResearchPeriods
+    // ya tiene sus propias guardas (seq !== _prefetchSeq, currentResearchTicker !== ticker) y
+    // ya redibuja sola si el usuario está mirando ese período cuando llega el dato.
+    try { _prefetchAllResearchPeriods(ticker, info).catch(()=>{}); } catch(e){}
+    // ── ANÁLISIS FUERA DEL CAMINO CRÍTICO ──────────────────────────────────────
+    // Antes se pre-ensamblaba el análisis AQUÍ (con la pantalla de carga puesta) y se esperaba
+    // hasta 12 s a la narrativa de Sonnet, para revelar "todo completo de una vez". El coste
+    // era que la acción entera —gráfica, precio, métricas, rating, proyecciones, escenarios,
+    // todo determinista y ya disponible— se quedaba oculta detrás de esa espera.
+    // Ahora se revela ya: _renderResearch llama a _upgradeAnalysisToAI, que pinta el análisis
+    // al instante si está en caché (_qualGet) y, si no, muestra su propio spinner acotado
+    // dentro de #r-analysis ("Analizando TICKER…") y lo reemplaza cuando llega.
+    // Revelar la acción ya, con las gráficas listas; el análisis se completa en su tarjeta.
     _renderResearch(ticker, info, researchChartCache['1mo'] || _initChart, newsObj?.news || [], overview);
     // Precio en vivo del header (Finnhub /quote): corrige un precio de snapshot viejo.
     _refreshResearchPrice(ticker);
@@ -19452,6 +19588,8 @@ function _chartEmptyState(on){
 }
 
 function _drawResearchChart(chartData, isPos) {
+  // chart.js se carga bajo demanda (ya no viene en el <head>) → se pide y se re-entra.
+  if (!window.Chart) { try { window._ensureChartJs().then(() => _drawResearchChart(chartData, isPos)).catch(()=>{}); } catch(e){} return; }
   if (!chartData) return;
   // REGLA DURA: a este lienzo SOLO entran precios reales. La curva "estimada" se retiró.
   { const _est = document.getElementById('r-chart-estimated'); if (_est) _est.style.display = 'none'; }
@@ -26573,6 +26711,35 @@ if (document.readyState === 'loading') {
     hideOverlay();
   }
 
+  // Re-lee el estado desde localStorage y vuelve a pintar, SIN recargar el documento.
+  // Reemplaza a location.reload() en el gate: recargar costaba re-descargar y re-parsear
+  // 1.75 MB con el body en visibility:hidden — se veía exactamente como una app congelada,
+  // y en un dispositivo nuevo se encadenaban dos recargas seguidas.
+  // NO duplica lógica: reutiliza loadSavedPortfolio() (la MISMA función que lee LS_KEY en el
+  // arranque normal) y los render que ya existen.
+  // ALCANCE DELIBERADO: solo cubre los casos en los que el usuario YA está confirmado y lo
+  // único que cambió es el contenido de LS_KEY (portafolio de la nube / siembra de cuenta
+  // nueva). El caso de CAMBIO DE CUENTA sigue usando location.reload() — ver el comentario
+  // en _purgeAccountLocal más abajo.
+  function _pvReinitFromLocal(){
+    var _apply = function(){
+      try {
+        // 1) volver a leer LS_KEY al estado en memoria (misma lógica que la carga inicial)
+        if (typeof window._pvLoadSavedPortfolio === 'function') window._pvLoadSavedPortfolio();
+        // 2) re-renderizar el portafolio (cabecera, resumen, tabla, donut, leyenda, perf)
+        if (typeof window.renderAll === 'function') window.renderAll();
+        // 3) refrescar watchlist (el gate la limpió y la restauró desde la fila de la cuenta)
+        if (typeof window.renderWatchlist === 'function') window.renderWatchlist();
+      } catch(e){ try { _pvLogError('_pvReinitFromLocal', e); } catch(_){} }
+    };
+    // El gate puede resolver ANTES de DOMContentLoaded (getSession() rápido con sesión en
+    // localStorage). En ese caso init() todavía no ha corrido y renderAll() pintaría sobre un
+    // DOM a medio construir. Se aplaza: nuestro listener se registra después del de init(),
+    // así que corre justo detrás de él.
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _apply);
+    else _apply();
+  }
+
   // ── Sincronización por-cuenta de PERFIL + cachés de IA (ahorra tokens entre dispositivos) ──
   // Empaqueta las claves de localStorage que CUESTAN IA o que definen el perfil del usuario,
   // para guardarlas en su fila (profiles.portfolio.__app) y restaurarlas al entrar desde otro
@@ -26722,6 +26889,13 @@ if (document.readyState === 'loading') {
       if (_bindPrev !== _bindNow) {
         _purgeAccountLocal();
         localStorage.setItem('pv_bound_uid', _bindNow);
+        // ESTE reload SE CONSERVA A PROPÓSITO (los otros dos del gate se sustituyeron por
+        // _pvReinitFromLocal). Aquí no basta con re-leer localStorage: _purgeAccountLocal()
+        // limpia el ALMACENAMIENTO, pero la cuenta anterior sigue viva en memoria — HOLDINGS,
+        // CASH, TX_LOG, WATCHLIST_CACHE, cachés de noticias/IA, instancias de Chart.js,
+        // timers… Una re-inicialización en caliente tendría que resetear cada uno de esos
+        // globales sin olvidar ninguno, y un olvido significa filtrar el portafolio de un
+        // usuario a otro. Recargar es lento; filtrar datos entre cuentas es un incidente.
         location.reload();   // re-inicializa desde localStorage limpio; al volver el bind coincide → sin re-purga
         return;
       }
@@ -26743,7 +26917,21 @@ if (document.readyState === 'loading') {
     } catch(e){}
 
     try {
-      var r = await sb.from('profiles').select('portfolio, updated_at').eq('id', s.user.id).maybeSingle();
+      // FIX perf: las dos lecturas del gate (`profiles` y `profile_caches`) son INDEPENDIENTES
+      // y antes se pagaban EN SERIE — dos round trips a Supabase encadenados en el camino
+      // crítico del arranque. Ahora salen juntas. Solo se adelanta la LECTURA: el restore de
+      // profile_caches sigue ocurriendo más abajo, DESPUÉS del restore del formato viejo, para
+      // que el formato nuevo siga mandando sobre el embebido en profiles.portfolio.
+      // Promise.resolve(...) envuelve el query builder de supabase-js v2, que es un thenable
+      // sin `.catch` propio. Si profile_caches falla, se degrada a {data:null,error} y se
+      // ignora abajo (igual que hoy); un fallo de `profiles` sí rechaza el Promise.all y cae
+      // en el catch exterior, exactamente como antes.
+      var _gateReads = await Promise.all([
+        sb.from('profiles').select('portfolio, updated_at').eq('id', s.user.id).maybeSingle(),
+        Promise.resolve(sb.from('profile_caches').select('bundle').eq('user_id', s.user.id).maybeSingle())
+          .catch(function(e){ return { data: null, error: e }; }),
+      ]);
+      var r = _gateReads[0], _pcRes = _gateReads[1];
 
       // BUG 1: el cliente de Supabase RESUELVE (no lanza) ante muchos errores (RLS, 4xx/5xx,
       // PostgREST) devolviendo {data:null, error:{...}}. Si no se revisa r.error, una lectura
@@ -26775,7 +26963,11 @@ if (document.readyState === 'loading') {
       // Si ya existe fila ahí, sus datos MANDAN (más recientes); si no existe todavía (cuenta sin
       // migrar), se deja el restore de formato viejo de arriba tal cual (fallback).
       try {
-        var { data: _pc } = await sb.from('profile_caches').select('bundle').eq('user_id', s.user.id).maybeSingle();
+        // La lectura ya se hizo arriba, en paralelo con la de `profiles` (_pcRes). Aquí solo se
+        // CONSUME, en el mismo punto del flujo que antes → el formato nuevo sigue mandando sobre
+        // el restore del formato viejo. Si falló, se ignora exactamente como hoy (_pvLogError).
+        if (_pcRes && _pcRes.error) throw _pcRes.error;
+        var _pc = _pcRes && _pcRes.data;
         var _bundle = (_pc && _pc.bundle) ? _pc.bundle : null;
         if (_bundle && (_bundle.__app || _bundle.__wl)) {
           if (_bundle.__app) _appBundleRestore(_bundle.__app);
@@ -26814,10 +27006,14 @@ if (document.readyState === 'loading') {
           var _cloudCanon = _pvCanon(portfolioOnly);
           var _localCanon = null; try { _localCanon = _pvCanon(JSON.parse(localRaw || 'null')); } catch(e){ _localCanon = null; }
           if (_cloudCanon !== _localCanon && !sessionStorage.getItem(APPLIED)) {
-            localStorage.setItem(LS_KEY, cloudRaw);   // perfil/IA ya restaurados arriba → sobreviven al reload
+            localStorage.setItem(LS_KEY, cloudRaw);   // perfil/IA ya restaurados arriba → sobreviven al re-init
             sessionStorage.setItem(APPLIED, '1');
-            location.reload();
-            return;
+            // Antes: location.reload() + return. La segunda pasada volvía a entrar aquí, ya con
+            // local === nube, y caía en las tres líneas de abajo. Ahora se re-inicializa en
+            // caliente y se CONTINÚA hasta esas mismas líneas: mismo estado final, sin volver a
+            // descargar y parsear 1.75 MB. Es seguro porque la cuenta ya está confirmada (el
+            // bind coincidió más arriba): lo único que cambia es el contenido de LS_KEY.
+            _pvReinitFromLocal();
           }
           localStorage.setItem(LS_KEY, cloudRaw);
           _lastPortHash = _pvPortHash(portfolioOnly);   // ya sincronizado con la nube → no re-subir igual
@@ -26833,8 +27029,12 @@ if (document.readyState === 'loading') {
         if (localRaw !== emptyRaw && !sessionStorage.getItem(APPLIED)) {
           localStorage.setItem(LS_KEY, emptyRaw);
           sessionStorage.setItem(APPLIED, '1');
-          location.reload();
-          return;
+          // Antes: location.reload() + return, y el upsert de abajo solo ocurría en la SEGUNDA
+          // pasada. Ahora se re-inicializa en caliente y se continúa hasta el upsert en la
+          // misma pasada: mismo estado final (local vacío + fila creada en la nube), sin
+          // recargar el documento. En un dispositivo nuevo este reload se encadenaba con el
+          // del cambio de bind → dos arranques en frío seguidos.
+          _pvReinitFromLocal();
         }
         localStorage.setItem(LS_KEY, emptyRaw);
         try {
@@ -27133,6 +27333,10 @@ if (document.readyState === 'loading') {
     // pegado para siempre (boot trap). Fallback seguro: reportar y mostrar login.
   }).catch(function(e){ try{ _pvLogError('boot getSession', e); }catch(_){} try{ showLogin(); }catch(_){} });
   sb.auth.onAuthStateChange(function(_e, s){
+    // El access token cacheado en memoria (_pvAccessToken, TTL 60 s) deja de ser válido en
+    // estos dos eventos: al salir ya no hay sesión, y al refrescar el token el viejo caduca.
+    // Sin esto, hasta 60 s de llamadas de IA irían con un Bearer obsoleto.
+    if (_e === 'SIGNED_OUT' || _e === 'TOKEN_REFRESHED') { try { window._pvTokCacheClear && window._pvTokCacheClear(); } catch(e){} }
     // Solo un cierre de sesión REAL borra datos locales; los eventos transitorios
     // (TOKEN_REFRESHED fallido, etc.) únicamente muestran el login.
     if (s && !session) cloudLoadAndGate(s);
@@ -27516,34 +27720,24 @@ document.addEventListener('DOMContentLoaded', function(){
   // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
   // overlay sin cambiar de tab — _analyzeOnboarding() hace showTab('portfolio') solo
   // cuando el análisis realmente termina.
-  // "Comenzar ahora": abre Paddle Checkout (SANDBOX). El paywall NO se cierra
-  // ni se llama snapConnect() aquí — eso ocurre SOLO tras checkout.completed
-  // (ver eventCallback en la init de Paddle en <head>).
-  // Sin toggle mensual/anual en la UI todavía → por defecto precio MENSUAL.
-  // Para ofrecer anual: pasar window.PADDLE_PRICES.annual como priceId.
-  // Web: abre el checkout de Paddle (SANDBOX). Tras 'checkout.completed' (eventCallback en <head>)
-  // se cierra el paywall y se conecta el broker vía _pvConfirmTrial().
+  // "Comenzar ahora" del paywall. En ESTE bundle (Capacitor/iOS) el cobro pasa SIEMPRE por
+  // StoreKit vía RevenueCat: Paddle es un método de pago externo y Apple lo rechaza
+  // (Guideline 3.1.1). Por eso el build de iOS no incluye paddle.js.
+  //
+  // Antes esta función conservaba, después del guard nativo, todo el camino de Paddle
+  // Checkout (lectura de PADDLE_PRICES, un priceId de respaldo en duro y Paddle.Checkout.open).
+  // Era código MUERTO y además roto: en este bundle no existen ni el script de Paddle ni la
+  // llamada a Paddle.Initialize, así que si alguna vez se hubiera alcanzado habría lanzado.
+  // Se sustituye por la ruta nativa única. El sistema de suscripción NO cambia: sigue siendo
+  // el mismo paywall de RevenueCat (_pvShowPaywall → PortivIAP.presentPaywall) que ya se usaba;
+  // solo se elimina la bifurcación que nunca se tomaba.
+  //
+  // El paywall NO se cierra aquí ni se llama a snapConnect(): eso ocurre en _pvConfirmTrial(),
+  // que dispara el listener de compra de RevenueCat cuando StoreKit confirma la transacción.
   window._pvStartCheckout = async function(){
-    // En iOS el cobro SIEMPRE pasa por StoreKit. Paddle es un método de pago externo y
-    // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
-    // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
-    if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
-    if (!window.Paddle || !window.Paddle.Checkout) {
-      try { alert('El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.'); } catch(e){}
-      return;
+    try { window._pvShowPaywall(); } catch(e){
+      try { alert('No se pudo abrir la suscripción. Inténtalo de nuevo en un momento.'); } catch(_){}
     }
-    var email = null, uid = null;
-    try {
-      var sb = window.sbClient;
-      if (sb && sb.auth) { var r = await sb.auth.getUser(); if (r && r.data && r.data.user) { email = r.data.user.email; uid = r.data.user.id; } }
-    } catch(e){}
-    if ((!email || !uid) && typeof session !== 'undefined' && session && session.user) {
-      email = email || session.user.email; uid = uid || session.user.id;
-    }
-    var priceId = (window.PADDLE_PRICES && window.PADDLE_PRICES.monthly) || 'pri_01ky1he07d68khj66569hd0hjg';
-    var opts = { items: [{ priceId: priceId, quantity: 1 }], customData: uid ? { supabase_user_id: uid } : undefined };
-    if (email) opts.customer = { email: email };
-    try { Paddle.Checkout.open(opts); } catch(e){ try{ alert('No se pudo abrir el checkout. Intenta de nuevo.'); }catch(_){} }
   };
   window._pvConfirmTrial = function(){
     // iOS: sin checkout web (Paddle). Cierra el paywall y arranca la conexión del broker.
