@@ -16486,8 +16486,8 @@ function _renderProjections(ticker, info) {
   const divSrc     = er.divSrc || 'dividend yield';
 
   // Capear el crecimiento anual a rangos razonables para horizonte 3A
-  const gAnnual    = er.gAnnual;                               // [-35%, +40%]
-  const gAnnualCap = Math.max(-0.25, Math.min(0.30, growth));  // más estricto para 3A
+  const gAnnual    = er.apprec;                                // apreciación defendible (la misma que alimenta el total)
+  const gAnnualCap = er.apprec;                                // misma tasa a 3A (ya capeada [-10%,+18%])
   // Retorno total anual = apreciación + dividendos (coincide EXACTO con el portafolio)
   const totalAnnual = er.total;
 
@@ -16578,7 +16578,7 @@ function _renderProjections(ticker, info) {
     ${row('3 meses', p3m, px, `Apreciación ${gPct}%/año ÷ 4 trimestres (precio)`)}
     ${row('6 meses', p6m, px, `Apreciación ${gPct}%/año ÷ 2 (precio)`)}
     ${row('1 año',   p1y, px, `Apreciación ${gPct}% compuesta (precio sin dividendos)`)}
-    ${row('3 años',  p3y, px, `Tasa ${gPctCap}%/año compuesta (cap ±30% para horizonte largo)`)}
+    ${row('3 años',  p3y, px, `Tasa ${gPctCap}%/año compuesta`)}
     <div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.55">
       Tasas de crecimiento y dividendos consistentes con el panel de "Retorno Esperado del Portafolio" —
       el mismo ticker aporta el mismo retorno en ambos análisis.
@@ -17981,14 +17981,14 @@ async function _pvxExtras(ticker, info){
   if (px>0){
     try { _cacheInfo(ticker, info); } catch(e){}
     const er = _expReturn(ticker);
-    const g=er.gAnnual, gCap=Math.max(-0.25,Math.min(0.30,er.growth));
+    const g=er.apprec, gCap=er.apprec;
     retBox = { totalPct:(er.total*100).toFixed(1), gPct:(g*100).toFixed(1), divPct:(er.divYield*100).toFixed(2), gSrc:er.gSrc, divSrc:er.divSrc||'dividend yield', total:er.total };
     const mk=(label,price,note)=>{ const chg=price-px; return {label,note,price,chg,chgPct:chg/px*100}; };
     proj = [
       mk('3 meses', px*Math.pow(1+g,0.25), `Apreciación ${(g*100).toFixed(1)}%/año ÷ 4 trimestres`),
       mk('6 meses', px*Math.pow(1+g,0.5),  `Apreciación ${(g*100).toFixed(1)}%/año ÷ 2`),
       mk('1 año',   px*Math.pow(1+g,1),    `Apreciación ${(g*100).toFixed(1)}% compuesta`),
-      mk('3 años',  px*Math.pow(1+gCap,3), `Tasa ${(gCap*100).toFixed(1)}%/año (cap ±30% a 3A)`),
+      mk('3 años',  px*Math.pow(1+gCap,3), `Tasa ${(gCap*100).toFixed(1)}%/año compuesta`),
     ];
   }
 
