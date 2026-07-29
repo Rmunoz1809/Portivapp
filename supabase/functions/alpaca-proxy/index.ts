@@ -57,8 +57,26 @@ function json(body: unknown, status = 200) {
   });
 }
 
+// ── Auth: sólo usuarios con sesión ───────────────────────────────────────────
+// Esta función estaba desplegada SIN ninguna verificación: bastaba conocer la URL para
+// gastar nuestra cuota de market data de Alpaca y nuestro egress de Supabase. La anon
+// key no sirve como credencial — viaja en el bundle público (index.html:32) — así que
+// se exige un JWT de usuario y se valida contra auth.getUser().
+async function isAuthedUser(req: Request): Promise<boolean> {
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+  // La anon key es un JWT válido con rol `anon`: getUser() la rechaza (no hay `sub` de
+  // usuario), así que no hace falta filtrarla aparte.
+  if (!token) return false;
+  try {
+    const { data, error } = await db.auth.getUser(token);
+    return !error && !!data?.user;
+  } catch { return false; }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+
+  if (!(await isAuthedUser(req))) return json({ error: "unauthorized" }, 401);
 
   if (!KEY_ID || !KEY_SECRET) {
     return json({ error: "APCA-API-KEY-ID / APCA-API-SECRET-KEY no configuradas en el servidor" }, 500);

@@ -136,10 +136,18 @@ Deno.serve(async (req) => {
     //   getUserAccountPositions   → GET /accounts/{id}/positions   (positions)
     //   getUserAccountBalance     → GET /accounts/{id}/balances    (cash)
     //   options.listOptionHoldings→ option positions (best-effort)
+    // El catch de aquí era `catch { accts = []; }` a secas, y esa igualación entre "SnapTrade
+    // respondió que no hay cuentas" y "SnapTrade no respondió" era el bug: un 429, un 5xx o un
+    // timeout salían por la misma puerta que un usuario sin broker, el endpoint devolvía
+    // needsConnection:true y el cliente borraba `pv_broker_*` y pintaba el cartel de "Conecta
+    // tu broker" a alguien que ACABA de conectarlo — y sin reintento, porque el poll solo se
+    // reagenda con `connected && syncing`. Un 429 al volver del portal dejaba el onboarding
+    // muerto hasta relanzar la app. Ahora el fallo de transporte se reporta como tal.
     let accts: any[] = [];
+    let acctsErr: unknown = null;
     try {
       accts = ((await st.accountInformation.listUserAccounts(sid)).data as any[]) ?? [];
-    } catch { accts = []; }
+    } catch (e) { acctsErr = e; accts = []; }
     const hasAccount = Array.isArray(accts) && accts.length > 0;
 
     // Earliest real inception across accounts (SnapTrade's first_transaction_date). The
@@ -176,6 +184,23 @@ Deno.serve(async (req) => {
 
     if (!hasHoldings) {
       if (!hasAccount) {
+        // No sabemos si tiene broker: la llamada falló. NO es needsConnection.
+        // `unavailable` le dice al cliente: conserva el estado local y vuelve a intentar.
+        if (acctsErr) {
+          const d = (acctsErr as any);
+          const st2 = d?.response?.status ?? d?.status ?? 0;
+          console.error("[snaptrade-refresh] listUserAccounts falló:", st2,
+            (d?.response?.data?.detail ?? d?.message ?? String(acctsErr)).toString().slice(0, 200));
+          return jsonResponse(req, {
+            connected: false,
+            needsConnection: false,
+            unavailable: true,          // ← el cliente NO debe borrar pv_broker_* ni parar el poll
+            upstreamStatus: st2 || null,
+            holdings: null,
+            accountId: null,
+            fromCache: false,
+          });
+        }
         // Registered on SnapTrade but NO broker linked yet → not broken; needs to connect.
         return jsonResponse(req, {
           connected: false,

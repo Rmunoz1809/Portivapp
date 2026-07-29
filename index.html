@@ -3391,6 +3391,36 @@ var _pvCheckoutCompleted = false;
   s.src = 'portiv-iap.js'; s.defer = true;
   document.head.appendChild(s);
 })();
+
+// Reintento de carga de portiv-iap.js.
+// Sin esto, si el script no llegaba a definir window.PortivIAP (arranque lento, WKWebView
+// que aborta la carga, primer lanzamiento tras instalar), _pvShowPaywall en iOS enseñaba
+// "cierra la app y vuelve a abrirla" y se rendía. Con el bloqueo duro activo eso deja al
+// usuario —o al revisor de Apple— dentro de una app cerrada SIN ninguna forma de comprar:
+// rechazo por Guideline 2.1. Aquí se espera al SDK y, si no aparece, se reinyecta el
+// script una vez antes de dar nada por perdido.
+window._pvAwaitIAP = function(totalMs){
+  var deadline = Date.now() + (totalMs || 8000);
+  var reinjected = false;
+  return new Promise(function(resolve){
+    (function tick(){
+      var iap = window.PortivIAP;
+      if (iap && typeof iap.presentPaywall === 'function') return resolve(iap);
+      if (Date.now() >= deadline) return resolve(null);
+      // A mitad de la ventana, un único reintento de carga (cache-bust para saltarse
+      // una respuesta fallida que el webview pudiera tener guardada).
+      if (!reinjected && Date.now() > deadline - (totalMs || 8000) / 2) {
+        reinjected = true;
+        try {
+          var r = document.createElement('script');
+          r.src = 'portiv-iap.js?retry=' + Date.now(); r.defer = true;
+          document.head.appendChild(r);
+        } catch(e){}
+      }
+      setTimeout(tick, 200);
+    })();
+  });
+};
 </script>
 </head>
 <body>
@@ -6517,10 +6547,8 @@ function _pvDTF(locale, opts){
   }catch(e){ return new Intl.DateTimeFormat(locale, opts); }
 }
 const _PV_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
-// Ruta a la función serverless de IA en el MISMO sitio (si algún día la despliegas en
-// netlify/functions/anthropic, funciona sin CORS). Si no existe (404) o falla, se cae
-// automáticamente a la llamada directa al navegador → Anthropic (abajo).
-const _AI_FN_URL = '/.netlify/functions/anthropic';
+// (Se retiró _AI_FN_URL — la Netlify Function /.netlify/functions/anthropic era un proxy
+//  ABIERTO a la API de Anthropic: sin Authorization y con CORS '*'. Ver _aiFetch.)
 // Proxy de IA server-side para PRODUCCIÓN (GitHub Pages es estático → no corre la función
 // Netlify → daba 405). Edge Function de Supabase con la key guardada como secreto
 // ANTHROPIC_API_KEY (Edge Functions → Secrets). Mismo host/anon que finnhub-proxy.
@@ -6685,14 +6713,10 @@ async function _aiFetch(opts, essential) {
       }
     } catch(e) {}
   }
-  try {
-    const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
-    if (r.ok) return r;   // hay función serverless desplegada
-    // La función respondió con ERROR (502 timeout, 400, etc.). Si NO hay key local para
-    // reintentar directo, devolvemos ESE error real — no el genérico "necesitas API key"
-    // (en un sitio desplegado el path directo nunca tendría key y ocultaría la causa real).
-    return _sbErr || r;
-  } catch(e) { /* función inalcanzable → proxy caído */ }
+  // Se ELIMINÓ el fallback a /.netlify/functions/anthropic: esa función no pedía ninguna
+  // credencial y respondía con Access-Control-Allow-Origin '*', o sea era un proxy ABIERTO
+  // a la API de Anthropic pagado con nuestra key. El único camino a la IA es el proxy de
+  // Supabase, que identifica al usuario (auth.getUser) y aplica el gate de cuota.
   return _sbErr || new Response(JSON.stringify({ error: { message: 'No se pudo conectar con el servicio de IA.' } }), { status: 502, headers: { 'content-type': 'application/json' } });
 }
 
@@ -6718,13 +6742,8 @@ async function _aiFetchVision(opts) {
       }
     } catch(e) {}
   }
-  try {
-    const r = await fetch(_AI_FN_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: opts && opts.body });
-    if (r.ok) return r;
-    // Función respondió con error y no hay key local de respaldo → devuelve el error real
-    // (el de Supabase si lo hubo, para no ocultar la causa con un 405 del host estático).
-    return _sbErr || r;
-  } catch(e) { /* función inalcanzable → proxy caído */ }
+  // Mismo motivo que en _aiFetch: el fallback a la Netlify Function era un proxy abierto
+  // a Anthropic con nuestra key. Eliminado.
   return _sbErr || new Response(JSON.stringify({ error: { message: 'No se pudo conectar con el servicio de IA.' } }), { status: 502, headers: { 'content-type': 'application/json' } });
 }
 
@@ -7022,21 +7041,21 @@ let NEXT_WEEK_NEWS = [];
 // calcula del delta vs ese peso. Asi la nota nunca puede contradecir lo mostrado.
 // Fase 6: sin cifras duras (margenes, P/E, betas, %) — quedaban fijas en el codigo y
 // envejecian mal. Las metricas reales se muestran en vivo desde Finnhub en la ficha.
-const REBAL_NOTES = {
-  NVDA:{sug:10,note:'Nucleo del ciclo IA, con margenes altos y fuerte crecimiento en Data Center, pero es ya la mayor posicion individual: concentrar mas en un solo nombre de beta elevada aumenta el riesgo idiosincratico. El objetivo mantiene el liderazgo sin sobreexponer; conviene anadir solo en correcciones profundas.'},
-  MA:  {sug:9, note:'Contrabalance defensivo del portafolio: margenes altos, retorno sobre capital elevado y sin riesgo crediticio directo. Crece de forma constante con pricing power real. Queda poco espacio para subir porque ya acumula una revalorizacion fuerte y su multiplo deja margen limitado de re-rating.'},
-  MU:  {sug:2, note:'La memoria es el negocio mas ciclico de tech: los precios de DRAM ceden y la unica tesis estructural es HBM para IA, que es una parte del revenue y no toda la empresa. Su beta amplifica las caidas. Un objetivo bajo mantiene la exposicion a HBM sin cargar el portafolio con la ciclicidad de DRAM.'},
-  TSM: {sug:8, note:'Monopolio efectivo en los nodos mas avanzados: sin TSMC no hay NVDA, AAPL ni AMD. Su multiplo es razonable para el crecimiento esperado. Objetivo acotado porque una parte grande del revenue depende de un solo cliente y el riesgo geopolitico de Taiwan es real, aunque su probabilidad sea baja.'},
-  AAPL:{sug:5, note:'Defensiva, pero de crecimiento moderado: iPhone saturado, China estancada y Apple Intelligence aun sin catalizador material. Servicios, de margen alto, sostiene la tesis. Objetivo modesto porque el upside es limitado frente a NVDA o AMZN: no es donde esta el alpha.'},
-  GOOGL:{sug:8, note:'La mejor opcionalidad asimetrica del portafolio: cotiza a un multiplo muy inferior al de NVDA. Search se estabiliza con AI Overviews, Cloud crece con fuerza y Waymo o Gemini no estan valuados. El riesgo antitrust ya esta descontado. El objetivo captura el re-rating si Search no se erosiona.'},
-  META:{sug:7, note:'Meta ya hizo el trabajo: fuerte recuperacion desde el minimo de 2022, margen operativo en maximos y publicidad con IA escalando. Objetivo acotado porque el multiplo ya descuenta excelencia y sobreasignar a estos niveles no anade upside marginal, con Reality Labs aun quemando caja.'},
-  AMZN:{sug:10,note:'AWS reacelera con Bedrock y clientes enterprise, el catalizador mas subestimado del portafolio. La publicidad crece rapido y con margen muy alto. El retail es apenas rentable, pero la suma de partes vale mas. El objetivo captura la aceleracion de AWS y la opcionalidad de la publicidad.'},
-  MSFT:{sug:5, note:'Azure crece con fuerza y Copilot Enterprise abre un mercado incremental grande sobre su base instalada. Margenes altos, balance solido y retorno al accionista via recompras y dividendo. Es la apuesta de IA enterprise con menos beta que NVDA: ancla de crecimiento con caida limitada.'},
-  APP: {sug:5, note:'La posicion mas especulativa del portafolio: revalorizacion enorme en poco tiempo gracias a su motor de anuncios con IA, con crecimiento esperado alto pero beta muy elevada y volatilidad brutal. Objetivo acotado porque subir mas expondria a una correccion severa ante un mal trimestre, y cerrarla del todo sacrificaria el upside asimetrico.'},
-  VOO: {sug:37,note:'El portafolio carga fuerte en tech y el top 3 concentra buena parte del total. Elevar VOO reduce el riesgo idiosincratico sin sacrificar mucho upside, porque el indice ya tiene un peso relevante en tecnologia y se mantiene la exposicion a IA. Costo minimo, dividendo y decadas de historial: la mejor herramienta de diversificacion disponible.'},
-  SNDK:{sug:3, note:'Spin-off de Western Digital y pure-play en NAND flash, una memoria mas volatil que DRAM, con precios sostenidos por escasez de oferta tras anos de baja inversion. La tesis es que HBM absorbe capacidad de las fabs y deja poco NAND disponible. Beta alta y sin historial largo como empresa independiente, asi que es una posicion tactica y no un core holding.'},
-  AVGO: {sug:6, note:'Doble motor: semiconductores custom (ASICs de IA para hyperscalers, con backlog plurianual) y software enterprise via VMware, de margen alto y flujo de caja estable. Crece con fuerza en la division de IA como alternativa a NVIDIA para quien quiere diseno propio de chips. El multiplo es exigente pero razonable dado el crecimiento, y diversifica la exposicion a semis mas alla de NVDA o TSM.'},
-};
+// ⚠ VACÍO A PROPÓSITO — antes esto era una tabla fija con 13 tickers y sus pesos
+// objetivo, escrita para UNA cartera concreta (la del dueño) y en primera persona sobre
+// ella ("La posicion mas especulativa del portafolio", "el top 3 concentra buena parte
+// del total"). _buildRebalPlan la leía para CUALQUIER usuario y el prompt la inyectaba
+// como «PLAN DE REBALANCEO (fuente ÚNICA …)» con la regla dura «si un ticker dice
+// AUMENTAR, no lo recortes». Es decir: a un usuario conservador con NVDA se le fijaba un
+// objetivo del 10% porque le convenía a otra persona, y al modelo se le prohibía discrepar.
+//
+// El camino correcto ya existía y ahora es el único: sin entrada aquí, _buildRebalPlan cae
+// a la nota generada por IA (_genRebalNote → _REBAL_AI_KEY), que sí se calcula con el
+// perfil de inversor y las posiciones REALES de quien está usando la app; y si aún no hay
+// nota, el peso objetivo es el peso actual (MANTENER), que es el neutro correcto.
+//
+// No volver a poner tickers aquí: cualquier cosa en esta tabla se le aplica a TODO el mundo.
+const REBAL_NOTES = {};
 // CANDIDATES ratings = "Fit para tu perfil" — calibrado con tu perfil real:
 //   Horizonte 1-3 años · GARP (calidad a precio razonable) · Más tech · Alta tolerancia al riesgo
 //   Deal-breaker: demasiado cara. Sin penalización de beta.
@@ -8458,6 +8477,10 @@ function renderDeepPortfolioAnalysis(T) {
         <tbody>${recRows}</tbody>
       </table>
     </div>
+    <div class="rbl-sub" style="margin-top:12px">
+      Sugerencias generadas por IA con fines educativos. No son asesoría financiera ni una
+      recomendación de compra o venta; decide siempre por tu cuenta o con un asesor autorizado.
+    </div>
     <div class="rbl-foot">
       <button class="rbl-export" onclick="(typeof exportPortfolioReport==='function')?exportPortfolioReport():window.print()">
         <span class="material-symbols-outlined">download</span>Exportar Reporte
@@ -8695,8 +8718,13 @@ function _genericRebalReason(i) {
   return `Peso actual razonable para el perfil del nombre. Mantener.`;
 }
 
-// ── Notas de rebalanceo generadas por IA para tickers no cubiertos por REBAL_NOTES ──
-const _REBAL_AI_KEY = 'rebal_ai_notes_v3';
+// ── Notas de rebalanceo generadas por IA (única fuente desde que REBAL_NOTES está vacío) ──
+// La clave se renombró con prefijo `pv_` a propósito: su contenido es prosa que describe la
+// cartera del usuario (pesos, solapamiento, comparación con sus otras posiciones), o sea es
+// dato de cuenta, y con el nombre viejo `rebal_ai_notes_v3` no encajaba en ningún patrón de
+// limpieza y sobrevivía intacta al cambio de cuenta. El `_v4` fuerza además que la caché
+// heredada de la versión anterior no se reutilice.
+const _REBAL_AI_KEY = 'pv_rebal_ai_notes_v4';
 const _rebalAIPending = new Set(); // evita llamadas duplicadas en vuelo
 
 function _rebalAILoad() {
@@ -10356,7 +10384,10 @@ function _nmAiRender(body, d) {
   if (!items.length) return;
   // Mismo aspecto que el resto del artículo: párrafos planos (.nm-text p),
   // sin tarjetas ni etiquetas verdes. El resumen IA se lee como parte de la noticia.
-  body.innerHTML = items.map(p => `<p>${esc(p)}</p>`).join('');
+  // Único punto de pintado del resumen IA de una noticia (lo llaman los 8 sitios de
+  // arriba), así que el descargo va aquí una sola vez y cubre todos los caminos.
+  body.innerHTML = items.map(p => `<p>${esc(p)}</p>`).join('')
+    + `<p style="font-size:11px;color:var(--text3);line-height:1.6;margin-top:10px;">Resumen generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</p>`;
 }
 
 // Pre-fetches AI summary for a news item in background (no DOM interaction)
@@ -15093,13 +15124,24 @@ let _alpacaDead = false;   // 500/403 del proxy (secrets mal puestas) → dejamo
 
 async function _alpacaFetch(path, timeoutMs = 12000){
   if (_alpacaDead || !_fhSupabaseOn()) return null;
+  // alpaca-proxy ahora exige JWT de USUARIO. Antes mandábamos la anon key, que va en el
+  // bundle público y por tanto no autenticaba nada: la función quedaba abierta a
+  // cualquiera con la URL, gastando nuestra cuota de Alpaca.
+  let _tok = null;
+  try { _tok = await _pvAccessToken(); } catch(e){}
+  // Sin sesión no hay velas — pero NO se marca muerto: en cuanto el usuario entre, el
+  // siguiente render de gráfica vuelve a intentarlo.
+  if (!_tok) return null;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const r = await fetch(`${ALPACA_PROXY}?path=${encodeURIComponent(path)}`, {
       signal: ctrl.signal,
-      headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + FH_PROXY_ANON },
+      headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + _tok },
     });
+    // 401 = token vencido a mitad de sesión. Transitorio: se recupera solo cuando
+    // supabase-js refresca el token, así que NO se marca muerto.
+    if (r.status === 401) return null;
     // 500 = secrets ausentes, 404 = función sin desplegar. No tiene sentido reintentar
     // en cada gráfica durante toda la sesión.
     if (r.status === 500 || r.status === 404 || r.status === 403) { _alpacaDead = true; return null; }
@@ -18516,7 +18558,11 @@ function _renderQualAnalysis(a, el){
     h += `<div class="px-hint">Las ventas programadas suelen ser rutina (impuestos, diversificación). Las <b>compras</b> con dinero propio son la señal más valiosa: un insider apuesta a que la acción sube. Fuente: SEC Formulario 4 vía Finnhub.</div></div>`;
   }
 
-  // 14) Disclaimer — removido a pedido (no se muestra en ninguna versión).
+  // 14) Disclaimer. Se retiró en su día "a pedido", pero esta es la superficie de IA
+  //     más densa de la app (moat, veredicto de valoración, insiders, perspectiva de
+  //     resultados) y va sin descargo: es justo el caso que App Review marca en apps
+  //     financieras. Vuelve, con el mismo texto que las otras ocho superficies.
+  h += `<div class="px-disclaimer">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>`;
 
   el.innerHTML = h;
   // ② Competidores: llena el slot LAZY. Si ya está cacheado → instantáneo; si no, fetch gentil
@@ -21068,15 +21114,23 @@ async function _buildWeekCatalysts() {
       const f = mon.toISOString().split('T')[0];
       const t = fri.toISOString().split('T')[0];
       const { earnings } = await apiCall({action:'earningsCalendar', from:f, to:t}, 10000);
-      // FIX: antes `new Set(TICKERS)` → TICKERS no existe como global → ReferenceError que el
-      // catch de abajo se tragaba, matando TODO el bloque de earnings (nunca se agregaban al outlook).
-      // El origen real de los símbolos en cartera es HOLDINGS[].ticker.
-      const held = new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).map(h => h.ticker));
+      // ⚠ NO FILTRAR NI PERSONALIZAR POR HOLDINGS AQUÍ.
+      // Lo que sale de esta función va a THIS_WEEK_NEWS / NEXT_WEEK_NEWS, que
+      // _buildFallbackOutlookData empaqueta y SharedOutlook._cloudSet sube a la tabla
+      // `shared_analysis`, cuya clave es SÓLO la semana (no hay user_id) y cuya policy de
+      // lectura es `using (true)`. Es decir: TODO LO QUE SE ESCRIBA AQUÍ LO LEEN TODOS
+      // LOS USUARIOS. Antes esto filtraba por `held = new Set(HOLDINGS.map(…))` y añadía
+      // la frase "Es una de tus posiciones", así que el primer usuario que ganaba el lock
+      // diario horneaba SUS tickers y SU texto en primera persona en el outlook de todos
+      // los demás — y a la vez veía los de otro. Esa era la fuga.
+      //
+      // El filtro es ahora una lista universal (_BIGCAP_EARNINGS_WATCH) y el texto es
+      // genérico. Para volver a personalizar hay que hacerlo EN EL RENDER (donde HOLDINGS
+      // es local y no se sube), nunca aquí.
       (earnings || []).forEach(e => {
-        if (!e || !(held.has(e.symbol) || _BIGCAP_EARNINGS_WATCH.has(e.symbol))) return;
+        if (!e || !_BIGCAP_EARNINGS_WATCH.has(e.symbol)) return;
         const d = new Date(e.date + 'T00:00:00');
         const di = d.getDay(); const dayIdx = (di>=1 && di<=5) ? di : 5;
-        const h = HOLDINGS.find(x => x.ticker === e.symbol);
         const when     = e.hour === 'bmo' ? 'antes de la apertura' : e.hour === 'amc' ? 'tras el cierre' : '';
         const whenTime = e.hour === 'bmo' ? 'Antes de la apertura' : e.hour === 'amc' ? 'Tras el cierre' : 'Hora por confirmar';
         items.push({
@@ -21086,11 +21140,11 @@ async function _buildWeekCatalysts() {
           time: whenTime,
           h: e.symbol + ' reporta resultados' + (when ? ' (' + when + ')' : ''),
           s:'neu', tipo:'Resultados', imp: 'high', impact:e.symbol, imgQ:'earnings,finance,stock market',
-          detail: (h ? h.name : e.symbol) + ' (' + e.symbol + ') publica resultados trimestrales ' + (when || 'esta semana') + '.' +
+          detail: e.symbol + ' publica resultados trimestrales ' + (when || 'esta semana') + '.' +
             (e.epsEstimate != null ? ' EPS estimado: ' + e.epsEstimate + '.' : '') +
             (e.revenueEstimate != null ? ' Ingresos estimados: $' + (e.revenueEstimate/1e9).toFixed(1) + 'B.' : '') +
             ' Los resultados pueden mover la acción con fuerza — revisa especialmente la guía hacia adelante, no solo las cifras del trimestre.' +
-            (h ? ' Es una de tus posiciones, así que el impacto es directo en el portafolio.' : ' Por su peso en el mercado, puede mover al sector/índice aunque no la tengas en tu portafolio.')
+            ' Por su peso en el mercado, puede mover al sector y al índice.'
         });
       });
     } catch(e) { /* sin earnings disponibles — se queda con los eventos macro */ }
@@ -21252,7 +21306,7 @@ function _renderWeeklyOutlook(data) {
       ? `<div class="wo-theme-bar"><span class="wo-theme-full">${data.theme}</span><span class="wo-theme-short">${_shortTheme(data.theme)}</span></div>`
       : '';
     const _ctxBar   = data.market_context ? `<div class="wo-ctx">${data.market_context}</div>` : '';
-    wrap.innerHTML = `<div class="wo-report">${_themeBar}${_ctxBar}${daysHtml}${data.narrative?`<div class="wo-section-lbl">Outlook — Próxima Semana</div><div class="wo-narrative">${_outlookNarrativeHtml(data.narrative)}</div>`:''}${themesHtml?`<div class="wo-section-lbl">Temas clave</div>${themesHtml}`:''}${ts?`<div class="wo-footer">Actualizado ${ts}</div>`:''}</div>`;
+    wrap.innerHTML = `<div class="wo-report">${_themeBar}${_ctxBar}${daysHtml}${data.narrative?`<div class="wo-section-lbl">Outlook — Próxima Semana</div><div class="wo-narrative">${_outlookNarrativeHtml(data.narrative)}</div>`:''}${themesHtml?`<div class="wo-section-lbl">Temas clave</div>${themesHtml}`:''}${ts?`<div class="wo-footer">Actualizado ${ts}</div>`:''}<div class="wo-footer" style="opacity:.85">Perspectiva generada por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div></div>`;
     // Pre-genera en background el Market Context de los eventos ya ocurridos / de hoy,
     // para que al abrir el detalle aparezca al instante (sin spinner).
     try { setTimeout(() => { try { _prewarmOutlookEvents(); } catch(e){} }, 150); } catch(e){}
@@ -21675,18 +21729,19 @@ function _earnEventsFor(off){
     const d  = new Date(r.date + 'T12:00:00');
     const di = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - mon) / 86400000) + 1;
     const dayIdx = (di >= 1 && di <= 5) ? di : 5;
-    const h = (typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).find(x => x.ticker === r.symbol);
+    // ⚠ Igual que en _buildWeekCatalysts: esto termina en el seed del outlook que se sube
+    // a `shared_analysis` (lectura pública, clave sólo por semana). Nada de HOLDINGS:
+    // ni el nombre de la posición ni la frase "Es una de tus posiciones" pueden viajar.
     const when = r.hour === 'bmo' ? 'antes de la apertura' : r.hour === 'amc' ? 'tras el cierre' : '';
     return {
       symbol: r.symbol, dayIdx, iso: _earnISO(d),
       title: `${r.symbol} reporta resultados${when ? ' (' + when + ')' : ''}`,
       time:  r.hour === 'bmo' ? 'Antes de apertura' : r.hour === 'amc' ? 'Tras el cierre' : 'Hora por confirmar',
       description: [
-        `${h ? h.name : r.symbol} (${r.symbol}) publica resultados trimestrales ${when || 'esta semana'}.`,
+        `${r.symbol} publica resultados trimestrales ${when || 'esta semana'}.`,
         (r.eps != null ? `EPS estimado: ${r.eps}.` : ''),
         (r.rev != null ? `Ingresos estimados: $${(r.rev/1e9).toFixed(1)}B.` : ''),
-        (h ? 'Es una de tus posiciones: el impacto es directo en el portafolio; lo que más mueve la acción es la guía hacia adelante, no las cifras del trimestre.'
-           : 'Por su peso en el mercado puede mover al sector y al índice aunque no la tengas en cartera; lo que más pesa es la guía hacia adelante.')
+        'Por su peso en el mercado puede mover al sector y al índice; lo que más pesa es la guía hacia adelante.'
       ].filter(Boolean).join(' '),
     };
   });
@@ -26012,7 +26067,12 @@ if (document.readyState === 'loading') {
     <h2 id="authTitle" style="text-align:center;color:#0b1c30;font-size:24px;font-weight:800;margin:0 0 6px;letter-spacing:-0.3px;">Iniciar sesión en Portiv</h2>
     <p id="authSub" style="text-align:center;color:#64748b;font-size:14px;margin:0 0 26px;">Accede a tu portafolio de forma segura</p>
 
-    <div id="authSignin" class="pv-form" style="display:none;flex-direction:column;gap:18px;">
+    <!-- Login por correo: visible. App Review no puede usar "Continuar con Apple"
+         ni Google (haría falta la contraseña del Apple ID del dueño, con 2FA), así
+         que sin este formulario el revisor no tiene NINGUNA forma de entrar a la
+         app → rechazo seguro por Guideline 2.1. El registro por correo sigue
+         oculto: los usuarios nuevos van por Apple/Google. -->
+    <div id="authSignin" class="pv-form" style="display:flex;flex-direction:column;gap:18px;">
       <div>
         <label class="av-label" for="siEmail">Correo electrónico</label>
         <div class="av-field">
@@ -26072,8 +26132,8 @@ if (document.readyState === 'loading') {
 
     <div id="authMsg" style="font-size:13px;min-height:18px;margin-top:14px;color:#15a05f;text-align:center;line-height:18px;transition:opacity .2s ease;"></div>
 
-    <!-- Separador "o" (oculto: login solo con Apple) -->
-    <div style="display:none;align-items:center;gap:12px;margin:18px 0 14px;color:#94a3b8;font-size:12px;">
+    <!-- Separador "o": ahora hay dos caminos reales (correo y social), así que se ve -->
+    <div style="display:flex;align-items:center;gap:12px;margin:18px 0 14px;color:#94a3b8;font-size:12px;">
       <div style="flex:1;height:1px;background:#e8ecf2;"></div>o<div style="flex:1;height:1px;background:#e8ecf2;"></div>
     </div>
 
@@ -26239,7 +26299,9 @@ if (document.readyState === 'loading') {
   function setMode(m){
     mode = m;
     var si = document.getElementById('authSignin'), su = document.getElementById('authSignup');
-    si.style.display = 'none';  // login solo con Apple: forms de correo siempre ocultos
+    // El form de entrar sí se muestra (ver comentario en #authSignin); el de
+    // registro no: crear cuenta sigue siendo solo Apple/Google.
+    si.style.display = (m === 'signin') ? 'flex' : 'none';
     su.style.display = 'none';
     document.getElementById('authTitle').textContent = m === 'signin' ? 'Iniciar sesión en Portiv' : 'Crea tu cuenta de Portiv';
     document.getElementById('authToggle').innerHTML = m === 'signin' ? '¿No tienes cuenta? <b>Crear una</b>' : '¿Ya tienes cuenta? <b>Inicia sesión</b>';
@@ -26530,49 +26592,58 @@ if (document.readyState === 'loading') {
   }
   window._appBundleGather = _appBundleGather;
 
-  // Borra TODO rastro local ESPECÍFICO de una cuenta: portafolio, historial de performance
-  // (los "registros" diarios/intraday), ancla de valor ("monto inicial") y perfil. NO toca las
-  // cachés genéricas de IA/noticias (mismas para todos → no son datos de cuenta). Se usa al
-  // detectar un cambio de cuenta en este navegador para que los datos de una cuenta NUNCA se
-  // filtren a otra.
-  function _purgeAccountLocal(){
-    var accountKeys = [
-      'portfolio_state_v4','portfolio_state_backup','portfolio_backup_ts',
-      'portiv_intraday_v2','portiv_daily_v2','portiv_daily_history_v1','portiv_prev_close_v1',
-      'pv_profile_local','portiv_profile_v1',
-      // BUG 2: marca de sincronización del portafolio (por-cuenta) → se limpia al cambiar de cuenta
-      // para que el estado de sync de una cuenta no contamine la comparación de recencia de otra.
-      'pv_port_synced','pv_port_saved_at'
-    ];
-    accountKeys.forEach(function(k){ try{ localStorage.removeItem(k); }catch(e){} });
-    try { Object.keys(localStorage).forEach(function(k){ if (/^portiv_profile_v1_/.test(k)) localStorage.removeItem(k); }); } catch(e){}
-    try { Object.keys(sessionStorage).forEach(function(k){ if (/^_applied_/.test(k)) sessionStorage.removeItem(k); }); } catch(e){}
-  }
-  window._purgeAccountLocal = _purgeAccountLocal;
+  // ── Limpieza local: UNA sola implementación, por LISTA DE CONSERVACIÓN ──────
+  // Antes había dos limpiadores con coberturas distintas y ambos por lista/prefijo
+  // POSITIVO ("borra lo que empiece por…"), lo cual falla por omisión: cualquier clave
+  // nueva que no encajara en el patrón sobrevivía al cambio de cuenta. En la práctica se
+  // escapaban, entre otras:
+  //   · rebal_ai_notes_v3   → prosa con los pesos y el solapamiento del usuario anterior
+  //   · nm_ai_cache_v1 / stock_ai_analysis_v1 → resúmenes IA con contexto de su cartera
+  //   · pv_broker_connected/_series/_inception, pv_perf_snap_1D/_1M → valor real en $
+  //   · portiv_hist_daily_v1 / portiv_hist_intra_v1 → qué tickers tenía
+  // y `portiv_intraday_v2` seguía en la lista cuando la clave viva es `_v3` (el bump la
+  // convirtió en un no-op silencioso).
+  //
+  // Se invierte la lógica: se BORRA TODO salvo lo explícitamente conservado. Así una clave
+  // nueva se purga por defecto en vez de filtrarse por defecto.
+  var _PV_KEEP_EXACT  = { portiv_lang:1, portiv_theme:1, fh_api_key:1 };
+  // Token de sesión de supabase-js. Si se borra a mitad de sesión, el usuario queda
+  // deslogueado — por eso el purgado por cambio de cuenta lo conserva.
+  var _PV_KEEP_AUTH_RE = /^(sb-|supabase\.auth)/;
 
-  // Borra TODO rastro local (como si la cuenta nunca hubiera existido). Se llama cuando el
-  // servidor ya NO reconoce la sesión (cuenta eliminada en Supabase). Conserva solo las
-  // preferencias de dispositivo (idioma/tema) y las API keys locales — no son datos de cuenta.
-  function _pvNukeLocalAll(){
+  // keepAuth  : conserva el token de sesión (cambio de cuenta en caliente).
+  // keepBind  : conserva `pv_bound_uid` (la marca "este navegador está ligado a este uid").
+  function _pvWipeLocal(keepAuth, keepBind){
     try {
-      // `pv_bound_uid` NO es dato de cuenta: es la marca de "este navegador ya está ligado a
-      // este usuario". Al borrarla, el siguiente login veía un bind distinto y disparaba
-      // `_purgeAccountLocal()` + `location.reload()` — es decir, un arranque en frío completo
-      // cada vez que la sesión parpadeaba. En un teléfono con red intermitente eso pasaba
-      // seguido. Se conserva: el aislamiento entre cuentas lo sigue dando la comparación de
-      // bind (si entra OTRO usuario, no coincide y se purga igual).
-      var KEEP = { portiv_lang:1, portiv_theme:1, fh_api_key:1, pv_bound_uid:1 };
       Object.keys(localStorage).forEach(function(k){
-        if (KEEP[k]) return;
-        if (/^(portiv_|pv_|news_|weekly_outlook_|outlook_|week_top_|wl_|portfolio_|shared_news_|fh_)/.test(k))
-          { try{ localStorage.removeItem(k); }catch(e){} }
+        if (_PV_KEEP_EXACT[k]) return;
+        if (keepAuth && _PV_KEEP_AUTH_RE.test(k)) return;
+        if (keepBind && k === 'pv_bound_uid') return;
+        try{ localStorage.removeItem(k); }catch(e){}
       });
       Object.keys(sessionStorage).forEach(function(k){
-        if (/^(_applied_|_cloudApplied|pv_)/.test(k) || k==='pv_force_quiz')
-          { try{ sessionStorage.removeItem(k); }catch(e){} }
+        if (keepAuth && _PV_KEEP_AUTH_RE.test(k)) return;
+        try{ sessionStorage.removeItem(k); }catch(e){}
       });
     } catch(e){}
   }
+
+  // Cambio de cuenta detectado EN CALIENTE (el bind no coincide). Se borra todo lo del
+  // usuario anterior pero se conserva la sesión (el usuario nuevo ya está autenticado) y
+  // el bind (lo reescribe el caller con el uid nuevo).
+  function _purgeAccountLocal(){ _pvWipeLocal(true, true); }
+  window._purgeAccountLocal = _purgeAccountLocal;
+
+  // Sesión cerrada / cuenta eliminada en el servidor: no debe quedar NADA. Se conserva
+  // `pv_bound_uid` porque no es dato de cuenta sino la marca de "este navegador ya está
+  // ligado a este usuario": borrarla hacía que el siguiente login viera un bind distinto
+  // y disparara purga + location.reload() — un arranque en frío cada vez que la sesión
+  // parpadeaba (frecuente en móvil con red intermitente). El aislamiento lo sigue dando
+  // la comparación de bind: si entra OTRO usuario, no coincide y se purga igual.
+  // (keepAuth sigue en true a propósito: el token de supabase-js lo gestiona y lo borra
+  //  la propia librería en signOut. Quitárselo por debajo a mitad del flujo es pedir un
+  //  estado inconsistente, y un token de una cuenta ya eliminada el servidor lo rechaza.)
+  function _pvNukeLocalAll(){ _pvWipeLocal(true, true); }
   window._pvNukeLocalAll = _pvNukeLocalAll;
 
   // ── Guard de entrada única ──────────────────────────────────────────────────
@@ -27104,7 +27175,14 @@ if (document.readyState === 'loading') {
   function showLogin(purge){
     session = null;
     window._pvAuthReady = false;
-    if (purge === false) {
+    // Antes: `if (purge === false) { …return; }` — o sea, CUALQUIER caller que pasara false
+    // saltaba la limpieza. Y el caller de onAuthStateChange pasa false para todo lo que no
+    // sea SIGNED_OUT/USER_DELETED, incluido el caso "la sesión se cayó a media" (refresh
+    // fallido, token revocado). Resultado: la pantalla de login aparecía con TODO el
+    // localStorage del usuario anterior intacto, y el siguiente que entrara en ese
+    // dispositivo lo heredaba. Ahora hay que pedir explícitamente que NO se limpie
+    // (purge === 'keep'), y "sin sesión" implica limpiar por defecto.
+    if (purge === 'keep') {
       var _b0 = document.getElementById('authBoot'); if (_b0) _b0.style.display = 'none';
       var _b1 = document.getElementById('authBody'); if (_b1) _b1.style.display = 'block';
       setMode('signin'); showOverlay();
@@ -27521,9 +27599,10 @@ document.addEventListener('DOMContentLoaded', function(){
     // Ese paywall lo diseña el dashboard de RevenueCat y resuelve SOLO la elegibilidad del
     // intro offer ("1 mes gratis") por producto y por usuario, con el dato que Apple le da
     // al SDK. Por eso aquí no se pinta ningún badge de trial a mano.
-    try {
-      var iap = _nat ? window.PortivIAP : null;
-      if (_nat && iap && typeof iap.presentPaywall === 'function'){
+    // Presentación del paywall nativo. Se extrae a su propia función porque ahora hay dos
+    // caminos hasta aquí: el SDK ya estaba listo, o lo estuvo tras esperarlo/reinyectarlo.
+    function _present(iap){
+      try {
         // Vincula la compra al usuario Supabase (si hay sesión) → atribución del webhook.
         try{ if(window.__pvUserId && window.__pvUserId!=='local' && iap.login) iap.login(window.__pvUserId); }catch(e){}
         iap.presentPaywall().then(function(res){
@@ -27536,16 +27615,26 @@ document.addEventListener('DOMContentLoaded', function(){
           }
           // cancelado / no presentado → no hace nada; el usuario puede reintentar el botón.
         }).catch(function(){});
-        return;   // en nativo NO se abre el overlay web
-      }
-    } catch(e){}
+      } catch(e){}
+    }
+
     if (_nat) {
-      // Estamos en iOS pero el SDK de compras no está disponible (portiv-iap.js no cargó).
-      // Mostrar el overlay web aquí sería ofrecer Paddle dentro de la app. Se avisa y se sale.
-      var _m = 'No se pudo abrir la suscripción. Cierra la app y vuelve a abrirla.';
-      try { if (typeof showToast === 'function') { showToast(_m, 'var(--red)'); return; } } catch(e){}
-      try { alert(_m); } catch(e){}
-      return;
+      var iap = null;
+      try { iap = window.PortivIAP; } catch(e){}
+      if (iap && typeof iap.presentPaywall === 'function'){ _present(iap); return; }
+
+      // El SDK aún no está. NO se cae al overlay web (sería ofrecer Paddle dentro de la
+      // app, Guideline 3.1.1) ni se abandona al usuario: se espera y se reintenta.
+      try { if (typeof showToast === 'function') showToast('Preparando la suscripción…', 'var(--text3)'); } catch(e){}
+      window._pvAwaitIAP(8000).then(function(ready){
+        if (ready){ _present(ready); return; }
+        // Agotados los reintentos. El mensaje dice qué hacer y el botón sigue vivo:
+        // volver a tocarlo repite el ciclo completo, así que nunca es un callejón sin salida.
+        var _m = 'No pudimos abrir la suscripción. Revisa tu conexión y vuelve a tocar el botón.';
+        try { if (typeof showToast === 'function') { showToast(_m, 'var(--red)'); return; } } catch(e){}
+        try { alert(_m); } catch(e){}
+      });
+      return;   // en nativo NO se abre el overlay web
     }
     // Web → overlay custom como antes.
     var o = document.getElementById('portivPaywall');
@@ -28641,6 +28730,11 @@ document.addEventListener('DOMContentLoaded', function(){
     if(!opts.silent){ _snapHistoryTries = 0; _snapHistoryForced = false; }
     return stCall('snaptrade-refresh', {}).then(function(j){
       if(!j || !j.connected){
+        // `unavailable` = la consulta a SnapTrade falló (429/5xx/timeout); NO significa que no
+        // haya broker. Antes esto caía en el mismo saco que "nunca conectó": se borraba
+        // pv_broker_* y se pintaba el cartel de captación a alguien que ACABA de conectar, sin
+        // reintento posible porque el poll solo se reagenda con `connected && syncing`.
+        if(j && j.unavailable){ _render('unavailable'); return j; }
         try{ localStorage.removeItem('pv_broker_connected'); localStorage.removeItem('pv_broker_series'); window._BROKER_HISTORY_PENDING=false; window._BROKER_LIVE=false; }catch(e){}
         // El servidor dice POR QUÉ no hay conexión. Sin esto los tres casos —nunca
         // conectó, la desconectó él, y "se la dimos de baja porque venció la
@@ -28674,12 +28768,25 @@ document.addEventListener('DOMContentLoaded', function(){
           try{ window._BROKER_EMPTY_OK = _settled; }catch(e){}
           if(typeof aiPortImportData==='function') aiPortImportData(data);
           // Broker path: aplica en SILENCIO (sin toast "AI Portfolio" ni salto de pestaña en cada
-          // poll de 2 min). El estado del broker ya se refleja en _render('connected'). El flag se
-          // pone ANTES de aiPortApply() (síncrono → el toast lee el flag) y se limpia justo después.
+          // poll de 2 min). El estado del broker ya se refleja en _render('connected').
+          //
+          // ⚠ El comentario anterior decía que aiPortApply() era "síncrono → el toast lee el
+          // flag", y sobre esa premisa el `finally` limpiaba _BROKER_APPLYING justo después de
+          // llamarla. Pero aiPortApply es `async function` y hace `await Promise.all(...)` a
+          // mitad: el `finally` síncrono se ejecutaba en ese primer await, así que TODA la
+          // segunda mitad corría con el flag ya en false, es decir creyéndose una importación
+          // manual de foto. Efectos reales en pleno sync silencioso de fondo: un confirm()
+          // nativo bloqueante, salto forzado a la pestaña Portfolio, toast de "AI Portfolio" y
+          // resurrección de los overrides de % antiguos. Se disparaba con cualquier posición
+          // con shares>0 y price nulo (fondos monetarios de Schwab, mutual funds, cripto).
+          //
+          // El flag ahora se limpia cuando la promesa REALMENTE termina.
           if(typeof aiPortApply==='function'){
             try{ window._BROKER_APPLYING=true; }catch(e){}
-            var _apRes; try{ _apRes=aiPortApply(); } finally { try{ window._BROKER_APPLYING=false; window._BROKER_EMPTY_OK=false; }catch(e){} }
+            var _apRes; try{ _apRes=aiPortApply(); }
+            catch(e){ try{ window._BROKER_APPLYING=false; window._BROKER_EMPTY_OK=false; }catch(_){} throw e; }
             return Promise.resolve(_apRes)
+            .finally(function(){ try{ window._BROKER_APPLYING=false; window._BROKER_EMPTY_OK=false; }catch(e){} })
             // Bloque 2.1: SnapTrade no trae cierre previo → snapMapHoldings deja day_change_pct=0
             // y el badge del día salía $0.00. Tras aplicar, refresca precios en vivo (fetchLivePrices
             // captura regularMarketPreviousClose → h._prevClose, justo lo que _calcRealDayChange
@@ -28892,6 +28999,15 @@ document.addEventListener('DOMContentLoaded', function(){
       }); }); }
   function _cardHTML(state, meta){
     var brokers='<div class="snap-brokers"><span class="snap-chip">Charles Schwab</span><span class="snap-chip">Interactive Brokers</span><span class="snap-chip">+ más</span></div>';
+    // No pudimos preguntarle a SnapTrade (429 / 5xx / timeout). NO sabemos si tiene broker,
+    // así que no se pinta ni "conectado" ni el cartel de captación: se dice la verdad y se
+    // ofrece reintentar. El poll sigue vivo por su cuenta.
+    if(state==='unavailable'){
+      return '<h3>No pudimos consultar tu broker</h3>'
+        +'<div class="snap-status"><span class="snap-dot"></span>Servicio temporalmente no disponible</div>'
+        +'<div class="snap-row"><button class="snap-btn secondary" onclick="snapRefresh()">Reintentar</button></div>'
+        +'<div class="snap-note">Tu conexión sigue guardada. Reintentamos solos en unos segundos.</div>';
+    }
     if(state==='connected'){
       var cache = meta && meta.fromCache;
       return '<h3>Broker conectado</h3>'
@@ -28973,6 +29089,8 @@ document.addEventListener('DOMContentLoaded', function(){
     // 4 min, then 12 s. If it STILL hasn't landed, stop the loop and tell the user they
     // can retry manually — never leave a silent, frozen spinner.
     var _syncTries=0, _SYNC_MAX=100, _syncToasted=false, _authTries=0;
+    var _unavailTries=0;          // reintentos ante fallo transitorio de SnapTrade (429/5xx)
+    var _jumpedToPortfolio=false; // el salto de pestaña al volver del portal va UNA vez
     // El bucle de espera de `sbClient` no tenía tope, a diferencia de sus hermanos
     // (`_authTries<10`, `_syncTries<_SYNC_MAX`). `sbClient` depende del script de supabase-js
     // servido por un CDN: si esa descarga se cae o la bloquea la red (datos móviles, portal
@@ -28987,10 +29105,24 @@ document.addEventListener('DOMContentLoaded', function(){
         // recargar (en iOS/Capacitor no hay recarga natural). Ahora reintenta.
         if(j==null){ if(_authTries++ < 10) setTimeout(go, 2000); return; }
         _authTries=0;
-        if(returned && j && j.connected){ try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){} }
+        // El salto a Portfolio va UNA sola vez, al volver del portal. Antes no tenía guard y
+        // corría en CADA vuelta del poll: con _SYNC_MAX vueltas cada 6-12 s, la app te arrancaba
+        // de Ajustes (o de donde estuvieras) cada pocos segundos durante hasta ~16 minutos.
+        if(returned && j && j.connected && !_jumpedToPortfolio){
+          _jumpedToPortfolio = true;
+          try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){}
+        }
         if(returned && j && j.connected && j.syncing && !_syncToasted){
           _syncToasted=true; toast('Conectado. Importando tus posiciones desde el broker… puede tardar unos minutos.');
         }
+        // Fallo transitorio de SnapTrade → seguir intentando con backoff. Sin esto el loop
+        // moría en el primer 429 y el onboarding quedaba muerto hasta relanzar la app.
+        if(j && j.unavailable){
+          if(_unavailTries++ < 12) setTimeout(go, Math.min(30000, 3000 * _unavailTries));
+          else { try{ toast('No pudimos contactar a tu broker. Pulsa "Reintentar" en unos minutos.'); }catch(e){} }
+          return;
+        }
+        _unavailTries = 0;
         if(j && j.connected && j.syncing){
           if(_syncTries++ < _SYNC_MAX){ setTimeout(go, _syncTries<40?6000:12000); }
           else { try{ toast('Tu broker sigue sincronizando. Pulsa "Actualizar" en unos minutos para ver tus posiciones.'); }catch(e){} }
@@ -29004,7 +29136,9 @@ document.addEventListener('DOMContentLoaded', function(){
     var _lastAuto = Date.now();
     function _autoRefresh(){
       if(document.hidden) return;
-      if(_state!=='connected' && _state!=='syncing') return;
+      // 'unavailable' incluido: si SnapTrade estaba caído, el refresco periódico es justo lo
+      // que devuelve al usuario a 'connected' sin que tenga que tocar nada.
+      if(_state!=='connected' && _state!=='syncing' && _state!=='unavailable') return;
       _lastAuto = Date.now();
       snapRefresh({silent:true});
     }
