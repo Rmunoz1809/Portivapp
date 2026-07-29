@@ -2,20 +2,22 @@
 -- PORTIV · Cierre de dos agujeros de escritura/lectura sobre datos ajenos
 -- Proyecto: zblhifszlhdgkhnymwjh  ·  Idempotente: se puede correr varias veces.
 --
---   1. `profiles` daba UPDATE sobre TODAS las columnas a `authenticated`. La RLS
---      limita la FILA (auth.uid() = id) pero no la COLUMNA, así que un usuario
---      podía escribir su propio `snaptrade_user_id`, `snaptrade_user_secret` o
---      `snaptrade_connected_at` con la anon key desde la consola del navegador.
---      Consecuencias reales:
---        · poner `snaptrade_connected_at` en el futuro → evade snaptrade-cleanup
---          (la baja por trial vencido nunca dispara: broker gratis para siempre).
---        · escribir el `snaptrade_user_id` de OTRO usuario en la propia fila →
---          snaptrade-webhook hace `.eq("snaptrade_user_id", …)` y aplica el
---          parche a las DOS filas: se puede romper la conexión de un tercero.
---        · borrar `snaptrade_user_secret` → deja al usuario de SnapTrade huérfano
---          y facturándose sin forma de darlo de baja.
+--   1. CORRECCIÓN: la versión anterior de este archivo revocaba y volvía a
+--      conceder los privilegios de `profiles` porque la auditoría se hizo sobre
+--      los archivos de migración, donde el GRANT es de tabla entera. La base de
+--      producción NO está así — se comprobó con has_column_privilege antes de
+--      aplicar nada, y ya tiene el candado por columna:
+--        · authenticated INSERT/UPDATE → sólo (email, id, portfolio, updated_at)
+--        · authenticated SELECT        → todo menos snaptrade_user_secret
+--        · authenticated DELETE        → ninguno
+--        · anon                        → ninguno
+--      Es decir: `snaptrade_user_secret` no es legible y `snaptrade_connected_at`
+--      / `snaptrade_user_id` no son escribibles desde el cliente. El revoke+grant
+--      habría QUITADO lecturas que el cliente sí usa y AÑADIDO un DELETE que hoy
+--      no tiene. Se elimina. Sólo queda el endurecimiento que no rompe nada.
 --
---   2. `has_active_entitlement(uid)` es SECURITY DEFINER, está concedida a
+--   2. ESTE SÍ SIGUE ABIERTO (verificado en producción): `has_active_entitlement(uid)`
+--      es SECURITY DEFINER, está concedida a
 --      `authenticated` y NUNCA comprueba que `uid = auth.uid()`. Cualquier usuario
 --      podía consultar el estado de suscripción de cualquier otro con sólo su UUID
 --      (`select public.has_active_entitlement('<uuid ajeno>')`), saltándose la RLS
@@ -49,35 +51,24 @@ alter table public.profiles
 --     siguen escribiendo sin cambios.
 -- ─────────────────────────────────────────────────────────────────────────
 alter table public.profiles enable row level security;
-alter table public.profiles force  row level security;  -- ni el owner se salta la RLS
 
--- Se revoca en bloque y se vuelve a conceder columna por columna. Postgres NO
--- permite mezclar privilegios de tabla y de columna para el mismo comando: si
--- queda un `grant update on profiles`, el de columna es irrelevante.
-revoke all on table public.profiles from anon, authenticated;
+-- FORCE: hoy es un no-op y conviene saberlo. El dueño de la tabla es `postgres`,
+-- que tiene el atributo BYPASSRLS, y BYPASSRLS gana sobre FORCE. Se deja porque
+-- el día que la tabla cambie de dueño a un rol sin ese atributo, la RLS seguirá
+-- aplicándosele. Comprobado que no hay triggers en auth.users que pudieran
+-- quedar atrapados por la RLS al insertarse el perfil de un alta nueva.
+alter table public.profiles force row level security;
 
--- SELECT: sólo lo que el cliente lee. `snaptrade_user_secret` deja de ser legible
--- aunque alguien añada una policy de select permisiva por error.
-grant select (id, email, portfolio, updated_at)
-  on public.profiles to authenticated;
+-- REFERENCES sobre TODAS las columnas está concedido a anon y a authenticated.
+-- No permite leer datos, pero sí crear una FK que apunte a cualquier columna, lo
+-- que impide borrarlas o cambiarlas de tipo, y confirma la existencia de valores.
+-- No lo usa nadie: se revoca. Es lo único de esta sección que cambia algo.
+revoke references on table public.profiles from anon, authenticated;
 
--- INSERT/UPDATE: el upsert del cliente necesita ambos sobre las mismas columnas.
-grant insert (id, email, portfolio, updated_at)
-  on public.profiles to authenticated;
--- `id` va TAMBIÉN en el update: PostgREST traduce .upsert() a
--- `insert … on conflict (id) do update set id = excluded.id, email = …`, o sea
--- incluye la columna de conflicto en el SET. Sin este privilegio el upsert del
--- cliente devolvería 42501 y la sincronización a la nube dejaría de funcionar.
--- Reescribirlo a un id ajeno lo sigue bloqueando la RLS: el `with check
--- (auth.uid() = id)` de profiles_update_own se evalúa sobre la fila NUEVA.
-grant update (id, email, portfolio, updated_at)
-  on public.profiles to authenticated;
-
--- DELETE: el borrado de cuenta del cliente (index.html:27306) lo necesita.
--- La RLS lo sigue limitando a la propia fila.
-grant delete on public.profiles to authenticated;
-
--- `anon` sin nada. La anon key viaja en el bundle público: no debe poder ni leer.
+-- NO se tocan SELECT/INSERT/UPDATE: ya están limitados por columna en producción.
+-- NO se concede DELETE: hoy `authenticated` no lo tiene y la app funciona, así que
+-- el borrado de cuenta va por la Edge Function `delete-account` (service role).
+-- Concederlo sería ampliar privilegios, no restringirlos.
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- 2 · has_active_entitlement — sólo sobre uno mismo
@@ -139,7 +130,86 @@ revoke all on function public.has_active_entitlement(uuid) from public, anon;
 grant execute on function public.has_active_entitlement(uuid) to authenticated, service_role;
 
 -- ─────────────────────────────────────────────────────────────────────────
--- 3 · Verificación (BLOQUEANTE — no des esto por bueno sin correrlo)
+-- 3 · Verificación BLOQUEANTE, dentro de la propia migración
+--
+--     Se usa has_*_privilege en vez de information_schema porque esas vistas
+--     sólo muestran lo que el rol actual puede ver; las funciones responden
+--     igual sea quien sea el que aplica la migración. Si algo no queda como
+--     debe, esto lanza excepción y la transacción entera se deshace: es
+--     preferible no aplicar nada a aplicar un candado a medias.
+-- ─────────────────────────────────────────────────────────────────────────
+do $verify$
+declare
+  fallos text[] := '{}';
+begin
+  -- (a) NO debe quedar privilegio de TABLA sobre profiles salvo DELETE: si
+  --     sobrevive uno, los GRANTs por columna son decorativos.
+  if has_table_privilege('authenticated', 'public.profiles', 'SELECT') then
+    fallos := fallos || 'authenticated conserva SELECT a nivel de tabla';
+  end if;
+  if has_table_privilege('authenticated', 'public.profiles', 'UPDATE') then
+    fallos := fallos || 'authenticated conserva UPDATE a nivel de tabla';
+  end if;
+  if has_table_privilege('authenticated', 'public.profiles', 'INSERT') then
+    fallos := fallos || 'authenticated conserva INSERT a nivel de tabla';
+  end if;
+
+  -- (b) Lo que el cliente SÍ necesita debe seguir funcionando.
+  if not has_column_privilege('authenticated', 'public.profiles', 'portfolio', 'SELECT') then
+    fallos := fallos || 'falta SELECT(portfolio): rompe la carga del portafolio';
+  end if;
+  if not has_column_privilege('authenticated', 'public.profiles', 'portfolio', 'UPDATE') then
+    fallos := fallos || 'falta UPDATE(portfolio): rompe la sincronización a la nube';
+  end if;
+  if not has_column_privilege('authenticated', 'public.profiles', 'id', 'UPDATE') then
+    fallos := fallos || 'falta UPDATE(id): PostgREST lo necesita en el on-conflict del upsert';
+  end if;
+  if not has_column_privilege('authenticated', 'public.profiles', 'email', 'INSERT') then
+    fallos := fallos || 'falta INSERT(email): rompe la creación del perfil';
+  end if;
+
+  -- (b2) El gate de has_active_entitlement: el motivo real de esta migración.
+  if not exists (
+    select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public' and p.proname = 'has_active_entitlement'
+       and p.prosrc like '%auth.uid()%'
+  ) then
+    fallos := fallos || 'has_active_entitlement sigue sin comprobar el uid del llamante';
+  end if;
+
+  -- (c) El motivo de todo esto: las columnas de SnapTrade quedan server-only.
+  if has_column_privilege('authenticated', 'public.profiles', 'snaptrade_user_secret', 'SELECT') then
+    fallos := fallos || 'snaptrade_user_secret sigue siendo legible por el cliente';
+  end if;
+  if has_column_privilege('authenticated', 'public.profiles', 'snaptrade_connected_at', 'UPDATE') then
+    fallos := fallos || 'snaptrade_connected_at sigue siendo escribible: evade snaptrade-cleanup';
+  end if;
+  if has_column_privilege('authenticated', 'public.profiles', 'snaptrade_user_id', 'UPDATE') then
+    fallos := fallos || 'snaptrade_user_id sigue siendo escribible: permite romper la conexión de un tercero';
+  end if;
+
+  -- (d) anon viaja en el bundle público: no debe poder ni leer.
+  if has_any_column_privilege('anon', 'public.profiles', 'SELECT') then
+    fallos := fallos || 'anon conserva lectura sobre profiles';
+  end if;
+
+  -- (e) RLS activa y forzada.
+  if not (select relrowsecurity and relforcerowsecurity
+            from pg_class where oid = 'public.profiles'::regclass) then
+    fallos := fallos || 'RLS no está enable+force en profiles';
+  end if;
+
+  if array_length(fallos, 1) is not null then
+    raise exception E'Verificación del candado de profiles FALLIDA:\n  - %',
+      array_to_string(fallos, E'\n  - ');
+  end if;
+
+  raise notice 'profiles: candado por columna verificado OK';
+end
+$verify$;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- 4 · Comprobación manual restante (no automatizable desde aquí)
 -- ─────────────────────────────────────────────────────────────────────────
 -- (a) `authenticated` NO debe aparecer en privilegios de TABLA sobre profiles
 --     salvo DELETE. Todo lo demás tiene que ser de columna:
