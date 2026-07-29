@@ -57,10 +57,24 @@ Deno.serve(async (req) => {
     // snaptrade-cleanup) instead of the generic "nunca conectaste". Soft check (no throw)
     // so the client renders a clean state rather than catching a 403.
     if (!entitled) {
+      // ⚠ El `|| "subscription_inactive"` de antes se aplicaba a TODO el mundo sin
+      // suscripción activa, incluidos los que NUNCA conectaron un broker. El cliente
+      // lo traduce con _isSubReason() a "Cerramos la conexión con tu broker porque tu
+      // suscripción terminó", así que un usuario recién registrado, que jamás tuvo
+      // broker, leía que le habíamos cerrado una conexión inexistente — y encima con
+      // un CTA de "Reactivar suscripción" en lugar del de conectar. `reason` sólo lo
+      // sella snaptrade-cleanup cuando desconecta DE VERDAD; si no hay reason ni
+      // rastro alguno de una conexión pasada, no hay nada que explicar.
+      const everConnected = !!(
+        profile?.snaptrade_user_id ||
+        profile?.snaptrade_connected_at ||
+        profile?.snaptrade_disconnected_at
+      );
       return jsonResponse(req, {
         connected: false,
         entitled: false,
-        disconnectedReason: reason || "subscription_inactive",
+        neverConnected: !everConnected,
+        disconnectedReason: reason || (everConnected ? "subscription_inactive" : null),
         holdings: null,
         accountId: null,
         fromCache: false,

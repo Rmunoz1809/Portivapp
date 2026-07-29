@@ -8148,7 +8148,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
 
     if (!p){
       host.innerHTML = `<div class="pv-ai-cta">
-        <div class="pv-ai-cta-txt">Completa tu test de perfil para recibir un análisis con IA<span>Un inversionista experto comparará tu cartera real con tu perfil de riesgo.</span></div>
+        <div class="pv-ai-cta-txt">Completa tu test de perfil para recibir un análisis con IA<span>La IA comparará tu cartera real con tu perfil de riesgo.</span></div>
         <button class="pv-ai-btn" onclick="openProfileQuiz()">Hacer el test →</button>
       </div>`;
       return;
@@ -8473,7 +8473,7 @@ function renderDeepPortfolioAnalysis(T) {
     </div>
     <div class="rbl-card">
       <table class="rbl-table">
-        <thead><tr><th>Activo</th><th>Acción</th><th>Rebalanceo</th><th>Análisis Experto</th></tr></thead>
+        <thead><tr><th>Activo</th><th>Acción</th><th>Rebalanceo</th><th>Análisis</th></tr></thead>
         <tbody>${recRows}</tbody>
       </table>
     </div>
@@ -27583,9 +27583,15 @@ document.addEventListener('DOMContentLoaded', function(){
   // Un target="_blank" con href RELATIVO dentro de WKWebView no abre nada útil: se pierde
   // o intenta capacitor://localhost/terminos.html en Safari y falla → "the links did not work".
   window._pvOpenExternal = function(path){
-    var abs = /^https?:/i.test(path) ? path : ('https://portivapp.com/' + String(path).replace(/^\//,''));
+    var _own = !/^https?:/i.test(path);   // página nuestra (relativa) vs enlace externo (noticia)
+    var abs = _own ? ('https://portivapp.com/' + String(path).replace(/^\//,'')) : path;
     try {
       if (window._pvIsNativeApp() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
+        // Marca de "abierto desde la app de iOS". Las páginas legales la leen para ocultar
+        // las secciones que describen la compra web por Paddle: dentro de la app, hablar de
+        // otro mecanismo de pago es justo lo que prohíbe la Guideline 3.1.1. Solo se añade a
+        // NUESTRAS páginas — a un enlace de noticia externo no se le toca la URL.
+        if (_own) abs += (abs.indexOf('?') === -1 ? '?' : '&') + 'app=ios';
         window.Capacitor.Plugins.Browser.open({ url: abs, presentationStyle: 'popover' });
         return false;
       }
@@ -28621,6 +28627,51 @@ document.addEventListener('DOMContentLoaded', function(){
     if(t==='bnd' || /\bbond\b/.test(t)) return 'bond';
     return 'stock';
   }
+  // ── Extracción del símbolo (F4) ──────────────────────────────────────────────────
+  // `p.symbol` de SnapTrade llega en tres formas: (a) objeto posición-símbolo con el
+  // símbolo universal ANIDADO en `.symbol`, (b) ese objeto universal directamente, o
+  // (c) UNA CADENA. La (c) es la habitual en cripto y en algunos fondos monetarios.
+  //
+  // El código anterior era `(p.symbol && (p.symbol.symbol || p.symbol)) || {}`: con la
+  // forma (c) se quedaba con la cadena y acto seguido leía `so.symbol` — undefined —, así
+  // que el ticker salía vacío y `if(!ticker) return;` DESCARTABA la posición sin decir
+  // nada. Un usuario con BTC/ETH no los veía en su cartera y su total salía corto, sin un
+  // solo aviso ni en pantalla ni en consola. Ahora se desenvuelve en cada nivel y, si aun
+  // así no hay ticker, la posición se cuenta como descartada y se avisa.
+  function _snapSymbolObj(p){
+    var s = (p && (p.symbol != null ? p.symbol : p.universal_symbol));
+    if (typeof s === 'string') return { symbol: s };
+    if (s && typeof s === 'object'){
+      var inner = (s.symbol != null ? s.symbol : s.universal_symbol);
+      if (typeof inner === 'string'){
+        // Envoltorio con el ticker en cadena: conserva type/currency del envoltorio.
+        return { symbol: inner, raw_symbol: s.raw_symbol, type: s.type, currency: s.currency };
+      }
+      if (inner && typeof inner === 'object'){
+        // El objeto interno a veces no trae currency; el externo sí.
+        if (inner.currency == null && s.currency != null){
+          var c = {}; for (var k in inner) c[k] = inner[k]; c.currency = s.currency; return c;
+        }
+        return inner;
+      }
+      return s;
+    }
+    return {};
+  }
+  function _snapTicker(so, p){
+    var t = (typeof so === 'string') ? so
+          : (so && (so.symbol || so.raw_symbol || so.ticker || so.code)) || '';
+    if (typeof t !== 'string') t = '';
+    if (!t && p) t = String((p.ticker || p.description || '') || '');
+    return t.toUpperCase().trim();
+  }
+  function _ccyOf(o){
+    try{
+      var c = o && o.currency;
+      if (c && typeof c === 'object') c = c.code || c.iso_code || null;
+      return (typeof c === 'string' && c) ? c.toUpperCase() : null;
+    }catch(e){ return null; }
+  }
   function snapMapHoldings(holdings){
     var accounts = Array.isArray(holdings)?holdings:((holdings&&holdings.accounts)||[]);
     var cash=0, total=0, positions=[];
@@ -28628,31 +28679,57 @@ document.addEventListener('DOMContentLoaded', function(){
     // En un setup mixto (una cuenta lo expone y otras no) el acumulado es PARCIAL y subvalúa el
     // portafolio entero — y ese número va directo a TOTAL_OVERRIDE, que manda sobre las posiciones.
     var _totalAccounts = 0;
-    // FIX 3 — Instrumentación de divisa. SnapTrade devuelve un balance por moneda y el precio en la
-    // moneda del símbolo. No convertimos todavía: registramos qué monedas aparecen para no mostrar
-    // cifras mezcladas (5,000 USD + 5,000 CAD = "10,000") sin saberlo.
-    var _ccys = {};
-    function _ccy(o){ try{ var c=o&&o.currency; c=(c&&(c.code||c))||null; if(c) _ccys[String(c).toUpperCase()]=1; }catch(e){} }
-    // FIX 2 — Las opciones viven en acc.option_positions, FUERA de acc.positions. No se mapean como
-    // filas todavía, pero sí se contabilizan para descontarlas del total del broker: si no, el total
-    // (que sí las incluye) nunca cuadra con la suma de filas y dispara el descuadre del total.
+    // ── Divisa (F3) ────────────────────────────────────────────────────────────────
+    // SnapTrade da un balance POR MONEDA y el precio en la moneda del símbolo. Antes esto
+    // sólo se instrumentaba: los importes se sumaban 1:1, así que 5.000 USD + 5.000 CAD
+    // se mostraban como "10.000" — un ~40 % de inflación sobre el patrimonio real, sin
+    // aviso alguno en pantalla. No tenemos fuente de tipos de cambio (Yahoo se retiró por
+    // licencia y Finnhub free no da FX), y ANTES que un número inventado va un número
+    // correcto: se acumula por moneda, el total se calcula SÓLO con la moneda dominante y
+    // el resto se declara aparte para que la UI lo diga. Cada cifra mostrada es cierta.
+    var _byCcy = {};   // { USD: {cash, mv}, CAD: {...} }
+    function _bucket(c){ c = c || 'USD'; return (_byCcy[c] || (_byCcy[c] = { cash:0, mv:0 })); }
+    // Las opciones viven en acc.option_positions, FUERA de acc.positions. Portiv no sabe
+    // valorar contratos (no hay fuente de cadenas de opciones con licencia), así que no se
+    // emiten como filas y se descuentan del total del broker para que filas + efectivo
+    // cuadren. Eso deja al usuario viendo una cartera MENOR que la real: lo mínimo es
+    // decírselo en pantalla (_SNAP_OPTIONS lo pinta la tarjeta del broker), no sólo en
+    // console.warn, que no lee nadie.
     var _optValue=0, _optCount=0;
+    var _dropped=[];    // posiciones sin ticker reconocible
+    var _noPrice=[];    // con acciones pero sin precio ni market_value
     accounts.forEach(function(acc){
       var bals = acc.balances || acc.balance || [];
-      if(Array.isArray(bals)) bals.forEach(function(b){ _ccy(b); cash += _n(b.cash!=null?b.cash:b.amount); });
+      if(Array.isArray(bals)) bals.forEach(function(b){
+        var v = _n(b.cash!=null?b.cash:b.amount);
+        if(!v) return;                       // un balance a 0 en otra moneda no la hace "presente"
+        cash += v; _bucket(_ccyOf(b)).cash += v;
+      });
       var at = acc.account && acc.account.balance && acc.account.balance.total;
       if(at!=null){ total += _n(at); _totalAccounts++; }
       (acc.positions||[]).forEach(function(p){
-        var so = (p.symbol && (p.symbol.symbol || p.symbol)) || {};
-        var ticker = String(so.symbol || so.raw_symbol || so.ticker || '').toUpperCase();
-        if(!ticker) return;
-        _ccy(so);
+        var so = _snapSymbolObj(p);
+        var ticker = _snapTicker(so, p);
+        if(!ticker){ _dropped.push(p && p.units); return; }
+        var ccy    = _ccyOf(so) || _ccyOf(p) || null;
         var shares = _n(p.units!=null?p.units:p.fractional_units);
         var price  = _n(p.price);
-        var avg    = _n(p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
-        var mv     = (price&&shares)?price*shares:_n(p.market_value);
+        var mvRaw  = _n(p.market_value);
+        // Precio ausente (fondos monetarios de Schwab, algunos mutual funds, cripto en
+        // ciertos brokers) → derívalo del market_value en vez de dejar la fila a 0 y
+        // hundir el total en silencio.
+        if(!price && mvRaw && shares) price = mvRaw/shares;
+        var mv = (price&&shares) ? price*shares : mvRaw;
+        if(shares && !mv) _noPrice.push(ticker);
+        // Coste medio: `null` cuando el broker NO lo da. Antes se forzaba a 0, y aguas
+        // abajo (aiPortImportData) 0 es un coste VÁLIDO: la base de coste salía 0 y el
+        // rendimiento mostrado era pura ficción. Con null, _aiNum devuelve null, cb queda
+        // sin resolver y la posición se pinta sin rendimiento — que es la verdad.
+        var avgRaw = (p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
+        var avg    = (avgRaw==null || avgRaw==='') ? null : (_n(avgRaw) || null);
+        _bucket(ccy).mv += (mv||0);
         positions.push({ ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-                         market_value:mv, day_change_pct:0, type: _snapAssetType(so) });
+                         market_value:mv, day_change_pct:0, type: _snapAssetType(so), currency: ccy });
       });
       var opts = acc.option_positions || acc.optionPositions || [];
       if(Array.isArray(opts)) opts.forEach(function(o){
@@ -28665,35 +28742,71 @@ document.addEventListener('DOMContentLoaded', function(){
     // FIX 1 — Agrega por ticker ANTES de entregar a aiPortImportData: ese pipeline (diseñado para
     // OCR) DESCARTA tickers repetidos, y snapMapHoldings emite una entrada por cuenta. Con AAPL en
     // brokerage + AAPL en la Roth IRA, o en dos brokers distintos, la segunda se perdía en silencio.
+    var _noCost=[];
     positions = (function(rows){
       var by={}, order=[];
       rows.forEach(function(p){
         var a = by[p.ticker];
-        if(!a){ a = by[p.ticker] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:0,
-                                     market_value:0, day_change_pct:0, type:p.type, _costSum:0 };
+        if(!a){ a = by[p.ticker] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:null,
+                                     market_value:0, day_change_pct:0, type:p.type, currency:p.currency,
+                                     _costSum:0, _costShares:0 };
                 order.push(p.ticker); }
         a.shares       += p.shares;
         a.market_value += p.market_value;
-        a._costSum     += (p.avg_cost||0) * (p.shares||0);     // avg_cost ponderado por acciones
+        // Sólo pondera los lotes que SÍ traen coste. Si AAPL está en dos cuentas y sólo una
+        // reporta coste, promediar sobre el total de acciones subestima el coste e infla la
+        // ganancia; por eso el coste sólo se da por bueno si lo cubre TODA la posición.
+        if(p.avg_cost != null){ a._costSum += p.avg_cost * (p.shares||0); a._costShares += (p.shares||0); }
         if(!a.current_price && p.current_price) a.current_price = p.current_price;
         if(a.type==='stock' && p.type && p.type!=='stock') a.type = p.type;
+        if(a.currency !== p.currency) a.currency = a.currency || p.currency;
       });
-      return order.map(function(k){ var a=by[k]; a.avg_cost = a.shares ? a._costSum/a.shares : 0; delete a._costSum; return a; });
+      return order.map(function(k){
+        var a=by[k];
+        var covered = a._costShares > 0 && Math.abs(a._costShares - a.shares) < 1e-6;
+        if(covered) a.avg_cost = a._costSum / a._costShares;
+        else { delete a.avg_cost; _noCost.push(a.ticker); }   // sin clave → cost basis desconocido
+        delete a._costSum; delete a._costShares;
+        return a;
+      });
     })(positions);
     // FIX 4 (cont.) — acumulado parcial → se descarta y se reconstruye desde cash + Σ market_value.
     if(_totalAccounts && _totalAccounts < accounts.length){
       console.warn('[snaptrade] balance.total parcial ('+_totalAccounts+'/'+accounts.length+' cuentas) → se usa cash + Σ market_value');
       total = 0;
     }
-    if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
-    else if(_optValue) total -= _optValue;   // FIX 2: el total del broker incluye opciones; las filas no.
-    // Instrumentación (FIX 2 / FIX 3): visible en consola y en window para diagnóstico.
+    // ── Total (F3) ────────────────────────────────────────────────────────────────
+    // Con una sola moneda: como siempre. Con varias: el total se limita a la dominante y
+    // el resto se declara aparte. `account.balance.total` tampoco sirve mezclado — SnapTrade
+    // lo da en la moneda de CADA cuenta —, así que también se descarta.
+    var _ccyList = Object.keys(_byCcy).filter(function(c){ return _byCcy[c].cash || _byCcy[c].mv; });
+    var _mixed = _ccyList.length > 1;
+    var _dom = null, _excluded = null;
+    if(_mixed){
+      _dom = _ccyList.slice().sort(function(a,b){
+        return (_byCcy[b].cash+_byCcy[b].mv) - (_byCcy[a].cash+_byCcy[a].mv);
+      })[0];
+      total = _byCcy[_dom].cash + _byCcy[_dom].mv;
+      _excluded = {};
+      _ccyList.forEach(function(c){ if(c!==_dom) _excluded[c] = _byCcy[c].cash + _byCcy[c].mv; });
+      console.warn('[snaptrade] cartera multidivisa: total en '+_dom+' ('+total.toFixed(2)+'); NO incluye', JSON.stringify(_excluded));
+    } else {
+      if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
+      else if(_optValue) total -= _optValue;   // el total del broker incluye opciones; las filas no.
+    }
+    // Estado para la UI: la tarjeta del broker lo convierte en avisos visibles.
     try{
-      var _cl = Object.keys(_ccys).filter(function(c){ return c && c!=='USD'; });
-      window._SNAP_FX_WARNING   = _cl.length ? _cl : null;
-      window._SNAP_OPTIONS_VALUE = _optValue || 0;
-      if(_cl.length)  console.warn('[snaptrade] monedas NO-USD sin convertir:', _cl.join(', '), '— las cifras pueden estar mezcladas.');
-      if(_optCount)   console.warn('[snaptrade] '+_optCount+' posición(es) de opciones no mapeadas; '+_optValue.toFixed(2)+' descontado del valor de la cuenta.');
+      window._SNAP_FX = _mixed ? { dominant:_dom, excluded:_excluded } : null;
+      window._SNAP_FX_WARNING = _mixed ? Object.keys(_excluded) : null;   // compat
+      window._SNAP_OPTIONS = _optCount ? { count:_optCount, value:_optValue } : null;
+      window._SNAP_OPTIONS_VALUE = _optValue || 0;                        // compat
+      window._SNAP_NO_COST = _noCost.length ? _noCost : null;
+      window._SNAP_NO_PRICE = _noPrice.length ? _noPrice : null;
+      window._SNAP_DROPPED = _dropped.length || 0;
+      if(_dropped.length) console.warn('[snaptrade] '+_dropped.length+' posición(es) SIN símbolo reconocible descartadas — el total va corto.');
+      if(_noPrice.length) console.warn('[snaptrade] sin precio ni market_value:', _noPrice.join(', '));
+      if(_noCost.length)  console.warn('[snaptrade] sin coste de adquisición (no se muestra rendimiento):', _noCost.join(', '));
+      if(_optCount)       console.warn('[snaptrade] '+_optCount+' posición(es) de opciones no mapeadas; '+_optValue.toFixed(2)+' fuera del total.');
     }catch(e){}
     // Bloque 2.3: si el broker expone rendimiento por período en el payload (algunas cuentas lo
     // traen), léelo → aiPortImportData lo ancla vía _injectPeriodAnchors. Si NO viene, NO se
@@ -28891,8 +29004,27 @@ document.addEventListener('DOMContentLoaded', function(){
             if(typeof _redrawActiveChart==='function'){ _redrawActiveChart(); }
           }
         }catch(e){ _pvLogError('snaptrade apply history', e); }
-        _perfNote('');
+        // F7 — La curva ya suma TODAS las cuentas. Si alguna no respondió, la serie va por
+        // debajo del valor real y hay que decirlo: si no, el usuario compara la gráfica con
+        // el total de la tarjeta, no cuadran, y no hay explicación por ninguna parte.
+        _perfNote(j.partial
+          ? 'Falta al menos una de tus cuentas en esta curva: los valores históricos pueden salir por debajo de tu total actual.'
+          : '');
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
+      } else if(j && (j.terminal || j.reason==='not_connected')){
+        // F12 — Reintentar no puede cambiar nada. getAccountBalanceHistory es EXPERIMENTAL y
+        // viene deshabilitado por defecto: activarlo exige escribirle a SnapTrade, no esperar.
+        // Antes se reintentaba igual 14 veces, y como cada reintento manda force:true se
+        // saltaba también la caché diaria: 14 llamadas al endpoint y 14 escrituras en
+        // `profiles` por sesión, para 14 veces la misma respuesta. Con la suma multi-cuenta
+        // serían 14 × (nº de cuentas). Se para en seco.
+        _snapHistoryTries = _SNAP_HIST_MAX;
+        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; }catch(e){}
+        try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
+        try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
+        _perfNote(j.reason==='not_connected'
+          ? ''
+          : 'Tu broker todavía no comparte el historial de saldos con Portiv. Mientras tanto verás el valor actual y la evolución desde que conectaste.');
       } else if(_snapHistoryTries < _SNAP_HIST_MAX){
         // Aún no disponible → reintenta con force; MANTÉN pending + skeleton (nunca reconstrucción).
         _snapHistoryTries++;
@@ -28929,8 +29061,20 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── UI plumbing (all defensive — no-op if a target is absent) ──
   function _setBusy(b){ Array.prototype.forEach.call(document.querySelectorAll('[data-snap-connect]'),function(btn){
       btn.disabled=!!b; btn.innerHTML = b?'<span class="snap-spin"></span> Abriendo portal…':(btn.dataset.snapLabel||'Conectar mi broker'); }); }
-  function _setRefreshBtn(b){ var el=document.getElementById('snapRefreshBtn'); if(!el) return; el.disabled=!!b;
-      el.innerHTML = b?'<span class="snap-spin"></span> Actualizando…':'↻ Actualizar'; }
+  // F9 — Esto sólo tocaba #snapRefreshBtn, el botón que vivía junto a los botones de período
+  // de la gráfica… y que se RETIRÓ (ver _injectPortfolioUI). El único "↻ Actualizar" que ve
+  // el usuario es #snapRefreshBtn2, dentro de la tarjeta del broker, y no lo tocaba nadie:
+  // pulsarlo no deshabilitaba nada, no ponía spinner y no cambiaba el texto. Como el refresh
+  // sirve de la caché de SnapTrade y suele resolver en <1 s sin mover ni una cifra, la
+  // sensación era la de un botón muerto — y la gente lo pulsaba en serie. Ahora se actúa
+  // sobre AMBOS ids (el viejo sigue soportado por si vuelve el de la gráfica).
+  function _setRefreshBtn(b){
+    ['snapRefreshBtn','snapRefreshBtn2'].forEach(function(id){
+      var el=document.getElementById(id); if(!el) return;
+      el.disabled=!!b;
+      el.innerHTML = b?'<span class="snap-spin"></span> Actualizando…':'↻ Actualizar';
+    });
+  }
   function _perfNote(msg){ var el=document.getElementById('snapPerfNote'); if(!el) return;
       el.textContent=msg||''; el.style.display=msg?'block':'none'; }
 
@@ -28997,6 +29141,38 @@ document.addEventListener('DOMContentLoaded', function(){
         try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
         try{ snapConnect(); }catch(e){}
       }); }); }
+  // ── Avisos de fidelidad del dato (F3 / F5 / F6) ──────────────────────────────────
+  // Todo esto existía ya como console.warn, que no lee ningún usuario. Cuando la cifra
+  // que mostramos NO es el patrimonio completo, hay que decirlo donde se ve.
+  function _fmtMoney(n, ccy){
+    try{ return new Intl.NumberFormat('es-ES',{style:'currency',currency:ccy||'USD',maximumFractionDigits:0}).format(n); }
+    catch(e){ return Math.round(n).toLocaleString('es-ES')+' '+(ccy||''); }
+  }
+  function _snapNotes(){
+    var out=[];
+    try{
+      var fx = window._SNAP_FX;
+      if(fx && fx.excluded){
+        var partes = Object.keys(fx.excluded).map(function(c){ return _fmtMoney(fx.excluded[c], c); });
+        out.push('Tu total está en <b>'+fx.dominant+'</b> y <b>no incluye</b> '+partes.join(' + ')
+               +'. No convertimos divisas: preferimos no enseñarte una cifra inventada.');
+      }
+      var op = window._SNAP_OPTIONS;
+      if(op && op.count){
+        out.push('Tienes <b>'+op.count+'</b> posición'+(op.count>1?'es':'')+' en opciones que no mostramos ni sumamos'
+               +(op.value ? ' (~'+_fmtMoney(op.value)+' según tu broker)' : '')+'. Tu cartera real es mayor que la que ves aquí.');
+      }
+      var np = window._SNAP_NO_PRICE;
+      if(np && np.length) out.push('Tu broker no dio precio para '+np.slice(0,4).join(', ')+(np.length>4?' y '+(np.length-4)+' más':'')+': no cuentan en el total.');
+      var nc = window._SNAP_NO_COST;
+      if(nc && nc.length) out.push('Sin precio de compra para '+nc.slice(0,4).join(', ')+(nc.length>4?' y '+(nc.length-4)+' más':'')+': no podemos calcular su rendimiento y lo dejamos en blanco.');
+      var dr = window._SNAP_DROPPED;
+      if(dr) out.push('<b>'+dr+'</b> posición'+(dr>1?'es':'')+' sin símbolo reconocible: no aparece'+(dr>1?'n':'')+' en la lista.');
+    }catch(e){}
+    if(!out.length) return '';
+    return '<div class="snap-note" style="border-left:3px solid #c98a00;padding-left:10px;margin-top:10px">⚠ '
+         + out.join('<br>⚠ ') + '</div>';
+  }
   function _cardHTML(state, meta){
     var brokers='<div class="snap-brokers"><span class="snap-chip">Charles Schwab</span><span class="snap-chip">Interactive Brokers</span><span class="snap-chip">+ más</span></div>';
     // No pudimos preguntarle a SnapTrade (429 / 5xx / timeout). NO sabemos si tiene broker,
@@ -29009,15 +29185,33 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-note">Tu conexión sigue guardada. Reintentamos solos en unos segundos.</div>';
     }
     if(state==='connected'){
-      var cache = meta && meta.fromCache;
+      // `fromCache` se leía y no se usaba. El refresh sirve de la caché de 60 min de
+      // snaptrade-refresh, así que pulsar "Actualizar" suele no mover ni una cifra: sin
+      // decir de cuándo son los datos, el botón parece roto. Ahora se dice.
+      var cache = !!(meta && meta.fromCache);
       return '<h3>Broker conectado</h3>'
-        +'<div class="snap-status"><span class="snap-dot ok"></span>Sincronizado con tu broker</div>'
+        +'<div class="snap-status"><span class="snap-dot ok"></span>'
+        + (cache ? 'Datos de la última sincronización de tu broker' : 'Sincronizado con tu broker ahora mismo')
+        +'</div>'
+        + _snapNotes()
         +'<div class="snap-row"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Actualizar</button>'
         +'<button class="snap-btn secondary" data-snap-connect data-snap-label="Reconectar / agregar">Reconectar</button></div>'
         // FIX 16 — Hasta ahora la ÚNICA vía a snaptrade-disconnect era eliminar la cuenta entera:
         // quien se iba sin borrarla seguía costando ~$1/mes de conexión activa.
         +'<div class="snap-row" style="margin-top:8px"><button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar broker</button></div>'
         +'<div class="snap-note">🔒 Los datos se actualizan una vez al día (sincronización incluida de tu broker).</div>';
+    }
+    // F11 — Salida del estado 'unknown'. Sin esto, agotados los reintentos del arranque (sin red,
+    // 5xx persistente, supabase-js bloqueado por el CDN), la tarjeta se quedaba en "Comprobando el
+    // estado de tu conexión…" con el spinner girando PARA SIEMPRE: ni conectado, ni desconectado,
+    // ni error, ni forma de reintentar salvo matar la app. Un spinner eterno es la peor respuesta
+    // posible — no dice nada y no deja hacer nada.
+    if(state==='offline'){
+      return '<h3>No pudimos comprobar tu broker</h3>'
+        +'<div class="snap-status"><span class="snap-dot"></span>Sin conexión con Portiv</div>'
+        +'<p class="snap-sub">No hemos podido contactar con nuestro servidor. Tu conexión con el broker sigue guardada — esto no la afecta.</p>'
+        +'<div class="snap-row"><button class="snap-btn secondary" onclick="snapRefresh()">Reintentar</button></div>'
+        +'<div class="snap-note">Revisa tu conexión a internet. Reintentamos solos al volver a la app.</div>';
     }
     // FIX 12a — Estado neutro mientras el primer refresh autenticado resuelve. Antes _boot pintaba
     // 'disconnected' de entrada y TODO usuario ya conectado veía el CTA "Conecta tu broker" durante
@@ -29027,10 +29221,19 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-status"><span class="snap-spin" style="border-color:rgba(4,22,44,.25);border-top-color:#04162c"></span>Un momento…</div>';
     }
     if(state==='syncing'){
+      // F10 — Tras ~14 min el poll rápido se apaga. Decir "se actualiza sola" a partir de
+      // ahí es mentira: sólo queda el refresco de fondo cada 20 min. Se dice tal cual.
+      if(window._SNAP_SYNC_STALLED){
+        return '<h3>Tu broker está tardando más de lo normal</h3>'
+          +'<p class="snap-sub">Seguimos esperando a que tu broker termine de preparar tus posiciones. Algunas cuentas tardan varias horas la primera vez, sobre todo fuera del horario de mercado.</p>'
+          +'<div class="snap-status"><span class="snap-dot"></span>Dejamos de comprobar cada pocos segundos</div>'
+          +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Comprobar ahora</button></div>'
+          +'<div class="snap-note">Volvemos a comprobarlo solos cada 20 minutos y al abrir la app. No hace falta que hagas nada.</div>';
+      }
       return '<h3>Sincronizando tu cuenta…</h3>'
         +'<p class="snap-sub">Tu broker se conectó. Estamos importando tus posiciones — puede tardar unos minutos la primera vez. Esta pantalla se actualiza sola.</p>'
         +'<div class="snap-status"><span class="snap-spin" style="border-color:rgba(4,22,44,.25);border-top-color:#04162c"></span>Importando posiciones desde tu broker…</div>'
-        +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" onclick="snapRefresh()">↻ Actualizar ahora</button></div>';
+        +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Actualizar ahora</button></div>';
     }
     if(state==='broken'){
       return '<h3>Reconecta tu broker</h3><p class="snap-sub">La conexión se interrumpió. Reconéctala para seguir viendo tus posiciones.</p>'
@@ -29097,13 +29300,27 @@ document.addEventListener('DOMContentLoaded', function(){
     // cautivo, DNS corporativo), esto reintentaba a 2,5 Hz PARA SIEMPRE y la página nunca
     // llegaba a estar ociosa. Tope: 50 intentos ≈ 20 s.
     var _sbTries=0;
-    function go(){ if(!window.sbClient){ if(_sbTries++ < 50) setTimeout(go, 400); return; }
+    function go(){ if(!window.sbClient){
+        if(_sbTries++ < 50){ setTimeout(go, 400); return; }
+        // F11: supabase-js nunca cargó (CDN caído, portal cautivo, DNS corporativo). Antes
+        // esto se rendía en silencio y la tarjeta se quedaba en "Comprobando…" para siempre.
+        _render('offline'); return;
+      }
       snapRefresh({silent:true}).then(function(j){
         // FIX 12c — stCall exige sesión. Si el usuario acaba de registrarse o iniciar sesión EN ESTA
         // MISMA carga, el primer refresh rechaza, el catch devuelve null y el loop moría sin
         // reagendarse: broker ya conectado, pero "Conecta tu broker" y cero posiciones hasta
         // recargar (en iOS/Capacitor no hay recarga natural). Ahora reintenta.
-        if(j==null){ if(_authTries++ < 10) setTimeout(go, 2000); return; }
+        if(j==null){
+          if(_authTries++ < 10){ setTimeout(go, 2000); return; }
+          // F11: 10 intentos × 2 s y seguimos sin respuesta. Puede ser una sesión que no
+          // arranca o el servidor caído — desde aquí no se distingue —, pero lo que NO
+          // puede pasar es dejar el spinner de "Comprobando…" girando el resto de la
+          // sesión. Sólo se pinta si nada mejor se ha pintado ya: si un _render posterior
+          // resolvió el estado real, no lo pisamos.
+          if(_state==='unknown') _render('offline');
+          return;
+        }
         _authTries=0;
         // El salto a Portfolio va UNA sola vez, al volver del portal. Antes no tenía guard y
         // corría en CADA vuelta del poll: con _SYNC_MAX vueltas cada 6-12 s, la app te arrancaba
@@ -29125,8 +29342,17 @@ document.addEventListener('DOMContentLoaded', function(){
         _unavailTries = 0;
         if(j && j.connected && j.syncing){
           if(_syncTries++ < _SYNC_MAX){ setTimeout(go, _syncTries<40?6000:12000); }
-          else { try{ toast('Tu broker sigue sincronizando. Pulsa "Actualizar" en unos minutos para ver tus posiciones.'); }catch(e){} }
-        }
+          else {
+            // F10 — Agotado el poll (~14 min) el toast se iba y la tarjeta seguía diciendo
+            // "puede tardar unos minutos la primera vez. Esta pantalla se actualiza sola",
+            // que a esas alturas ya es falso: el poll está muerto. Sólo queda el refresco
+            // periódico de 20 min, y el usuario no tiene forma de saberlo. Se marca el
+            // estado como estancado para que la tarjeta diga la verdad.
+            try{ window._SNAP_SYNC_STALLED = true; }catch(e){}
+            _render('syncing');
+            try{ toast('Tu broker sigue sincronizando. Pulsa "Actualizar" en unos minutos para ver tus posiciones.'); }catch(e){}
+          }
+        } else { try{ window._SNAP_SYNC_STALLED = false; }catch(e){} }
       }); }
     go();
     // FIX 15 — No existía ningún refresco periódico: los comentarios hablaban de un "poll cada 2
@@ -29138,7 +29364,10 @@ document.addEventListener('DOMContentLoaded', function(){
       if(document.hidden) return;
       // 'unavailable' incluido: si SnapTrade estaba caído, el refresco periódico es justo lo
       // que devuelve al usuario a 'connected' sin que tenga que tocar nada.
-      if(_state!=='connected' && _state!=='syncing' && _state!=='unavailable') return;
+      // 'offline' incluido por lo mismo: si nos quedamos sin red durante el arranque, este
+      // refresco (y el de volver a la app) es lo que devuelve al usuario a su estado real
+      // sin pedirle nada.
+      if(_state!=='connected' && _state!=='syncing' && _state!=='unavailable' && _state!=='offline') return;
       _lastAuto = Date.now();
       snapRefresh({silent:true});
     }

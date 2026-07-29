@@ -53,10 +53,37 @@ Deno.serve(async (req) => {
       return String(code) === "1010" || /already exist/i.test(_detail(e));
     };
     // Stored secret unusable (signature/secret/user mismatch) → heal & retry login.
+    //
+    // ⚠ CUIDADO AL TOCAR ESTO. `healOrphan()` llama a deleteSnapTradeUser(), y eso BORRA
+    // EN SNAPTRADE TODAS LAS CONEXIONES DE BROKER DEL USUARIO. Es irreversible desde aquí:
+    // el usuario tiene que volver a pasar por el portal de cada broker. Sólo puede
+    // dispararse cuando el secreto guardado está REALMENTE muerto.
+    //
+    // La versión anterior tenía `|invalid` suelto en la alternancia, y además `not found`
+    // y `does not exist` sin sujeto. SnapTrade responde 400 con "Invalid ..." a errores de
+    // validación que no tienen NADA que ver con el secreto — connectionType no soportado
+    // por el broker, customRedirect no permitido en el proyecto, cuerpo mal formado — y
+    // cualquiera de ellos borraba las conexiones del usuario. También matcheaba el
+    // "not found" de un recurso cualquiera. Un error de validación NUESTRO no puede
+    // costarle al usuario sus conexiones: ahora el mensaje tiene que hablar explícitamente
+    // del secreto, de la firma o de la inexistencia DEL USUARIO.
     const _isAuthish = (e: any) => {
       const s = e?.response?.status ?? e?.status ?? 0;
-      return (s === 400 || s === 401) &&
-        /secret|signature|unable to verify|does not exist|not found|no.?such.?user|invalid/i.test(_detail(e));
+      if (s !== 400 && s !== 401) return false;
+      const d = _detail(e);
+      const hit =
+        /user\s?secret|usersecret/i.test(d) ||                                  // "userSecret is invalid"
+        /signature|unable to verify/i.test(d) ||                                 // firma HMAC del SDK
+        /secret[^.]{0,30}(invalid|incorrect|mismatch|expired)/i.test(d) ||
+        /(invalid|incorrect|bad)[^.]{0,30}secret/i.test(d) ||
+        /user[^.]{0,30}(does not exist|not found|no longer)/i.test(d) ||
+        /no.?such.?user/i.test(d);
+      if (hit) {
+        // Se deja rastro: si esto aparece con un mensaje que no es de secreto muerto,
+        // el regex se ha vuelto a abrir de más y hay que estrecharlo otra vez.
+        console.warn("[snaptrade-connect] secreto inservible → se recrea el usuario y se PIERDEN las conexiones. detalle:", d.slice(0, 200));
+      }
+      return hit;
     };
 
     // Al sellar el enlace se guarda TAMBIÉN el momento (`snaptrade_connected_at`):
