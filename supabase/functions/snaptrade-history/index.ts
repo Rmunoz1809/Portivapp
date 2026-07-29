@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
         history: cached.history ?? [],
         available: !!cached.available,
         reason: cached.reason,
-        terminal: !cached.available && cached.reason === "endpoint_disabled",
+        terminal: !!cached.terminal,
         partial: !!cached.partial,
         accounts: cached.accounts ?? null,
         fromCache: true,
@@ -153,20 +153,29 @@ Deno.serve(async (req) => {
     }
 
     // ── Experimental endpoint — everything below is graceful on failure ──
-    const series: { date: string; value: number }[][] = [];
-    let failed = 0;
-    for (const accountId of accountIds) {
+    // En paralelo: en serie, N cuentas multiplican por N la latencia de una función que ya
+    // llama a un endpoint experimental lento, y el usuario mira un esqueleto de gráfica
+    // mientras tanto. Ninguna llamada depende de otra.
+    let transient = 0;   // 429 / 5xx / red: reintentar SÍ puede cambiar el resultado
+    const settled = await Promise.all(accountIds.map(async (accountId) => {
       try {
         const raw = (
           await st.accountInformation.getAccountBalanceHistory({ ...sid, accountId } as any)
         ).data;
-        series.push(normalize(raw));
+        return normalize(raw);
       } catch (err: any) {
-        failed++;
-        series.push([]);
-        console.warn(`getAccountBalanceHistory unavailable (${accountId}):`, err?.message ?? String(err));
+        const s = err?.response?.status ?? err?.status ?? 0;
+        // Distinguir "el endpoint no está habilitado para esta cuenta" (permanente hasta
+        // que SnapTrade lo active) de "ahora mismo no responde" (429, 5xx, timeout). Sin
+        // esta separación un 429 puntual se marcaba `terminal` y el cliente dejaba de
+        // pedir el historial el resto de la sesión por un fallo de un segundo.
+        if (s === 429 || s >= 500 || s === 0) transient++;
+        console.warn(`getAccountBalanceHistory unavailable (${accountId}) status=${s}:`, err?.message ?? String(err));
+        return null;   // null = falló; [] = respondió pero sin datos
       }
-    }
+    }));
+    const failed = settled.filter((s) => s === null).length;
+    const series = settled.map((s) => s ?? []);
 
     const history = mergeSeries(series);
     const available = history.length > 1;   // un solo punto no dibuja una curva
@@ -182,9 +191,12 @@ Deno.serve(async (req) => {
     // Mientras no lo hagan, cada reintento es una llamada tirada a la basura y una
     // escritura en profiles. "empty" sí puede cambiar: la cuenta puede estar aún
     // sincronizando.
-    const terminal = !available && reason === "endpoint_disabled";
+    const terminal = !available && reason === "endpoint_disabled" && transient === 0;
 
-    const payload = { updatedAt: new Date().toISOString(), available, reason, partial, accounts: accountIds.length, history };
+    // `terminal` se guarda calculado, no se recalcula al leer la caché: `transient` sólo
+    // se conoce en el momento de la llamada, y sin él la caché convertía un 429 de hace
+    // horas en un "no insistas" permanente.
+    const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, accounts: accountIds.length, history };
     await admin.from("profiles").update({ snaptrade_history: payload }).eq("id", userId);
 
     return jsonResponse(req, { history, available, reason, terminal, partial, accounts: accountIds.length });

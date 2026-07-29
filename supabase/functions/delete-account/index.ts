@@ -37,9 +37,12 @@ import { adminClient, requireUser, snaptrade } from "../_shared/snaptrade.ts";
 const _isGone = (e: any) => {
   const s = e?.status ?? e?.response?.status ?? 0;
   if (s === 404) return true;
-  return /not.?found|does not exist|user.*not.*found/i.test(
-    (e?.message ?? e?.error?.message ?? "") + "",
-  );
+  // El SDK de SnapTrade no pone el motivo en `message` (ahí deja el genérico de axios,
+  // "Request failed with status code 404") sino en response.data.detail. Sin leerlo, un
+  // usuario ya borrado en SnapTrade se contabilizaba como huérfano facturable.
+  const msg = (e?.message ?? e?.error?.message ?? "") + "";
+  const detail = (e?.response?.data?.detail ?? e?.response?.data?.message ?? e?.detail ?? "") + "";
+  return /not.?found|does not exist|user.*not.*found|no.?such.?user/i.test(msg + " " + detail);
 };
 
 Deno.serve(async (req) => {
@@ -69,7 +72,7 @@ Deno.serve(async (req) => {
           snapUnlinked = true;
         } catch (e: any) {
           // Ya borrado en SnapTrade → objetivo cumplido, no es un huérfano.
-          if (_isGone(e) || _isGone(e?.response?.data)) {
+          if (_isGone(e)) {
             snapUnlinked = true;
           } else {
             snapUnlinked = false;

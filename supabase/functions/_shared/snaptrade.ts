@@ -83,6 +83,8 @@ export type ProfileSnap = {
   snaptrade_history: unknown | null;
   snaptrade_connection_broken: boolean | null;
   snaptrade_disconnected_reason: string | null;
+  snaptrade_connected_at: string | null;
+  snaptrade_disconnected_at: string | null;
 };
 
 /** Load the SnapTrade-related profile columns for a user (service role). */
@@ -93,7 +95,10 @@ export async function loadProfile(
   const { data, error } = await admin
     .from("profiles")
     .select(
-      "snaptrade_user_id, snaptrade_user_secret, snaptrade_connection_id, snaptrade_account_id, snaptrade_last_refresh, snaptrade_holdings, snaptrade_history, snaptrade_connection_broken, snaptrade_disconnected_reason",
+      // snaptrade_connected_at / _disconnected_at: snaptrade-refresh los usa para separar
+      // "nunca conectó un broker" de "se lo desconectamos". Sin ellos en el select llegan
+      // como undefined y todo el mundo cae en el segundo caso.
+      "snaptrade_user_id, snaptrade_user_secret, snaptrade_connection_id, snaptrade_account_id, snaptrade_last_refresh, snaptrade_holdings, snaptrade_history, snaptrade_connection_broken, snaptrade_disconnected_reason, snaptrade_connected_at, snaptrade_disconnected_at",
     )
     .eq("id", userId)
     .maybeSingle();
