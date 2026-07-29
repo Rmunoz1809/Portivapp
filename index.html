@@ -2,20 +2,17 @@
 <html lang="es" class="app-locked">
 <head>
 <meta charset="UTF-8">
-<!-- Handshake TCP+TLS adelantado a los dos orígenes que el arranque SIEMPRE toca (Supabase
-     para auth/gate, jsdelivr para el SDK). Va aquí arriba, antes de cualquier <style>, para
-     que el navegador lo vea en el primer trozo del HTML. -->
+<!-- Handshake TCP+TLS adelantado al único origen externo que el arranque SIEMPRE toca
+     (Supabase para auth/gate). Va aquí arriba, antes de cualquier <style>, para que el
+     navegador lo vea en el primer trozo del HTML. El preconnect a jsdelivr se eliminó
+     al vendorizar el SDK: ese origen ya no se usa. -->
 <link rel="preconnect" href="https://zblhifszlhdgkhnymwjh.supabase.co" crossorigin>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Las fuentes son locales pero el navegador solo las descubre tras parsear fonts.css.
      Con el preload arrancan en paralelo al CSS, no después. Solo los dos woff2 que se usan
      en el primer paint (Inter latin del texto, Material Symbols de los iconos del shell);
      los subsets latin-ext y Manrope se cargan por demanda como hasta ahora. -->
 <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/material-symbols.woff2" as="font" type="font/woff2" crossorigin>
-<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
 <style id="bootLock">
   /* Oculta TODO el contenido de la app hasta que el gating de cuenta lo revele.
      El overlay de auth queda exento (es la cubierta "Cargando…"/login). Esto evita
@@ -275,7 +272,18 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
   window.addEventListener('orientationchange', onChange, { passive: true });
 })();
 </script>
-<title>Portafolio — Plataforma de Inversión</title>
+<title>Portiv — Tu portafolio de inversión, potenciado por IA</title>
+<meta name="description" content="Portiv organiza tu portafolio de inversión y te da análisis de acciones con IA, noticias filtradas por tus posiciones y sincronización con tu broker. En español.">
+<meta name="theme-color" content="#0A1F3D">
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Portiv">
+<meta property="og:title" content="Portiv — Tu portafolio de inversión, potenciado por IA">
+<meta property="og:description" content="Análisis de acciones con IA, noticias que sí mueven tu cartera y sincronización con tu broker. En español.">
+<meta property="og:url" content="https://portivapp.com/">
+<meta property="og:image" content="https://portivapp.com/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
 <!-- chart.js YA NO se carga en el <head>. Son ~200 KB que el login no necesita para nada:
@@ -290,7 +298,7 @@ window._ensureChartJs = (function(){
     if (_p) return _p;
     _p = new Promise(function(res, rej){
       var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+      s.src = 'vendor/chart.umd.min.js';   // chart.js 4.4.0 vendorizado — sin CDN en runtime
       s.onload  = function(){ res(); };
       s.onerror = function(){ _p = null; rej(new Error('chartjs')); };
       document.head.appendChild(s);
@@ -3307,14 +3315,27 @@ window._ensureChartJs = (function(){
      en un _pvAuthBoot() sobre DOMContentLoaded, y además habría invertido el orden con el
      `init` de noticias/outlook, que hoy corre con window.sbClient ya creado.)
      La red de seguridad de los 10 s sigue comprobando `!window.supabase`: a los 10 s este
-     script ya cargó o ya falló, así que su diagnóstico sigue siendo válido. -->
-<link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin>
+     script ya cargó o ya falló, así que su diagnóstico sigue siendo válido.
+     AHORA ES LOCAL: el SDK se sirve desde vendor/supabase.js (@supabase/supabase-js 2.111.0,
+     descargado del CDN y congelado en el repo). La app nativa arranca sin red hacia terceros
+     y no ejecuta código remoto (Guideline 2.5.2). Sigue siendo SÍNCRONO a propósito: el IIFE
+     de auth de abajo asume que `window.supabase` ya existe. NO añadir defer ni async. -->
+<link rel="preload" as="script" href="vendor/supabase.js">
 <!-- Paddle.js (billing / suscripción Portiv Pro) — SOLO build web. iOS usa IAP nativo (RevenueCat).
      YA NO se carga en el <head>: es un script de tercero que solo hace falta cuando el usuario
      abre el checkout, y en el arranque competía por red con Supabase y el propio HTML.
      Se carga perezosamente con _ensurePaddle() desde _pvStartCheckout. -->
 <script>
 /* PADDLE BILLING (LIVE). Entorno de producción, token client-side LIVE y priceIds LIVE. */
+/* ÚNICO lugar donde vive el token client-side LIVE de Paddle.
+   Se obtiene en vendors.paddle.com → Developer Tools → Authentication → Client-side tokens.
+   Empieza por "live_". Mientras siga con el valor placeholder, el checkout web
+   queda deshabilitado con un mensaje honesto en vez de abrirse roto. */
+window.PADDLE_CLIENT_TOKEN = 'PADDLE_LIVE_CLIENT_TOKEN';
+window._pvPaddleReady = function(){
+  var t = window.PADDLE_CLIENT_TOKEN || '';
+  return /^live_/.test(t) || /^test_/.test(t);
+};
 window.PADDLE_PRICES = {
   monthly: 'pri_01kxps87qstgex009vr5w6z1sn', // USD 4.99/mes · prueba 30 días
   annual:  'pri_01kxpseeyhn7d9yw29fxc6rvse'  // USD 49.99/año
@@ -3335,9 +3356,10 @@ var _pvCheckoutCompleted = false;
   var _pdTries = 0;
   function initPaddle(){
     if (!window.Paddle || !window.Paddle.Environment) { if (_pdTries++ < 100) setTimeout(initPaddle, 60); return; }
+    if (!window._pvPaddleReady()) { console.error('[Paddle] token client-side no configurado — checkout web deshabilitado'); return; }
     Paddle.Environment.set('production');
     Paddle.Initialize({
-      token: 'PADDLE_LIVE_CLIENT_TOKEN', // ← reemplazar con el token client-side LIVE del dashboard
+      token: window.PADDLE_CLIENT_TOKEN,
       eventCallback: function(ev){
         if (!ev) return;
         if (ev.name === 'checkout.completed') {
@@ -3787,7 +3809,7 @@ window._pvAwaitIAP = function(totalMs){
       <div class="ai-chat-chips" id="aiChatSuggestions">
         <button class="ai-chat-chip" onclick="aiChatQuick('¿Cómo van mis posiciones hoy?')">¿Cómo van mis posiciones hoy?</button>
         <button class="ai-chat-chip" onclick="aiChatQuick('¿Hay noticias importantes de mi portafolio?')">Noticias de mi portafolio</button>
-        <button class="ai-chat-chip" onclick="aiChatQuick('¿Está bien diversificado mi portafolio?')">¿Estoy diversificado?</button>
+        <button class="ai-chat-chip" onclick="aiChatQuick('¿Por qué se movió el mercado hoy?')">¿Por qué se movió el mercado hoy?</button>
       </div>
       <div class="ai-chat-inputbar">
         <textarea id="aiChatInput" rows="1" placeholder="Escribe tu pregunta…"
@@ -6624,6 +6646,13 @@ const AI_MODELS = {
   // Sonnet 5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
   // (qbio:v1:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
   narrative:  'claude-sonnet-5',
+  // Chat (AI Analyst) = Haiku, por costo: es la única vía de pago on-demand y Sonnet 5
+  // salía ~3× más caro por mensaje. La tendencia de Haiku a pedir aclaración en vez de
+  // comprometerse con una lectura se contiene por prompt (REGLA #1 + frases prohibidas +
+  // few-shot) y por contexto (_chatMarketCtx le da fecha, movimiento del día y titulares,
+  // que era el motivo real por el que preguntaba). Único punto de cambio: si el chat
+  // vuelve a "entrevistar", subir esta clave a 'claude-sonnet-5' y nada más.
+  chat:       'claude-haiku-4-5',
 };
 
 // ── Pre-calentamiento de briefs "Cómo afecta al mercado" ─────────────────────────
@@ -8940,6 +8969,13 @@ function posRowHTML(h, idx, c, T) {
   const priceChg  = h.price - c.prevClose;
   const dayPctEff = c.dayChgPctEff;
   const pcc = dayPctEff >= 0 ? 'pos' : 'neg';
+  // Mismo criterio que #perf-day: sin precios en vivo ni cierre previo cacheado de hoy, la
+  // columna DÍA no es cero, es desconocida. Se pinta "—" y sin color, para no teñir la fila
+  // de verde por un +0.00 inventado que 3 s después salta al valor real.
+  const dayKnown  = isLive || _PV_DAY_FROM_CACHE;
+  const pccEff    = dayKnown ? pcc : '';
+  const dayAmtTxt = dayKnown ? usdSigned(priceChg,2) : '—';
+  const dayPctTxt = dayKnown ? pctSigned(dayPctEff)  : '—';
   const gc  = c.gl >= 0 ? 'pos' : 'neg';
   const reinv = (h.reinvest === false) ? 'No' : 'Yes';
   const isOpen = activeDrawer && activeDrawer.idx === idx;
@@ -8955,11 +8991,11 @@ function posRowHTML(h, idx, c, T) {
     </div></div></td>
     <td><div class="td-inner" style="font-variant-numeric:tabular-nums">${h.qty.toFixed(4)}</div></td>
     <td><div class="td-inner" style="font-variant-numeric:tabular-nums">$${h.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></td>
-    <td><div class="td-inner ${pcc}" style="font-variant-numeric:tabular-nums">${usdSigned(priceChg,2)}</div></td>
-    <td><div class="td-inner ${pcc}" style="font-weight:600;font-variant-numeric:tabular-nums">${pctSigned(dayPctEff)}</div></td>
+    <td><div class="td-inner ${pccEff}" style="font-variant-numeric:tabular-nums">${dayAmtTxt}</div></td>
+    <td><div class="td-inner ${pccEff}" style="font-weight:600;font-variant-numeric:tabular-nums">${dayPctTxt}</div></td>
     <td><div class="td-inner" style="font-weight:600;font-variant-numeric:tabular-nums">${usd(round2(c.mktVal))}</div></td>
     <td><div class="td-inner ${pcc}" style="font-variant-numeric:tabular-nums">${usdSigned(round2(c.dayChgAbs),2)}</div></td>
-    <td><div class="td-inner ${pcc}" style="font-weight:600;font-variant-numeric:tabular-nums">${pctSigned(dayPctEff)}</div></td>
+    <td><div class="td-inner ${pccEff}" style="font-weight:600;font-variant-numeric:tabular-nums">${dayPctTxt}</div></td>
     <td><div class="td-inner" style="color:#8a96a3;font-variant-numeric:tabular-nums">${usd(round2(h.costBasis))}</div></td>
     <td><div class="td-inner ${gc}" style="font-weight:700;font-variant-numeric:tabular-nums">${usdSigned(round2(c.gl))}</div></td>
     <td><div class="td-inner ${gc}" style="font-variant-numeric:tabular-nums">${pctSigned(c.glPct)}</div></td>
@@ -11553,7 +11589,11 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     try{ return await ensureFresh(true); }catch(e){}
   }
 
-  return { apply, ensureFresh, hasFresh, state, forceRefresh };
+  // `get` expone el objeto cacheado tal cual ({today, week, next, ...}) para que otras
+  // partes de la app (p. ej. el contexto del chat) puedan leer los titulares del día sin
+  // volver a pedirlos ni duplicar el parseo de localStorage.
+  function get(){ return _local(); }
+  return { apply, ensureFresh, hasFresh, state, forceRefresh, get };
 })();
 window.SharedNews = SharedNews;
 
@@ -12074,95 +12114,8 @@ function renderNewsTab() {
 
   // ── Esta Semana: delegada al motor canónico PORTIV_NEWS (zona NY, scoring, top-2/día) ──────
   if (typeof PORTIV_NEWS !== 'undefined') { try { PORTIV_NEWS.renderThisWeek(); } catch(e){ console.warn('[PORTIV_NEWS] render', e); } }
-  // (legacy desactivado — PORTIV_NEWS es la única fuente de verdad de "Esta Semana")
-  if (false) {
-    const weekStart = new Date(thisMon); weekStart.setHours(0,0,0,0);
-    const weekEndEx = new Date(thisFri); weekEndEx.setHours(23,59,59,999);
-
-    // --- 1. Pool de todas las noticias disponibles con relevancia ---
-    const pool = [];
-    GENERAL_NEWS.forEach(n => pool.push({...n}));
-    HOLDINGS.forEach(h =>
-      (STOCK_NEWS[h.ticker] || []).forEach(n =>
-        pool.push({ ...n, impact: n.impact || h.ticker, _ticker: h.ticker })
-      )
-    );
-
-    // --- 2. Asignar día de la semana a cada noticia ---
-    const seen = new Set();
-    const withDay = pool
-      .filter(n => n && n.h && !seen.has(n.h.slice(0,60)) && seen.add(n.h.slice(0,60)))
-      .map(n => {
-        const ts = n._ts ? new Date(n._ts) : new Date();
-        let di = ts.getDay();
-        if (di === 0 || di === 6) di = 5; // weekend → Friday
-        const off = di - 1; // 0=Mon … 4=Fri
-        const d = new Date(thisMon); d.setDate(thisMon.getDate() + off);
-        return {
-          ...n,
-          s: n.s || 'neu',
-          _rel: typeof n._rel === 'number' ? n._rel : _portfolioRelevance(n.h, n.ext||'', n.impact||''),
-          dayIdx: off + 1,
-          dayLong: _DOW_ES[off + 1] || '',
-          day: d.toLocaleDateString('es-MX', {weekday:'short', day:'numeric', month:'short'})
-        };
-      })
-      .filter(n => n._rel > 0 || !HOLDINGS.length);
-
-    // --- 3. Por cada día (1=Lun…5=Vie) guardar las TOP 2 más impactantes ---
-    const byDay = {};
-    withDay.forEach(n => {
-      const di = n.dayIdx;
-      if (!byDay[di]) byDay[di] = [];
-      byDay[di].push(n);
-    });
-    const topPerDay = [];
-    [1,2,3,4,5].forEach(di => {
-      if (!byDay[di]) return;
-      const sorted = byDay[di].sort((a,b) => (b._rel||0) - (a._rel||0));
-      topPerDay.push(...sorted.slice(0,2));
-    });
-
-    // --- 4. Guardar en localStorage (clave de semana) ---
-    // En fin de semana NO añadimos nuevas noticias a Esta Semana (ya cerró el viernes).
-    // Solo leemos lo ya guardado para mostrarlo.
-    try {
-      const stored = JSON.parse(localStorage.getItem('week_top_' + _weekKeyStr) || '[]');
-      // Merge: solo añadir nuevas noticias si es día de semana
-      const storedHeads = new Set(stored.map(n => n.h?.slice(0,60)));
-      const toAdd = _isWeekday()
-        ? topPerDay.filter(n => !storedHeads.has(n.h?.slice(0,60)))
-        : [];
-      // Por día, mantener máximo 2
-      const merged = [...stored, ...toAdd];
-      const mergedByDay = {};
-      merged.forEach(n => {
-        const di = n.dayIdx || 9;
-        if (!mergedByDay[di]) mergedByDay[di] = [];
-        mergedByDay[di].push(n);
-      });
-      const final = [];
-      [1,2,3,4,5].forEach(di => {
-        if (!mergedByDay[di]) return;
-        final.push(...mergedByDay[di].sort((a,b)=>(b._rel||0)-(a._rel||0)).slice(0,2));
-      });
-      localStorage.setItem('week_top_' + _weekKeyStr, JSON.stringify(final));
-      // Limpiar semanas viejas (> 2 semanas atrás)
-      Object.keys(localStorage).filter(k => k.startsWith('week_top_') && k !== 'week_top_' + _weekKeyStr && k !== 'week_top_' + _prevWeekKeyStr)
-        .forEach(k => localStorage.removeItem(k));
-    } catch(e) {}
-
-    // --- 5. Leer lo guardado y combinarlo con macros ---
-    let savedTop = [];
-    try { savedTop = JSON.parse(localStorage.getItem('week_top_' + _weekKeyStr) || '[]'); } catch(e) {}
-
-    const combinedWeek = [...THIS_WEEK_NEWS, ...savedTop]
-      .filter((n,i,arr) => arr.findIndex(x => x.h === n.h) === i) // dedup
-      .sort((a, b) => (a.dayIdx || 9) - (b.dayIdx || 9) || (b._rel||0) - (a._rel||0));
-
-    $('thisWeekNews').innerHTML = renderWeekCatalysts(combinedWeek,
-      'Sin noticias ni catalizadores relevantes esta semana todavía. Se guardarán las 2 más impactantes por día automáticamente.');
-  }
+  // (el render legacy que vivía aquí dentro de un `if (false)` se eliminó —
+  //  PORTIV_NEWS es la única fuente de verdad de "Esta Semana")
 
   // ── Weekly Outlook ─────────────────────────────────────────────────────────────
   // Al abrir: pinta el caché si está fresco (< 24h, misma semana); si está vencido o
@@ -13116,7 +13069,12 @@ const PORTIV_HIST = {
   data: {},            // ticker → { 'YYYY-MM-DD': close }
   _ready: false, _loading: false, _at: 0, _hydrated: false,
   _LS_DAILY: 'portiv_hist_daily_v1', _LS_INTRA: 'portiv_hist_intra_v1',
-  _DAILY_TTL: 86400000, _INTRA_TTL: 300000,   // daily fresco 24h · intradía 5min (Fase 2/3)
+  // Intradía a 4 min, no 5: el loop que lo refresca corre en los múltiplos de 5 min, y con un
+  // TTL de 5 min exactos el tick llegaba a veces un pelo ANTES de vencer y se saltaba la
+  // recarga → la curva se quedaba un bucket atrás hasta el tick siguiente. 4 min garantiza que
+  // todo tick de 5 min encuentre el caché vencido. El caché del proxy (300 s) sigue absorbiendo
+  // el gasto real, así que esto no añade llamadas upstream.
+  _DAILY_TTL: 86400000, _INTRA_TTL: 240000,   // daily fresco 24h · intradía 4min
   ready(){ return this._ready; },
   // ── CORTAFUEGOS ANTI-BUCLE ────────────────────────────────────────────────────
   //  generate() pide la reconstrucción → al terminar, la reconstrucción repinta →
@@ -13229,6 +13187,31 @@ const PORTIV_HIST = {
   intra: {},            // ticker → { 'HH:MM': precio }  (solo HOY, hora de NY)
   _intraReady:false, _intraLoading:false, _intraAt:0,
   intradayReady(){ return this._intraReady; },
+  // ── ¿Hay cobertura SUFICIENTE para dibujar la sesión? ──────────────────────────────────
+  //  Exigir las N posiciones al 100% era frágil: el feed IEX gratuito no cubre algunos ADR y
+  //  ETF delgados, y UNA sola posición sin barras dejaba la gráfica 1D entera en el plan B de
+  //  snapshots locales. Ahora se mide por PESO a mercado: si las posiciones con barras reales
+  //  suman ≥70% del valor, la forma de la curva es representativa y se dibuja. Las que faltan
+  //  no se rellenan con nada inventado — quedan absorbidas en el término de efectivo implícito
+  //  de seriesIntraday(), o sea entran como constante y no aportan movimiento falso.
+  _INTRA_MIN_COV: 0.70,
+  _intraCovered(tks){
+    try {
+      const list = tks || this._tickers();
+      if (!list.length) return false;
+      let tot = 0, cov = 0;
+      list.forEach(t => {
+        let w = 0;
+        (typeof HOLDINGS!=='undefined' ? HOLDINGS : []).forEach(h => {
+          if (h && h.ticker && h.ticker.toUpperCase() === t && +h.qty > 0) w += (+h.qty) * (+h.price || 0);
+        });
+        if (!(w > 0)) w = 1;                                  // aún sin precio → peso neutro
+        tot += w;
+        if (this.intra[t] && Object.keys(this.intra[t]).length) cov += w;
+      });
+      return tot > 0 && (cov / tot) >= this._INTRA_MIN_COV;
+    } catch(e){ return false; }
+  },
   _etHHMM(ts){
     try { const p = PORTIV_CHART._nyParts(new Date(ts*1000));
       return String(p.h).padStart(2,'0')+':'+String(p.mi).padStart(2,'0'); } catch(e){ return null; }
@@ -13247,31 +13230,20 @@ const PORTIV_HIST = {
     this._intraLoading = true;
     const _have0 = tks.filter(t => this.intra[t] && Object.keys(this.intra[t]).length).length;
     try {
-      const today = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : null;
-      const q = tks.slice();
-      const one = async (tk)=>{
-        try {
-          if (typeof _yhChart !== 'function') return;
-          const y = await _yhChart(tk, '1d', '5m', 7000);   // sesión de HOY a 5 min
-          if (y && Array.isArray(y.timestamps) && y.timestamps.length && Array.isArray(y.closes)){
-            const m = {};
-            for (let i=0;i<y.timestamps.length;i++){
-              const c = y.closes[i]; if (c==null) continue;
-              const ts = y.timestamps[i];
-              if (today && this._etDay(ts) !== today) continue;    // solo HOY
-              const hhmm = this._etHHMM(ts); if (!hhmm) continue;
-              const mins = (+hhmm.slice(0,2))*60 + (+hhmm.slice(3,5));
-              if (mins < 570 || mins > 960) continue;              // sesión regular 09:30–16:00
-              m[hhmm] = c;
-            }
-            if (Object.keys(m).length) this.intra[tk] = m;
-          }
-        } catch(e){}
-      };
-      const CONC=3;
-      const workers = Array.from({length:Math.min(CONC,q.length)}, async ()=>{ while(q.length){ await one(q.shift()); } });
-      await Promise.all(workers);
-      this._intraReady = this._tickers().every(t => this.intra[t] && Object.keys(this.intra[t]).length);
+      // FUENTE: Alpaca (feed IEX, licencia comercial) en UNA sola petición multi-símbolo.
+      // ─────────────────────────────────────────────────────────────────────────────────
+      // Antes esto colgaba de _yhChart, que es un STUB que devuelve null desde que Yahoo se
+      // retiró (App Review 5C). Consecuencia silenciosa: la reconstrucción intradía nunca se
+      // completaba, _intraReady se quedaba en false para siempre y la gráfica 1D caía SIEMPRE
+      // al plan B de snapshots locales — que solo tiene puntos desde que el usuario abrió el
+      // app. De ahí la línea que arrancaba a media mañana con un salto desde el ancla 09:30.
+      // Con Alpaca la sesión se reconstruye entera 09:30→ahora sin importar cuándo se abrió.
+      const got = (typeof _alpacaIntradayBars === 'function')
+        ? await _alpacaIntradayBars(tks, 12000) : {};
+      Object.keys(got || {}).forEach(t => {
+        if (got[t] && Object.keys(got[t]).length) this.intra[t] = got[t];
+      });
+      this._intraReady = this._intraCovered(tks);
       this._intraAt = Date.now();
       this._persistIntra();                                   // persistir intradía de HOY (Fase 2)
     } catch(e){}
@@ -13286,25 +13258,32 @@ const PORTIV_HIST = {
     try {
       const tks = this._tickers();
       if (!tks.length) return null;
-      for (const t of tks){ if (!this.intra[t] || !Object.keys(this.intra[t]).length) return null; }
+      // Se dibuja con las posiciones que SÍ tienen barras, siempre que pesen lo suficiente
+      // (_intraCovered). Antes bastaba un ticker sin cobertura IEX para devolver null y perder
+      // la sesión entera. Las posiciones sin barras no desaparecen del nivel de la curva: al
+      // definirse el efectivo implícito como (total en vivo − posiciones cubiertas al último
+      // punto), su valor queda dentro de ese término CONSTANTE. Se les respeta el importe y no
+      // se les inventa movimiento intradía que nadie reportó.
+      const withBars = tks.filter(t => this.intra[t] && Object.keys(this.intra[t]).length);
+      if (!withBars.length || !this._intraCovered(tks)) return null;
       const qty = {};
       (HOLDINGS||[]).forEach(h=>{ if(h&&h.ticker&&+h.qty>0){ const t=h.ticker.toUpperCase(); qty[t]=(qty[t]||0)+(+h.qty); } });
       const toMin = k => (+k.slice(0,2))*60 + (+k.slice(3,5));
       // Línea maestra de tiempos = UNIÓN de todos los buckets de 5 min (orden cronológico).
-      const set = new Set(); tks.forEach(t=> Object.keys(this.intra[t]).forEach(k=> set.add(k)));
+      const set = new Set(); withBars.forEach(t=> Object.keys(this.intra[t]).forEach(k=> set.add(k)));
       const times = [...set].sort((a,b)=> toMin(a)-toMin(b));
       if (times.length < 2) return null;
       // Precio de un ticker en t = último bucket ≤ t (forward-fill); antes de su 1er bucket = su
       // 1er precio. Rellena huecos sin inventar movimiento.
-      const sortedKeys = {}; tks.forEach(t=>{ sortedKeys[t] = Object.keys(this.intra[t]).sort((a,b)=>toMin(a)-toMin(b)); });
+      const sortedKeys = {}; withBars.forEach(t=>{ sortedKeys[t] = Object.keys(this.intra[t]).sort((a,b)=>toMin(a)-toMin(b)); });
       const priceAt = (t, mt)=>{ const ks=sortedKeys[t]; let px=this.intra[t][ks[0]];
         for (let i=0;i<ks.length;i++){ if (toMin(ks[i])<=mt) px=this.intra[t][ks[i]]; else break; } return px; };
       // Efectivo implícito constante = total en vivo − valor de posiciones al último tiempo.
       const lastM = toMin(times[times.length-1]);
-      let posLast = 0; tks.forEach(t=> posLast += (qty[t]||0) * priceAt(t,lastM));
+      let posLast = 0; withBars.forEach(t=> posLast += (qty[t]||0) * priceAt(t,lastM));
       let liveTotal = 0; try { liveTotal = (typeof calcTotals==='function') ? +calcTotals().total.toFixed(2) : 0; } catch(e){}
       const cash = (liveTotal>0) ? (liveTotal - posLast) : 0;
-      const values = times.map(k=>{ const mt=toMin(k); let v=0; tks.forEach(t=> v += (qty[t]||0)*priceAt(t,mt)); return +(v+cash).toFixed(2); });
+      const values = times.map(k=>{ const mt=toMin(k); let v=0; withBars.forEach(t=> v += (qty[t]||0)*priceAt(t,mt)); return +(v+cash).toFixed(2); });
       const today = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : '';
       const base = values[0], last = values[values.length-1];
       return {
@@ -13338,7 +13317,7 @@ const PORTIV_HIST = {
       if (raw){ const o = JSON.parse(raw); const today = this._todayETsafe();
         if (o && o.intra && typeof o.intra==='object' && o.day && today && o.day===today){
           this.intra = o.intra; this._intraAt = +o.at||0;
-          const tks=this._tickers(); this._intraReady = tks.length>0 && tks.every(t => this.intra[t] && Object.keys(this.intra[t]).length); } } } catch(e){}
+          this._intraReady = this._intraCovered(); } } } catch(e){}
   }
 };
 window.PORTIV_HIST = PORTIV_HIST;
@@ -14682,6 +14661,98 @@ function _pvRunZoom(snap, period) {
   _pvZoomRAF = requestAnimationFrame(step);
 }
 
+// ── Transición 1D ↔ histórico: MORPH (la ventana no se puede "acercar") ──────────────────
+//  El zoom de arriba re-encuadra la MISMA curva, y eso solo significa algo entre períodos que
+//  comparten dominio (fechas). 1D vive en HH:MM: no existe un tramo de la curva de 1M que "sea"
+//  la sesión de hoy, así que acercar la cámara no aplica — por eso _pvZoomPrep rechaza 1D y el
+//  paso quedaba en un CORTE SECO (update('none')), que es lo que se siente como un salto.
+//  Aquí las dos curvas se re-muestrean al MISMO número de puntos y la línea se interpola de una
+//  a la otra: se deforma, el color viaja con ella y la banda Y se desplaza en el mismo gesto.
+//  Largo constante en todos los frames → Chart.js nunca interpola entre datasets de distinto
+//  tamaño, que es lo que dibujaba la "curva fantasma" que ya se peleó en el zoom.
+const _PV_MORPH_MS = 480;
+
+// Re-muestrea etiquetas a n ranuras sin repetir la misma en ranuras contiguas (el eje 1D trae
+// ~78 HH:MM y pintarlas todas sería una mancha).
+function _pvMorphLabels(labels, n) {
+  const L = labels.length - 1, out = new Array(n);
+  let prev = null;
+  for (let i = 0; i < n; i++) {
+    const x = L * (n === 1 ? 0 : i / (n - 1));
+    const l = String(labels[Math.max(0, Math.min(L, Math.round(x)))] ?? '');
+    out[i] = (l && l === prev) ? '' : l;
+    if (l) prev = l;
+  }
+  return out;
+}
+
+// ¿Procede el morph? Mismas guardas que el zoom: gráfica visible, sin "reduce motion" y con
+// curva previa suficiente para re-muestrear. Devuelve la foto de la curva vieja o null.
+function _pvMorphPrep(prev, next) {
+  try {
+    if (!perfChart || !prev || !next || prev === next) return null;
+    if (prev !== '1D' && next !== '1D') return null;            // el resto ya lo cubre el zoom
+    if (document.hidden) return null;
+    if (!perfChart.canvas || perfChart.canvas.offsetParent === null) return null;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+    return _pvZoomSnapshot();
+  } catch(e) { return null; }
+}
+
+// Ejecuta el morph. `snap` = curva vieja; el dataset nuevo ya está comprometido en el chart
+// (setPeriodData(..., 'skip')) pero sin pintar. Reusa _pvZoomRAF a propósito: así _pvStopZoom()
+// y la guarda de reentrada de setPeriod cancelan también esta animación, sin un segundo handle
+// que se pudiera quedar vivo y pelearse con el siguiente cambio de período.
+function _pvRunMorph(snap, period) {
+  const s0 = perfChart && perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0];
+  if (!s0) return;
+  const finLabels = perfChart.data.labels.slice();
+  const finValues = s0.data.slice();
+  const finColor  = s0.borderColor, finFill = s0.backgroundColor;
+  if (finValues.length < 2 || !Array.isArray(snap.values) || snap.values.length < 2) {
+    try { perfChart.update('none'); } catch(e) {}
+    return;
+  }
+  const N = _PV_ZOOM_N;
+  const fromN = _pvZoomResample(snap.values, 0, snap.values.length - 1, N);
+  const toN   = _pvZoomResample(finValues,   0, finValues.length   - 1, N);
+  // Etiquetas del período NUEVO desde el primer frame. Cambiarlas a mitad de la animación se lee
+  // como un glitch: el eje salta de dominio (fechas → HH:MM) de golpe hagamos lo que hagamos, y
+  // lo que el ojo percibe como transición es la LÍNEA deformándose, que es lo que sí se anima.
+  const midLabels = _pvMorphLabels(finLabels, N);
+  const yA = snap.y;
+  const yS = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
+  const yB = (yS && typeof yS.min === 'number' && typeof yS.max === 'number') ? { min: yS.min, max: yS.max } : null;
+  const yTween = (yA && yB && yA.max > yA.min && yB.max > yB.min);
+  _pvStopZoom();
+  const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+
+  const step = (now) => {
+    _pvZoomRAF = null;
+    const t = Math.min(1, Math.max(0, ((now || Date.now()) - t0) / _PV_MORPH_MS));
+    const e = 1 - Math.pow(1 - t, 3);                          // ease-out, sin rebote
+    const vals = new Array(N);
+    for (let i = 0; i < N; i++) vals[i] = +(fromN[i] + (toN[i] - fromN[i]) * e).toFixed(2);
+    perfChart.data.labels = midLabels;
+    s0.data = vals;
+    s0.borderColor = (typeof snap.color === 'string' && typeof finColor === 'string')
+      ? _pvMixColor(snap.color, finColor, Math.min(1, e * 1.4)) : finColor;
+    if (e >= 0.5) s0.backgroundColor = finFill;
+    if (yTween) { try { _pvApplyYBand(yA.min + (yB.min - yA.min) * e, yA.max + (yB.max - yA.max) * e); } catch(e2){} }
+    perfChart.update('none');
+
+    if (t < 1) { _pvZoomRAF = requestAnimationFrame(step); return; }
+    // Cierre: el dataset REAL del período (etiquetas y puntos exactos) queda pintado.
+    perfChart.data.labels = finLabels;
+    s0.data = finValues;
+    s0.borderColor = finColor;
+    s0.backgroundColor = finFill;
+    try { _applyChartYBounds(); } catch(e2){}
+    perfChart.update('none');
+  };
+  _pvZoomRAF = requestAnimationFrame(step);
+}
+
 // Permite que PORTIV_CHART inyecte un dataset directamente (sin pasar por setPeriod).
 // `updMode`: modo de update de Chart.js. 'skip' = no pintar (lo hace el zoom por frames).
 function setPeriodData(period, ds, updMode) {
@@ -14865,7 +14936,15 @@ function setPeriod(period, btn) {
       setPeriodData(period, ds, 'skip');
       try { _pvRunZoom(_zSnap, period); } catch(e) { try { perfChart.update('periodChange'); } catch(e2){} }
     } else {
-      setPeriodData(period, ds);
+      // 1D ↔ histórico: el zoom no aplica (otro dominio en X) pero el corte seco tampoco es
+      // aceptable. Morph: la línea vieja se deforma hasta ser la nueva.
+      const _mSnap = (typeof _pvMorphPrep === 'function') ? _pvMorphPrep(_prevPeriod, period) : null;
+      if (_mSnap) {
+        setPeriodData(period, ds, 'skip');
+        try { _pvRunMorph(_mSnap, period); } catch(e) { try { perfChart.update('none'); } catch(e2){} }
+      } else {
+        setPeriodData(period, ds);
+      }
     }
   } else {
     // Sin datos para este timeframe (p.ej. 1D antes del primer snapshot) → punto base en vivo.
@@ -14932,8 +15011,16 @@ function _updatePerfTotals(activeP, ds) {
   let day = T.day, dayPct = pfDayChgPct(T);
   try { if (typeof _calcRealDayChange === 'function') { const dc = _calcRealDayChange(); day = dc.day; dayPct = dc.dayPct; } } catch(e) {}
   if (el('perf-day')) {
-    el('perf-day').textContent = `${sign(day)}${usd(Math.abs(day))} (${sign(dayPct)}${Math.abs(dayPct).toFixed(2)}%)`;
-    el('perf-day').className = 'perf-metric-val ' + (day >= 0 ? 'pos' : 'neg');
+    // Sin precios en vivo y sin cierre previo cacheado de HOY, `day` vale 0 por falta de datos,
+    // no porque la cartera no se haya movido. Pintar "+$0.00" afirma algo que no se sabe; "—"
+    // dice la verdad y además no parpadea a cero cuando llegan los precios 3 s después.
+    if (!isLive && !_PV_DAY_FROM_CACHE) {
+      el('perf-day').textContent = '—';
+      el('perf-day').className = 'perf-metric-val';
+    } else {
+      el('perf-day').textContent = `${sign(day)}${usd(Math.abs(day))} (${sign(dayPct)}${Math.abs(dayPct).toFixed(2)}%)`;
+      el('perf-day').className = 'perf-metric-val ' + (day >= 0 ? 'pos' : 'neg');
+    }
   }
   const ap = activeP || (typeof activePeriod !== 'undefined' ? activePeriod : '1M');
   // Badge del header = cambio del PERÍODO activo (1D = cambio del día en vivo).
@@ -15213,6 +15300,61 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
     closes.push(Math.round(b.c * 10000) / 10000);
   }
   return timestamps.length >= 2 ? { timestamps, closes } : null;
+}
+
+// ── Barras intradía de 5 min, MULTI-SÍMBOLO (motor de la gráfica 1D) ──────────────────────
+// Alpaca acepta N símbolos en UNA sola petición (`symbols=A,B,C`), así que reconstruir la
+// sesión completa de una cartera de 12 posiciones cuesta 1 llamada, no 12. Eso es lo que hace
+// viable refrescar cada 5 min sin castigar la cuota del proxy ni la batería del teléfono.
+// Devuelve { TICKER: { 'HH:MM': precio } } SOLO con barras de HOY (hora de NY) dentro de la
+// sesión regular 09:30–16:00. Sin dato → objeto vacío. Nunca inventa un precio.
+async function _alpacaIntradayBars(tickers, timeoutMs = 12000){
+  const out = {};
+  const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean))].sort();
+  if (!syms.length) return out;
+  // La ventana arranca en la fecha de HOY (ET) en vez de "hace 6 días". Además de bajar mucho
+  // menos dato, mantiene la URL —y por tanto la clave de caché del proxy— IDÉNTICA durante
+  // toda la sesión: N usuarios con la misma cartera comparten UNA llamada upstream por ventana
+  // de 5 min (ttlFor() del proxy da 300 s a cualquier timeframe con "min").
+  // Ojo: Alpaca interpreta `YYYY-MM-DD` como medianoche UTC, que es la tarde ANTERIOR en ET →
+  // llegan algunas barras de ayer. El filtro por día ET de abajo las descarta.
+  let today = null;
+  try {
+    const p = PORTIV_CHART._nyParts();
+    today = `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
+  } catch(e){ return out; }
+  const _etDay = ms => { const p = PORTIV_CHART._nyParts(new Date(ms));
+    return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`; };
+  const _etHM  = ms => { const p = PORTIV_CHART._nyParts(new Date(ms));
+    return String(p.h).padStart(2,'0') + ':' + String(p.mi).padStart(2,'0'); };
+  // Trocear carteras grandes: la lista de símbolos viaja en la query string y el proxy la usa
+  // como clave de caché — varias peticiones cortas antes que una que se pase de largo.
+  const CHUNK = 25;
+  for (let i = 0; i < syms.length; i += CHUNK) {
+    const grp = syms.slice(i, i + CHUNK);
+    const qs = `symbols=${encodeURIComponent(grp.join(','))}&timeframe=5Min&start=${today}`
+             + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
+    let d = null;
+    try { d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs); } catch(e){}
+    const bars = (d && d.bars && typeof d.bars === 'object') ? d.bars : null;
+    if (!bars) continue;
+    for (const sym of grp) {
+      const arr = bars[sym] || bars[sym.replace('.', '/')];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const m = {};
+      for (const b of arr) {
+        if (!b || typeof b.c !== 'number' || !isFinite(b.c) || b.c <= 0) continue;
+        const ms = Date.parse(b.t); if (!isFinite(ms)) continue;
+        if (_etDay(ms) !== today) continue;                   // solo HOY
+        const hhmm = _etHM(ms);
+        const mins = (+hhmm.slice(0,2)) * 60 + (+hhmm.slice(3,5));
+        if (mins < 570 || mins > 960) continue;               // sesión regular 09:30–16:00
+        m[hhmm] = b.c;
+      }
+      if (Object.keys(m).length) out[sym] = m;
+    }
+  }
+  return out;
 }
 
 // Yahoo Finance noticias: RETIRADO (App Review 5C) — fuente sin licencia. Las noticias van solo
@@ -15549,6 +15691,42 @@ function _loadPrevCloseData() {
     if (!d || !d.date || !d.prices || !d.portfolioClose) return null;
     return d;
   } catch(e) { return null; }
+}
+
+// El día de MERCADO, no el del reloj local. _todayISO() usa hora local y en Panamá (UTC−5)
+// va una hora detrás del ET de verano (UTC−4): cerca de medianoche daba por caducado un
+// caché que sí pertenecía a la sesión vigente. Cae a _todayISO() si PORTIV_SYNC no existe aún.
+function _pvMarketDayISO() {
+  try { if (typeof PORTIV_SYNC !== 'undefined' && PORTIV_SYNC._todayET) return PORTIV_SYNC._todayET(); } catch(e) {}
+  return _todayISO();
+}
+
+// Al arrancar, HOLDINGS vuelve de localStorage sin `_prevClose` y con dayChgPct = 0, así que
+// calcH() cae en prevClose = price y el cambio del día sale exactamente $0.00 hasta que
+// responde fetchLivePrices (~3 s: doble rAF + lotes de 5 con 300 ms entre lotes). El cierre
+// previo YA está persistido en _PC_KEY con su fecha, así que se rehidrata antes del primer
+// render y el número real aparece sin tocar la red.
+//
+// Solo se acepta el caché de la sesión de HOY: pintar el movimiento de ayer bajo la etiqueta
+// "TODAY" haría creer que la cartera ya se movió hoy, que es peor que no mostrar nada.
+// Y solo se da por bueno si CADA posición tiene cierre previo — con una sola sin él, el total
+// sería un cambio del día incompleto presentado como si fuera completo.
+var _PV_DAY_FROM_CACHE = false;   // var, no let: _updatePerfTotals se define antes en el archivo
+function _pvHydratePrevCloseFromCache() {
+  try {
+    _PV_DAY_FROM_CACHE = false;
+    if (!Array.isArray(HOLDINGS) || !HOLDINGS.length) return false;
+    const d = _loadPrevCloseData();
+    if (!d || d.date !== _pvMarketDayISO()) return false;
+    let hit = 0;
+    HOLDINGS.forEach(h => {
+      if (h._prevClose && h._prevClose > 0) { hit++; return; }
+      const pc = d.prices[h.ticker];
+      if (typeof pc === 'number' && isFinite(pc) && pc > 0) { h._prevClose = pc; hit++; }
+    });
+    _PV_DAY_FROM_CACHE = (hit === HOLDINGS.length);
+    return _PV_DAY_FROM_CACHE;
+  } catch(e) { return false; }
 }
 
 
@@ -23457,8 +23635,19 @@ function _renderTokenBadge(){
 
 // Response cache
 const _chatCache=new Map();
-const _CACHE_TTL_LIVE=3*60*1000; const _CACHE_TTL_STATIC=20*60*1000;
-function _chatCacheKey(q){ return q.trim().toLowerCase().replace(/\s+/g,' ').slice(0,100); }
+const _CACHE_TTL_LIVE=3*60*1000; const _CACHE_TTL_STATIC=10*60*1000;
+// Firma del estado de la cartera. Sin esto, "mi portafolio" no matchea la regex de TTL
+// corto → se servía la MISMA respuesta hasta 20 min después, aunque el mercado se hubiera
+// movido o el usuario hubiera cambiado posiciones. Servir una lectura obsoleta como si
+// fuera de ahora es inaceptable en un producto de inversión.
+function _chatStateSig(){
+  try{
+    const T=calcTotals();
+    return [Math.round(T.total), Math.round(T.day), HOLDINGS.length,
+            (typeof PORTIV_SYNC!=='undefined' ? PORTIV_SYNC.marketStatus() : '')].join('|');
+  }catch(e){ return ''; }
+}
+function _chatCacheKey(q){ return q.trim().toLowerCase().replace(/\s+/g,' ').slice(0,100)+'::'+_chatStateSig(); }
 function _chatCacheGet(q){
   const entry=_chatCache.get(_chatCacheKey(q)); if(!entry) return null;
   const ttl=/precio|price|hoy|ahora|now|live|news|noticia|earning|resultado/.test(q.toLowerCase())?_CACHE_TTL_LIVE:_CACHE_TTL_STATIC;
@@ -23471,15 +23660,29 @@ function _chatCacheSet(q,answer,sources){
 
 // Detecta qué tickers menciona la pregunta (por símbolo o nombre), aunque no estén en el portafolio
 function _chatDetectTickers(q){
-  const ql=q.toLowerCase();
+  const raw=String(q||'');
+  const ql=raw.toLowerCase();
   const found=new Set();
-  // tickers del portafolio + los que tengan bio/noticias en la página
+  // FIX: antes esto era `ql.includes(t.toLowerCase())`, una coincidencia de SUBCADENA sin
+  // límites de palabra. Con tickers cortos era un desastre silencioso: "V" casaba dentro de
+  // "diversificado" y "van", "MA" dentro de "semana", "KO" dentro de "koala"… así que
+  // preguntas como "estoy diversificado?" o "qué pasó con la Fed esta semana" arrastraban
+  // al contexto la ficha entera de Visa o Mastercard — tokens tirados y respuestas fuera de
+  // tema. Ahora: límite de palabra siempre y, para tickers de 1-3 letras, exigir que el
+  // usuario los haya escrito en MAYÚSCULAS (que es como se escribe un ticker de verdad).
+  const _wordRe = s => new RegExp('(^|[^a-z0-9áéíóúüñ])'+s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'([^a-z0-9áéíóúüñ]|$)','i');
   const known=new Set([...HOLDINGS.map(h=>h.ticker), ...Object.keys(COMPANY_BIOS||{}), ...Object.keys(STOCK_NEWS||{})]);
-  known.forEach(t=>{ if(ql.includes(t.toLowerCase())) found.add(t); });
+  known.forEach(t=>{
+    if(!t) return;
+    if(t.length<=3){
+      // Ticker corto → solo si aparece tal cual en mayúsculas y como palabra suelta.
+      if(new RegExp('(^|[^A-Za-z0-9])'+t+'([^A-Za-z0-9]|$)').test(raw)) found.add(t);
+    } else if(_wordRe(t.toLowerCase()).test(ql)) found.add(t);
+  });
   // por nombre de empresa (STOCK_DB: [ticker,nombre,sector])
   (typeof STOCK_DB!=='undefined'?STOCK_DB:[]).forEach(row=>{
     const firstWord=(row[1]||'').toLowerCase().split(/[\s.(]/)[0];
-    if(firstWord.length>3 && ql.includes(firstWord)) found.add(row[0]);
+    if(firstWord.length>3 && _wordRe(firstWord).test(ql)) found.add(row[0]);
   });
   return Array.from(found).slice(0,2); // máximo 2 para acotar tokens
 }
@@ -23522,11 +23725,92 @@ function _chatPersonalCtx(){
   }catch(e){ return ''; }
 }
 
-function _chatSmartContext(question){
+// ── CONTEXTO TEMPORAL Y DE MERCADO ──────────────────────────────────────────────
+// Sin esto el modelo no sabe qué día es, cómo va el mercado ni qué pasó hoy → su salida
+// racional es PREGUNTARLE al usuario. Todo va en try/catch: un fallo aquí no puede tumbar
+// el chat, solo devuelve '' y el resto del contexto sigue.
+function _chatMarketCtx(){
+  try{
+    const L=[];
+    const usd=v=>(v<0?'-$':'$')+Math.abs(Math.round(v||0)).toLocaleString('en-US');
+
+    // (a) Fecha ET + estado del mercado (helpers ya existentes; nunca `new Date()` a pelo)
+    try{
+      const iso = (typeof PORTIV_SYNC!=='undefined' && PORTIV_SYNC._todayET) ? PORTIV_SYNC._todayET() : '';
+      const st  = (typeof PORTIV_SYNC!=='undefined' && PORTIV_SYNC.marketStatus) ? PORTIV_SYNC.marketStatus() : '';
+      if(iso){
+        const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+        const DIAS=['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+        const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+        let fecha=iso;
+        if(m){
+          const wd=new Date(Date.UTC(+m[1],+m[2]-1,+m[3])).getUTCDay();
+          fecha=`${DIAS[wd]} ${+m[3]} de ${MESES[+m[2]-1]} de ${m[1]}`;
+        }
+        const ST={OPEN:'ABIERTO',PREMARKET:'PREMARKET',AFTERHOURS:'AFTER-HOURS',CLOSED:'CERRADO'};
+        L.push(`FECHA Y MERCADO: hoy es ${fecha} (hora de Nueva York). Mercado: ${ST[st]||st||'—'}.`);
+      }
+    }catch(e){}
+
+    // (b) Movimiento del día de la cartera, ya en $ y %.
+    // Base del % = valor a mercado de AYER (T.mkt - T.day). Dividir entre T.total metería
+    // el cash dentro y diluiría el porcentaje respecto al que el usuario ve en pantalla.
+    try{
+      const T=calcTotals();
+      const base=(T.mkt||0)-(T.day||0);
+      const pct = base>0 ? (T.day/base*100) : 0;
+      if(T.mkt>0) L.push(`CARTERA HOY: ${T.day>=0?'+':''}${usd(T.day)} (${pct>=0?'+':''}${pct.toFixed(2)}%) sobre ${usd(T.mkt)} a mercado.`);
+    }catch(e){}
+
+    // (c) Top/bottom movers del día
+    try{
+      if(Array.isArray(HOLDINGS) && HOLDINGS.length){
+        const mv=HOLDINGS.map(h=>{ const c=calcH(h); return {t:h.ticker, a:c.dayChgAbs||0, p:c.dayChgPctEff||0}; })
+                         .sort((x,y)=>x.a-y.a);
+        const fmt=o=>`${o.t} ${o.a>=0?'+':''}${usd(o.a)} (${o.p>=0?'+':''}${o.p.toFixed(1)}%)`;
+        const peores=mv.slice(0,3).filter(o=>o.a<0);
+        const mejores=mv.slice(-3).reverse().filter(o=>o.a>0);
+        const seg=[];
+        if(peores.length)  seg.push('peores '+peores.map(fmt).join(' · '));
+        if(mejores.length) seg.push('mejores '+mejores.map(fmt).join(' · '));
+        if(seg.length) L.push('MOVIMIENTO POR POSICIÓN HOY: '+seg.join('; '));
+      }
+    }catch(e){}
+
+    // (d) Titulares del mercado de hoy — ya cacheados en el dispositivo por SharedNews.
+    // Es la fuente principal para "¿por qué se movió el mercado?" y es GRATIS.
+    // Si no hay nada cacheado NO se imprime nada: escribir "sin noticias" induce al modelo
+    // a decir que no sabe, que es justo el comportamiento que estamos quitando.
+    try{
+      let news=null;
+      try{ if(window.SharedNews && SharedNews.get) news=SharedNews.get(); }catch(e){}
+      if(!news){ try{ news=JSON.parse(localStorage.getItem('shared_news_v2')||'null'); }catch(e){} }
+      const today = news && Array.isArray(news.today) ? news.today : [];
+      if(today.length){
+        const sig=s=>s==='pos'?'(+)':s==='neg'?'(-)':'(=)';
+        const lines=today.slice(0,4).map(n=>`- [${n.date||'Hoy'}] ${sig(n.s)} ${n.h}${n.impact?' · Impacto: '+n.impact:''}`);
+        L.push('TITULARES DEL MERCADO HOY (ya cargados en la app — úsalos como tu fuente principal para explicar por qué se movió el mercado):\n'+lines.join('\n'));
+      }
+    }catch(e){}
+
+    return L.join('\n');
+  }catch(e){ return ''; }
+}
+
+// `kind` viene de _chatRoute: gobierna QUÉ bloques merece la pena mandar. Una pregunta
+// conceptual ("¿qué es el P/E?") no necesita titulares del día, plan de rebalanceo ni el
+// análisis de Portiv Intelligence — eran ~2.5K chars de contexto irrelevante en cada
+// mensaje de ese tipo. Sí conserva el perfil, para poder aterrizar la explicación en SU caso.
+function _chatSmartContext(question, kind){
   try {
     const q=question.toLowerCase(); const T=calcTotals();
+    const concept = (kind==='concept');
     const summary=`Portafolio: $${T.total.toFixed(0)} total, cash $${T.cash.toFixed(0)}, invertido $${INITIAL_CAPITAL.toFixed(0)}, hoy ${T.day>=0?'+':''}$${T.day.toFixed(0)}`;
     const parts=[];
+    // PRIMERO de todo: fecha, estado del mercado, movimiento del día y titulares. Va arriba
+    // porque _chatSmartContext tiene un `return` temprano en el branch de tickers — si se
+    // empujara más abajo, las preguntas con ticker se quedarían sin contexto temporal.
+    if(!concept){ const mkt=_chatMarketCtx(); if(mkt) parts.push(mkt); }
     const personal=_chatPersonalCtx(); if(personal) parts.push(personal);
     parts.push(summary);
     // ── COHERENCIA: el chat debe alinear con lo que el usuario ve en la app ──
@@ -23534,11 +23818,11 @@ function _chatSmartContext(question){
     // y (2) el análisis "Portiv Intelligence" ya generado. Así el chatbot nunca contradice ni
     // a las recomendaciones ni al análisis.
     try {
-      const plan = (typeof _buildRebalPlan==='function') ? _buildRebalPlan() : null;
+      const plan = (!concept && typeof _buildRebalPlan==='function') ? _buildRebalPlan() : null;
       if (plan && plan.rows.length) parts.push('PLAN DE REBALANCEO (sé coherente — misma dirección por ticker que esto):\n'+plan.text);
     } catch(e){}
     try {
-      const intel = (typeof PV_AI!=='undefined' && PV_AI.load) ? PV_AI.load() : null;
+      const intel = (!concept && typeof PV_AI!=='undefined' && PV_AI.load) ? PV_AI.load() : null;
       if (intel && intel.text) {
         const t = intel.text.length>900 ? intel.text.slice(0,900)+'…' : intel.text;
         parts.push('ANÁLISIS "PORTIV INTELLIGENCE" (tu opinión debe ser coherente con este análisis del portafolio):\n'+t);
@@ -23570,21 +23854,115 @@ function _chatSmartContext(question){
         }
         parts.push(block.join('\n'));
       });
-      return parts.join('\n');
+      return _chatCtxTrim(parts.join('\n'));
     }
 
     // Pregunta general del portafolio → top-5 por valor
     const top5=HOLDINGS.slice().sort((a,b)=>calcH(b).mktVal-calcH(a).mktVal).slice(0,5);
     const tops=top5.map(h=>{const c=calcH(h);const w=T.mkt>0?(c.mktVal/T.mkt*100).toFixed(1):'0';return `${h.ticker} $${c.mktVal.toFixed(0)} (${w}%)`;}).join(', ');
     parts.push(`Posiciones principales: ${tops}`);
-    return parts.join('\n');
+    return _chatCtxTrim(parts.join('\n'));
   } catch(e){ return 'Portafolio no disponible.'; }
 }
 
-// ¿La pregunta necesita datos en vivo de internet? Si NO, omitimos web_search
-// (la mayoría de preguntas del portafolio se responden con el contexto local → $0 en búsquedas).
-function _chatNeedsWeb(q){
-  return /(\bhoy\b|\bayer\b|\bahora\b|ahorita|esta semana|este mes|reciente|[uú]ltim[oa]|precio actual|cotiza|c[oó]mo va|noticia|\bnews\b|earnings?|resultados|report[oó]|cay[oó]|subi[oó]|desplom|viernes|lunes|martes|mi[eé]rcoles|jueves|s[aá]bado|domingo|\d{1,2}\s+de\s+(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)|qu[eé] pas[oó]|por qu[eé] (baj|sub|ca[ye])|\bfed\b|inflaci[oó]n|empleo|\bcpi\b|\bpib\b|guidance|upgrade|downgrade)/i.test(q||'');
+// Tope duro del contexto. Con el bloque de mercado + perfil + cartera + plan de rebalanceo
+// + Portiv Intelligence + tickers, el prompt puede crecer bastante; 6K chars (~1.5K tokens)
+// es de sobra para responder y acota el costo por mensaje.
+function _chatCtxTrim(s){ return (s && s.length>6000) ? s.slice(0,6000)+'\n…' : (s||''); }
+
+// ── ROUTER DE CONOCIMIENTO ──────────────────────────────────────────────────────
+// Decide, pregunta a pregunta, QUÉ sabe ya la app y por tanto cuánta búsqueda web hace
+// falta y qué bloques de contexto merece la pena mandar.
+//
+// La versión anterior era una lista de palabras clave. El problema de fondo es que una
+// regex no puede saber si la respuesta YA está en el dispositivo: "¿por qué bajó el
+// mercado hoy?" costaba 2 búsquedas ($0.02) aunque SharedNews tuviera los titulares de hoy
+// cacheados y gratis; y "¿a qué se dedica NVDA?" también buscaba pese a tener la ficha
+// completa (moat, riesgos, competidores, TAM) en COMPANY_BIOS.
+//
+// Este router mide COBERTURA real: ¿hay titulares de hoy en caché? ¿el ticker tiene ficha
+// o posición? ¿la pregunta pide un dato de mercado o una opinión cualitativa?
+// Devuelve { web, kind, why }:
+//   web  → tope de búsquedas (0 = ninguna). Es un TECHO, no una orden: el modelo decide.
+//   kind → qué contexto vale la pena mandar ('concept' no necesita cartera ni titulares).
+//   why  → traza legible, solo para depurar.
+let _chatLastKind = null;   // hilo de conversación: los seguimientos heredan la ruta previa
+function _chatRoute(q, prevKind){
+  try{
+    // NFD + quitar diacríticos: "¿qué es…?" y "que es" caen en la misma rama sin duplicar
+    // cada patrón con clases tipo [eé]. Mismo truco que _titleKey en SharedNews.
+    const s = String(q||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+    const has = re => re.test(s);
+
+    // ── Qué tiene la app cargado AHORA MISMO ──
+    const tickers = _chatDetectTickers(q||'');
+    const hasBio  = tickers.some(t => (typeof COMPANY_BIOS!=='undefined') && COMPANY_BIOS[t]);
+    const hasPos  = tickers.some(t => HOLDINGS.some(h=>h.ticker===t));
+    let hasToday = false;
+    try{ const n=(window.SharedNews&&SharedNews.get)?SharedNews.get():null;
+         hasToday = !!(n && Array.isArray(n.today) && n.today.length); }catch(e){}
+
+    // OJO con los patrones: van dentro de `\b(...)\b`, así que todo lo que sea un PREFIJO
+    // (diversificad, rebalance, posicion, desplom…) lleva `\w*` para llegar al fin de
+    // palabra. Sin eso, `\b(estoy diversificad)\b` NO casa con "estoy diversificado" — la
+    // rama entera queda muerta en silencio. Los diacríticos ya se quitaron arriba.
+    const RE_CONCEPT = /\b(que es|que son|que significa|que quiere decir|explica\w*|como funciona|diferencia entre|para que sirve|como se calcula|definicion\w*)\b/;
+    const RE_LOCAL   = /\b(estoy diversificad\w*|mi perfil|mi riesgo|mi horizonte|rebalance\w*|cuanto tengo|cuanto llevo|cuanto he ganado|cuanto he perdido|mis posicion\w*|mi cartera|mi portafolio|mi portfolio|que compre|debo vender|deberia vender|debo comprar|deberia comprar|conviene vender|conviene comprar|como voy|como van mis|como estan mis)\b/;
+    const RE_WHY     = /\b(por que|porque|que paso|que ha pasado|a que se debe|que hay detras)\b/;
+    const RE_MOVE    = /\b(hoy|ahora|bajo|subio|cayo|caida|desplom\w*|rojo|verde|mercado|cartera|portafolio|nasdaq|s&p|sp500)\b/;
+    const RE_QUANT   = /\b(precio\w*|cotiza\w*|cuanto vale|valuacion|valoracion|multiplo\w*|p\/?e|ev\/?ebitda|earnings|resultados|reporto|guidance|target|analistas?|cara|caro|barata|barato|hoy|ahora|comprar mas|vender)\b/;
+    const RE_LIVE    = /\b(hoy|ayer|ahora|esta semana|este mes|reciente\w*|ultim\w*|noticia\w*|news|fed|inflacion|cpi|pib|empleo|tasas|earnings|resultados|guidance|upgrade|downgrade|analistas?|precio\w*|cotiza\w*|desplom\w*|cayo|subio)\b/;
+    // Macro y ventanas más largas que "hoy" siempre quieren dato fresco: los titulares
+    // cacheados son SOLO del día y no bastan para "¿qué pasó con la Fed esta semana?".
+    const RE_MACRO   = /\b(fed|inflacion|cpi|pib|empleo|tasas|earnings|guidance|upgrade|downgrade|analistas?)\b/;
+    const RE_WINDOW  = /\b(ayer|esta semana|este mes|ultim\w*)\b/;
+
+    // (0) SEGUIMIENTO sin sujeto propio ("y ahora?", "y eso?", "sigue"). Antes caían en la
+    // rama de "evento vivo" y gastaban 2 búsquedas sobre una pregunta que se resuelve con el
+    // hilo. Heredan la ruta del turno anterior. Se excluye lo conceptual: "explícame eso"
+    // debe ir a la rama (1), no arrastrar el contexto del turno previo.
+    if(prevKind && s.length<=28 && !tickers.length && !RE_CONCEPT.test(s)
+       && has(/^(y |ok|vale|entonces|y ahora|ahora que|por que|porque|y eso|mas|ampl|sigue|continua)/))
+      return {web: prevKind==='concept'?0:1, kind:prevKind, why:'seguimiento del hilo'};
+
+    // (1) CONCEPTUAL/EDUCATIVO — el modelo ya lo sabe de memoria. Ni búsqueda ni cartera.
+    if(RE_CONCEPT.test(s) && !has(/\bhoy\b|\bahora\b|precio/))
+      return {web:0, kind:'concept', why:'conceptual — sale del modelo'};
+
+    // (2) META-CARTERA — respuesta 100% en el contexto (perfil + posiciones + plan de
+    // rebalanceo). Buscar aquí no aporta nada y encima arriesga contradecir a la app.
+    if(RE_LOCAL.test(s))
+      return {web:0, kind:'portfolio', why:'todo en el contexto local'};
+
+    // (3) "¿POR QUÉ SE MOVIÓ …?" — si SharedNews ya trae los titulares del día, la respuesta
+    // es GRATIS y además es la MISMA que el usuario ve en la pestaña de Noticias (coherencia).
+    // Solo si no hay nada cacheado se paga la búsqueda.
+    if(RE_WHY.test(s) && RE_MOVE.test(s))
+      return (hasToday && !RE_WINDOW.test(s)) ? {web:0, kind:'market', why:'titulares de hoy ya en caché'}
+                                              : {web:2, kind:'market', why:'sin cobertura local del periodo'};
+
+    // (3b) ESTADO GENERAL DEL DÍA ("¿hay noticias?", "no vi ninguna noticia", "cómo está el
+    // mercado hoy") — los titulares cacheados YA responden. Se excluye macro y ventanas
+    // distintas de hoy, que sí necesitan detalle fresco.
+    if(hasToday && !tickers.length && !RE_MACRO.test(s) && !RE_WINDOW.test(s)
+       && has(/\b(noticia\w*|news|mercado|hoy)\b/))
+      return {web:0, kind:'market', why:'titulares de hoy cubren la pregunta'};
+
+    // (4) TICKER CON FICHA O POSICIÓN — separar cualitativo de cuantitativo.
+    // Negocio/moat/riesgos/competencia → está en COMPANY_BIOS, $0.
+    // Precio/valuación/earnings/"está cara" → necesita dato fresco, 1 búsqueda.
+    if(tickers.length && (hasBio||hasPos))
+      return RE_QUANT.test(s) ? {web:1, kind:'ticker', why:'ticker + dato de mercado fresco'}
+                              : {web:0, kind:'ticker', why:'ficha del ticker ya cargada'};
+
+    // (5) EVENTO VIVO / MACRO fuera del contexto → búsqueda de verdad.
+    if(RE_LIVE.test(s))
+      return {web:2, kind:'market', why:'evento vivo fuera del contexto'};
+
+    // (6) Sin señal clara → 1 búsqueda de cortesía. Nunca 0: quedarse sin datos es lo que
+    // hacía que el bot le devolviera la pregunta al usuario.
+    return {web:1, kind:'general', why:'sin señal clara'};
+  }catch(e){ return {web:1, kind:'general', why:'fallback por error'}; }
 }
 
 function _chatEscape(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -23613,7 +23991,7 @@ function _aiAnalystInit(){
   if(!_aiAnalystReady){
     _aiAnalystReady = true;
     // Saludo inicial
-    _aiChatAddMsg('bot', '¡Hola! Soy **Portiv IA**, tu analista de portafolio. Tengo acceso completo a tus posiciones, precios en tiempo real y noticias del mercado.\n\n¿En qué puedo ayudarte hoy?');
+    _aiChatAddMsg('bot', '¡Hola! Soy **Portiv IA**, tu analista de portafolio. Tengo acceso completo a tus posiciones, precios en tiempo real y noticias del mercado.\n\nPregúntame por qué se movió algo, si una posición está cara, o qué haría yo con tu cartera hoy.');
   }
   // Sync token badge
   _aiRenderTokenBadge();
@@ -23695,7 +24073,7 @@ async function aiChatSend(){
     _aiChatAddMsg('user',text); input.value=''; input.style.height='auto';
     _aiChatAddMsg('bot',cached.answer);
     CHAT_HISTORY.push({role:'user',content:text},{role:'assistant',content:cached.answer});
-    if(CHAT_HISTORY.length>8) CHAT_HISTORY.splice(0,2);
+    if(CHAT_HISTORY.length>12) CHAT_HISTORY.splice(0,2);
     return;
   }
 
@@ -23713,8 +24091,28 @@ async function aiChatSend(){
   if(msgs) msgs.scrollTop = msgs.scrollHeight;
 
   try {
-    const ctx = _chatSmartContext(text);
+    // El router decide de una vez: cuánta web se permite y qué contexto merece mandarse.
+    const _route = _chatRoute(text, _chatLastKind);
+    _chatLastKind = _route.kind;
+    const ctx = _chatSmartContext(text, _route.kind);
     const system = `Eres un inversor profesional con más de 20 años de experiencia en los mercados de renta variable, con un track record real y un rendimiento anual sobresaliente (consistentemente por encima del S&P 500). Eres un experto en acciones: dominas valuación (P/E, EV/EBITDA, DCF, PEG), análisis de fundamentales, lectura de earnings, dinámicas de sector, ciclos de mercado y gestión de riesgo. Has vivido el dot-com, la crisis de 2008, el COVID y el boom de la IA. Hablas como alguien que ha ganado y perdido dinero de verdad.
+
+REGLA #1 — ERES UN ASISTENTE QUE RESPONDE, NO QUE ENTREVISTA (inviolable):
+- NUNCA le hagas una pregunta al usuario. Ni de aclaración, ni retórica al cierre, ni "para afinar el análisis". Cero signos de interrogación dirigidos a él.
+- Si la pregunta es ambigua, ELIGE la interpretación más probable, dilo en media frase y responde: "Asumiendo que hablas de tu cartera: …". Nunca pidas que elija por ti.
+- Nunca pidas que el usuario te traiga datos, ni que te diga qué vio, ni que te dé contexto. Los datos los sacas del CONTEXTO de abajo o los buscas tú.
+- Nunca digas que no tienes un dato. Si no está en el contexto, búscalo. Si tampoco puedes buscarlo, razona con lo que sí tienes y declara el supuesto en media frase.
+- Cierra SIEMPRE con un veredicto o una acción concreta ("no muevas nada", "si baja de X, ahí sí conviene mirar", "el ajuste que sí haría es…"). Nunca cierres invitando a responder.
+
+FRASES PROHIBIDAS (no las escribas nunca, en ninguna variante):
+"¿Te refieres a…?" · "¿A cuál de…?" · "dame más contexto" · "búscame ese dato" · "con eso te doy mi veredicto" · "¿viste alguna noticia?" · "no tengo el dato" · "no está visible" · "déjame buscar" · "¿quieres que…?" · "¿te gustaría que…?"
+
+CÓMO DESAMBIGUAR SIN PREGUNTAR (aplica siempre):
+- "el mercado" → S&P 500 y Nasdaq.
+- "mi portafolio" / "mi cartera" → las posiciones del CONTEXTO.
+- "hoy" → la fecha ET del CONTEXTO.
+- "¿por qué bajó/subió?" → explica con los TITULARES del CONTEXTO + la composición de SU cartera (peso sectorial, beta, top-3). Nunca contestes que no sabes qué pasó.
+- Pregunta sin ticker ni sujeto claro → asume su cartera completa.
 
 PERSONALIDAD Y TONO:
 - Habla en primera persona, con la seguridad y franqueza de un veterano: directo, sin rodeos, con criterio propio. Da TU opinión, no resúmenes neutrales de Wikipedia.
@@ -23731,10 +24129,18 @@ LÍMITES:
 ESTILO (obligatorio):
 - Da la respuesta directamente, sin narrar tu proceso. NUNCA digas "no tengo ese dato", "no está visible", "voy a buscarlo" o "déjame buscar". Entrega la información o el análisis como si ya lo supieras.
 - No menciones de dónde sacas la información (ni la página ni internet).
+- No narres lo que vas a hacer ni lo que buscaste. Entrega la conclusión.
+- Extensión: 3-6 frases. Densidad alta, cero relleno, cero preámbulo.
 
 FUENTES DE DATOS (uso interno, nunca lo menciones):
-1. PRIMERO usa los datos del CONTEXTO de abajo (perfil de empresa, moat, catalizadores, riesgos, competidores, TAM, noticias y datos del portafolio). Casi toda pregunta sobre las empresas del portafolio se responde con esto.
+1. PRIMERO usa los datos del CONTEXTO de abajo (fecha y estado del mercado, movimiento del día de su cartera, titulares de hoy, perfil de empresa, moat, catalizadores, riesgos, competidores, TAM, noticias y datos del portafolio). Casi toda pregunta se responde con esto.
 2. Si un dato puntual no está en el contexto (ej. precio exacto de hoy, un ratio específico, una noticia muy reciente), búscalo en silencio y responde directamente con la cifra, sin avisar que la buscaste.
+
+CUÁNDO BUSCAR EN INTERNET (criterio, no reflejo):
+- NO busques si la respuesta ya está en el CONTEXTO. Concretamente: por qué se movió el mercado hoy (están los TITULARES), cómo va su cartera hoy (está el movimiento por posición), a qué se dedica una empresa / su moat / riesgos / competidores (está la ficha), si está diversificado o qué dice su perfil (están las métricas), o cualquier concepto de inversión que ya sepas explicar. Buscar aquí solo añade latencia y riesgo de contradecir a la app.
+- SÍ busca cuando hace falta un dato de mercado FRESCO que el contexto no trae: precio o valuación actual, múltiplos concretos, resultados o guidance recién publicados, movimientos de analistas, o un evento macro del que el contexto no tenga titular.
+- Si buscas, una o dos consultas bien apuntadas. No encadenes búsquedas para confirmar algo que ya leíste.
+- Busques o no, la respuesta se entrega igual: con veredicto y sin preguntar nada.
 
 PERSONALIZACIÓN (obligatorio):
 - El CONTEXTO incluye el PERFIL DEL USUARIO (nombre, perfil de riesgo del test —capacidad vs disposición—, horizonte, énfasis, estrategia declarada, topes sugeridos) y su CARTERA REAL (posiciones, pesos, beta, concentración top-3, exposición tech, sectores, cash).
@@ -23748,13 +24154,30 @@ COHERENCIA (obligatorio — no te contradigas con lo que el usuario ve en la app
 - Si el análisis "Portiv Intelligence" concluye que la cartera ENCAJA con su perfil, no la llames "demasiado agresiva"; si detecta un desajuste, alinéate con ese desajuste.
 - Puedes añadir matices, contexto o el porqué con tu criterio, pero la DIRECCIÓN por ticker y el VEREDICTO de encaje deben coincidir con el plan y el análisis.
 
+EJEMPLO DE LO QUE NO DEBES HACER:
+Usuario: "porque el mercado bajo hoy tanto"
+❌ MAL: "No tengo el dato exacto de qué índices cayeron. ¿Te refieres al S&P 500, al Nasdaq, o a tu cartera? Búscame ese dato y te doy mi lectura."
+✅ BIEN: "El Nasdaq se llevó la peor parte hoy y tu cartera cayó $129 (-1.3%), que para un perfil agresivo a 10 años es ruido. Con 55% en tech y beta 1.23, cualquier día de rotación fuera de semis te pega amplificado — NVDA y TSM explican dos tercios de la caída. El detonante fue [titular del contexto]. No es un cambio de tesis: es repricing de corto plazo. No movería nada; si NVDA rompe los $XXX, ahí sí vale la pena revisar el peso."
+
 CONTEXTO (datos ya cargados en la página):
 ${ctx}`;
-    const histSlice = CHAT_HISTORY.slice(-4);
+    // slice(-6): con 4 se perdían intercambios completos enseguida y el modelo repetía
+    // preguntas ya contestadas ("y ahora?" se quedaba sin el hilo previo).
+    const histSlice = CHAT_HISTORY.slice(-6);
     // Chat IA Analyst: usa el proxy de IA server-side (anthropic-proxy).
     const convText2 = histSlice.map(m => (m.role==='user'?'Usuario':'Asistente')+': '+m.content).join('\n');
-    const _needsWeb = _chatNeedsWeb(text);   // 1 búsqueda solo si la pregunta pide datos en vivo (el proxy topa en max_uses:1)
-    const body = {model:_aiQualityModel(AI_MODELS.reasoning),max_tokens:1500,system,prompt:convText2,allowed_tools:_needsWeb?['websearch']:undefined};
+    const _webN = _route.web;
+    // AI_MODELS.chat directo, SIN pasar por _aiQualityModel(): ese helper devuelve Haiku
+    // fijo ignorando su argumento, así que el modelo del chat no se podía cambiar sin
+    // afectar a todas las vías de background. Con la clave propia, el chat es un knob suelto.
+    // max_tokens 900: el prompt pide 3-6 frases; 1500 solo alargaba la cola de streaming.
+    const body = { model: AI_MODELS.chat, max_tokens: 900, system, prompt: convText2 };
+    if(_webN > 0){
+      // Mismo par allowed_tools + tools que ya usa el resto del archivo (el proxy hace
+      // passthrough de esta forma exacta). Sin `tools` explícito la búsqueda era poco fiable.
+      body.allowed_tools = ['WebSearch','WebFetch'];
+      body.tools = [{ type:'web_search_20250305', name:'web_search', max_uses:_webN }];
+    }
 
     const res = await _aiFetch({
       method:'POST',
@@ -23772,12 +24195,14 @@ ${ctx}`;
     if(!answer && Array.isArray(data.content)) data.content.forEach(b=>{if(b.type==='text') answer+=b.text;});
     answer = answer.trim()||'No pude generar una respuesta.';
 
-    _chatCacheSet(text, answer);
+    // No cachear respuestas que usaron búsqueda web: son las más perecederas y, además,
+    // el hit de caché no restituye las `sources` (se servirían sin fuentes).
+    if(_webN === 0) _chatCacheSet(text, answer, undefined);
     CHAT_HISTORY.push({role:'assistant',content:answer});
-    if(CHAT_HISTORY.length>8) CHAT_HISTORY.splice(0,2);
+    if(CHAT_HISTORY.length>12) CHAT_HISTORY.splice(0,2);
 
     if(_typing) _typing.classList.remove('show');
-    _aiChatAddMsg('bot', answer, _needsWeb?data.sources:undefined);   // fuentes solo si hubo búsqueda; nunca inventadas
+    _aiChatAddMsg('bot', answer, _webN>0?data.sources:undefined);   // fuentes solo si hubo búsqueda; nunca inventadas
     _aiRenderTokenBadge();
   } catch(e){
     pvReportError('IA · analista', e, { toast: false });
@@ -25797,6 +26222,7 @@ function init() {
     _refreshNewsWeekDates(); // siempre actualiza fechas a esta semana (va después del cache)
     try { renderNewsTab(); } catch(e) {} // pinta lo cacheado AL INSTANTE (sin esperar el fetch) → fluido
     profLoad();               // carga perfil guardado (nombre, divisa, estrategia)
+    _pvHydratePrevCloseFromCache(); // cierre previo de hoy → el cambio del día sale ya en el primer paint
     renderAll();
     // FASE 4.11 — Auto-test de reconciliación al arrancar: compara las posiciones cargadas
     // contra la verdad de referencia (Schwab) y registra PASS/FAIL en consola. Si difiere
@@ -25891,6 +26317,12 @@ function init() {
         _idle(() => {
         try {
           if (isMarketOpen() || isExtendedHours()) { try { fetchLivePrices(); } catch(e){} }
+          // El loop de 5 min se salta los ticks con la pestaña oculta, así que al volver de un
+          // rato en segundo plano la reconstrucción intradía puede tener un hueco. Se pide aquí
+          // (el TTL de 4 min la hace no-op si ya está fresca) y ella misma repinta 1D al llegar.
+          if (isMarketOpen() && typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST.ensureIntradayAsync) {
+            try { PORTIV_HIST.ensureIntradayAsync(); } catch(e) {}
+          }
           if (typeof renderAll === 'function') renderAll();
           if (typeof activePeriod !== 'undefined' && activePeriod === '1D' && typeof PORTIV_CHART !== 'undefined') {
             try { PORTIV_CHART.refresh('1D'); } catch(e) {}
@@ -25900,18 +26332,43 @@ function init() {
       });
     }
 
-    // ── Snapshot cada 5 min garantizado + gráfica viva ───────────────────────────
-    //    Asegura un punto de portfolio cada 5min durante market hours (bucket de 5 min
-    //    para 1D) y refresca la gráfica del período activo, aunque los precios no cambien.
-    setInterval(() => {
-      if (document.hidden) return;
-      try {
-        if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.isMarketOpenNow()) {
-          PORTIV_CHART.record();
-          if (typeof _redrawActiveChart === 'function') _redrawActiveChart();
-        }
-      } catch(e) {}
-    }, 5 * 60 * 1000);
+    // ── Motor de la gráfica 1D: refresco cada 5 min ALINEADO al bucket ───────────────
+    //    La curva de HOY no la dibuja el navegador punto a punto: se RECONSTRUYE desde las
+    //    barras de 5 min de cada posición (PORTIV_HIST.ensureIntradayAsync → Alpaca, feed IEX
+    //    licenciado). Por eso va de 09:30 a AHORA aunque el app haya estado cerrado toda la
+    //    mañana: al abrirlo, la sesión entera ya está ahí. Este loop solo la mantiene fresca.
+    //
+    //    El tick se ANCLA al múltiplo de 5 min + 25 s (margen para que la barra de ese bucket
+    //    ya exista upstream) en vez de correr cada 300 s desde que cargó la página. Dos motivos:
+    //    el punto nuevo aparece a las :05, :10, :15… y no a las :07:43; y un setInterval fijo se
+    //    desfasa cuando el sistema suspende la pestaña, mientras que esto se recoloca solo en
+    //    cada vuelta. Fuera de sesión no se pide nada: no nacen barras nuevas.
+    (function _pvIntraLoop(){
+      const PER = 5 * 60 * 1000;
+      const _nextDelay = () => {
+        let d = PER - (Date.now() % PER) + 25000;
+        if (d > PER) d -= PER;          // ya pasado el +25s de este bucket → el siguiente
+        if (d < 5000) d += PER;         // nunca encadenar dos ticks casi pegados
+        return d;
+      };
+      const _tick = async () => {
+        try {
+          if (!document.hidden && typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.isMarketOpenNow()) {
+            PORTIV_CHART.record();      // plan B local (bucket de 5 min en localStorage)
+            if (typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST.ensureIntradayAsync) {
+              await PORTIV_HIST.ensureIntradayAsync();
+            }
+            // ensureIntradayAsync ya repinta 1D por su cuenta si la carga aportó datos nuevos.
+            // Repintar aquí también dispararía DOS renders por tick, así que este solo cubre
+            // los demás períodos (que igual mueven su último punto con el total en vivo).
+            if (typeof activePeriod !== 'undefined' && activePeriod !== '1D'
+                && typeof _redrawActiveChart === 'function') _redrawActiveChart();
+          }
+        } catch(e) {}
+        setTimeout(_tick, _nextDelay());
+      };
+      setTimeout(_tick, _nextDelay());
+    })();
 
     // ── Redibujado horario explícito: nuevo bucket 1D aparece al cambiar de hora ────
     setInterval(() => {
@@ -26185,6 +26642,7 @@ if (document.readyState === 'loading') {
   </div>
 
   <div class="av-foot">
+    <a href="https://portivapp.com/precios.html" onclick="return _pvOpenExternal('precios.html')" target="_blank" rel="noopener">Precios</a>
     <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
     <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
     <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
@@ -26228,7 +26686,7 @@ if (document.readyState === 'loading') {
      de auth, así que window.supabase está garantizado cuando ese IIFE crea el cliente.
      Se precarga desde el <head> con <link rel="preload" as="script"> → la descarga arranca
      igual de temprano que antes. -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="vendor/supabase.js"></script>
 
 <script>
 (function(){
@@ -26551,6 +27009,9 @@ if (document.readyState === 'loading') {
       try {
         // 1) volver a leer LS_KEY al estado en memoria (misma lógica que la carga inicial)
         if (typeof window._pvLoadSavedPortfolio === 'function') window._pvLoadSavedPortfolio();
+        // 1.5) el blob de la nube trae las posiciones sin `_prevClose`: rehidratarlo aquí también,
+        //      o este render volvería a dejar el cambio del día en blanco tras la carga remota.
+        if (typeof _pvHydratePrevCloseFromCache === 'function') _pvHydratePrevCloseFromCache();
         // 2) re-renderizar el portafolio (cabecera, resumen, tabla, donut, leyenda, perf)
         if (typeof window.renderAll === 'function') window.renderAll();
         // 3) refrescar watchlist (el gate la limpió y la restauró desde la fila de la cuenta)
@@ -27563,7 +28024,7 @@ document.addEventListener('DOMContentLoaded', function(){
           </button>
           <button type="button" data-plan="annual" aria-pressed="false" onclick="_pvSelectPlan('annual')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid var(--st-surface-cont, #e5eeff);background:transparent;">
             <div class="pw-feat-t">Anual</div>
-            <div class="pw-feat-d">USD 49.99/año · ahorra ~17%</div>
+            <div class="pw-feat-d">USD 49.99/año · 30 días gratis</div>
           </button>
         </div>
         <button class="pw-btn" onclick="_pvStartCheckout()">Comenzar ahora</button>
@@ -27711,7 +28172,7 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       var p = document.getElementById('pwPriceNote');
       if (p) p.innerHTML = (_pvSelectedPlan === 'annual')
-        ? 'USD 49.99 <b>al año</b> · ahorra ~17%'
+        ? '<b>1 mes gratis</b>, luego USD 49.99 <b>al año</b> · ahorra ~17%'
         : '<b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b>';
     } catch(e){}
   };
@@ -27724,6 +28185,14 @@ document.addEventListener('DOMContentLoaded', function(){
     // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
     // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
     if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
+    // Token client-side de Paddle sin configurar → Paddle.Initialize nunca corrió y
+    // Checkout.open() abriría un overlay vacío. Se avisa en vez de fingir que funciona.
+    if (!window._pvPaddleReady()) {
+      var _mt = 'El pago web no está disponible en este momento. Escríbenos a rm.clover@icloud.com y lo resolvemos.';
+      try { if (typeof showToast === 'function') { showToast(_mt, 'var(--red)'); return; } } catch(e){}
+      try { alert(_mt); } catch(e){}
+      return;
+    }
     // Nuevo intento → el flag de "ya pagué" del intento anterior no debe sobrevivir.
     try { _pvCheckoutCompleted = false; } catch(e){}
     // Paddle.js ya no viene en el <head>: se descarga aquí la primera vez (~300 ms). Si el
@@ -27804,6 +28273,11 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // Mismo bypass que la función SQL. Se duplica a propósito: si sólo estuviera en el
   // servidor, el dueño vería el bloqueo en pantalla aunque las llamadas le funcionaran.
+  // OJO: estos correos viajan en texto plano dentro de un HTML público, así que quedan
+  // expuestos al scraping de spam. Se conservan a propósito: el bypass visual del gate los
+  // necesita en cliente y el servidor valida la propiedad igual, así que publicarlos no
+  // concede ningún privilegio. Documentado para que la exposición sea una decisión y no
+  // un descuido; si algún día molesta el spam, la salida es mover el check a un claim del JWT.
   var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
 
   // Estados de Paddle/RevenueCat que SIGUEN dando acceso. 'past_due' entra aquí a
