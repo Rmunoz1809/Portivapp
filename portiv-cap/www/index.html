@@ -2,20 +2,17 @@
 <html lang="es" class="app-locked">
 <head>
 <meta charset="UTF-8">
-<!-- Handshake TCP+TLS adelantado a los dos orígenes que el arranque SIEMPRE toca (Supabase
-     para auth/gate, jsdelivr para el SDK). Va aquí arriba, antes de cualquier <style>, para
-     que el navegador lo vea en el primer trozo del HTML. -->
+<!-- Handshake TCP+TLS adelantado al único origen externo que el arranque SIEMPRE toca
+     (Supabase para auth/gate). Va aquí arriba, antes de cualquier <style>, para que el
+     navegador lo vea en el primer trozo del HTML. El preconnect a jsdelivr se eliminó
+     al vendorizar el SDK: ese origen ya no se usa. -->
 <link rel="preconnect" href="https://zblhifszlhdgkhnymwjh.supabase.co" crossorigin>
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 <!-- Las fuentes son locales pero el navegador solo las descubre tras parsear fonts.css.
      Con el preload arrancan en paralelo al CSS, no después. Solo los dos woff2 que se usan
      en el primer paint (Inter latin del texto, Material Symbols de los iconos del shell);
      los subsets latin-ext y Manrope se cargan por demanda como hasta ahora. -->
 <link rel="preload" href="fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/material-symbols.woff2" as="font" type="font/woff2" crossorigin>
-<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
 <style id="bootLock">
   /* Oculta TODO el contenido de la app hasta que el gating de cuenta lo revele.
      El overlay de auth queda exento (es la cubierta "Cargando…"/login). Esto evita
@@ -275,7 +272,18 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
   window.addEventListener('orientationchange', onChange, { passive: true });
 })();
 </script>
-<title>Portafolio — Plataforma de Inversión</title>
+<title>Portiv — Tu portafolio de inversión, potenciado por IA</title>
+<meta name="description" content="Portiv organiza tu portafolio de inversión y te da análisis de acciones con IA, noticias filtradas por tus posiciones y sincronización con tu broker. En español.">
+<meta name="theme-color" content="#0A1F3D">
+<link rel="icon" href="icon.png" type="image/png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Portiv">
+<meta property="og:title" content="Portiv — Tu portafolio de inversión, potenciado por IA">
+<meta property="og:description" content="Análisis de acciones con IA, noticias que sí mueven tu cartera y sincronización con tu broker. En español.">
+<meta property="og:url" content="https://portivapp.com/">
+<meta property="og:image" content="https://portivapp.com/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
 <!-- Fuentes LOCALES (bundle woff2, latin+latin-ext, Material Symbols icon-subset). Sin CDN → sin render-block por red. -->
 <link rel="stylesheet" href="fonts/fonts.css">
 <!-- chart.js YA NO se carga en el <head>. Son ~200 KB que el login no necesita para nada:
@@ -290,7 +298,7 @@ window._ensureChartJs = (function(){
     if (_p) return _p;
     _p = new Promise(function(res, rej){
       var s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+      s.src = 'vendor/chart.umd.min.js';   // chart.js 4.4.0 vendorizado — sin CDN en runtime
       s.onload  = function(){ res(); };
       s.onerror = function(){ _p = null; rej(new Error('chartjs')); };
       document.head.appendChild(s);
@@ -3307,14 +3315,27 @@ window._ensureChartJs = (function(){
      en un _pvAuthBoot() sobre DOMContentLoaded, y además habría invertido el orden con el
      `init` de noticias/outlook, que hoy corre con window.sbClient ya creado.)
      La red de seguridad de los 10 s sigue comprobando `!window.supabase`: a los 10 s este
-     script ya cargó o ya falló, así que su diagnóstico sigue siendo válido. -->
-<link rel="preload" as="script" href="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin>
+     script ya cargó o ya falló, así que su diagnóstico sigue siendo válido.
+     AHORA ES LOCAL: el SDK se sirve desde vendor/supabase.js (@supabase/supabase-js 2.111.0,
+     descargado del CDN y congelado en el repo). La app nativa arranca sin red hacia terceros
+     y no ejecuta código remoto (Guideline 2.5.2). Sigue siendo SÍNCRONO a propósito: el IIFE
+     de auth de abajo asume que `window.supabase` ya existe. NO añadir defer ni async. -->
+<link rel="preload" as="script" href="vendor/supabase.js">
 <!-- Paddle.js (billing / suscripción Portiv Pro) — SOLO build web. iOS usa IAP nativo (RevenueCat).
      YA NO se carga en el <head>: es un script de tercero que solo hace falta cuando el usuario
      abre el checkout, y en el arranque competía por red con Supabase y el propio HTML.
      Se carga perezosamente con _ensurePaddle() desde _pvStartCheckout. -->
 <script>
 /* PADDLE BILLING (LIVE). Entorno de producción, token client-side LIVE y priceIds LIVE. */
+/* ÚNICO lugar donde vive el token client-side LIVE de Paddle.
+   Se obtiene en vendors.paddle.com → Developer Tools → Authentication → Client-side tokens.
+   Empieza por "live_". Mientras siga con el valor placeholder, el checkout web
+   queda deshabilitado con un mensaje honesto en vez de abrirse roto. */
+window.PADDLE_CLIENT_TOKEN = 'PADDLE_LIVE_CLIENT_TOKEN';
+window._pvPaddleReady = function(){
+  var t = window.PADDLE_CLIENT_TOKEN || '';
+  return /^live_/.test(t) || /^test_/.test(t);
+};
 window.PADDLE_PRICES = {
   monthly: 'pri_01kxps87qstgex009vr5w6z1sn', // USD 4.99/mes · prueba 30 días
   annual:  'pri_01kxpseeyhn7d9yw29fxc6rvse'  // USD 49.99/año
@@ -3335,9 +3356,10 @@ var _pvCheckoutCompleted = false;
   var _pdTries = 0;
   function initPaddle(){
     if (!window.Paddle || !window.Paddle.Environment) { if (_pdTries++ < 100) setTimeout(initPaddle, 60); return; }
+    if (!window._pvPaddleReady()) { console.error('[Paddle] token client-side no configurado — checkout web deshabilitado'); return; }
     Paddle.Environment.set('production');
     Paddle.Initialize({
-      token: 'PADDLE_LIVE_CLIENT_TOKEN', // ← reemplazar con el token client-side LIVE del dashboard
+      token: window.PADDLE_CLIENT_TOKEN,
       eventCallback: function(ev){
         if (!ev) return;
         if (ev.name === 'checkout.completed') {
@@ -12074,95 +12096,8 @@ function renderNewsTab() {
 
   // ── Esta Semana: delegada al motor canónico PORTIV_NEWS (zona NY, scoring, top-2/día) ──────
   if (typeof PORTIV_NEWS !== 'undefined') { try { PORTIV_NEWS.renderThisWeek(); } catch(e){ console.warn('[PORTIV_NEWS] render', e); } }
-  // (legacy desactivado — PORTIV_NEWS es la única fuente de verdad de "Esta Semana")
-  if (false) {
-    const weekStart = new Date(thisMon); weekStart.setHours(0,0,0,0);
-    const weekEndEx = new Date(thisFri); weekEndEx.setHours(23,59,59,999);
-
-    // --- 1. Pool de todas las noticias disponibles con relevancia ---
-    const pool = [];
-    GENERAL_NEWS.forEach(n => pool.push({...n}));
-    HOLDINGS.forEach(h =>
-      (STOCK_NEWS[h.ticker] || []).forEach(n =>
-        pool.push({ ...n, impact: n.impact || h.ticker, _ticker: h.ticker })
-      )
-    );
-
-    // --- 2. Asignar día de la semana a cada noticia ---
-    const seen = new Set();
-    const withDay = pool
-      .filter(n => n && n.h && !seen.has(n.h.slice(0,60)) && seen.add(n.h.slice(0,60)))
-      .map(n => {
-        const ts = n._ts ? new Date(n._ts) : new Date();
-        let di = ts.getDay();
-        if (di === 0 || di === 6) di = 5; // weekend → Friday
-        const off = di - 1; // 0=Mon … 4=Fri
-        const d = new Date(thisMon); d.setDate(thisMon.getDate() + off);
-        return {
-          ...n,
-          s: n.s || 'neu',
-          _rel: typeof n._rel === 'number' ? n._rel : _portfolioRelevance(n.h, n.ext||'', n.impact||''),
-          dayIdx: off + 1,
-          dayLong: _DOW_ES[off + 1] || '',
-          day: d.toLocaleDateString('es-MX', {weekday:'short', day:'numeric', month:'short'})
-        };
-      })
-      .filter(n => n._rel > 0 || !HOLDINGS.length);
-
-    // --- 3. Por cada día (1=Lun…5=Vie) guardar las TOP 2 más impactantes ---
-    const byDay = {};
-    withDay.forEach(n => {
-      const di = n.dayIdx;
-      if (!byDay[di]) byDay[di] = [];
-      byDay[di].push(n);
-    });
-    const topPerDay = [];
-    [1,2,3,4,5].forEach(di => {
-      if (!byDay[di]) return;
-      const sorted = byDay[di].sort((a,b) => (b._rel||0) - (a._rel||0));
-      topPerDay.push(...sorted.slice(0,2));
-    });
-
-    // --- 4. Guardar en localStorage (clave de semana) ---
-    // En fin de semana NO añadimos nuevas noticias a Esta Semana (ya cerró el viernes).
-    // Solo leemos lo ya guardado para mostrarlo.
-    try {
-      const stored = JSON.parse(localStorage.getItem('week_top_' + _weekKeyStr) || '[]');
-      // Merge: solo añadir nuevas noticias si es día de semana
-      const storedHeads = new Set(stored.map(n => n.h?.slice(0,60)));
-      const toAdd = _isWeekday()
-        ? topPerDay.filter(n => !storedHeads.has(n.h?.slice(0,60)))
-        : [];
-      // Por día, mantener máximo 2
-      const merged = [...stored, ...toAdd];
-      const mergedByDay = {};
-      merged.forEach(n => {
-        const di = n.dayIdx || 9;
-        if (!mergedByDay[di]) mergedByDay[di] = [];
-        mergedByDay[di].push(n);
-      });
-      const final = [];
-      [1,2,3,4,5].forEach(di => {
-        if (!mergedByDay[di]) return;
-        final.push(...mergedByDay[di].sort((a,b)=>(b._rel||0)-(a._rel||0)).slice(0,2));
-      });
-      localStorage.setItem('week_top_' + _weekKeyStr, JSON.stringify(final));
-      // Limpiar semanas viejas (> 2 semanas atrás)
-      Object.keys(localStorage).filter(k => k.startsWith('week_top_') && k !== 'week_top_' + _weekKeyStr && k !== 'week_top_' + _prevWeekKeyStr)
-        .forEach(k => localStorage.removeItem(k));
-    } catch(e) {}
-
-    // --- 5. Leer lo guardado y combinarlo con macros ---
-    let savedTop = [];
-    try { savedTop = JSON.parse(localStorage.getItem('week_top_' + _weekKeyStr) || '[]'); } catch(e) {}
-
-    const combinedWeek = [...THIS_WEEK_NEWS, ...savedTop]
-      .filter((n,i,arr) => arr.findIndex(x => x.h === n.h) === i) // dedup
-      .sort((a, b) => (a.dayIdx || 9) - (b.dayIdx || 9) || (b._rel||0) - (a._rel||0));
-
-    $('thisWeekNews').innerHTML = renderWeekCatalysts(combinedWeek,
-      'Sin noticias ni catalizadores relevantes esta semana todavía. Se guardarán las 2 más impactantes por día automáticamente.');
-  }
+  // (el render legacy que vivía aquí dentro de un `if (false)` se eliminó —
+  //  PORTIV_NEWS es la única fuente de verdad de "Esta Semana")
 
   // ── Weekly Outlook ─────────────────────────────────────────────────────────────
   // Al abrir: pinta el caché si está fresco (< 24h, misma semana); si está vencido o
@@ -26185,6 +26120,7 @@ if (document.readyState === 'loading') {
   </div>
 
   <div class="av-foot">
+    <a href="https://portivapp.com/precios.html" onclick="return _pvOpenExternal('precios.html')" target="_blank" rel="noopener">Precios</a>
     <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
     <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
     <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
@@ -26228,7 +26164,7 @@ if (document.readyState === 'loading') {
      de auth, así que window.supabase está garantizado cuando ese IIFE crea el cliente.
      Se precarga desde el <head> con <link rel="preload" as="script"> → la descarga arranca
      igual de temprano que antes. -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="vendor/supabase.js"></script>
 
 <script>
 (function(){
@@ -27563,7 +27499,7 @@ document.addEventListener('DOMContentLoaded', function(){
           </button>
           <button type="button" data-plan="annual" aria-pressed="false" onclick="_pvSelectPlan('annual')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid var(--st-surface-cont, #e5eeff);background:transparent;">
             <div class="pw-feat-t">Anual</div>
-            <div class="pw-feat-d">USD 49.99/año · ahorra ~17%</div>
+            <div class="pw-feat-d">USD 49.99/año · 30 días gratis</div>
           </button>
         </div>
         <button class="pw-btn" onclick="_pvStartCheckout()">Comenzar ahora</button>
@@ -27711,7 +27647,7 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       var p = document.getElementById('pwPriceNote');
       if (p) p.innerHTML = (_pvSelectedPlan === 'annual')
-        ? 'USD 49.99 <b>al año</b> · ahorra ~17%'
+        ? '<b>1 mes gratis</b>, luego USD 49.99 <b>al año</b> · ahorra ~17%'
         : '<b>1 mes gratis</b>, luego USD 4.99 <b>al mes</b>';
     } catch(e){}
   };
@@ -27724,6 +27660,14 @@ document.addEventListener('DOMContentLoaded', function(){
     // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
     // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
     if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
+    // Token client-side de Paddle sin configurar → Paddle.Initialize nunca corrió y
+    // Checkout.open() abriría un overlay vacío. Se avisa en vez de fingir que funciona.
+    if (!window._pvPaddleReady()) {
+      var _mt = 'El pago web no está disponible en este momento. Escríbenos a rm.clover@icloud.com y lo resolvemos.';
+      try { if (typeof showToast === 'function') { showToast(_mt, 'var(--red)'); return; } } catch(e){}
+      try { alert(_mt); } catch(e){}
+      return;
+    }
     // Nuevo intento → el flag de "ya pagué" del intento anterior no debe sobrevivir.
     try { _pvCheckoutCompleted = false; } catch(e){}
     // Paddle.js ya no viene en el <head>: se descarga aquí la primera vez (~300 ms). Si el
@@ -27804,6 +27748,11 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // Mismo bypass que la función SQL. Se duplica a propósito: si sólo estuviera en el
   // servidor, el dueño vería el bloqueo en pantalla aunque las llamadas le funcionaran.
+  // OJO: estos correos viajan en texto plano dentro de un HTML público, así que quedan
+  // expuestos al scraping de spam. Se conservan a propósito: el bypass visual del gate los
+  // necesita en cliente y el servidor valida la propiedad igual, así que publicarlos no
+  // concede ningún privilegio. Documentado para que la exposición sea una decisión y no
+  // un descuido; si algún día molesta el spam, la salida es mover el check a un claim del JWT.
   var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
 
   // Estados de Paddle/RevenueCat que SIGUEN dando acceso. 'past_due' entra aquí a
