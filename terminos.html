@@ -29,6 +29,9 @@
   }
   a { color: var(--navy); }
   hr { border: none; border-top: 1px solid var(--line); margin: 40px 0 24px; }
+  /* Variantes de texto sólo para la vista de la app iOS. Ocultas por defecto para que la
+     web nunca muestre las dos versiones aunque el script no llegue a ejecutarse. */
+  [data-ios-only] { display: none; }
 </style>
 </head>
 <body>
@@ -55,13 +58,15 @@
   <p>Para usar Portiv debes crear una cuenta (correo electrónico o Iniciar sesión con Apple). Eres responsable de mantener la confidencialidad de tus credenciales y de toda actividad realizada bajo tu cuenta.</p>
 
   <h2>4. Suscripción Portiv Pro</h2>
-  <p>Portiv ofrece funciones adicionales mediante una suscripción paga ("Portiv Pro"), disponible en modalidad mensual o anual. La suscripción incluye una prueba gratuita de 30 días y se renueva automáticamente al finalizar, salvo cancelación. El pago se procesa según el canal de compra:</p>
+  <p>Portiv ofrece funciones adicionales mediante una suscripción paga ("Portiv Pro"), disponible en modalidad mensual o anual. La suscripción incluye una prueba gratuita de 30 días y se renueva automáticamente al finalizar, salvo cancelación.<span data-web-only> El pago se procesa según el canal de compra:</span></p>
   <ul>
-    <li><strong>En la web (portivapp.com):</strong> el pago es procesado por <strong>Paddle.com Market Limited</strong>, que actúa como <em>Merchant of Record</em> y revendedor autorizado de Portiv; Paddle gestiona el cobro, los impuestos y el soporte de facturación.</li>
+    <li data-web-only><strong>En la web (portivapp.com):</strong> el pago es procesado por <strong>Paddle.com Market Limited</strong>, que actúa como <em>Merchant of Record</em> y revendedor autorizado de Portiv; Paddle gestiona el cobro, los impuestos y el soporte de facturación.</li>
     <li><strong>En iOS (App Store):</strong> el pago se cobra a tu cuenta de Apple ID mediante compra dentro de la aplicación, gestionada por Apple.</li>
-    <li>La suscripción se renueva automáticamente salvo que la canceles antes del fin del periodo vigente. Puedes cancelar desde el portal de comprador de Paddle (compras web) o desde los Ajustes de tu cuenta de Apple (compras iOS).</li>
+    <li data-web-only>La suscripción se renueva automáticamente salvo que la canceles antes del fin del periodo vigente. Puedes cancelar desde el portal de comprador de Paddle (compras web) o desde los Ajustes de tu cuenta de Apple (compras iOS).</li>
+    <li data-ios-only>La suscripción se renueva automáticamente salvo que la canceles al menos 24 horas antes del fin del periodo vigente, desde Ajustes → tu nombre → Suscripciones en tu dispositivo Apple.</li>
     <li>Los precios se muestran antes de confirmar la compra y pueden variar según tu país o región.</li>
-    <li>No procesamos ni almacenamos directamente los datos de tu tarjeta; el pago lo gestionan Paddle o Apple según el canal, conforme a sus propios términos.</li>
+    <li data-web-only>No procesamos ni almacenamos directamente los datos de tu tarjeta; el pago lo gestionan Paddle o Apple según el canal, conforme a sus propios términos.</li>
+    <li data-ios-only>No procesamos ni almacenamos directamente los datos de tu tarjeta; el pago lo gestiona Apple conforme a sus propios términos.</li>
     <li>Los reembolsos se rigen por nuestra <a href="/reembolsos.html">Política de Reembolsos</a>.</li>
   </ul>
 
@@ -96,5 +101,30 @@
     <a href="/reembolsos.html">Política de Reembolsos</a>
   </div>
 </main>
+
+<!-- Vista para la app de iOS. Ver el comentario equivalente en reembolsos.html:
+     dentro de la app no puede aparecer la compra web por Paddle (Guideline 3.1.1).
+     Aquí además hay líneas con variante propia (`data-ios-only`), porque decir
+     "renueva salvo que canceles" sigue siendo obligatorio: lo que cambia es que en
+     iOS se cancela en Ajustes de Apple y no en un portal externo. -->
+<script>
+(function(){
+  try{
+    if (new URLSearchParams(location.search).get('app') !== 'ios') return;
+    document.documentElement.setAttribute('data-app','ios');
+    var w = document.querySelectorAll('[data-web-only]');
+    for (var i = 0; i < w.length; i++) w[i].parentNode.removeChild(w[i]);
+    var s = document.querySelectorAll('[data-ios-only]');
+    for (var j = 0; j < s.length; j++) s[j].style.display = 'list-item';
+    // Propaga ?app=ios a los enlaces internos. Sin esto, tocar "Política de Reembolsos"
+    // desde aquí abría esa página en su versión web, con la compra por Paddle a la vista.
+    var a = document.querySelectorAll('a[href$=".html"]');
+    for (var k = 0; k < a.length; k++){
+      var h = a[k].getAttribute('href') || '';
+      if (h.charAt(0) === '/' && h.indexOf('app=ios') === -1) a[k].setAttribute('href', h + '?app=ios');
+    }
+  }catch(e){}
+})();
+</script>
 </body>
 </html>
