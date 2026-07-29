@@ -25048,6 +25048,16 @@ const PORTIV_VAL = {
   },
   // Busca una posición de referencia cuyo (qty,cost) coincida — fingerprint para detectar mala lectura.
   refByQtyCost(qty, cost){
+    // ⚠ REFERENCE es el snapshot REAL de la cuenta Schwab del DUEÑO. Esta huella renombra
+    // el ticker de una posición cuando (qty, cost) casan, y se aplicaba a TODOS los
+    // usuarios. La tolerancia del costo es ±$1 y la referencia está llena de importes
+    // redondos —500.00, 499.99, 999.97, 400.00—, que son exactamente los que teclea
+    // cualquiera que compre "500 dólares de algo". Un usuario con ~1,702 acciones de
+    // cualquier valor compradas por ~$500 veía su posición RENOMBRADA a AAPL, con lo que
+    // perdía su ticker real y se le duplicaba otro. Corromper la cartera de un tercero con
+    // los datos del dueño es lo más grave que puede hacer este módulo.
+    // Sólo aplica al dueño, que es para quien se capturó.
+    if (!window._PV_IS_OWNER) return null;
     // Se EXIGEN ambas señales (cantidad Y costo). Antes, si el costo venía null, hacía match
     // solo por cantidad → corregía un ticker por otro con qty parecida (ej. META qty 1.7 ≈
     // AAPL qty 1.702 → "META corregido a AAPL", duplicando AAPL y perdiendo META). La huella
@@ -25150,6 +25160,11 @@ const PORTIV_VAL = {
   // FASE 4 — Reconciliación contra la referencia. Devuelve {pass, diffs}. Falla si mktval difiere
   //          >$0.50, si falta un ticker, o si aparece uno inesperado.
   reconcile(){
+    // Mismo motivo que refByQtyCost: compara la cartera contra la del DUEÑO. Para
+    // cualquier otro usuario cada una de sus posiciones sale como "TICKER INESPERADO" y
+    // las 12 del dueño como "FALTA": ruido puro en consola y un {pass:false} engañoso
+    // para cualquier llamador que lo interprete como "la importación salió mal".
+    if (!window._PV_IS_OWNER) return { pass: true, diffs: [], skipped: 'no-owner' };
     const ref = this.REFERENCE; const diffs = [];
     const held = {}; HOLDINGS.forEach(h => { held[h.ticker] = h; });
     Object.entries(ref.positions).forEach(([tk, r]) => {
@@ -27811,8 +27826,14 @@ document.addEventListener('DOMContentLoaded', function(){
       if (!sb || !sb.auth) return false;
       var r = await sb.auth.getUser();
       var em = ((r && r.data && r.data.user && r.data.user.email) || '').toLowerCase();
-      return OWNER_EMAILS.indexOf(em) >= 0;
-    } catch(e){ return false; }
+      var own = OWNER_EMAILS.indexOf(em) >= 0;
+      // Espejo SÍNCRONO del check, para consumidores que no pueden esperar a una promesa
+      // (PORTIV_VAL corre dentro del pipeline de importación). Arranca en false y sólo
+      // pasa a true tras confirmar el email: cualquier código que dependa de él trata al
+      // usuario como NO-dueño mientras haya duda, que es el lado seguro.
+      try{ window._PV_IS_OWNER = own; }catch(e){}
+      return own;
+    } catch(e){ try{ window._PV_IS_OWNER = false; }catch(_){} return false; }
   }
 
   // Reconciliación con RevenueCat vía Edge Function. Anti-tormenta: sin el throttle,
@@ -27835,16 +27856,32 @@ document.addEventListener('DOMContentLoaded', function(){
     };
   })();
 
-  // Lee la fila propia de `subscriptions`. La RLS sólo deja ver la del usuario
-  // autenticado, así que no hace falta filtrar por uid a mano.
+  // Lee la fila propia de `subscriptions`.
+  //
+  // El filtro por uid es EXPLÍCITO aunque la RLS ya restrinja la fila. El comentario
+  // anterior decía que por eso "no hace falta filtrar a mano", y esa es justo la premisa
+  // que no conviene sostener: deja la corrección de la consulta colgando de una única
+  // política que vive en otro sitio, que la toca otra migración y que nadie revisa al
+  // editar este archivo. Si esa política se relaja, `.maybeSingle()` sobre varias filas
+  // devuelve error → fail-open → todo el mundo pasa el candado; y si devolviera una sola
+  // fila ajena, estaríamos leyendo la suscripción de otro. Con el .eq() ninguno de los dos
+  // finales es posible, cueste lo que cueste la RLS.
   window._pvSubStatus = async function(){
     if (await _isOwner()) return { active:true, status:'owner', owner:true };
     var sb = window.sbClient;
     if (!sb) return null;
     var srv = null;
     try {
+      // getSession() lee la sesión LOCAL; getUser() haría un viaje de red extra y añadiría
+      // un modo de fallo nuevo justo en el camino del candado. Para acotar la consulta
+      // basta el uid local: si estuviera obsoleto, la RLS rechaza igual. El .eq() es un
+      // cinturón sobre los tirantes, no el que sujeta el pantalón.
+      var _u = null;
+      try { var _s = await sb.auth.getSession(); _u = _s && _s.data && _s.data.session && _s.data.session.user && _s.data.session.user.id; } catch(e){}
+      if (!_u) return null;                     // sin sesión no hay nada que consultar
       var r = await sb.from('subscriptions')
         .select('entitlement_active,status,expires_at,will_renew')
+        .eq('user_id', _u)
         .maybeSingle();
       // Fallo de red / RLS: se devuelve null y el llamador NO bloquea. Mismo criterio
       // fail-open que requireEntitlement en el servidor: una caída nuestra no debe
@@ -28826,7 +28863,11 @@ document.addEventListener('DOMContentLoaded', function(){
         if (Object.keys(_pc).length) period_changes=_pc;
       }
     } catch(e){}
-    var out = { cash_balance:cash, portfolio_value:total, positions:positions };
+    // En multidivisa el efectivo también tiene que ir en la moneda dominante. Dejarlo como
+    // la suma cruda 1:1 mientras `portfolio_value` sí está acotado deja las dos cifras
+    // contradiciéndose (efectivo > total en carteras con mucho saldo extranjero) y filtra
+    // por la puerta de atrás la misma suma inventada que se acaba de quitar del total.
+    var out = { cash_balance: (_mixed ? _byCcy[_dom].cash : cash), portfolio_value:total, positions:positions };
     if (period_changes) out.period_changes = period_changes;
     return out;
   }
