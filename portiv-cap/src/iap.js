@@ -25,11 +25,23 @@ import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 //  vacía, no empieza por `appl_`, o si el bundle resultante todavía contiene una
 //  clave `test_`. Es decir: subir la de sandbox por olvido no es posible.
 // ══════════════════════════════════════════════════════════════════════════════
+// Tomado el camino (a): la clave de producción vive AQUÍ, no en una variable de entorno.
+//
+// El motivo es que el camino (b) dejaba una trampa silenciosa. La clave sólo existía
+// dentro del artefacto ya compilado, así que `npm run sync` y `npm run open:ios` —que
+// llaman a `build:iap`, sin el --define— reconstruían www/portiv-iap.js con la clave de
+// SANDBOX. La app arranca igual, el paywall se abre igual, y nadie puede comprar: el
+// fallo no se ve hasta que un usuario real lo intenta. Con la clave en el código, los
+// dos caminos de build producen un bundle de producción y la trampa desaparece.
+//
+// No es un secreto: `appl_…` es la clave PÚBLICA del SDK de iOS, pensada para viajar
+// dentro del binario, y ya está en el repo dentro de www/portiv-iap.js. La que sí es
+// secreta es la clave v2 del backend, que no vive en este archivo.
 const RC_KEYS = {
   test: 'test_QuOSkuEiywERIEaFurpQhZlKIoQ',
-  prod: '',                    // ← clave pública de iOS de PRODUCCIÓN (empieza por 'appl_')
+  prod: 'appl_zfKbgdFDEuQbqaRzGzRQQKayUSr',
 };
-const RC_ENV_DEFAULT = 'test'; // ← 'prod' el día del lanzamiento (camino a)
+const RC_ENV_DEFAULT = 'prod';
 
 // esbuild sustituye estos dos identificadores en el build de producción (--define).
 // En el build normal no existen, de ahí el guard con typeof.
