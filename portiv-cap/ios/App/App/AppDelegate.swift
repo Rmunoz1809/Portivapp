@@ -1,6 +1,28 @@
 import UIKit
+import WebKit
 import Capacitor
 import GoogleSignIn
+
+/// Controlador de la app. Sólo añade una cosa sobre el de Capacitor: apagar el zoom.
+///
+/// El viewport y el CSS ya evitan que WKWebView amplíe al enfocar un campo, pero eso
+/// es la capa web: si un `<meta>` se recalcula (el layout de iPad reescribe el suyo al
+/// rotar) o una vista futura se olvida de la regla, el pinch vuelve. Fijar el zoom en
+/// el scrollView del WebView lo cierra de raíz, y no hay forma de que la app quede
+/// encallada a 2× como pasaba en el buscador de Watchlist.
+class PortivViewController: CAPBridgeViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        guard let scrollView = webView?.scrollView else { return }
+        scrollView.minimumZoomScale = 1.0
+        scrollView.maximumZoomScale = 1.0
+        scrollView.zoomScale = 1.0
+        scrollView.bouncesZoom = false
+        // El doble-tap-zoom y el pinch son gestos del propio scrollView: sin este
+        // recognizer, WebKit no tiene por dónde iniciar una ampliación.
+        scrollView.pinchGestureRecognizer?.isEnabled = false
+    }
+}
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {

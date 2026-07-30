@@ -220,7 +220,7 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
   });
 })();
 </script>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
 /* ─── iPad → layout de tablet (bottom-nav), no el de escritorio ───────────────
    El CSS conmuta de paradigma en 900px: ≥900 = sidebar de escritorio, ≤899 = bottom-nav
@@ -241,10 +241,14 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
   var m = document.querySelector('meta[name="viewport"]');
   if (!m) return;
   var TABLET_W = 899;                       // mismo número que el breakpoint del CSS
-  var DESKTOP  = 'width=device-width, initial-scale=1.0, viewport-fit=cover';
+  var DESKTOP  = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
   /* Sin initial-scale al fijar el ancho: el viewport final es el MAYOR entre `width` y el
-     que implica la escala, así que initial-scale=1 anularía el width=899. */
-  var TABLET   = 'width=' + TABLET_W + ', viewport-fit=cover';
+     que implica la escala, así que initial-scale=1 anularía el width=899.
+     Tampoco `maximum-scale`: la escala inicial en iPad es deviceWidth/899 (≈1.3) y
+     maximum-scale la recortaría a 1 → el viewport volvería a 1180 y con él el layout de
+     escritorio. `user-scalable=no` sí es seguro: sólo bloquea el pinch del usuario, no
+     toca la escala calculada. */
+  var TABLET   = 'width=' + TABLET_W + ', user-scalable=no, viewport-fit=cover';
   var ua = navigator.userAgent || '';
   /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama del Mac
      táctil. (No cambiaría el layout — nunca superan 899 px — pero sí marcaría la clase.) */
@@ -380,6 +384,29 @@ window._ensureChartJs = (function(){
   .page, .nm-overlay, .stitch-layout, .ai-chat-body, .modal, .modal-content { overscroll-behavior: contain; }
   button { touch-action: manipulation; cursor: pointer; }
   input { touch-action: manipulation; }
+
+  /* ── ANTI-ZOOM ────────────────────────────────────────────────────────────
+     Bug: al tocar el buscador de Watchlist (y el de Analizar, y el de la barra
+     superior) iOS ampliaba la página y ya no había forma de volver a 1× — la app
+     quedaba descuadrada el resto de la sesión.
+
+     Causa: WKWebView/Safari amplían automáticamente al enfocar un campo cuyo texto
+     mide MENOS de 16px, y el viewport no ponía techo a la escala, así que el zoom
+     se quedaba pegado. Los tres buscadores estaban a 13–14px.
+
+     Arreglo: en punteros gruesos (táctil) todo control de texto pasa a 16px — el
+     único tamaño que iOS no amplía. `!important` es obligatorio: varios campos
+     (p.ej. #wlInput) llevan el font-size en el atributo `style`, que gana a
+     cualquier selector. En ratón/trackpad no cambia nada.
+
+     `touch-action: manipulation` global elimina además el doble-tap-zoom (y de
+     paso el retardo de 300 ms del click), sin bloquear scroll ni arrastre. */
+  * { touch-action: manipulation; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+  @media (pointer: coarse) {
+    input, select, textarea { font-size: 16px !important; }
+  }
 
   /* ── HEADER ── */
   .header { padding: 18px 28px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
