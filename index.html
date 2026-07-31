@@ -8742,12 +8742,13 @@ function renderDeepPortfolioAnalysis(T) {
   const _perfilTxt = _pp ? `tu perfil <strong>${_pp.label}</strong> (${_pp.horizonLabel.toLowerCase()}, riesgo ${_pp.riskLabel.toLowerCase()})` : 'tu perfil de inversionista';
   document.getElementById('port-rebal-recs').innerHTML = `
     <div class="rbl-sub">
-      El peso objetivo reparte tu cartera según la <strong>calificación 1-10</strong> de cada empresa —la misma
-      que ves en Análisis, calculada con sus números publicados— y luego aplica los límites de
-      ${_perfilTxt}: techo por posición, techo por sector y un mínimo por debajo del cual una posición no
-      aporta. La columna de la derecha dice las dos cosas: qué hace ese nombre <strong>dentro de tu cartera</strong>
-      y cómo va <strong>el negocio</strong>. Vender posiciones ganadoras puede generar impuestos sobre las
-      ganancias — tenlo en cuenta antes de recortar.
+      Cada posición se compara con las demás usando los <strong>números que publica cada empresa</strong>
+      —qué gana por lo que vende, cuánto crece, con cuánta deuda y a qué precio cotiza— y el peso se
+      inclina hacia los negocios que salen mejor parados, dentro de los límites de ${_perfilTxt}:
+      techo por posición, techo por sector y un mínimo por debajo del cual una posición no aporta.
+      La columna de la derecha explica las dos mitades: qué hace ese nombre <strong>dentro de tu
+      cartera</strong> y qué está haciendo <strong>el negocio</strong>. Vender posiciones ganadoras
+      puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
     </div>
     <div class="rbl-card">
       <table class="rbl-table">
@@ -9057,24 +9058,99 @@ function _pvxRebalEngine(m, T){
   const enough = known.length >= Math.max(2, Math.ceil(rows.length * 0.5));
   const pctS = v => (v*100).toFixed(1) + '%';
 
-  // ── Mitad "negocio": SOLO métricas publicadas. Sin datos → se dice, no se rellena. ──
-  const bizTxt = r => {
-    const f = r.inf || {}, b = [];
-    const n = k => (typeof f[k] === 'number' && isFinite(f[k])) ? f[k] : null;
-    const pe = n('trailingPE'), revG = n('revenueGrowth'), pm = n('profitMargins'),
-          roe = n('returnOnEquity'), de = n('debtToEquity'), gm = n('grossMargins'),
-          fcf = n('freeCashflow');
-    if (pe   != null && pe > 0) b.push(`P/E ${pe.toFixed(0)}x`);
-    if (revG != null)           b.push(`ventas ${revG>=0?'+':''}${(revG*100).toFixed(0)}%`);
-    if (pm   != null)           b.push(`margen neto ${(pm*100).toFixed(0)}%`);
-    if (roe  != null)           b.push(`ROE ${(roe*100).toFixed(0)}%`);
-    if (gm   != null && b.length < 3) b.push(`margen bruto ${(gm*100).toFixed(0)}%`);
-    if (de   != null && b.length < 3) b.push(`deuda/capital ${de > 5 ? (de/100).toFixed(1) : de.toFixed(1)}`);
-    if (fcf  != null && b.length < 3) b.push(`flujo libre ${fcf>0?'positivo':'negativo'}`);
-    if (!b.length) return 'El negocio no publica los fundamentales que usa la calificación, así que no se le pone nota ni se toca su peso por calidad.';
-    const head = r.q != null ? `Negocio ${r.q.toFixed(1)}/10` : 'Negocio';
-    return `${head}: ${b.slice(0,3).join(' · ')}.`;
+  // ── Mitad "negocio": LECTURA del negocio, no una lista de ratios. ────────────────
+  // Antes esto era `P/E 42x · ventas +83% · margen neto 34%`: números correctos que no
+  // dicen NADA sobre por qué mover dinero. Ahora cada métrica se traduce a la afirmación
+  // de negocio que sostiene (poder de precio, apalancamiento operativo, solidez del
+  // balance, momento del ciclo) y se cierra con qué estás pagando por ese crecimiento.
+  // Regla que no se rompe: solo se afirma lo que los números publicados respaldan; si la
+  // empresa no publica, se dice que no publica. Nunca se rellena con adjetivos.
+  const num = (f,k) => (f && typeof f[k] === 'number' && isFinite(f[k])) ? f[k] : null;
+  const sgn = v => `${v>=0?'+':''}${(v*100).toFixed(0)}%`;
+  // Sectores donde las ganancias van y vienen con el ciclo: la nota es más alta justo en
+  // el pico, que es el peor momento para cargar. Se detecta por el sector canónico.
+  const CYC_RE = /semiconduct|memoria|energ|material|autom|discrecional|bienes ra|financ|industrial/i;
+  const isCyc  = s => CYC_RE.test(String(s || ''));
+  // En prosa el sector va sin el prefijo de familia: "Tech · Semiconductores" se lee mal
+  // dentro de una frase; "semiconductores" sí.
+  const secTxt = s => String(s || '').split('·').pop().trim().toLowerCase();
+
+  const cap1 = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+  const bizRead = r => {
+    const f = r.inf;
+    if (!f) return 'Esta empresa no publica sus números, así que no hay con qué compararla y su peso no se toca.';
+    const pe = num(f,'trailingPE'), peg = num(f,'pegRatio'), revG = num(f,'revenueGrowth'),
+          epsG = num(f,'earningsGrowth'), gm = num(f,'grossMargins'), pm = num(f,'profitMargins'),
+          roe = num(f,'returnOnEquity'), roic = num(f,'returnOnCapital'), de = num(f,'debtToEquity'),
+          cr = num(f,'currentRatio'), fcf = num(f,'freeCashflow');
+
+    // ① El rasgo que más pesa en la decisión. Uno solo: el que manda.
+    // r.warn queda en true cuando ese rasgo es un aviso: si aun así la posición sube, el
+    // motivo tiene que reconocerlo ("aun con eso…") en vez de sonar a que no lo vio.
+    let trait = null; r.warn = false;
+    if (pm != null && pm < 0)
+      trait = `aún no gana dinero (margen neto ${sgn(pm)}): su valor depende de una mejora que todavía no ocurrió`;
+    else if (de != null && de > 150)
+      trait = `debe ${(de/100).toFixed(1)}× su capital: un año flojo le pega mucho más fuerte que a una empresa sin deuda`;
+    else if (fcf != null && fcf < 0)
+      trait = `quema caja: su crecimiento depende de que alguien se lo financie`;
+    else if (gm != null && gm >= 0.55 && ((roic != null && roic >= 0.15) || (roe != null && roe >= 0.20)))
+      // Tres formas de decir "tiene ventaja competitiva", elegidas por cuál de los números la
+      // sostiene mejor. Con una sola frase, media cartera repetía la misma línea palabra por
+      // palabra y el lector deja de leer la columna.
+      trait = gm >= 0.70
+          ? `vende con ${(gm*100).toFixed(0)}% de margen bruto algo que casi no le cuesta producir: le sobra margen para invertir o para bajar precios si alguien la ataca`
+        : (roic != null && roic >= 0.20)
+          ? `cada dólar que reinvierte le rinde ${(roic*100).toFixed(0)}%: puede crecer sin salir a pedir dinero`
+          : `${(gm*100).toFixed(0)}% de margen bruto y buen retorno sobre el capital: puede subir precios sin perder al cliente`;
+    else if (revG != null && epsG != null && revG > 0.03 && epsG > revG + 0.10)
+      trait = `gana más rápido (${sgn(epsG)}) de lo que vende (${sgn(revG)}): escala sin que los costos sigan`;
+    else if (revG != null && epsG != null && revG > 0.05 && epsG < revG - 0.10)
+      trait = `vende más (${sgn(revG)}) y gana menos por venta (${sgn(epsG)}): compra crecimiento con margen`;
+    else if (pm != null && pm >= 0.18 && fcf != null && fcf > 0)
+      trait = `convierte ${(pm*100).toFixed(0)} de cada 100 de venta en ganancia y en caja`;
+    else if (de != null && de < 50 && cr != null && cr >= 1.5)
+      trait = `sin deuda relevante: aguanta un mal año sin vender activos ni diluirte`;
+    else if (revG != null)
+      trait = `crece ${sgn(revG)} en ventas${pm != null ? ` con ${(pm*100).toFixed(0)}% de margen neto` : ''}`;
+
+    // ¿El rasgo elegido fue un AVISO? Si la posición aun así sube, el motivo debe
+    // reconocerlo ("aun con eso…") en vez de sonar a que no lo vio.
+    r.warn = !!trait && /no gana dinero|^debe |quema caja|gana menos por venta/.test(trait);
+
+    // ② Aviso de ciclo: solo si el sector es cíclico Y viene de un año excepcional.
+    let cycNote = null;
+    if (isCyc(r.it.sector) && revG != null && revG > 0.35)
+      cycNote = `viene de un pico (${sgn(revG)}) y en ${secTxt(r.it.sector)} esos números se dan vuelta con el ciclo`;
+
+    // ③ Qué estás pagando por eso. El PEG manda cuando existe; si no, P/E contra crecimiento.
+    let val = null;
+    if (peg != null && peg > 0 && peg < 100)
+      val = peg <= 1.0 ? `y a PEG ${peg.toFixed(1)} no pagas por ese crecimiento`
+          : peg <= 2.0 ? `y a PEG ${peg.toFixed(1)} el precio va en línea`
+          : `aunque a PEG ${peg.toFixed(1)} el precio descuenta años de ejecución perfecta`;
+    else if (pe != null && pe > 0 && revG != null)
+      val = (pe > 40 && revG < 0.15) ? `aunque a ${pe.toFixed(0)}× ganancias pagas caro para lo que crece`
+          : (pe < 20 && revG > 0.15) ? `y a ${pe.toFixed(0)}× ganancias el precio se queda corto`
+          : `y a ${pe.toFixed(0)}× ganancias el precio va en línea`;
+
+    // Dos clausulas como maximo. Con aviso de ciclo, ESE es el cierre: encadenar ademas la
+    // valoracion producia frases de tres oraciones que nadie termina de leer.
+    const parts = [trait, cycNote].filter(Boolean);
+    if (!parts.length) return `Publica muy pocos números como para leer el negocio, así que su peso no se toca.`;
+    let s = parts.join(', pero ');
+    if (val && !cycNote) s += `, ${val}`;
+    return `${cap1(s)}.`;
   };
+
+  // Una sola posición: no hay nada que repartir, y el mensaje de "solo 1 de 1 tiene datos"
+  // era falso además de absurdo. Se dice lo único accionable que hay para esa cartera.
+  if (rows.length === 1){
+    const r0 = rows[0];
+    out[r0.tk] = { sug: r0.it.weight, action: 'MANTENER',
+      why: `Es tu única posición: no hay entre qué rebalancear, porque cualquier ajuste es comprar o vender ${r0.it.ticker}, no repartir. ${bizRead(r0)} Con un solo nombre tu resultado ES el de ${r0.it.ticker}; lo que más te cambiaría el riesgo es sumar una segunda posición de otro sector.` };
+    return out;
+  }
 
   // ── Sin base para calificar: todo se queda quieto y se explica. ──
   // Se distingue "todavía están cargando" de "esta empresa no publica los datos": el primer
@@ -9085,7 +9161,7 @@ function _pvxRebalEngine(m, T){
       out[r.tk] = { sug: r.it.weight, action: 'MANTENER',
         why: loading
           ? `Cargando los fundamentales de tus posiciones para calificarlas. En unos segundos aparece aquí el peso objetivo y el motivo.`
-          : `Solo ${known.length} de ${rows.length} posiciones tienen fundamentales suficientes para calificarse, así que no hay base para mover pesos todavía. ${bizTxt(r)}` };
+          : `Solo ${known.length} de tus ${rows.length} posiciones publican números suficientes para compararlas entre sí, así que mover pesos ahora sería adivinar. ${bizRead(r)}` };
     });
     return out;
   }
@@ -9093,7 +9169,21 @@ function _pvxRebalEngine(m, T){
   // ── Peso objetivo: reparto por calidad (la nota pesa de forma progresiva: un 9 recibe
   //    ~2× lo de un 5), después techo por posición, suelo de relevancia y techo por sector. ──
   const qAvg = known.reduce((s,r)=>s+r.q, 0) / known.length;
-  rows.forEach(r => { const q = r.q != null ? r.q : qAvg; r.qEff = q; r.raw = Math.pow(Math.max(1,q), 2.2); });
+  rows.forEach(r => {
+    let q = r.q != null ? r.q : qAvg;
+    // TRAMPA DEL CICLO. En sectores cíclicos la nota es MÁS alta justo en el pico —ventas y
+    // márgenes récord puntúan altísimo— que es exactamente el peor momento para cargar. Sin
+    // esto el motor recomendaba llevar una memoria de 1.7% a 7.5% de la cartera por venir de
+    // un +83% que no se repite. Se descuenta el exceso de crecimiento sobre +35%, hasta 1.5
+    // puntos de nota: sigue pesando más que una empresa mala, pero deja de ganarle a un
+    // negocio estable solo por estar en la parte alta de su ciclo.
+    const rg = num(r.inf, 'revenueGrowth');
+    if (r.q != null && isCyc(r.it.sector) && rg != null && rg > 0.35){
+      r.cycPeak = true;
+      q = Math.max(1, q - Math.min(1.5, (rg - 0.35) * 3));
+    }
+    r.qEff = q; r.raw = Math.pow(Math.max(1,q), 2.2);
+  });
   let rawSum = rows.reduce((s,r)=>s+r.raw, 0);
   rows.forEach(r => { r.tgt = totW * r.raw / rawSum; });
 
@@ -9101,30 +9191,77 @@ function _pvxRebalEngine(m, T){
   rows.forEach(r => {
     if (r.it.weight < MINW && r.q != null && r.q < 5.5) { r.tgt = 0; r.closed = true; }
   });
-  // Techo por posición y por sector, con 2 pasadas para repartir lo que sobra.
+  // TECHOS FACTIBLES. Con pocas posiciones los topes del perfil son imposibles de cumplir
+  // (3 nombres no pueden pesar 9% cada uno y sumar el 100% invertido). Antes eso reventaba
+  // en silencio: sobraba peso que nadie podía absorber y el resto se le sumaba ENTERO a la
+  // posición más grande — de ahí salía un "AUMENTAR 41 pp" hacia una empresa en pérdidas en
+  // una cartera de dos nombres. Los techos se relajan hasta el mínimo factible: nunca por
+  // debajo de 1.6× el peso equitativo, que sigue limitando la concentración de verdad.
+  const nOpen   = rows.filter(r => !r.closed).length || rows.length;
+  const equalW  = totW / nOpen;
+  const MAXW_E  = Math.max(MAXW, equalW * 1.6);
+  const secNames = {}; rows.forEach(r => { secNames[r.it.sector] = (secNames[r.it.sector]||0) + 1; });
+  const oneSector = Object.keys(secNames).length <= 1;   // sin otro sector, el techo sectorial no tiene a dónde mover
+
   for (let pass = 0; pass < 2; pass++){
     let freed = 0;
-    rows.forEach(r => { if (r.tgt > MAXW){ freed += r.tgt - MAXW; r.tgt = MAXW; r.capped = true; } });
-    const secT = {}; rows.forEach(r => { secT[r.it.sector] = (secT[r.it.sector]||0) + r.tgt; });
-    Object.keys(secT).forEach(s => {
-      if (secT[s] > SECTMAX){
-        const k = SECTMAX / secT[s];
-        rows.forEach(r => { if (r.it.sector === s){ freed += r.tgt * (1-k); r.tgt *= k; r.secCapped = true; } });
-      }
-    });
+    rows.forEach(r => { if (r.tgt > MAXW_E){ freed += r.tgt - MAXW_E; r.tgt = MAXW_E; r.capped = true; } });
+    if (!oneSector){
+      const secT = {}; rows.forEach(r => { secT[r.it.sector] = (secT[r.it.sector]||0) + r.tgt; });
+      Object.keys(secT).forEach(s => {
+        if (secT[s] > SECTMAX){
+          const k = SECTMAX / secT[s];
+          rows.forEach(r => { if (r.it.sector === s){ freed += r.tgt * (1-k); r.tgt *= k; r.secCapped = true; } });
+        }
+      });
+    }
     if (freed <= 0.0001) break;
-    const room = rows.filter(r => !r.closed && r.tgt < MAXW && !r.secCapped);
+    const room = rows.filter(r => !r.closed && r.tgt < MAXW_E && !r.secCapped);
     const roomSum = room.reduce((s,r)=>s+r.raw, 0);
     if (!roomSum) break;
-    room.forEach(r => { r.tgt = Math.min(MAXW, r.tgt + freed * r.raw / roomSum); });
+    room.forEach(r => { r.tgt = Math.min(MAXW_E, r.tgt + freed * r.raw / roomSum); });
   }
-  // Redondeo a 0.1 pp; la diferencia de redondeo se absorbe en la posición más grande.
+
+  // El plan debe repartir EXACTAMENTE lo que hay invertido: ni inventar dinero ni dejarlo
+  // sin asignar. Lo que quedó suelto (por techos que no se pudieron redistribuir o por
+  // posiciones cerradas) se reparte en proporción entre las que siguen abiertas.
+  const openSum = rows.filter(r => !r.closed).reduce((s,r)=>s+r.tgt, 0);
+  if (openSum > 0){
+    const k = totW / openSum;
+    rows.forEach(r => { if (!r.closed) r.tgt *= k; });
+  }
+
+  // Redondeo a 0.1 pp. El residuo de REDONDEO —y solo ese, nunca un sobrante de verdad—
+  // se absorbe en la posición más grande.
   rows.forEach(r => { r.tgt = Math.max(0, Math.round(r.tgt * 1000) / 1000); });
   const drift = totW - rows.reduce((s,r)=>s+r.tgt, 0);
-  if (Math.abs(drift) > 0.0005){
+  if (Math.abs(drift) > 0.0005 && Math.abs(drift) <= 0.005){
     const big = rows.slice().sort((a,b)=>b.tgt-a.tgt)[0];
     if (big) big.tgt = Math.max(0, Math.round((big.tgt + drift) * 1000) / 1000);
   }
+
+  // ── De dónde sale y a dónde va el dinero: nombres concretos, no "los de mejor nota". ──
+  // Un consejo accionable dice CON QUÉ financiar la compra y HACIA QUÉ mover el recorte.
+  // Para un recorte se prefiere destino de OTRO sector: mover de una semi a otra semi no
+  // reduce el riesgo que motivó el recorte.
+  const gainers = rows.filter(x => x.tgt - x.it.weight > 0.005).sort((a,b)=>(b.tgt-b.it.weight)-(a.tgt-a.it.weight));
+  const losers  = rows.filter(x => x.it.weight - x.tgt > 0.005).sort((a,b)=>(b.it.weight-b.tgt)-(a.it.weight-a.tgt));
+  const listTxt = a => !a.length ? '' : a.length === 1 ? a[0] : a.slice(0,-1).join(', ') + ' y ' + a[a.length-1];
+  // Dónde queda este negocio frente a los demás de la cartera. Se usa para ELEGIR la frase,
+  // nunca para mostrar un número: al usuario le sirve "de los más sólidos que tienes", no "8.2".
+  const tier = r => {
+    const better = rows.filter(x => (x.qEff || 0) > (r.qEff || 0)).length;
+    const p = rows.length > 1 ? better / (rows.length - 1) : 0;
+    return p <= 0.34 ? 'top' : p >= 0.67 ? 'low' : 'mid';
+  };
+  // Posición de un nombre dentro de su propio sector (1 = el que más pesa de ese sector).
+  const secRank = r => rows.filter(x => x.it.sector === r.it.sector && x.it.weight > r.it.weight).length + 1;
+  const pickTxt = (pool, r, preferOtherSector) => {
+    const notSelf = pool.filter(x => x.tk !== r.tk);
+    const other   = notSelf.filter(x => x.it.sector !== r.it.sector);
+    const use     = (preferOtherSector && other.length) ? other : notSelf;
+    return listTxt(use.slice(0,2).map(x => x.it.ticker));
+  };
 
   rows.forEach(r => {
     const cur = r.it.weight, sug = r.tgt, d = sug - cur;
@@ -9132,36 +9269,81 @@ function _pvxRebalEngine(m, T){
     const dpp = Math.abs(d*100).toFixed(1);
     const rank = rankOf(r.it.ticker), n = rows.length;
     const secW = bySec[r.it.sector] || 0;
+    // La lectura del negocio se resuelve ANTES del "por qué": deja marcado r.warn, y sin eso
+    // una posición con deuda alta subía diciendo "sus números lo sostienen", ignorando el aviso
+    // que la propia frase anterior acababa de dar.
+    const biz = bizRead(r);
+    // Los pares del sector se nombran de mayor a menor peso: nombrar los tres más chicos
+    // subestima la concentración que la frase intenta advertir.
+    const peers = rows.filter(x => x.tk !== r.tk && x.it.sector === r.it.sector)
+      .sort((a,b) => b.it.weight - a.it.weight).map(x => x.it.ticker);
 
     // ── Mitad "tu cartera": qué hace ESTA posición dentro de ESTE portafolio ──
     let port;
     if (r.closed)
-      port = `Con ${pctS(cur)} no mueve la aguja: aunque duplique, cambia menos de ${pctS(cur)} el resultado de la cartera, y su nota no justifica ponerle más dinero.`;
-    else if (r.capped && cur >= MAXW)
-      port = `Es tu posición nº${rank} de ${n} con ${pctS(cur)}, por encima del techo de ${pctS(MAXW)} por nombre que corresponde a un perfil ${perfTxt}; tu top-3 ya concentra ${pctS(top3W)}.`;
-    else if (r.secCapped)
-      port = `${r.it.sector} ya pesa ${pctS(secW)} de tu cartera; el recorte sale de ahí y no de nombres que te dan diversificación.`;
+      port = `Con ${pctS(cur)} (nº${rank} de ${n}), ni duplicándose cambia tu resultado.`;
+    else if (r.capped && cur >= MAXW_E && action === 'REDUCIR')
+      port = `Es tu nº${rank} con ${pctS(cur)}, sobre el techo de ${pctS(MAXW_E)} por nombre de un perfil ${perfTxt}; tu top-3 ya concentra ${pctS(top3W)}.`;
+    // Los flags de techo describen por qué se movió el objetivo, pero tras la normalización
+    // final una fila marcada puede terminar SUBIENDO. Explicar un recorte en una fila que
+    // aumenta es peor que no explicar nada, así que estas ramas exigen que la acción cuadre.
+    else if (r.secCapped && action === 'REDUCIR')
+      port = `${r.it.sector} ya pesa ${pctS(secW)}${peers.length ? ` entre esta y ${listTxt(peers.slice(0,3))}` : ''}: el recorte sale de donde te sobra, no de lo que te diversifica.`;
     else if (cur < MINW)
-      port = `Con ${pctS(cur)} es de las posiciones más chicas (nº${rank} de ${n}): o sube a un peso que se note, o no aporta.`;
+      port = `Con ${pctS(cur)} es de tus más chicas (nº${rank} de ${n}): a ese peso, ni acertar cambia tu resultado.`;
     else
-      port = `Pesa ${pctS(cur)} y es la nº${rank} de ${n}; por calidad le corresponde ${pctS(sug)} de tu cartera.`;
-    if ((r.it.beta || 0) >= 1.4 && (m.portBeta || 0) >= 1.3 && action === 'REDUCIR')
-      port += ` Además es de las más volátiles (beta ${(r.it.beta).toFixed(2)}) en una cartera que ya va con beta ${(m.portBeta).toFixed(2)}.`;
+      port = `Pesa ${pctS(cur)} y es tu posición nº${rank} de ${n}.`;
+    // UNA sola coletilla, la que más informe: solapamiento de sector antes que volatilidad.
+    // El aviso de sector se reserva a los DOS nombres que más pesan dentro de ese sector: si
+    // se pone en todas las filas del sector, la misma frase se repite 8 veces y deja de leerse.
+    if (!r.secCapped && peers.length && totW > 0 && secW / totW >= 0.30 && secRank(r) <= 2)
+      port += ` Con ${listTxt(peers.slice(0,3))} suman ${pctS(secW)} del mismo sector: caen a la vez.`;
+    else if ((r.it.beta || 0) >= 1.4 && (m.portBeta || 0) >= 1.3 && action === 'REDUCIR')
+      port += ` Además es de las más volátiles (beta ${(r.it.beta).toFixed(2)}) en una cartera que ya va en ${(m.portBeta).toFixed(2)}.`;
 
-    // ── Qué hacer y qué se gana con hacerlo ──
+    // ── POR QUÉ SUBIRLA O BAJARLA, y con qué. ────────────────────────────────────
+    // El motivo NUNCA es "tiene mejor nota": eso no le dice nada a nadie. El motivo es la
+    // comparación entre negocios que hay detrás del número — cuáles de tus empresas ganan
+    // más por lo que venden, crecen sin endeudarse y no dependen de un año irrepetible — y
+    // el tamaño que hoy tiene cada una. La nota se usa para calcular; jamás para explicar.
     const usd = Math.abs(d) * (T && T.mkt ? T.mkt : 0);
     const money = usd >= 1 ? ` (~$${Math.round(usd).toLocaleString('en-US')})` : '';
     let move;
-    if (action === 'REDUCIR')
-      move = r.closed
-        ? `Cerrarla${money} y llevar ese dinero a las posiciones con mejor nota.`
-        : `Recortar ${dpp} pp${money} y mover ese dinero a los nombres con mejor nota.`;
-    else if (action === 'AUMENTAR')
-      move = `Subir ${dpp} pp${money} la acerca al peso que su calificación justifica.`;
-    else
-      move = `El peso ya coincide con lo que su calificación justifica (diferencia menor a 0.5 pp): no hay nada que hacer.`;
+    if (action === 'REDUCIR'){
+      const dest = pickTxt(gainers, r, true);
+      const to   = dest ? `hacia ${dest}` : 'y dejarlo en efectivo hasta tener un destino mejor';
+      const cut  = `recortar ${dpp} pp${money} ${to}`;
+      const ellas = dest.includes(' y ') ? 'ellas' : 'ella';
+      if (r.closed)
+        move = `Y el negocio tampoco da para agrandarla: cerrarla${money}` +
+               (dest ? ` y llevar ese dinero a ${dest}.` : ' y dejar el efectivo hasta tener un destino mejor.');
+      else if (r.capped && cur >= MAXW_E)
+        move = `El problema no es el negocio, es el tamaño: ${cut}.`;
+      else if (r.cycPeak)
+        move = `Estás pagando por un año que difícilmente se repita, y a este peso duele si el ciclo gira: ${cut}.`;
+      else if (tier(r) === 'low')
+        move = `Es de los negocios más flojos que tienes y aun así pesa como los mejores: ${cut}.`;
+      else
+        move = dest
+          ? `Sigue siendo buen negocio, pero pesa más de lo que sostiene frente a ${dest}: recortar ${dpp} pp${money} hacia ${ellas}.`
+          : `Pesa más de lo que su negocio sostiene frente al resto de tu cartera: ${cut}.`;
+    } else if (action === 'AUMENTAR'){
+      const src  = pickTxt(losers, r, false);
+      const with_ = src ? ` con lo que recortes de ${src}.` : ' con aportes nuevos.';
+      const up   = `subir ${dpp} pp${money}`;
+      if (cur < MINW)
+        move = `El negocio aguanta un peso mayor: ${up}${with_}`;
+      else if (r.warn)
+        move = `Aun con eso, el resto de sus números sostiene más peso del que tiene hoy: ${up}${with_}`;
+      else if (tier(r) === 'top')
+        move = `Es de los negocios más sólidos que tienes y pesa menos que otros que rinden peor: ${up}${with_}`;
+      else
+        move = `Sus números sostienen más peso del que tiene hoy: ${up}${with_}`;
+    } else {
+      move = `Ni el negocio ni el tamaño piden moverla: déjala como está.`;
+    }
 
-    out[r.tk] = { sug, action, why: `${port} ${bizTxt(r)} ${move}` };
+    out[r.tk] = { sug, action, why: `${port} ${biz} ${move}` };
   });
   return out;
 }
