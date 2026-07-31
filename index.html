@@ -4533,6 +4533,13 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-ptr-pt .dot{width:14px;height:14px;border-radius:50%;margin:0 auto;border:3px solid #fff;box-shadow:0 0 0 1px #ccc}
       .pvx .px-ptr-pt .pl{font-size:10.5px;color:var(--px-muted);margin-bottom:4px}
       .pvx .px-ptr-pt .pv{font-family:'Poppins','Manrope',sans-serif;font-size:12.5px;font-weight:800;margin-top:4px}
+      /* Alternativa en rejilla del rango de objetivos (se activa en pantallas estrechas). */
+      .pvx .px-ptr-grid{display:none;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
+      .pvx .px-ptr-grid .g{border:1px solid var(--px-line);border-radius:12px;padding:10px 12px;background:#f8fafc}
+      .pvx .px-ptr-grid .g span{display:block;font-size:11px;color:var(--px-muted);margin-bottom:3px}
+      .pvx .px-ptr-grid .g b{font-family:'Poppins','Manrope',sans-serif;font-size:16px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--px-ink)}
+      .pvx .px-ptr-grid .g.low b{color:var(--px-red)} .pvx .px-ptr-grid .g.avg b{color:var(--px-green-text)}
+      .pvx .px-ptr-grid .g.high b{color:var(--px-green-strong)}
       .pvx .px-ptr-pt.low .dot{background:var(--px-red)} .pvx .px-ptr-pt.cur .dot{background:var(--px-navy)}
       .pvx .px-ptr-pt.avg .dot{background:var(--px-green)} .pvx .px-ptr-pt.high .dot{background:var(--px-green-strong)}
       /* return box + projection rows */
@@ -4580,10 +4587,29 @@ window._pvAwaitIAP = function(totalMs){
         .pvx .px-score{padding:3px 9px}
         .pvx .px-score b{font-size:15px}
       }
-      @media(max-width:420px){
+      @media(max-width:480px){
+        /* iPhone estrecho: nada se sale de la tarjeta — las columnas se encogen, no desbordan. */
         .pvx .px-sec-title{font-size:16px}
         .pvx .px-rating-badge .num{font-size:40px}
         .pvx .px-sbox{flex:1 1 100%;justify-content:space-between}
+        .pvx .px-dim{gap:8px}
+        .pvx .px-dim .name{min-width:0;flex:1 1 auto;font-size:13.5px}
+        .pvx .px-dim .right{gap:10px;flex:0 0 auto}
+        .pvx .px-track{width:56px}
+        .pvx .px-tag{min-width:62px;font-size:12px}
+        .pvx .px-metric{gap:8px}
+        .pvx .px-metric .k{min-width:0;flex:1 1 auto;font-size:13.5px}
+        .pvx .px-metric .ctx{margin:0 0 0 auto;font-size:11px;max-width:38%}
+        .pvx .px-metric .v{min-width:64px}
+        .pvx .px-metric .v .big{font-size:15.5px}
+        .pvx .px-metric .k,.pvx .px-hbox .kk{overflow-wrap:anywhere}
+        .pvx .px-cat .cd{width:72px;font-size:11.5px}
+        /* Rango de objetivos: en pantalla estrecha la escala se cambia por una rejilla de
+           cifras. Las etiquetas absolutas de los extremos SIEMPRE se salían del recuadro. */
+        .pvx .px-ptr-scale{display:none}
+        .pvx .px-ptr-grid{display:grid}
+        .pvx .px-retbox{padding:16px 16px}
+        .pvx .px-retbox .rn{font-size:30px}
       }
       @media(prefers-reduced-motion:reduce){ .pvx *{transition:none!important;animation:none!important} }
     </style>
@@ -18399,7 +18425,9 @@ function _peerGapText(ticker, rows){
 function _renderPeersInto(host, ticker, rows){
   if (!host) return;
   const esc = pvEsc;   // delegado al escape único de la app
-  if (!Array.isArray(rows) || rows.length < 2){ host.innerHTML=''; return; }   // sin rivales → nada (no tabla solitaria)
+  // Sin rivales con datos → la tarjeta se mantiene (todas las acciones muestran los mismos
+  // apartados), pero se dice la verdad en vez de pintar una tabla de una sola fila.
+  if (!Array.isArray(rows) || rows.length < 2){ host.innerHTML = _pvxPeersEmptyCard(ticker); return; }
   const fx = v => (v==null||!isFinite(v)) ? '—' : `${v.toFixed(1)}x`;
   const fp = v => (v==null||!isFinite(v)) ? '—' : `${v.toFixed(1)}%`;
   // Párrafo bajo la tabla: brecha real (de los datos) + posición de mercado curada (cuota/monopolio).
@@ -18410,7 +18438,7 @@ function _renderPeersInto(host, ticker, rows){
     const _body = [_gap, _pos].filter(Boolean).join(' ');
     _posBlock = `<div class="px-mktpos" style="margin-top:14px;padding:12px 14px;border-left:3px solid var(--px-ink,#1a2536);background:rgba(26,37,54,.045);border-radius:8px;font-size:13.5px;line-height:1.7;color:var(--px-ink-soft,#3a4658)"><b style="color:var(--px-ink,#1a2536)">Posición de mercado.</b> ${esc(_body)}</div>`;
   }
-  host.innerHTML = `<div class="px-card"><h2 class="px-sec-title">Comparación con competidores</h2>
+  host.innerHTML = `<div class="px-card"><h2 class="px-sec-title"><span class="t">Comparación con competidores</span></h2>
     <p class="px-intro">La misma acción se ve distinta al lado de sus rivales. Aquí ${esc(ticker)} contra sus competidores del sector.</p>
     <div class="px-cmp-wrap"><table class="px-cmp">
       <thead><tr><th>Empresa</th><th>P/E</th><th>Crec. ingresos</th><th>Margen neto</th><th>ROE</th></tr></thead>
@@ -18418,6 +18446,15 @@ function _renderPeersInto(host, ticker, rows){
     </table></div>
     ${_posBlock}
     <div class="px-hint">Comparada con sus rivales del sector usando datos financieros reales (TTM). "—" = dato no disponible.</div></div>`;
+}
+
+// Tarjeta de "Comparación con competidores" sin datos: mantiene el apartado presente en TODAS
+// las acciones (mismos apartados siempre) sin inventar rivales ni cifras.
+function _pvxPeersEmptyCard(ticker){
+  const esc = pvEsc;
+  return `<div class="px-card"><h2 class="px-sec-title"><span class="t">Comparación con competidores</span></h2>
+    <p class="px-intro">La misma acción se ve distinta al lado de sus rivales.</p>
+    <div style="margin-top:14px"><p class="px-empty">No hay rivales con datos financieros publicados para comparar contra ${esc(ticker)} en este momento.</p></div></div>`;
 }
 
 // Carga LAZY (2º plano) de la comparación: usa caché si existe; si no, fetch gentil, cachea y
@@ -18438,7 +18475,7 @@ async function _fillPeers(ticker, selfMetrics, peerTickers){
     if (h2 && h2.dataset.tk === ticker) _renderPeersInto(h2, ticker, data ? data.rows : null);
   } catch(e){
     const h2 = document.getElementById('pvx-peers-host');
-    if (h2 && h2.dataset.tk === ticker) h2.innerHTML = '';   // falló → sin sección (degrada limpio)
+    if (h2 && h2.dataset.tk === ticker) h2.innerHTML = _pvxPeersEmptyCard(ticker);   // falló → tarjeta con aviso, no un hueco
   } finally { _peersInflight.delete(ticker); }
 }
 
@@ -18609,7 +18646,9 @@ function _pvxRubricScores(info, a){
   if (pegOk)        fl.push(peg<1 ? 1.0 : peg<2 ? 0.4 : peg<3.5 ? -0.4 : -1.2);
   else if (pe != null) fl.push(pe<=0 ? -1.2 : pe<20 ? 0.8 : pe<35 ? 0.2 : pe<60 ? -0.6 : -1.2);
   if (roe  != null) fl.push(roe>0.20 ? 1.0 : roe>0.10 ? 0.4 : roe>0 ? 0 : -1.2);
-  const prosRiesgos = fl.length ? cl(5.5 + fl.reduce((s,x)=>s+x,0)) : null;
+  // Promedio de las banderas (no suma): así una empresa no llega a 10 solo por tener muchos
+  // datos publicados, ni se desploma por tener pocos. Rango real ≈ 1 … 9.7.
+  const prosRiesgos = fl.length ? cl(5.5 + (fl.reduce((s,x)=>s+x,0) / fl.length) * 3.5) : null;
 
   const vals = [moat, dims, datos, salud, prosRiesgos].filter(v => typeof v === 'number');
   const nota = vals.length ? Math.round(avg(vals) * 10) / 10 : null;
@@ -18816,25 +18855,28 @@ function _renderQualAnalysis(a, el){
   }
 
   // 8) VALORACIÓN: pill + resumen.
-  h += `<div class="px-card"><h2 class="px-sec-title">Valoración</h2>
+  h += `<div class="px-card">${stitle('Valoración')}
     <span class="px-pill ${/barata|razonable/i.test(a.valLabel)?'green':/cara/i.test(a.valLabel)?'red':'amber'}">${esc(a.valLabel)}</span>
-    ${a.valoracion_full ? `<p style="color:var(--px-ink-soft);margin:0;font-size:14.5px;line-height:1.6">${esc(a.valoracion_full)}</p>` : ''}</div>`;
+    ${a.valoracion_full && a.valoracion_full.trim() ? `<p style="color:var(--px-ink-soft);margin:0;font-size:14.5px;line-height:1.6">${esc(a.valoracion_full)}</p>` : empty('Sin múltiplos publicados suficientes para valorar la acción con datos reales.')}</div>`;
 
   // 9) PROS y RIESGOS: dos columnas.
   const col = (title, cls, icon, arr) => `<div class="${cls}"><h4>${icon} ${title}</h4>${(Array.isArray(arr)&&arr.length)?`<ul>${arr.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<div style="font-size:13px;color:var(--px-muted)">—</div>'}</div>`;
-  h += `<div class="px-card"><h2 class="px-sec-title">Pros y riesgos</h2>
+  h += `<div class="px-card">${stitle('Pros y riesgos','prosRiesgos')}
     <div class="px-pr">${col('PROS','pros','✓',a.pros)}${col('RIESGOS','risks','⚠',a.riesgos)}</div></div>`;
 
   // 10) ESCENARIOS a 1 año (pesimista / base / optimista) — anclados en objetivos reales.
-  if (a.scenarios && a.scenarios.length){
-    h += `<div class="px-card"><h2 class="px-sec-title">Escenarios a 1 año</h2>
+  {
+    const sc1 = (a.scenarios && a.scenarios.length) ? a.scenarios : null;
+    h += `<div class="px-card">${stitle('Escenarios a 1 año')}
       <p class="px-intro">En vez de un solo número, tres futuros posibles. La realidad casi siempre cae en un punto intermedio.</p>
-      <div class="px-scen" style="margin-top:16px">${a.scenarios.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div><div class="sprob">Probabilidad estimada: ${s.prob}%</div></div>`).join('')}</div></div>`;
+      ${sc1 ? `<div class="px-scen" style="margin-top:16px">${sc1.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div><div class="sprob">Probabilidad estimada: ${s.prob}%</div></div>`).join('')}</div>`
+          : `<div style="margin-top:14px">${empty('Ningún analista cubre esta acción con objetivos de precio publicados, así que no hay base real para armar escenarios.')}</div>`}</div>`;
   }
 
   // 11) PROYECCIONES de precio: consenso + rango de objetivos + retorno esperado + filas.
-  if (a.retBox || a.consensus || a.targetRange){
-    let p = `<div class="px-card"><h2 class="px-sec-title">Proyecciones de precio</h2>`;
+  {
+    let p = `<div class="px-card">${stitle('Proyecciones de precio')}`;
+    if (!(a.retBox || a.consensus || a.targetRange)) p += `<div style="margin-top:2px">${empty('Sin cobertura de analistas ni datos suficientes para proyectar precio con números reales.')}</div>`;
     if (a.consensus){ const c=a.consensus, rClr=c.verdict.cls==='pos'?'var(--px-green-text)':c.verdict.cls==='neg'?'var(--px-red)':'var(--px-amber)';
       p += `<div class="px-cons-top"><span class="lbl">Consenso de ${c.tot} analistas</span><span class="rec" style="color:${rClr}">${c.verdict.label}</span></div>
         <div class="px-cons-bar"><i style="width:${c.buyPct}%;background:var(--px-green-bar)"></i><i style="width:${c.holdPct}%;background:var(--px-amber)"></i><i style="width:${c.sellPct}%;background:var(--px-red)"></i></div>
@@ -18848,6 +18890,12 @@ function _renderQualAnalysis(a, el){
           <div class="px-ptr-pt cur"  style="left:${t.posCur}%"><div class="pl">Hoy</div><div class="dot"></div><div class="pv">$${t.cur.toFixed(0)}</div></div>
           <div class="px-ptr-pt avg"  style="left:${t.posAvg}%"><div class="pl">Promedio</div><div class="dot"></div><div class="pv">$${t.avg.toFixed(0)}</div></div>
           <div class="px-ptr-pt high" style="left:${t.posHigh}%"><div class="pl">Máximo</div><div class="dot"></div><div class="pv">$${t.high.toFixed(0)}</div></div>
+        </div>
+        <div class="px-ptr-grid">
+          <div class="g low"><span>Mínimo</span><b>$${t.low.toFixed(2)}</b></div>
+          <div class="g cur"><span>Hoy</span><b>$${t.cur.toFixed(2)}</b></div>
+          <div class="g avg"><span>Promedio</span><b>$${t.avg.toFixed(2)}</b></div>
+          <div class="g high"><span>Máximo</span><b>$${t.high.toFixed(2)}</b></div>
         </div>
         <div class="px-hint">El objetivo promedio implica ${t.avgPct>=0?'+':''}${t.avgPct.toFixed(0)}% frente al precio de hoy.</div></div>`;
     }
@@ -18863,18 +18911,23 @@ function _renderQualAnalysis(a, el){
   }
 
   // 12) PRÓXIMOS catalizadores (fecha + evento + impacto).
-  if (a.catalysts && a.catalysts.length){
-    h += `<div class="px-card"><h2 class="px-sec-title">Próximos catalizadores</h2>
+  {
+    const cts = (a.catalysts && a.catalysts.length) ? a.catalysts : null;
+    h += `<div class="px-card">${stitle('Próximos catalizadores')}
       <p class="px-intro">Fechas y temas que pueden mover el precio: cuándo conviene prestar atención.</p>
-      <div style="margin-top:12px">${a.catalysts.map(c=>`<div class="px-cat"><div class="cd">${esc(c.date)}</div><div class="cc"><b>${esc(c.title)}</b>${c.desc?`<span>${esc(c.desc)}</span>`:''}</div><span class="cimp ${c.impact}">${c.impact==='hi'?'Alto':c.impact==='md'?'Medio':'Bajo'}</span></div>`).join('')}</div></div>`;
+      ${cts ? `<div style="margin-top:12px">${cts.map(c=>`<div class="px-cat"><div class="cd">${esc(c.date)}</div><div class="cc"><b>${esc(c.title)}</b>${c.desc?`<span>${esc(c.desc)}</span>`:''}</div><span class="cimp ${c.impact}">${c.impact==='hi'?'Alto':c.impact==='md'?'Medio':'Bajo'}</span></div>`).join('')}</div>`
+          : `<div style="margin-top:14px">${empty('Todavía no hay fecha confirmada del próximo reporte ni otros eventos publicados para esta empresa.')}</div>`}</div>`;
   }
 
   // 13) QUIÉN es dueño / actividad de directivos (insiders) — datos reales SEC F4.
   //     (El % institucional/insiders/short NO se expone por el proveedor → dona omitida.)
-  if (a.insiders && !a.insiders.empty){
+  if (!(a.insiders && !a.insiders.empty)){
+    h += `<div class="px-card">${stitle('Actividad de directivos (insiders)')}
+      <div>${empty('La SEC no registra operaciones de directivos (Formulario 4) para esta empresa en los últimos 12 meses.')}</div></div>`;
+  } else {
     const ins = a.insiders;
     const toneCls = ins.tone==='pos'?'green':ins.tone==='neg'?'red':'amber';
-    h += `<div class="px-card"><h2 class="px-sec-title">Actividad de directivos (insiders)</h2>
+    h += `<div class="px-card">${stitle('Actividad de directivos (insiders)')}
       <span class="px-pill ${toneCls}">${esc(ins.label)}</span>
       <div style="font-size:13px;color:var(--px-ink-soft);line-height:1.6;margin:2px 0 4px">Últimos 12 meses en mercado abierto: <b style="color:var(--px-green-text)">compras ${money(ins.buyVal)}</b> · <b style="color:var(--px-red)">ventas ${money(ins.sellVal)}</b>${ins.discCount?` · ${ins.discCount} ${ins.discCount===1?'operación':'operaciones'}`:''}.</div>`;
     if (ins.ops && ins.ops.length){
@@ -18902,8 +18955,20 @@ function _renderQualAnalysis(a, el){
         // Deriva competidores del mismo nicho (sin depender de campos cacheados en 'a').
         const _pt = (typeof _derivePeers==='function') ? _derivePeers(a.ticker, {sector:a.sector||'',industry:a.industry||''}) : [];
         if (_pt.length) _fillPeers(a.ticker, a.selfMetrics, _pt);
-        else _ph.innerHTML = '';   // sin comparables → sin tabla solitaria
+        else _ph.innerHTML = _pvxPeersEmptyCard(a.ticker);   // sin comparables → tarjeta con aviso
       }
+    }
+  } catch(e){}
+  // La tarjeta oscura de rating de arriba debe decir lo MISMO que la nota del análisis: si no,
+  // el usuario ve dos "/10" distintos en la misma pantalla. Se sincroniza número + etiqueta.
+  try {
+    const _n = (a.scores && typeof a.scores.nota === 'number') ? a.scores.nota : null;
+    if (_n != null){
+      const _g = document.getElementById('r-rating-general');
+      if (_g){ _g.textContent = _n.toFixed(1); _g.style.color = _n>=8?'var(--green)':_n>=6?'var(--yellow)':_n>=4?'var(--text2)':'var(--red)'; }
+      const _r = document.getElementById('r-rec-label');
+      if (_r){ _r.textContent = _n>=8.5?'STRONG BUY':_n>=7?'BUY':_n>=5.5?'HOLD':_n>=4?'REDUCE':'SELL';
+               _r.style.color = _n>=7?'#34d399':_n>=5.5?'#facc15':'#f87171'; }
     }
   } catch(e){}
   // Las proyecciones ahora viven dentro del análisis → ocultamos la tarjeta antigua duplicada.
@@ -19345,9 +19410,9 @@ function _summarizeInsiders(raw){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v2';   // v2: purga análisis viejos SIN las tarjetas "Crecimiento reciente"/"Competidores" → se re-ensamblan con las secciones nuevas
+const _QUAL_LS  = 'portiv_qual_analysis_v3';   // v3: purga análisis viejos SIN `scores` (calificación 1-10 por apartado) → se re-ensamblan con la nota nueva
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
-try { localStorage.removeItem('portiv_qual_analysis_v1'); } catch(e){}   // borra físicamente el caché viejo de TODAS las empresas
+try { localStorage.removeItem('portiv_qual_analysis_v1'); localStorage.removeItem('portiv_qual_analysis_v2'); } catch(e){}   // borra físicamente los cachés viejos de TODAS las empresas
 function _qualLoad(){ try { return JSON.parse(localStorage.getItem(_QUAL_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _qualGet(tk, eKey){
   const c = _qualLoad()[(tk||'').toUpperCase()];
