@@ -3259,7 +3259,10 @@ window._ensureChartJs = (function(){
   }
 
   /* ── Rebalanceo: tabla → tarjetas apiladas (profesional, cabe sin scroll) ── */
-  .rbl-table, .rbl-table tbody, .rbl-table tr, .rbl-table td { display: block !important; width: 100% !important; }
+  /* box-sizing: sin él, `width:100%` en la fila mide 100% del ancho de la tabla y encima
+     le suma los 14px de padding de cada lado → la nota se salía ~28px por la derecha y las
+     últimas letras de cada línea quedaban cortadas contra el borde de la tarjeta. */
+  .rbl-table, .rbl-table tbody, .rbl-table tr, .rbl-table td { display: block !important; width: 100% !important; box-sizing: border-box !important; }
   .rbl-table thead { display: none !important; }
   .rbl-table tr { padding: 12px 14px !important; border-bottom: 1px solid var(--border) !important; }
   .rbl-table td { padding: 3px 0 !important; border: none !important; white-space: normal !important; }
@@ -3270,9 +3273,11 @@ window._ensureChartJs = (function(){
   .rbl-action { margin-top: 4px !important; }
   .rbl-rebal { font-size: 13px !important; }
   .rbl-note { max-width: 100% !important; margin-top: 4px !important; font-size: 12.5px !important; }
-  /* Resumen corto (1ª oración) en móvil, no el análisis largo */
-  .rbl-note-full { display: none !important; }
-  .rbl-note-short { display: inline !important; }
+  /* El análisis COMPLETO también en móvil. Antes se recortaba a la 1ª oración, y con el
+     motor nuevo esa oración es solo la mitad "tu cartera": el usuario se quedaba sin ver
+     cómo va el negocio, que es justo la otra mitad de la explicación. Son 3 líneas. */
+  .rbl-note-full { display: inline !important; }
+  .rbl-note-short { display: none !important; }
 
   /* ── Earnings Per Share: 2 tarjetas por fila, más chicas ── */
   .eps-grid { grid-template-columns: minmax(0,1fr) minmax(0,1fr) !important; gap: 8px !important; }
@@ -4147,7 +4152,7 @@ window._pvAwaitIAP = function(totalMs){
     .rbl-action .material-symbols-outlined { font-size:16px; }
     .rbl-rebal { font-size:13px; color:var(--text2); white-space:nowrap; }
     .rbl-rebal strong { color:var(--st-primary); font-weight:700; }
-    .rbl-note { font-size:12.5px; line-height:1.5; color:var(--text2); max-width:340px; white-space:normal; }
+    .rbl-note { font-size:12.5px; line-height:1.55; color:var(--text2); max-width:460px; white-space:normal; }
     .rbl-note-short { display:none; }
     .rbl-foot { display:flex; justify-content:flex-end; margin-top:18px; }
     .rbl-export { display:inline-flex; align-items:center; gap:8px; background:var(--st-primary); color:#fff; border:none; border-radius:10px; padding:12px 20px; font-family:'Manrope',sans-serif; font-size:14px; font-weight:700; cursor:pointer; box-shadow:0 2px 8px rgba(4,22,44,.18); transition:background .15s; }
@@ -4692,11 +4697,15 @@ window._pvAwaitIAP = function(totalMs){
   .set-legal-item:last-child { border-bottom:0; }
   .set-legal-item:hover { background:rgba(11,28,48,.04); }
   .set-legal-item:active { background:rgba(11,28,48,.07); }
-  .set-legal-item > .material-symbols-outlined { font-size:21px; color:var(--text3); flex:0 0 auto; }
   .set-legal-item .sl-txt { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1 1 auto; }
   .set-legal-item .sl-txt b { font-size:14px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
   .set-legal-item .sl-txt i { font-style:normal; font-size:12px; font-weight:500; color:var(--text3); line-height:1.45; overflow-wrap:anywhere; }
-  .set-legal-item .sl-arrow { font-size:20px; color:var(--text3); flex:0 0 auto; margin-left:auto; }
+  /* Flecha dibujada con CSS, no con la fuente de iconos: material-symbols.woff2 va
+     SUBSETEADA a los glifos que ya usaba la app, así que un icono nuevo (chevron_right,
+     gavel…) no existe en el archivo y el navegador pintaba el nombre del ligature como
+     texto gigante. Un borde rotado no depende de ninguna fuente. */
+  .set-legal-item .sl-arrow { flex:0 0 auto; margin-left:auto; width:8px; height:8px; border-right:2px solid var(--text3);
+    border-bottom:2px solid var(--text3); transform:rotate(-45deg); opacity:.75; }
   .set-legal-foot { margin-top:14px; font-size:11.5px; line-height:1.6; color:var(--text3); font-family:'Manrope',sans-serif; }
   @media(max-width:480px){
     .set-legal-item { gap:11px; padding:12px 13px; }
@@ -5278,10 +5287,9 @@ window._pvAwaitIAP = function(totalMs){
   body.dark-theme #tab-settings .set-legal-item { border-bottom-color: rgba(138,150,163,0.16); color: #e8edf7; }
   body.dark-theme #tab-settings .set-legal-item:hover { background: rgba(255,255,255,0.05); }
   body.dark-theme #tab-settings .set-legal-item:active { background: rgba(255,255,255,0.08); }
-  body.dark-theme #tab-settings .set-legal-item > .material-symbols-outlined,
-  body.dark-theme #tab-settings .set-legal-item .sl-arrow,
   body.dark-theme #tab-settings .set-legal-item .sl-txt i,
   body.dark-theme #tab-settings .set-legal-foot { color: #8a96a3; }
+  body.dark-theme #tab-settings .set-legal-item .sl-arrow { border-color: #8a96a3; }
 
   body.dark-theme #tab-settings .prof-avatar {
     background: linear-gradient(135deg, #10b981 0%, #0ea5a4 100%) !important;
@@ -5705,29 +5713,24 @@ window._pvAwaitIAP = function(totalMs){
 
     <div class="set-legal-list">
       <button class="set-legal-item" onclick="_acctLegal('terminos.html')">
-        <span class="material-symbols-outlined">gavel</span>
         <span class="sl-txt"><b>Términos de Servicio (EULA)</b><i>Las condiciones del contrato de licencia de uso.</i></span>
-        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+        <span class="sl-arrow" aria-hidden="true"></span>
       </button>
       <button class="set-legal-item" onclick="_acctLegal('privacidad.html')">
-        <span class="material-symbols-outlined">shield_lock</span>
         <span class="sl-txt"><b>Política de Privacidad</b><i>Qué datos recogemos, para qué y cómo se guardan.</i></span>
-        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+        <span class="sl-arrow" aria-hidden="true"></span>
       </button>
       <button class="set-legal-item" onclick="_acctLegal('reembolsos.html')">
-        <span class="material-symbols-outlined">receipt_long</span>
         <span class="sl-txt"><b>Política de Reembolsos</b><i>Cancelaciones y devoluciones de la suscripción.</i></span>
-        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+        <span class="sl-arrow" aria-hidden="true"></span>
       </button>
       <button class="set-legal-item" onclick="_acctHelp()">
-        <span class="material-symbols-outlined">help_center</span>
         <span class="sl-txt"><b>Soporte y contacto</b><i>Ayuda, preguntas frecuentes y cómo escribirnos.</i></span>
-        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+        <span class="sl-arrow" aria-hidden="true"></span>
       </button>
       <button class="set-legal-item" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
-        <span class="material-symbols-outlined">sell</span>
         <span class="sl-txt"><b>Planes y precios</b><i>Qué incluye Portiv Pro.</i></span>
-        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+        <span class="sl-arrow" aria-hidden="true"></span>
       </button>
     </div>
 
@@ -8425,17 +8428,21 @@ function _buildRebalPlan(m){
       m = (T && typeof _portfolioMetrics === 'function') ? _portfolioMetrics(T) : null;
     }
     const items = (m && m.items) ? m.items : [];
-    const aiCache = (typeof _rebalAILoad === 'function') ? _rebalAILoad() : {};
+    // El motor determinista es la fuente por defecto: siempre da un objetivo y un motivo.
+    // REBAL_NOTES (nota curada a mano) sigue mandando si algún día se vuelve a llenar.
+    const T2 = (typeof calcTotals === 'function') ? calcTotals() : null;
+    let eng = {};
+    try { eng = _pvxRebalEngine(m, T2) || {}; } catch(e){ eng = {}; }
     const rows = items.map(i => {
+      const tk = (i.ticker||'').toUpperCase();
       const noteEntry = (typeof REBAL_NOTES !== 'undefined') ? REBAL_NOTES[i.ticker] : null;
-      const aiEntry   = !noteEntry ? (aiCache[i.ticker] || null) : null;
-      const sugPct = noteEntry?.sug != null ? noteEntry.sug
-                   : aiEntry?.sug  != null  ? aiEntry.sug
-                   : null;
-      const sug = sugPct != null ? sugPct / 100 : i.weight;   // null → mantener peso actual
+      const e = eng[tk] || null;
+      const sug = noteEntry?.sug != null ? noteEntry.sug / 100
+                : (e && typeof e.sug === 'number') ? e.sug
+                : i.weight;                                  // sin base → mantener peso actual
       const delta = sug - i.weight;
-      const action = Math.abs(delta) < 0.004 ? 'MANTENER' : (delta > 0 ? 'AUMENTAR' : 'REDUCIR');
-      return { ticker: i.ticker, cur: i.weight, sug, action };
+      const action = Math.abs(delta) < 0.005 ? 'MANTENER' : (delta > 0 ? 'AUMENTAR' : 'REDUCIR');
+      return { ticker: i.ticker, cur: i.weight, sug, action, why: (e && e.why) || null };
     });
     const pctS = v => (v*100).toFixed(1) + '%';
     const text = rows.length
@@ -8627,22 +8634,20 @@ function renderDeepPortfolioAnalysis(T) {
 
   // ── 2) RECOMENDACIONES DE REBALANCEO ──────────────────────────────────────
   // Lógica: comparar peso actual vs sugerido (de REBAL_NOTES si existe, si no usar rating-based)
-  const _rebalAICache = (typeof _rebalAILoad === 'function') ? _rebalAILoad() : {};
-  // Acción/peso objetivo salen del PLAN ÚNICO (_buildRebalPlan) → idénticos a los que ven
-  // Portiv Intelligence y el chatbot. La tabla solo añade el estilo visual y la nota.
+  // Acción, peso objetivo Y motivo salen del PLAN ÚNICO (_buildRebalPlan → _pvxRebalEngine)
+  // → idénticos a los que ven Portiv Intelligence y el chatbot. La tabla solo añade estilo.
+  // Ya no se pide nota a la IA: el motor determinista siempre responde y su explicación
+  // corresponde exactamente al número de la fila (la nota de IA podía decir otra cosa).
   const _plan = _buildRebalPlan(m);
   const _planByTk = {}; _plan.rows.forEach(r => { _planByTk[r.ticker] = r; });
   const _actionStyle = { MANTENER:{cls:'gray',icon:'remove'}, AUMENTAR:{cls:'green',icon:'arrow_upward'}, REDUCIR:{cls:'red',icon:'arrow_downward'} };
   const recRows = m.items.map(i => {
     const noteEntry = (typeof REBAL_NOTES !== 'undefined') ? REBAL_NOTES[i.ticker] : null;
-    const aiEntry   = !noteEntry ? (_rebalAICache[i.ticker] || null) : null;
-    // Para tickers sin nota hardcodeada, lanzar generación IA (async, no bloquea render)
-    if (!noteEntry && !aiEntry && typeof _genRebalNote === 'function') _genRebalNote(i);
     const pr = _planByTk[i.ticker] || { cur:i.weight, sug:i.weight, action:'MANTENER' };
     const sug = pr.sug;
     const st  = _actionStyle[pr.action] || _actionStyle.MANTENER;
     const action = { label: pr.action, cls: st.cls, icon: st.icon };
-    const note = noteEntry?.note || aiEntry?.note || _genericRebalReason(i);
+    const note = noteEntry?.note || pr.why || _genericRebalReason(i);
     // Delta accionable en dinero y en acciones (los pesos son sobre el valor de mercado T.mkt).
     const _deltaUSD = (sug - i.weight) * (T.mkt || 0);
     const _px = i.price || 0;
@@ -8661,7 +8666,7 @@ function renderDeepPortfolioAnalysis(T) {
           <span class="rbl-action ${action.cls}"><span class="material-symbols-outlined">${action.icon}</span>${action.label}</span>
         </td>
         <td><span class="rbl-rebal">${pct(i.weight)} → <strong>${pct(sug)}</strong></span>${_deltaTxt}</td>
-        <td><div class="rbl-note"><span class="rbl-note-full">${note}</span><span class="rbl-note-short">${(function(t){ var m=String(t).match(/^[\s\S]*?[.!?](?=\s|$)/); return (m?m[0]:String(t)).trim(); })(note)}</span></div></td>
+        <td><div class="rbl-note"><span class="rbl-note-full">${note}</span></div></td>
       </tr>`;
   }).join('');
 
@@ -8669,8 +8674,12 @@ function renderDeepPortfolioAnalysis(T) {
   const _perfilTxt = _pp ? `tu perfil <strong>${_pp.label}</strong> (${_pp.horizonLabel.toLowerCase()}, riesgo ${_pp.riskLabel.toLowerCase()})` : 'tu perfil de inversionista';
   document.getElementById('port-rebal-recs').innerHTML = `
     <div class="rbl-sub">
-      Las sugerencias combinan: rating fundamental del ticker (P/E, ROE, crecimiento), beta del portafolio,
-      concentración actual, y ${_perfilTxt}. Vender posiciones ganadoras puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
+      El peso objetivo reparte tu cartera según la <strong>calificación 1-10</strong> de cada empresa —la misma
+      que ves en Análisis, calculada con sus números publicados— y luego aplica los límites de
+      ${_perfilTxt}: techo por posición, techo por sector y un mínimo por debajo del cual una posición no
+      aporta. La columna de la derecha dice las dos cosas: qué hace ese nombre <strong>dentro de tu cartera</strong>
+      y cómo va <strong>el negocio</strong>. Vender posiciones ganadoras puede generar impuestos sobre las
+      ganancias — tenlo en cuenta antes de recortar.
     </div>
     <div class="rbl-card">
       <table class="rbl-table">
@@ -8679,8 +8688,9 @@ function renderDeepPortfolioAnalysis(T) {
       </table>
     </div>
     <div class="rbl-sub" style="margin-top:12px">
-      Sugerencias generadas por IA con fines educativos. No son asesoría financiera ni una
-      recomendación de compra o venta; decide siempre por tu cuenta o con un asesor autorizado.
+      Sugerencias calculadas con fines educativos a partir de los datos publicados por cada empresa.
+      No son asesoría financiera ni una recomendación de compra o venta; decide siempre por tu cuenta
+      o con un asesor autorizado.
     </div>
     <div class="rbl-foot">
       <button class="rbl-export" onclick="(typeof exportPortfolioReport==='function')?exportPortfolioReport():window.print()">
@@ -8909,6 +8919,169 @@ function renderAssetDetailTable(T) {
       </thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════
+//  MOTOR DE REBALANCEO (determinista)
+// ══════════════════════════════════════════════════════════════════════════════════
+// Antes el peso objetivo salía SOLO de REBAL_NOTES (hoy vacío) o de una nota generada por
+// IA y cacheada por ticker. Si la IA no había respondido —o fallaba— cada fila caía a
+// "sug = peso actual": la tabla entera decía MANTENER y repetía la misma frase genérica.
+// Aquí el objetivo se calcula con los números que la app YA tiene, y la explicación se
+// arma en dos mitades, que es lo que pide leer el usuario:
+//   · TU CARTERA  → peso, puesto, techo del perfil, concentración por sector, beta.
+//   · EL NEGOCIO  → valoración, crecimiento, márgenes, retorno sobre capital, deuda.
+// La calidad de cada empresa es la MISMA nota 1-10 del análisis (rúbricas), así que la
+// tabla no puede contradecir lo que dice la pestaña Análisis.
+// Honestidad: si no se puede calificar al menos la mitad de la cartera, no se mueve ningún
+// peso y se dice por qué. Un ticker sin fundamentales publicados nunca se recorta "por las
+// dudas": se deja en MANTENER con el motivo escrito.
+function _pvxRebalEngine(m, T){
+  const items = (m && m.items) ? m.items.filter(i => i && i.weight > 0) : [];
+  const out = {};
+  if (!items.length) return out;
+
+  const prof  = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
+  const riskS = String((prof && prof.riskLabel) || '').toLowerCase();
+  const risk  = /agres|alto/.test(riskS) ? 'alto' : /conserv|baj/.test(riskS) ? 'bajo' : 'medio';
+  const MAXW    = risk === 'alto' ? 0.12 : risk === 'bajo' ? 0.07 : 0.09;   // techo por posición
+  const MINW    = 0.025;                                                    // por debajo, la posición no mueve la aguja
+  const SECTMAX = risk === 'alto' ? 0.55 : risk === 'bajo' ? 0.35 : 0.45;   // techo por sector
+  const perfTxt = risk === 'alto' ? 'agresivo' : risk === 'bajo' ? 'conservador' : 'moderado';
+
+  const infoOf = tk => (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[tk]) ? _INFO_CACHE[tk] : null;
+  // Nota 1-10: primero la del análisis ya calculado (la que el usuario vio), si no, las
+  // mismas rúbricas al vuelo con los fundamentales cacheados. Sin datos → null.
+  const qualityOf = tk => {
+    try {
+      if (typeof _qualGet === 'function' && typeof _analysisEarningsKey === 'function'){
+        const a = _qualGet(tk, _analysisEarningsKey(tk));
+        if (a && a.scores && typeof a.scores.nota === 'number') return a.scores.nota;
+      }
+    } catch(e){}
+    try {
+      const s = _pvxRubricScores(infoOf(tk), {});
+      if (s && typeof s.nota === 'number' && isFinite(s.nota)) return s.nota;
+    } catch(e){}
+    return null;
+  };
+
+  const totW  = items.reduce((s,i)=>s+i.weight, 0);
+  const bySec = {}; items.forEach(i => { bySec[i.sector] = (bySec[i.sector]||0) + i.weight; });
+  const ranked = items.slice().sort((a,b)=>b.weight-a.weight);
+  const rankOf = tk => ranked.findIndex(x => x.ticker === tk) + 1;
+  const top3W  = ranked.slice(0,3).reduce((s,i)=>s+i.weight, 0);
+
+  const rows = items.map(i => {
+    const tk = (i.ticker||'').toUpperCase();
+    return { it:i, tk, q: qualityOf(tk), inf: infoOf(tk) };
+  });
+  const known = rows.filter(r => r.q != null);
+  const enough = known.length >= Math.max(2, Math.ceil(rows.length * 0.5));
+  const pctS = v => (v*100).toFixed(1) + '%';
+
+  // ── Mitad "negocio": SOLO métricas publicadas. Sin datos → se dice, no se rellena. ──
+  const bizTxt = r => {
+    const f = r.inf || {}, b = [];
+    const n = k => (typeof f[k] === 'number' && isFinite(f[k])) ? f[k] : null;
+    const pe = n('trailingPE'), revG = n('revenueGrowth'), pm = n('profitMargins'),
+          roe = n('returnOnEquity'), de = n('debtToEquity'), gm = n('grossMargins'),
+          fcf = n('freeCashflow');
+    if (pe   != null && pe > 0) b.push(`P/E ${pe.toFixed(0)}x`);
+    if (revG != null)           b.push(`ventas ${revG>=0?'+':''}${(revG*100).toFixed(0)}%`);
+    if (pm   != null)           b.push(`margen neto ${(pm*100).toFixed(0)}%`);
+    if (roe  != null)           b.push(`ROE ${(roe*100).toFixed(0)}%`);
+    if (gm   != null && b.length < 3) b.push(`margen bruto ${(gm*100).toFixed(0)}%`);
+    if (de   != null && b.length < 3) b.push(`deuda/capital ${de > 5 ? (de/100).toFixed(1) : de.toFixed(1)}`);
+    if (fcf  != null && b.length < 3) b.push(`flujo libre ${fcf>0?'positivo':'negativo'}`);
+    if (!b.length) return 'El negocio no publica los fundamentales que usa la calificación, así que no se le pone nota ni se toca su peso por calidad.';
+    const head = r.q != null ? `Negocio ${r.q.toFixed(1)}/10` : 'Negocio';
+    return `${head}: ${b.slice(0,3).join(' · ')}.`;
+  };
+
+  // ── Sin base para calificar: todo se queda quieto y se explica. ──
+  if (!enough){
+    rows.forEach(r => {
+      out[r.tk] = { sug: r.it.weight, action: 'MANTENER',
+        why: `Solo ${known.length} de ${rows.length} posiciones tienen fundamentales suficientes para calificarse, así que no hay base para mover pesos todavía. ${bizTxt(r)}` };
+    });
+    return out;
+  }
+
+  // ── Peso objetivo: reparto por calidad (la nota pesa de forma progresiva: un 9 recibe
+  //    ~2× lo de un 5), después techo por posición, suelo de relevancia y techo por sector. ──
+  const qAvg = known.reduce((s,r)=>s+r.q, 0) / known.length;
+  rows.forEach(r => { const q = r.q != null ? r.q : qAvg; r.qEff = q; r.raw = Math.pow(Math.max(1,q), 2.2); });
+  let rawSum = rows.reduce((s,r)=>s+r.raw, 0);
+  rows.forEach(r => { r.tgt = totW * r.raw / rawSum; });
+
+  // Colas: una posición minúscula o se hace relevante o se cierra; no se queda de adorno.
+  rows.forEach(r => {
+    if (r.it.weight < MINW && r.q != null && r.q < 5.5) { r.tgt = 0; r.closed = true; }
+  });
+  // Techo por posición y por sector, con 2 pasadas para repartir lo que sobra.
+  for (let pass = 0; pass < 2; pass++){
+    let freed = 0;
+    rows.forEach(r => { if (r.tgt > MAXW){ freed += r.tgt - MAXW; r.tgt = MAXW; r.capped = true; } });
+    const secT = {}; rows.forEach(r => { secT[r.it.sector] = (secT[r.it.sector]||0) + r.tgt; });
+    Object.keys(secT).forEach(s => {
+      if (secT[s] > SECTMAX){
+        const k = SECTMAX / secT[s];
+        rows.forEach(r => { if (r.it.sector === s){ freed += r.tgt * (1-k); r.tgt *= k; r.secCapped = true; } });
+      }
+    });
+    if (freed <= 0.0001) break;
+    const room = rows.filter(r => !r.closed && r.tgt < MAXW && !r.secCapped);
+    const roomSum = room.reduce((s,r)=>s+r.raw, 0);
+    if (!roomSum) break;
+    room.forEach(r => { r.tgt = Math.min(MAXW, r.tgt + freed * r.raw / roomSum); });
+  }
+  // Redondeo a 0.1 pp; la diferencia de redondeo se absorbe en la posición más grande.
+  rows.forEach(r => { r.tgt = Math.max(0, Math.round(r.tgt * 1000) / 1000); });
+  const drift = totW - rows.reduce((s,r)=>s+r.tgt, 0);
+  if (Math.abs(drift) > 0.0005){
+    const big = rows.slice().sort((a,b)=>b.tgt-a.tgt)[0];
+    if (big) big.tgt = Math.max(0, Math.round((big.tgt + drift) * 1000) / 1000);
+  }
+
+  rows.forEach(r => {
+    const cur = r.it.weight, sug = r.tgt, d = sug - cur;
+    const action = Math.abs(d) < 0.005 ? 'MANTENER' : (d > 0 ? 'AUMENTAR' : 'REDUCIR');
+    const dpp = Math.abs(d*100).toFixed(1);
+    const rank = rankOf(r.it.ticker), n = rows.length;
+    const secW = bySec[r.it.sector] || 0;
+
+    // ── Mitad "tu cartera": qué hace ESTA posición dentro de ESTE portafolio ──
+    let port;
+    if (r.closed)
+      port = `Con ${pctS(cur)} no mueve la aguja: aunque duplique, cambia menos de ${pctS(cur)} el resultado de la cartera, y su nota no justifica ponerle más dinero.`;
+    else if (r.capped && cur >= MAXW)
+      port = `Es tu posición nº${rank} de ${n} con ${pctS(cur)}, por encima del techo de ${pctS(MAXW)} por nombre que corresponde a un perfil ${perfTxt}; tu top-3 ya concentra ${pctS(top3W)}.`;
+    else if (r.secCapped)
+      port = `${r.it.sector} ya pesa ${pctS(secW)} de tu cartera; el recorte sale de ahí y no de nombres que te dan diversificación.`;
+    else if (cur < MINW)
+      port = `Con ${pctS(cur)} es de las posiciones más chicas (nº${rank} de ${n}): o sube a un peso que se note, o no aporta.`;
+    else
+      port = `Pesa ${pctS(cur)} y es la nº${rank} de ${n}; por calidad le corresponde ${pctS(sug)} de tu cartera.`;
+    if ((r.it.beta || 0) >= 1.4 && (m.portBeta || 0) >= 1.3 && action === 'REDUCIR')
+      port += ` Además es de las más volátiles (beta ${(r.it.beta).toFixed(2)}) en una cartera que ya va con beta ${(m.portBeta).toFixed(2)}.`;
+
+    // ── Qué hacer y qué se gana con hacerlo ──
+    const usd = Math.abs(d) * (T && T.mkt ? T.mkt : 0);
+    const money = usd >= 1 ? ` (~$${Math.round(usd).toLocaleString('en-US')})` : '';
+    let move;
+    if (action === 'REDUCIR')
+      move = r.closed
+        ? `Cerrarla${money} y llevar ese dinero a las posiciones con mejor nota.`
+        : `Recortar ${dpp} pp${money} y mover ese dinero a los nombres con mejor nota.`;
+    else if (action === 'AUMENTAR')
+      move = `Subir ${dpp} pp${money} la acerca al peso que su calificación justifica.`;
+    else
+      move = `El peso ya coincide con lo que su calificación justifica (diferencia menor a 0.5 pp): no hay nada que hacer.`;
+
+    out[r.tk] = { sug, action, why: `${port} ${bizTxt(r)} ${move}` };
+  });
+  return out;
 }
 
 // Razón genérica de rebalanceo si no hay nota custom
