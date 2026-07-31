@@ -9019,9 +9019,33 @@ function _pvxRebalEngine(m, T){
   const perfTxt = risk === 'alto' ? 'agresivo' : risk === 'bajo' ? 'conservador' : 'moderado';
 
   const infoOf = tk => (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[tk]) ? _INFO_CACHE[tk] : null;
+
+  // ── FONDOS COTIZADOS ─────────────────────────────────────────────────────────
+  // Un ETF NO es una empresa: no tiene margen bruto, ni deuda, ni P/E propio. Pasarlo por
+  // las rúbricas de empresa daba lo que se veía en pantalla: "publica muy pocos números"
+  // seguido de un recorte de 25 pp del S&P 500 hacia dos acciones sueltas — exactamente al
+  // revés de lo que corresponde. Un índice amplio y barato se juzga por lo que SÍ tiene:
+  // cuántas empresas replica, qué comisión cobra y cuánto concentra en su top-10.
+  const etfOf    = tk => (typeof ETF_DB !== 'undefined' && ETF_DB[tk]) ? ETF_DB[tk] : null;
+  const isEtfTk  = tk => { try { return typeof _isEtfTicker === 'function' && _isEtfTicker(tk, infoOf(tk)); } catch(e){ return !!etfOf(tk); } };
+  const etfQuality = tk => {
+    const e = etfOf(tk);
+    if (!e) return null;                       // ETF sin ficha: no se inventa, no se mueve
+    let q = 5;
+    const nH = e.nHold || 0;
+    if (nH >= 400) q += 2.5; else if (nH >= 100) q += 2; else if (nH >= 30) q += 1;
+    if (typeof e.er === 'number'){
+      if (e.er <= 0.001) q += 1;               // ≤0.10% anual: costo irrelevante
+      else if (e.er <= 0.004) q += 0.5;
+      else if (e.er > 0.008) q -= 1;           // >0.80%: la comisión se come el retorno
+    }
+    if (typeof e.top10 === 'number' && e.top10 > 0.55) q -= 1;   // "diversificado" solo de nombre
+    return Math.max(1, Math.min(10, Math.round(q * 10) / 10));
+  };
   // Nota 1-10: primero la del análisis ya calculado (la que el usuario vio), si no, las
   // mismas rúbricas al vuelo con los fundamentales cacheados. Sin datos → null.
   const qualityOf = tk => {
+    if (isEtfTk(tk)) return etfQuality(tk);
     try {
       if (typeof _qualGet === 'function' && typeof _analysisEarningsKey === 'function'){
         const a = _qualGet(tk, _analysisEarningsKey(tk));
@@ -9052,7 +9076,7 @@ function _pvxRebalEngine(m, T){
 
   const rows = items.map(i => {
     const tk = (i.ticker||'').toUpperCase();
-    return { it:i, tk, q: qualityOf(tk), inf: infoOf(tk) };
+    return { it:i, tk, q: qualityOf(tk), inf: infoOf(tk), isEtf: isEtfTk(tk), etf: etfOf(tk) };
   });
   const known = rows.filter(r => r.q != null);
   const enough = known.length >= Math.max(2, Math.ceil(rows.length * 0.5));
@@ -9076,7 +9100,34 @@ function _pvxRebalEngine(m, T){
   const secTxt = s => String(s || '').split('·').pop().trim().toLowerCase();
 
   const cap1 = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
+
+  // ── Lectura de un FONDO: qué replica, qué cuesta y qué te duplica ────────────────
+  // Lo único que de verdad importa de un ETF en el contexto de ESTA cartera: cuántas
+  // empresas trae, cuánto cobra por traerlas y cuáles de ellas el usuario YA tiene sueltas
+  // (esa exposición doble es invisible mirando la tabla de posiciones y es lo que más
+  // desordena una cartera "diversificada").
+  const etfRead = r => {
+    const e = r.etf;
+    if (!e) return 'Es un fondo cotizado, pero no tengo su ficha —qué índice replica, cuántas posiciones trae, qué comisión cobra—, así que no lo comparo con tus acciones ni le muevo el peso.';
+    let s = e.nHold
+      ? `No es una empresa: es un fondo que te da ${e.nHold} empresas en un solo ticker`
+      : `No es una empresa: es un fondo que replica un índice completo`;
+    if (e.cat) s += ` (${e.cat.toLowerCase()})`;
+    if (typeof e.er === 'number')
+      s += `, cobrando ${(e.er*100).toFixed(2)}% al año` + (e.er <= 0.001 ? ', que a efectos prácticos es gratis' : '');
+    s += '.';
+    const dup = (e.holdings || []).filter(h => rows.some(x => x.tk === String(h.t || '').toUpperCase()));
+    if (dup.length){
+      const top = dup.slice(0,3).map(h => h.t);
+      const w = dup.reduce((a,h) => a + (h.w || 0), 0);
+      s += ` Ojo: dentro ya lleva ${top.join(', ')}${dup.length > top.length ? ' y otras que tienes' : ''}` +
+           (w > 0 ? ` (${w.toFixed(0)}% del fondo)` : '') + `, así que a esos nombres estás expuesto por dos vías a la vez.`;
+    }
+    return s;
+  };
+
   const bizRead = r => {
+    if (r.isEtf) return etfRead(r);
     const f = r.inf;
     if (!f) return 'Esta empresa no publica sus números, así que no hay con qué compararla y su peso no se toca.';
     const pe = num(f,'trailingPE'), peg = num(f,'pegRatio'), revG = num(f,'revenueGrowth'),
@@ -9148,7 +9199,12 @@ function _pvxRebalEngine(m, T){
   if (rows.length === 1){
     const r0 = rows[0];
     out[r0.tk] = { sug: r0.it.weight, action: 'MANTENER',
-      why: `Es tu única posición: no hay entre qué rebalancear, porque cualquier ajuste es comprar o vender ${r0.it.ticker}, no repartir. ${bizRead(r0)} Con un solo nombre tu resultado ES el de ${r0.it.ticker}; lo que más te cambiaría el riesgo es sumar una segunda posición de otro sector.` };
+      // Un fondo indexado en solitario NO es una cartera sin diversificar: decirle a alguien
+      // 100% en el S&P 500 que "sume otro sector para bajar el riesgo" sería simplemente falso.
+      why: `Es tu única posición: no hay entre qué rebalancear, porque cualquier ajuste es comprar o vender ${r0.it.ticker}, no repartir. ${bizRead(r0)} ` +
+        (r0.isEtf && r0.etf && (r0.etf.nHold || 0) >= 50
+          ? `Aun siendo una sola línea en tu cuenta, por dentro ya estás repartido entre cientos de empresas: es una base perfectamente válida por sí sola.`
+          : `Con un solo nombre tu resultado ES el de ${r0.it.ticker}; lo que más te cambiaría el riesgo es sumar una segunda posición de otro sector.`) };
     return out;
   }
 
@@ -9169,8 +9225,46 @@ function _pvxRebalEngine(m, T){
   // ── Peso objetivo: reparto por calidad (la nota pesa de forma progresiva: un 9 recibe
   //    ~2× lo de un 5), después techo por posición, suelo de relevancia y techo por sector. ──
   const qAvg = known.reduce((s,r)=>s+r.q, 0) / known.length;
+
+  // LO QUE NO SE PUEDE EVALUAR, NO SE MUEVE. Antes una posición sin datos recibía la nota
+  // PROMEDIO y su peso se movía igual, mientras el texto prometía justo lo contrario ("no
+  // publica sus números, así que su peso no se toca") y acto seguido recomendaba recortarla.
+  // Ahora la promesa se cumple: queda clavada en su peso actual y solo se reparte el resto.
+  rows.forEach(r => { if (r.q == null){ r.fixed = true; r.tgt = r.it.weight; } });
+
+  // EL NÚCLEO INDEXADO NO SE VENDE PARA FINANCIAR APUESTAS INDIVIDUALES.
+  // Repartir por calidad trata a un fondo de 500 empresas como si fuera un nombre más, y
+  // como varias acciones sueltas puntúan parecido, el reparto terminaba diciendo "recorta el
+  // S&P 500 y compra estas dos" — que es cambiar diversificación por apuesta, justo lo
+  // contrario de lo que un núcleo indexado hace por la cartera. Ninguna nota por empresa mide
+  // esa diversificación, así que el núcleo se respeta: se queda en su peso y el rebalanceo se
+  // resuelve entre las acciones. Lo único que sí se recorta es el exceso sobre ETFMAX, donde
+  // ya no queda casi nada de cartera para el resto.
   rows.forEach(r => {
-    let q = r.q != null ? r.q : qAvg;
+    if (r.q != null && (typeof diversifiedPre === 'function' ? diversifiedPre(r) : (r.isEtf && r.etf && (r.etf.nHold||0) >= 50))){
+      r.core = true; r.fixed = true;
+      r.tgt = Math.min(r.it.weight, 0.60 * totW);
+    }
+  });
+  const scored = rows.filter(r => !r.fixed);
+  const poolW  = Math.max(0, totW - rows.filter(r => r.fixed).reduce((s,r)=>s+r.tgt, 0));
+  const capRows = scored;
+  const nOpen   = capRows.length || 1;
+  const equalW  = poolW / nOpen;
+  const MAXW_E  = Math.max(MAXW, equalW * 1.6);
+  // El techo por nombre existe para que una SOLA empresa no te hunda la cartera. Un fondo
+  // que replica 500 empresas es lo contrario de ese riesgo: aplicarle el mismo techo era el
+  // motivo de fondo por el que salía "REDUCIR el S&P 500 para comprar dos acciones sueltas".
+  // Se le deja un techo propio, mucho más alto, para que siga siendo un núcleo válido.
+  const diversified = r => r.isEtf && (r.etf ? (r.etf.nHold || 0) >= 50 : false);
+  const ETFMAX = 0.60 * totW;
+  const capFor = r => diversified(r) ? Math.max(MAXW_E, ETFMAX) : MAXW_E;
+
+  if (!scored.length || poolW <= 0){
+    rows.forEach(r => { r.tgt = r.it.weight; });
+  } else {
+  scored.forEach(r => {
+    let q = r.q;
     // TRAMPA DEL CICLO. En sectores cíclicos la nota es MÁS alta justo en el pico —ventas y
     // márgenes récord puntúan altísimo— que es exactamente el peor momento para cargar. Sin
     // esto el motor recomendaba llevar una memoria de 1.7% a 7.5% de la cartera por venir de
@@ -9184,12 +9278,13 @@ function _pvxRebalEngine(m, T){
     }
     r.qEff = q; r.raw = Math.pow(Math.max(1,q), 2.2);
   });
-  let rawSum = rows.reduce((s,r)=>s+r.raw, 0);
-  rows.forEach(r => { r.tgt = totW * r.raw / rawSum; });
+  let rawSum = scored.reduce((s,r)=>s+r.raw, 0) || 1;
+  scored.forEach(r => { r.tgt = poolW * r.raw / rawSum; });
 
   // Colas: una posición minúscula o se hace relevante o se cierra; no se queda de adorno.
-  rows.forEach(r => {
-    if (r.it.weight < MINW && r.q != null && r.q < 5.5) { r.tgt = 0; r.closed = true; }
+  // Un fondo diversificado nunca se cierra por "chico": lo que aporta es cobertura, no tamaño.
+  scored.forEach(r => {
+    if (r.it.weight < MINW && r.q < 5.5 && !r.isEtf) { r.tgt = 0; r.closed = true; }
   });
   // TECHOS FACTIBLES. Con pocas posiciones los topes del perfil son imposibles de cumplir
   // (3 nombres no pueden pesar 9% cada uno y sumar el 100% invertido). Antes eso reventaba
@@ -9197,39 +9292,38 @@ function _pvxRebalEngine(m, T){
   // posición más grande — de ahí salía un "AUMENTAR 41 pp" hacia una empresa en pérdidas en
   // una cartera de dos nombres. Los techos se relajan hasta el mínimo factible: nunca por
   // debajo de 1.6× el peso equitativo, que sigue limitando la concentración de verdad.
-  const nOpen   = rows.filter(r => !r.closed).length || rows.length;
-  const equalW  = totW / nOpen;
-  const MAXW_E  = Math.max(MAXW, equalW * 1.6);
-  const secNames = {}; rows.forEach(r => { secNames[r.it.sector] = (secNames[r.it.sector]||0) + 1; });
-  const oneSector = Object.keys(secNames).length <= 1;   // sin otro sector, el techo sectorial no tiene a dónde mover
+  const secNames = {}; scored.forEach(r => { secNames[r.it.sector] = (secNames[r.it.sector]||0) + 1; });
+  const oneSector = Object.keys(secNames).length <= 1;
 
   for (let pass = 0; pass < 2; pass++){
     let freed = 0;
-    rows.forEach(r => { if (r.tgt > MAXW_E){ freed += r.tgt - MAXW_E; r.tgt = MAXW_E; r.capped = true; } });
+    scored.forEach(r => { const c = capFor(r); if (r.tgt > c){ freed += r.tgt - c; r.tgt = c; r.capped = true; } });
     if (!oneSector){
-      const secT = {}; rows.forEach(r => { secT[r.it.sector] = (secT[r.it.sector]||0) + r.tgt; });
+      const secT = {}; scored.forEach(r => { secT[r.it.sector] = (secT[r.it.sector]||0) + r.tgt; });
       Object.keys(secT).forEach(s => {
-        if (secT[s] > SECTMAX){
+        // El sector "ETF · Índice" no es una apuesta sectorial: no se le aplica techo de sector.
+        if (secT[s] > SECTMAX && !/etf/i.test(s)){
           const k = SECTMAX / secT[s];
-          rows.forEach(r => { if (r.it.sector === s){ freed += r.tgt * (1-k); r.tgt *= k; r.secCapped = true; } });
+          scored.forEach(r => { if (r.it.sector === s){ freed += r.tgt * (1-k); r.tgt *= k; r.secCapped = true; } });
         }
       });
     }
     if (freed <= 0.0001) break;
-    const room = rows.filter(r => !r.closed && r.tgt < MAXW_E && !r.secCapped);
+    const room = scored.filter(r => !r.closed && r.tgt < capFor(r) && !r.secCapped);
     const roomSum = room.reduce((s,r)=>s+r.raw, 0);
     if (!roomSum) break;
-    room.forEach(r => { r.tgt = Math.min(MAXW_E, r.tgt + freed * r.raw / roomSum); });
+    room.forEach(r => { r.tgt = Math.min(capFor(r), r.tgt + freed * r.raw / roomSum); });
   }
 
   // El plan debe repartir EXACTAMENTE lo que hay invertido: ni inventar dinero ni dejarlo
   // sin asignar. Lo que quedó suelto (por techos que no se pudieron redistribuir o por
   // posiciones cerradas) se reparte en proporción entre las que siguen abiertas.
-  const openSum = rows.filter(r => !r.closed).reduce((s,r)=>s+r.tgt, 0);
+  const openSum = scored.filter(r => !r.closed).reduce((s,r)=>s+r.tgt, 0);
   if (openSum > 0){
-    const k = totW / openSum;
-    rows.forEach(r => { if (!r.closed) r.tgt *= k; });
+    const k = poolW / openSum;
+    scored.forEach(r => { if (!r.closed) r.tgt *= k; });
   }
+  }   // fin del reparto (había pool evaluable)
 
   // Redondeo a 0.1 pp. El residuo de REDONDEO —y solo ese, nunca un sobrante de verdad—
   // se absorbe en la posición más grande.
@@ -9282,13 +9376,15 @@ function _pvxRebalEngine(m, T){
     let port;
     if (r.closed)
       port = `Con ${pctS(cur)} (nº${rank} de ${n}), ni duplicándose cambia tu resultado.`;
-    else if (r.capped && cur >= MAXW_E && action === 'REDUCIR')
-      port = `Es tu nº${rank} con ${pctS(cur)}, sobre el techo de ${pctS(MAXW_E)} por nombre de un perfil ${perfTxt}; tu top-3 ya concentra ${pctS(top3W)}.`;
+    else if (r.capped && cur >= capFor(r) && action === 'REDUCIR')
+      port = `Es tu nº${rank} con ${pctS(cur)}, sobre el techo de ${pctS(capFor(r))} por posición de un perfil ${perfTxt}; tu top-3 ya concentra ${pctS(top3W)}.`;
     // Los flags de techo describen por qué se movió el objetivo, pero tras la normalización
     // final una fila marcada puede terminar SUBIENDO. Explicar un recorte en una fila que
     // aumenta es peor que no explicar nada, así que estas ramas exigen que la acción cuadre.
     else if (r.secCapped && action === 'REDUCIR')
       port = `${r.it.sector} ya pesa ${pctS(secW)}${peers.length ? ` entre esta y ${listTxt(peers.slice(0,3))}` : ''}: el recorte sale de donde te sobra, no de lo que te diversifica.`;
+    else if (r.core)
+      port = `Es tu núcleo indexado y tu posición nº${rank} de ${n} con ${pctS(cur)}: la parte de la cartera que no depende de acertar con ninguna empresa en particular.`;
     else if (cur < MINW)
       port = `Con ${pctS(cur)} es de tus más chicas (nº${rank} de ${n}): a ese peso, ni acertar cambia tu resultado.`;
     else
@@ -9314,10 +9410,12 @@ function _pvxRebalEngine(m, T){
       const to   = dest ? `hacia ${dest}` : 'y dejarlo en efectivo hasta tener un destino mejor';
       const cut  = `recortar ${dpp} pp${money} ${to}`;
       const ellas = dest.includes(' y ') ? 'ellas' : 'ella';
-      if (r.closed)
+      if (r.core)
+        move = `Un solo fondo por encima del 60% deja sin espacio al resto de tu cartera: ${cut}. Del resto no se recorta: el índice no se vende para financiar acciones sueltas.`;
+      else if (r.closed)
         move = `Y el negocio tampoco da para agrandarla: cerrarla${money}` +
                (dest ? ` y llevar ese dinero a ${dest}.` : ' y dejar el efectivo hasta tener un destino mejor.');
-      else if (r.capped && cur >= MAXW_E)
+      else if (r.capped && cur >= capFor(r))
         move = `El problema no es el negocio, es el tamaño: ${cut}.`;
       else if (r.cycPeak)
         move = `Estás pagando por un año que difícilmente se repita, y a este peso duele si el ciclo gira: ${cut}.`;
@@ -9325,7 +9423,7 @@ function _pvxRebalEngine(m, T){
         move = `Es de los negocios más flojos que tienes y aun así pesa como los mejores: ${cut}.`;
       else
         move = dest
-          ? `Sigue siendo buen negocio, pero pesa más de lo que sostiene frente a ${dest}: recortar ${dpp} pp${money} hacia ${ellas}.`
+          ? `Pesa más de lo que sostiene frente a ${dest}: recortar ${dpp} pp${money} hacia ${ellas}.`
           : `Pesa más de lo que su negocio sostiene frente al resto de tu cartera: ${cut}.`;
     } else if (action === 'AUMENTAR'){
       const src  = pickTxt(losers, r, false);
@@ -9340,7 +9438,9 @@ function _pvxRebalEngine(m, T){
       else
         move = `Sus números sostienen más peso del que tiene hoy: ${up}${with_}`;
     } else {
-      move = `Ni el negocio ni el tamaño piden moverla: déjala como está.`;
+      move = r.core
+        ? `Por eso el rebalanceo no la toca: vender índice para comprar acciones sueltas cambia diversificación por apuesta. Los ajustes salen del resto de tu cartera.`
+        : `Ni el negocio ni el tamaño piden moverla: déjala como está.`;
     }
 
     out[r.tk] = { sug, action, why: `${port} ${biz} ${move}` };
