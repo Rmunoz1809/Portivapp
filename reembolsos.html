@@ -116,5 +116,65 @@
   }catch(e){}
 })();
 </script>
+
+<!-- ══════════════════════════════════════════════════════════════════════════
+     SALIDA. Esta página se abre desde dentro de Portiv y antes no tenía ninguna
+     forma evidente de volver: ni botón, ni "atrás" (una pestaña recién abierta no
+     tiene historial). Se resuelve en dos capas:
+       · embed=1  → la abre el visor interno de la app, que YA pone su botón
+                    "Cerrar" arriba. Aquí no se pinta nada para no duplicarlo.
+       · sin embed → la página vive por su cuenta (navegador, Safari in-app, enlace
+                    compartido) y se pinta su propia barra "Volver a Portiv".
+     El botón prueba, en orden: cerrar la pestaña si la abrimos nosotros → volver
+     atrás si hay historial → ir al inicio. Alguna de las tres funciona siempre.
+     ══════════════════════════════════════════════════════════════════════════ -->
+<style>
+  .pv-exitbar { position: sticky; top: 0; z-index: 99999; display: flex; align-items: center; gap: 10px;
+    padding: calc(9px + env(safe-area-inset-top, 0px)) 14px 9px; background: #0A1F3D; color: #fff;
+    font: 600 15px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .pv-exitbar button { min-width: 44px; height: 44px; padding: 0 14px; border-radius: 11px;
+    border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.10); color: #fff;
+    font: 600 15px inherit; cursor: pointer; display: flex; align-items: center; gap: 7px; }
+  .pv-exitbar button:active { background: rgba(255,255,255,.20); }
+  .pv-exitbar .pv-exit-chev { font-size: 19px; line-height: 1; }
+</style>
+<script>
+(function(){
+  try{
+    var q = new URLSearchParams(location.search);
+    var isApp = q.get('app') === 'ios', isEmbed = q.get('embed') === '1';
+
+    // Los enlaces internos conservan el contexto: sin esto, tocar "Privacidad" desde
+    // Términos salía del visor (perdía embed) y volvía a mostrar la versión web (perdía app).
+    var carry = [];
+    if (isApp) carry.push('app=ios');
+    if (isEmbed) carry.push('embed=1');
+    if (carry.length){
+      var a = document.querySelectorAll('a[href$=".html"]');
+      for (var i = 0; i < a.length; i++){
+        var h = a[i].getAttribute('href') || '';
+        if (/^https?:/i.test(h) || h.indexOf('app=ios') !== -1 || h.indexOf('embed=1') !== -1) continue;
+        a[i].setAttribute('href', h + (h.indexOf('?') === -1 ? '?' : '&') + carry.join('&'));
+      }
+    }
+
+    if (isEmbed) return;   // el visor de la app ya pone su propio botón "Cerrar"
+
+    var bar = document.createElement('div');
+    bar.className = 'pv-exitbar';
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.setAttribute('aria-label', 'Volver a Portiv');
+    b.innerHTML = '<span class="pv-exit-chev">&lsaquo;</span><span>Volver a Portiv</span>';
+    b.onclick = function(){
+      try { if (window.opener && !window.opener.closed) { window.close(); return; } } catch(e){}
+      try { if (history.length > 1) { history.back(); return; } } catch(e){}
+      location.href = 'index.html' + (isApp ? '?app=ios' : '');
+    };
+    bar.appendChild(b);
+    document.body.insertBefore(bar, document.body.firstChild);
+  }catch(e){}
+})();
+</script>
 </body>
 </html>

@@ -4262,6 +4262,13 @@ window._pvAwaitIAP = function(totalMs){
     #tab-analizar .rap-score{font-size:34px;font-weight:800;line-height:1;display:flex;align-items:baseline;gap:3px;justify-content:flex-end}
     #tab-analizar .rap-score small{font-size:14px;font-weight:600;color:rgba(255,255,255,.5)}
     #tab-analizar .rap-score-cap{font-size:11px;color:rgba(255,255,255,.55);margin-top:6px;text-transform:uppercase;letter-spacing:.5px}
+    /* Estado de espera de la valoración: la nota no se escribe hasta que el análisis termina,
+       así que mientras tanto se ve claramente "cargando" y no un número que luego cambia.
+       .rap-rec baja de tamaño porque "Analizando…" es mucho más largo que "BUY". */
+    #tab-analizar .rap-pending{color:rgba(255,255,255,.42)!important;animation:rapPulse 1.25s ease-in-out infinite}
+    #tab-analizar .rap-rec.rap-pending{font-size:17px;letter-spacing:0}
+    @keyframes rapPulse{0%,100%{opacity:.45}50%{opacity:.95}}
+    @media (prefers-reduced-motion: reduce){ #tab-analizar .rap-pending{animation:none} }
     #tab-analizar .rap-pills{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:16px 0}
     #tab-analizar .rap-pill{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:10px 12px}
     #tab-analizar .rap-pill-lbl{font-size:10px;color:rgba(255,255,255,.5);text-transform:uppercase;letter-spacing:.5px}
@@ -4675,6 +4682,26 @@ window._pvAwaitIAP = function(totalMs){
   /* Profile card */
   .prof-card { background:#fff; border-radius:16px; border:1px solid var(--st-surface-highest); box-shadow:0 10px 30px -10px rgba(11,28,48,.05); padding:28px; font-family:'Manrope',sans-serif; }
   .prof-card-title { font-size:11px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--text3); margin-bottom:18px; }
+
+  /* Legal y documentos (Ajustes) — filas táctiles: 56px de alto mínimo, texto que envuelve
+     en pantallas estrechas y flecha que nunca se comprime. */
+  .set-legal-list { display:flex; flex-direction:column; border:1px solid var(--border,#e0e3ea); border-radius:12px; overflow:hidden; }
+  .set-legal-item { display:flex; align-items:center; gap:13px; width:100%; min-height:58px; padding:13px 15px; box-sizing:border-box;
+    background:transparent; border:0; border-bottom:1px solid var(--border,#e0e3ea); text-align:left; cursor:pointer;
+    font-family:'Manrope',sans-serif; color:var(--st-primary,#0F1D35); transition:background .14s ease; }
+  .set-legal-item:last-child { border-bottom:0; }
+  .set-legal-item:hover { background:rgba(11,28,48,.04); }
+  .set-legal-item:active { background:rgba(11,28,48,.07); }
+  .set-legal-item > .material-symbols-outlined { font-size:21px; color:var(--text3); flex:0 0 auto; }
+  .set-legal-item .sl-txt { display:flex; flex-direction:column; gap:2px; min-width:0; flex:1 1 auto; }
+  .set-legal-item .sl-txt b { font-size:14px; font-weight:700; line-height:1.35; overflow-wrap:anywhere; }
+  .set-legal-item .sl-txt i { font-style:normal; font-size:12px; font-weight:500; color:var(--text3); line-height:1.45; overflow-wrap:anywhere; }
+  .set-legal-item .sl-arrow { font-size:20px; color:var(--text3); flex:0 0 auto; margin-left:auto; }
+  .set-legal-foot { margin-top:14px; font-size:11.5px; line-height:1.6; color:var(--text3); font-family:'Manrope',sans-serif; }
+  @media(max-width:480px){
+    .set-legal-item { gap:11px; padding:12px 13px; }
+    .set-legal-item .sl-txt i { font-size:11.5px; }
+  }
 
   /* User identity */
   .prof-identity { display:flex; align-items:center; gap:18px; }
@@ -5247,6 +5274,15 @@ window._pvAwaitIAP = function(totalMs){
   body.dark-theme #tab-settings .prof-card > div[style*="font-size:28px"],
   body.dark-theme #tab-settings .prof-card > div[style*="font-size:15px"] { color: #e8edf7 !important; }
 
+  body.dark-theme #tab-settings .set-legal-list { border-color: rgba(138,150,163,0.20); }
+  body.dark-theme #tab-settings .set-legal-item { border-bottom-color: rgba(138,150,163,0.16); color: #e8edf7; }
+  body.dark-theme #tab-settings .set-legal-item:hover { background: rgba(255,255,255,0.05); }
+  body.dark-theme #tab-settings .set-legal-item:active { background: rgba(255,255,255,0.08); }
+  body.dark-theme #tab-settings .set-legal-item > .material-symbols-outlined,
+  body.dark-theme #tab-settings .set-legal-item .sl-arrow,
+  body.dark-theme #tab-settings .set-legal-item .sl-txt i,
+  body.dark-theme #tab-settings .set-legal-foot { color: #8a96a3; }
+
   body.dark-theme #tab-settings .prof-avatar {
     background: linear-gradient(135deg, #10b981 0%, #0ea5a4 100%) !important;
     color: #04162c !important;
@@ -5516,8 +5552,12 @@ window._pvAwaitIAP = function(totalMs){
 
   <div id="snapConnectCard" class="snap-card"></div>
 
-  <!-- ── 3. ANALIZAR IMÁGENES (OCR de screenshot del broker) — restaurado ── -->
-  <div class="prof-card" style="order:3">
+  <!-- ── 3. ANALIZAR IMÁGENES (OCR de screenshot del broker) ──
+       RETIRADO de la interfaz a pedido, junto con el Editor del Portafolio: el portafolio
+       se llena solo desde el broker (SnapTrade). El bloque se conserva OCULTO porque el
+       importador escribía en la misma tabla que hoy usa la sincronización del broker
+       (aiPortImportData → aiPortApply); borrar el DOM rompería esa ruta. -->
+  <div class="prof-card" style="order:3;display:none" aria-hidden="true">
     <div class="prof-card-title">Sincronizar desde Screenshot del Broker</div>
     <div style="font-size:15px;font-weight:700;color:var(--st-primary);font-family:'Manrope',sans-serif;margin-bottom:6px;">Importar datos desde imagen</div>
     <div style="font-size:13px;color:var(--text3);margin-bottom:16px;line-height:1.5;">Sube capturas de pantalla de tu broker. La IA extrae automáticamente posiciones, precios, costo base y cambios del día.</div>
@@ -5549,9 +5589,13 @@ window._pvAwaitIAP = function(totalMs){
     </div>
   </div>
 
-  <!-- ── 4. EDITOR DEL PORTAFOLIO (rediseñado) ── visible: el analizador de fotos lo usa
-       como paso de revisión (aiPortImportData llena la tabla → revisar → aiPortApply). -->
-  <div class="prof-card" style="order:5">
+  <!-- ── 4. EDITOR DEL PORTAFOLIO ── RETIRADO de la interfaz a pedido.
+       No se borra el markup: la sincronización con el broker (SnapTrade) escribe sus
+       posiciones en esta tabla y luego llama a aiPortApply() para volcarlas al portafolio
+       (ver el bloque de SnapTrade al final del archivo: aiPortImportData → aiPortApply).
+       Eliminar estos nodos dejaría al broker sin ruta de importación. Queda oculto y fuera
+       del árbol de accesibilidad: para el usuario el editor ya no existe. -->
+  <div class="prof-card" style="order:5;display:none" aria-hidden="true">
     <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" onclick="aiEditorToggle()">
       <div>
         <div class="prof-card-title" style="margin-bottom:2px">Editor del Portafolio</div>
@@ -5643,6 +5687,54 @@ window._pvAwaitIAP = function(totalMs){
         </button>
         <button class="pe-reset-btn" onclick="renderAIPortEditor()">↺ Reiniciar</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ── 5. LEGAL Y DOCUMENTOS ──
+       Todos los documentos de la app en un solo sitio dentro de Ajustes. Hasta ahora sólo
+       vivían en el menú del avatar (Términos/Privacidad) y en pies de página que un usuario
+       ya logueado casi nunca ve. Reembolsos y Soporte no tenían ninguna ruta desde dentro.
+       Se abren con _pvOpenExternal → en iOS salen en SFSafariViewController (el usuario no
+       sale de la app) y con ?app=ios, que oculta en esas páginas todo lo referido a la
+       compra web por Paddle (Guideline 3.1.1). "Planes y precios" sólo se muestra en web:
+       en el build nativo hablar de otro método de pago es justo lo prohibido. -->
+  <div class="prof-card" style="order:6">
+    <div class="prof-card-title">Legal y documentos</div>
+    <div style="font-size:15px;font-weight:700;color:var(--st-primary);font-family:'Manrope',sans-serif;margin-bottom:6px;">Términos, privacidad y políticas</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px;line-height:1.5;">Los documentos que rigen tu uso de Portiv. Se abren dentro de la app.</div>
+
+    <div class="set-legal-list">
+      <button class="set-legal-item" onclick="_acctLegal('terminos.html')">
+        <span class="material-symbols-outlined">gavel</span>
+        <span class="sl-txt"><b>Términos de Servicio (EULA)</b><i>Las condiciones del contrato de licencia de uso.</i></span>
+        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+      </button>
+      <button class="set-legal-item" onclick="_acctLegal('privacidad.html')">
+        <span class="material-symbols-outlined">shield_lock</span>
+        <span class="sl-txt"><b>Política de Privacidad</b><i>Qué datos recogemos, para qué y cómo se guardan.</i></span>
+        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+      </button>
+      <button class="set-legal-item" onclick="_acctLegal('reembolsos.html')">
+        <span class="material-symbols-outlined">receipt_long</span>
+        <span class="sl-txt"><b>Política de Reembolsos</b><i>Cancelaciones y devoluciones de la suscripción.</i></span>
+        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+      </button>
+      <button class="set-legal-item" onclick="_acctHelp()">
+        <span class="material-symbols-outlined">help_center</span>
+        <span class="sl-txt"><b>Soporte y contacto</b><i>Ayuda, preguntas frecuentes y cómo escribirnos.</i></span>
+        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+      </button>
+      <button class="set-legal-item" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
+        <span class="material-symbols-outlined">sell</span>
+        <span class="sl-txt"><b>Planes y precios</b><i>Qué incluye Portiv Pro.</i></span>
+        <span class="sl-arrow material-symbols-outlined">chevron_right</span>
+      </button>
+    </div>
+
+    <div class="set-legal-foot">
+      <span id="setLegalVer">Portiv</span> · Los datos de mercado son informativos y pueden retrasarse.
+      Portiv no es un asesor de inversión: nada de lo que muestra la app es una recomendación
+      personalizada de compra o venta.
     </div>
   </div>
 
@@ -6120,6 +6212,12 @@ window._seedProfileFromAuth = function(user){
   } catch(e){ return {}; }
 };
 async function renderSettings(){
+  // "Planes y precios" sólo en el build web: dentro de la app de iOS, enseñar o describir
+  // un canal de compra que no sea el IAP de Apple es exactamente lo que veta la 3.1.1.
+  try {
+    const _pr = document.getElementById('setLegalPricing');
+    if (_pr) _pr.style.display = (typeof window._pvIsNativeApp === 'function' && window._pvIsNativeApp()) ? 'none' : 'flex';
+  } catch(e){}
   const isDark = document.body.classList.contains('dark-theme');
   document.querySelectorAll('#setThemeToggle .set-theme-opt').forEach(b =>
     b.classList.toggle('sel', b.dataset.theme === (isDark ? 'dark' : 'light')));
@@ -8378,7 +8476,7 @@ function renderDeepPortfolioAnalysis(T) {
         ${card0('Exposición Tech','—')}
         ${card0('Beta ponderada','—')}
       </div>
-      ${emptyMsg('Tu portafolio está vacío. Agrega posiciones en la pestaña <b>Personalizar</b> o desde <b>Analizar</b> para construir el análisis profundo — sectores, concentración, beta y diagnóstico se calcularán con tus datos reales.')}`;
+      ${emptyMsg('Tu portafolio está vacío. Conecta tu broker desde <b>Ajustes</b> para construir el análisis profundo — sectores, concentración, beta y diagnóstico se calcularán con tus datos reales.')}`;
     document.getElementById('port-rebal-recs').innerHTML = emptyMsg('Sin posiciones que rebalancear. Las recomendaciones aparecerán cuando agregues holdings.');
     document.getElementById('port-pros-cons').innerHTML = emptyMsg('Los pros y contras se generan a partir de tus posiciones reales. Aún no hay nada que analizar.');
     document.getElementById('port-expected-return').innerHTML = `
@@ -17296,8 +17394,26 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   _rk=Math.min(10,Math.max(1,Math.round(_rk)));
   const riskLvl = _rk>=8?'Alto':_rk>=5?'Medio':'Bajo';
   const _set = (id,txt,clr) => { const e=$(id); if(e){ e.textContent=txt; if(clr) e.style.color=clr; } };
-  _set('r-rating-general', gRating);
-  _set('r-rec-label', recL, recC);
+  // ── UNA sola valoración por acción ──────────────────────────────────────────────
+  // Antes esta tarjeta pintaba de inmediato un rating provisional (_computeGeneralRating) y,
+  // al terminar el análisis, la nota del sistema de rubros lo reemplazaba: el usuario veía
+  // primero un 7.5 y después un 7.6 para la misma empresa. Ahora, cuando va a haber análisis,
+  // el número espera en estado "cargando" y se escribe UNA sola vez, ya definitivo.
+  // El rating provisional se guarda solo como red de seguridad: ETF (no hay análisis por
+  // empresa), fallo de red o empresa sin datos suficientes para calificar ningún rubro.
+  window._PVX_RATING_FALLBACK = { ticker, rating: gRating, recL, recC };
+  if (_isEtfTicker(ticker, info)) {
+    _set('r-rating-general', gRating);
+    _set('r-rec-label', recL, recC);
+  } else {
+    const _rg = $('r-rating-general');
+    if (_rg){ _rg.textContent = '—'; _rg.style.color = ''; _rg.classList.add('rap-pending'); }
+    const _rl = $('r-rec-label');
+    if (_rl){ _rl.textContent = 'Analizando…'; _rl.style.color = ''; _rl.classList.add('rap-pending'); }
+    // Si el análisis no llegara nunca (red caída), la tarjeta no se queda en "Analizando…".
+    clearTimeout(window._PVX_RATING_TO);
+    window._PVX_RATING_TO = setTimeout(() => { try { _pvxRatingFallback(ticker); } catch(e){} }, 20000);
+  }
   _set('r-risk-lvl', riskLvl);
   _set('r-biz-quality', bqLabel);
   _set('r-val-score', valLabel);
@@ -18656,6 +18772,27 @@ function _pvxRubricScores(info, a){
   return { moat:r1(moat), dims:r1(dims), datos:r1(datos), salud:r1(salud), prosRiesgos:r1(prosRiesgos), nota, n:vals.length };
 }
 
+// Red de seguridad de la tarjeta de rating: si el análisis no llega (ETF, red caída, o
+// ninguna rubro con datos), escribe el rating provisional en vez de dejar "Analizando…"
+// para siempre. No hace nada si la nota definitiva ya se pintó.
+function _pvxRatingFallback(ticker){
+  const f = window._PVX_RATING_FALLBACK;
+  if (!f) return;
+  if (ticker && f.ticker && String(ticker).toUpperCase() !== String(f.ticker).toUpperCase()) return;
+  const g = document.getElementById('r-rating-general');
+  if (g && g.classList.contains('rap-pending')){
+    g.classList.remove('rap-pending');
+    g.textContent = f.rating;
+    const n = parseFloat(f.rating);
+    g.style.color = n>=8?'var(--green)':n>=6?'var(--yellow)':n>=4?'var(--text2)':'var(--red)';
+  }
+  const r = document.getElementById('r-rec-label');
+  if (r && r.classList.contains('rap-pending')){
+    r.classList.remove('rap-pending');
+    r.textContent = f.recL; r.style.color = f.recC;
+  }
+}
+
 // Pinta el análisis determinista como tarjetas .rax-sec dentro de #r-analysis.
 function _renderQualAnalysis(a, el){
   if (!el || !a) return;
@@ -18959,16 +19096,23 @@ function _renderQualAnalysis(a, el){
       }
     }
   } catch(e){}
-  // La tarjeta oscura de rating de arriba debe decir lo MISMO que la nota del análisis: si no,
-  // el usuario ve dos "/10" distintos en la misma pantalla. Se sincroniza número + etiqueta.
+  // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
+  // número, escrito una sola vez cuando ya es definitivo (arriba quedó en "Analizando…").
   try {
     const _n = (a.scores && typeof a.scores.nota === 'number') ? a.scores.nota : null;
+    clearTimeout(window._PVX_RATING_TO);
     if (_n != null){
       const _g = document.getElementById('r-rating-general');
-      if (_g){ _g.textContent = _n.toFixed(1); _g.style.color = _n>=8?'var(--green)':_n>=6?'var(--yellow)':_n>=4?'var(--text2)':'var(--red)'; }
+      if (_g){ _g.classList.remove('rap-pending'); _g.textContent = _n.toFixed(1);
+               _g.style.color = _n>=8?'var(--green)':_n>=6?'var(--yellow)':_n>=4?'var(--text2)':'var(--red)'; }
       const _r = document.getElementById('r-rec-label');
-      if (_r){ _r.textContent = _n>=8.5?'STRONG BUY':_n>=7?'BUY':_n>=5.5?'HOLD':_n>=4?'REDUCE':'SELL';
+      if (_r){ _r.classList.remove('rap-pending');
+               _r.textContent = _n>=8.5?'STRONG BUY':_n>=7?'BUY':_n>=5.5?'HOLD':_n>=4?'REDUCE':'SELL';
                _r.style.color = _n>=7?'#34d399':_n>=5.5?'#facc15':'#f87171'; }
+    } else {
+      // Ningún rubro tenía datos suficientes → no hay nota honesta que dar. Se usa el rating
+      // de respaldo antes que dejar la tarjeta vacía para siempre.
+      _pvxRatingFallback(a.ticker);
     }
   } catch(e){}
   // Las proyecciones ahora viven dentro del análisis → ocultamos la tarjeta antigua duplicada.
@@ -19475,7 +19619,7 @@ async function _upgradeAnalysisToAI(ticker, info){
   ticker = (ticker||'').toUpperCase();
   const el = document.getElementById('r-analysis');
   if (!el) return;
-  if (_isEtfTicker(ticker, info)) { el.innerHTML = ''; el.style.display = 'none'; return; }   // ETF → sin análisis por empresa
+  if (_isEtfTicker(ticker, info)) { el.innerHTML = ''; el.style.display = 'none'; try{_pvxRatingFallback(ticker);}catch(e){} return; }   // ETF → sin análisis por empresa
   el.dataset.tk = ticker;
   el.style.display = 'block';
   const eKey = _analysisEarningsKey(ticker);
@@ -19483,7 +19627,7 @@ async function _upgradeAnalysisToAI(ticker, info){
   // ── RE-ENTRADA INSTANTÁNEA: hay análisis ensamblado del MISMO earnings → píntalo YA ──
   const cached = _qualGet(ticker, eKey);
   if (cached) {
-    try { _renderQualAnalysis(cached, el); } catch(e){}
+    try { _renderQualAnalysis(cached, el); } catch(e){ try{_pvxRatingFallback(ticker);}catch(e2){} }
     // Refresco silencioso en 2º plano SOLO si el caché ya tiene >30 min (evita gastar red en
     // re-entradas seguidas). Sin spinner: si algo cambió, se re-pinta sin que el usuario lo note.
     const _ent = _qualLoad()[ticker];
@@ -19504,7 +19648,7 @@ async function _upgradeAnalysisToAI(ticker, info){
   const a = await _assembleAnalysis(ticker, info).catch(() => null);
   const cur = document.getElementById('r-analysis');
   if (!cur || cur.dataset.tk !== ticker) return;                 // el usuario cambió de acción
-  if (!a) { cur.innerHTML=''; cur.style.display='none'; return; }
+  if (!a) { cur.innerHTML=''; cur.style.display='none'; try{_pvxRatingFallback(ticker);}catch(e){} return; }
   _qualSet(ticker, a, eKey);
   _renderQualAnalysis(a, cur);
 }
@@ -28293,8 +28437,93 @@ document.addEventListener('DOMContentLoaded', function(){
   // de la app — requisito de facto de App Review). Web: pestaña nueva de siempre.
   // Un target="_blank" con href RELATIVO dentro de WKWebView no abre nada útil: se pierde
   // o intenta capacitor://localhost/terminos.html en Safari y falla → "the links did not work".
+  // ── Visor de NUESTROS documentos (Términos, Privacidad, Reembolsos, Soporte, Precios) ──
+  // Antes se abrían fuera: SFSafariViewController en nativo, pestaña nueva en web. En los dos
+  // casos el usuario se quedaba sin una salida clara — no hay botón "atrás" en una pestaña
+  // recién abierta, y el "Listo" de Safari no siempre es evidente. Ahora se muestran DENTRO
+  // de la app, en una capa propia con un botón "Cerrar" que siempre funciona.
+  // El iframe apunta al archivo LOCAL (relativo), que es el mismo origen en los dos builds
+  // (capacitor://localhost y portivapp.com) y está incluido en el bundle → sin red, sin
+  // X-Frame-Options, sin fallos. Si por lo que sea no carga, se cae al camino de siempre.
+  var _pvDocTitles = {
+    'terminos.html':'Términos de Servicio', 'privacidad.html':'Política de Privacidad',
+    'reembolsos.html':'Política de Reembolsos', 'soporte.html':'Soporte', 'precios.html':'Planes y precios'
+  };
+  var _pvDocEl = null, _pvDocEsc = null;
+  window._pvCloseDoc = function(){
+    try { if (_pvDocEsc) { document.removeEventListener('keydown', _pvDocEsc, true); _pvDocEsc = null; } } catch(e){}
+    try { if (_pvDocEl && _pvDocEl.parentNode) _pvDocEl.parentNode.removeChild(_pvDocEl); } catch(e){}
+    _pvDocEl = null;
+    try { document.body.style.overflow = ''; } catch(e){}
+    return false;
+  };
+  window._pvOpenDoc = function(path, fallback){
+    var page = String(path).replace(/^\//,'');
+    var file = page.split('?')[0];
+    if (_pvDocEl) window._pvCloseDoc();
+    var url = page + (page.indexOf('?') === -1 ? '?' : '&') + 'embed=1'
+            + (window._pvIsNativeApp() ? '&app=ios' : '');
+    var ov = document.createElement('div');
+    ov.id = 'pvDocOverlay';
+    ov.setAttribute('role','dialog');
+    ov.setAttribute('aria-modal','true');
+    ov.setAttribute('aria-label', _pvDocTitles[file] || 'Documento');
+    // z-index por encima de TODO (el overlay de cuenta usa 99000): si el documento se abre
+    // desde el login o desde el paywall, tiene que quedar delante o no habría forma de leerlo.
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff;display:flex;flex-direction:column;';
+    var bar = document.createElement('div');
+    bar.style.cssText = 'flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;'
+      + 'background:#0A1F3D;color:#fff;font:600 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-label','Cerrar');
+    // 44×44 mínimo: es el objetivo táctil que pide Apple, y este botón es la ÚNICA salida.
+    btn.style.cssText = 'flex:0 0 auto;min-width:44px;height:44px;padding:0 14px;border-radius:11px;border:1px solid rgba(255,255,255,.28);'
+      + 'background:rgba(255,255,255,.10);color:#fff;font:600 15px inherit;cursor:pointer;display:flex;align-items:center;gap:7px;';
+    btn.innerHTML = '<span style="font-size:19px;line-height:1">‹</span><span>Cerrar</span>';
+    btn.onclick = function(){ window._pvCloseDoc(); };
+    var ttl = document.createElement('div');
+    ttl.textContent = _pvDocTitles[file] || 'Documento';
+    ttl.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;padding-right:58px;';
+    bar.appendChild(btn); bar.appendChild(ttl);
+    var fr = document.createElement('iframe');
+    fr.src = url;
+    fr.title = _pvDocTitles[file] || 'Documento';
+    fr.style.cssText = 'flex:1 1 auto;width:100%;border:0;background:#fff;';
+    var loaded = false;
+    // El título sigue a la navegación interna: desde Términos se puede tocar "Política de
+    // Reembolsos" sin salir del visor, y la cabecera tiene que decir dónde está el usuario.
+    fr.onload = function(){
+      loaded = true;
+      try {
+        var p = (fr.contentWindow.location.pathname || '').split('/').pop();
+        if (p && _pvDocTitles[p]) { ttl.textContent = _pvDocTitles[p]; ov.setAttribute('aria-label', _pvDocTitles[p]); }
+      } catch(e){}
+    };
+    ov.appendChild(bar); ov.appendChild(fr);
+    document.body.appendChild(ov);
+    _pvDocEl = ov;
+    try { document.body.style.overflow = 'hidden'; } catch(e){}
+    _pvDocEsc = function(e){ if (e.key === 'Escape' || e.keyCode === 27) { e.stopPropagation(); window._pvCloseDoc(); } };
+    document.addEventListener('keydown', _pvDocEsc, true);
+    // Red de seguridad: si el archivo local no existiera en este build, no dejamos al usuario
+    // mirando una hoja en blanco — se cierra la capa y se abre por el camino de siempre.
+    setTimeout(function(){
+      if (!loaded && _pvDocEl === ov) { window._pvCloseDoc(); try { fallback(); } catch(e){} }
+    }, 5000);
+    return false;
+  };
+
   window._pvOpenExternal = function(path){
     var _own = !/^https?:/i.test(path);   // página nuestra (relativa) vs enlace externo (noticia)
+    var abs = _own ? ('https://portivapp.com/' + String(path).replace(/^\//,'')) : path;
+    // Nuestras páginas: visor interno con botón de cerrar (salida garantizada en los dos builds).
+    if (_own) return window._pvOpenDoc(path, function(){ _pvOpenExternalRaw(path); });
+    return _pvOpenExternalRaw(path);
+  };
+
+  function _pvOpenExternalRaw(path){
+    var _own = !/^https?:/i.test(path);
     var abs = _own ? ('https://portivapp.com/' + String(path).replace(/^\//,'')) : path;
     try {
       if (window._pvIsNativeApp() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
@@ -28309,7 +28538,8 @@ document.addEventListener('DOMContentLoaded', function(){
     } catch(e){}
     try { window.open(abs, '_blank', 'noopener'); } catch(e){ location.href = abs; }
     return false;
-  };
+  }
+  window._pvOpenExternalRaw = _pvOpenExternalRaw;
   window._pvShowPaywall = function(){
     var _nat = window._pvIsNativeApp();
     // iOS nativo → paywall PREHECHO de RevenueCat (IAP StoreKit), NO el overlay web.
