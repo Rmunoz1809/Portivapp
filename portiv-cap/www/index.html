@@ -7677,10 +7677,38 @@ function _canonicalSector(ticker){
 // _INFO_CACHE: snapshot de `info` (Finnhub/Yahoo) por ticker; lo llena el
 // análisis individual al abrirse, para que el portafolio reutilice los mismos
 // datos en vivo en tickers que no están en TICKER_GROWTH_EXPECTED.
+// Hasta aquí el caché SOLO se llenaba al abrir el análisis individual de una acción y
+// moría al recargar. Consecuencia real: en la pestaña Análisis el motor de rebalanceo no
+// encontraba fundamentales de casi ninguna posición, no podía calificarlas y —por diseño,
+// para no inventar— dejaba TODAS las filas en MANTENER. Ahora el caché sobrevive 12 h en
+// localStorage y el portafolio pide en segundo plano lo que le falta (_pvxEnsureFundamentals).
+const _INFO_LS  = 'portiv_info_cache_v1';
+const _INFO_TTL = 12 * 60 * 60 * 1000;
 const _INFO_CACHE = {};
+const _INFO_TS    = {};
+(function _infoHydrate(){
+  try {
+    const raw = JSON.parse(localStorage.getItem(_INFO_LS) || '{}') || {};
+    const now = Date.now();
+    Object.keys(raw).forEach(tk => {
+      const e = raw[tk];
+      if (e && e.info && (now - (e.ts || 0)) < _INFO_TTL){ _INFO_CACHE[tk] = e.info; _INFO_TS[tk] = e.ts; }
+    });
+  } catch(e){}
+})();
+function _infoPersist(){
+  try {
+    const out = {};
+    Object.keys(_INFO_CACHE).forEach(tk => { out[tk] = { info: _INFO_CACHE[tk], ts: _INFO_TS[tk] || Date.now() }; });
+    localStorage.setItem(_INFO_LS, JSON.stringify(out));
+  } catch(e){}   // cuota llena: el caché en memoria sigue sirviendo esta sesión
+}
 function _cacheInfo(ticker, info){
   if (!ticker || !info) return;
-  _INFO_CACHE[ticker.toUpperCase()] = info;
+  const tk = ticker.toUpperCase();
+  _INFO_CACHE[tk] = info;
+  _INFO_TS[tk]    = Date.now();
+  _infoPersist();
 }
 // Ancla de retorno de LARGO PLAZO por sector canónico (retorno histórico de la clase
 // de activo). Se mezcla 50/50 con el crecimiento capeado para una apreciación defendible
@@ -8415,6 +8443,43 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
 };
 window.PV_AI = PV_AI;
 
+// ── FUNDAMENTALES DEL PORTAFOLIO EN SEGUNDO PLANO ────────────────────────────────
+// El motor de rebalanceo califica cada empresa con sus números publicados, que viven en
+// _INFO_CACHE. Ese caché lo llenaba únicamente el análisis individual al abrirse, así que
+// quien nunca entró a una acción no tenía NINGUNA calificación y la tabla entera salía
+// "MANTENER — no hay base para mover pesos". Aquí se piden los que faltan: un solo intento
+// por ticker y por sesión (si la API falla no se reintenta en bucle) y de a 3 en paralelo,
+// porque cada 'info' son 5 llamadas al proxy y una ráfaga de 13×5 se gana un 429.
+// Cuando llegan datos nuevos se repinta el análisis; en la segunda pasada ya no falta
+// ninguno, así que no hay bucle de renders.
+const _PVX_INFO_TRIED = new Set();
+let _pvxInfoBusy = false;
+async function _pvxEnsureFundamentals(tickers){
+  if (_pvxInfoBusy || typeof apiCall !== 'function') return;
+  const need = Array.from(new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean)))
+    .filter(tk => !_INFO_CACHE[tk] && !_PVX_INFO_TRIED.has(tk));
+  if (!need.length) return;
+  _pvxInfoBusy = true;
+  need.forEach(tk => _PVX_INFO_TRIED.add(tk));
+  let got = 0;
+  try {
+    const queue = need.slice();
+    const worker = async () => {
+      while (queue.length){
+        const tk = queue.shift();
+        try {
+          const d = await apiCall({ action: 'info', ticker: tk }, 12000);
+          if (d) { _cacheInfo(tk, d); got++; }
+        } catch(e){ /* sin datos para ese ticker: el motor lo dice, no lo inventa */ }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  } finally { _pvxInfoBusy = false; }
+  if (got && typeof renderDeepPortfolioAnalysis === 'function' && typeof calcTotals === 'function'){
+    try { renderDeepPortfolioAnalysis(calcTotals()); } catch(e){}
+  }
+}
+
 // ── PLAN DE REBALANCEO (fuente ÚNICA de coherencia) ───────────────────────────────
 // Un SOLO cálculo del peso objetivo por ticker (REBAL_NOTES → nota IA cacheada → mantener)
 // que consumen las TRES superficies: la tabla "Recomendaciones de Rebalanceo", el análisis
@@ -8496,6 +8561,9 @@ function renderDeepPortfolioAnalysis(T) {
     return;
   }
   try { if (typeof EPS !== 'undefined') EPS.renderPortfolio(); } catch(e) {}
+  // Fundamentales que le faltan al motor de rebalanceo para poder calificar (no bloquea el
+  // render: cuando llegan, repinta). Sin esto la tabla salía entera en MANTENER.
+  try { _pvxEnsureFundamentals(HOLDINGS.map(h => h.ticker)); } catch(e){}
 
   // ── 1) ANÁLISIS PROFUNDO ───────────────────────────────────────────────────
   const _sectorEntries = Object.entries(m.bySector).sort((a,b)=>b[1]-a[1]);
@@ -8960,7 +9028,16 @@ function _pvxRebalEngine(m, T){
       }
     } catch(e){}
     try {
-      const s = _pvxRubricScores(infoOf(tk), {});
+      const inf = infoOf(tk);
+      // Exigencia mínima de evidencia: las rúbricas devuelven nota con muy pocos datos
+      // (un P/E y un margen ya dan un 7.7), y aquí esa nota mueve dinero de verdad. Si la
+      // empresa no publica al menos 3 de los fundamentales núcleo, se queda sin nota y su
+      // peso no se toca por calidad — antes que repartir la cartera sobre casi nada.
+      const CORE = ['trailingPE','returnOnEquity','profitMargins','grossMargins','operatingMargins',
+                    'revenueGrowth','earningsGrowth','debtToEquity','currentRatio','freeCashflow','returnOnCapital'];
+      const nCore = inf ? CORE.filter(k => typeof inf[k] === 'number' && isFinite(inf[k])).length : 0;
+      if (nCore < 3) return null;
+      const s = _pvxRubricScores(inf, {});
       if (s && typeof s.nota === 'number' && isFinite(s.nota)) return s.nota;
     } catch(e){}
     return null;
@@ -9000,10 +9077,15 @@ function _pvxRebalEngine(m, T){
   };
 
   // ── Sin base para calificar: todo se queda quieto y se explica. ──
+  // Se distingue "todavía están cargando" de "esta empresa no publica los datos": el primer
+  // caso se resuelve solo en unos segundos y decirle al usuario que no hay base sería falso.
   if (!enough){
+    const loading = (typeof _pvxInfoBusy !== 'undefined' && _pvxInfoBusy);
     rows.forEach(r => {
       out[r.tk] = { sug: r.it.weight, action: 'MANTENER',
-        why: `Solo ${known.length} de ${rows.length} posiciones tienen fundamentales suficientes para calificarse, así que no hay base para mover pesos todavía. ${bizTxt(r)}` };
+        why: loading
+          ? `Cargando los fundamentales de tus posiciones para calificarlas. En unos segundos aparece aquí el peso objetivo y el motivo.`
+          : `Solo ${known.length} de ${rows.length} posiciones tienen fundamentales suficientes para calificarse, así que no hay base para mover pesos todavía. ${bizTxt(r)}` };
     });
     return out;
   }
