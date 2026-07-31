@@ -13,8 +13,11 @@
 //  • Captures the primary snaptrade_account_id on first success (needed by
 //    snaptrade-history).
 //
-// Request  (POST): { userId?: string }
-// Response (200):  { holdings, accountId, connected, fromCache }
+//  • `force: true` (botón "Sincronizar ahora") SALTA la caché y, si hace falta, pide a
+//    SnapTrade una sincronización real con el broker. Ver el bloque SINCRONIZACIÓN MANUAL.
+//
+// Request  (POST): { userId?: string, force?: boolean }
+// Response (200):  { holdings, accountId, connected, fromCache, lastSync, syncQueued, disabled }
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
 import {
@@ -26,6 +29,19 @@ import {
 } from "../_shared/snaptrade.ts";
 
 const CACHE_MS = 60 * 60 * 1000; // 60 minutes
+
+// ── SINCRONIZACIÓN MANUAL (facturada) ────────────────────────────────────────────
+// Las conexiones con `data_freshness_mode: "delayed"` (nuestro plan) sólo refrescan sus
+// posiciones UNA VEZ AL DÍA. Comprobado en producción: una compra del día 29 no aparecía
+// en SnapTrade el día 31 — no era un fallo nuestro de lectura, es que SnapTrade todavía
+// no había vuelto a preguntarle al broker. La única palanca es
+// connections.refreshBrokerageAuthorization, que SnapTrade FACTURA por llamada.
+//
+// Por eso: sólo a petición explícita del usuario (`force`), sólo si los datos que ya
+// tenemos son viejos (STALE_MS) y como mucho una vez cada MANUAL_SYNC_MIN_MS por usuario.
+// El límite vive en el servidor: el cliente podría pulsar el botón en bucle.
+const MANUAL_SYNC_MIN_MS = 30 * 60 * 1000; // 1 sincronización facturada / 30 min / usuario
+const STALE_MS = 15 * 60 * 1000;           // datos con < 15 min no se pagan por refrescar
 
 /** Best-effort extraction of the primary account id from a holdings payload. */
 function primaryAccountId(holdings: any): string | null {
@@ -48,6 +64,7 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { /* optional */ }
 
     const userId = await requireUser(req, admin, body?.userId);
+    const force = body?.force === true;   // el usuario pulsó "Sincronizar ahora"
     const entitled = await isEntitled(admin, userId);
     const profile = await loadProfile(admin, userId);
     const reason = profile?.snaptrade_disconnected_reason ?? null;
@@ -98,7 +115,10 @@ Deno.serve(async (req) => {
       ? new Date(profile.snaptrade_last_refresh).getTime()
       : 0;
     const fresh = last && Date.now() - last < CACHE_MS;
-    if (fresh && profile.snaptrade_holdings != null) {
+    // `force` = el usuario pulsó el botón. Servirle la caché entonces era exactamente el
+    // bug del que se quejaba: pulsar "Actualizar" no movía una sola cifra durante una hora
+    // aunque su broker ya tuviera la operación.
+    if (!force && fresh && profile.snaptrade_holdings != null) {
       return jsonResponse(req, {
         connected: true,
         broken: !!profile.snaptrade_connection_broken,
@@ -114,6 +134,55 @@ Deno.serve(async (req) => {
       userId: profile.snaptrade_user_id,
       userSecret: profile.snaptrade_user_secret,
     };
+
+    // ── Estado REAL de la conexión ────────────────────────────────────────────────
+    // Una conexión DESHABILITADA sigue devolviendo posiciones: SnapTrade responde con el
+    // último estado cacheado, sin error. Así que un usuario cuya conexión se cae (cambió la
+    // contraseña del broker, caducó la sesión, revocó el acceso) veía cifras de aspecto
+    // normal congeladas para siempre, y `snaptrade_connection_broken` seguía en false porque
+    // el webhook CONNECTION_BROKEN era el ÚNICO camino por el que nos enterábamos — si ese
+    // evento se perdía, nadie volvía a preguntar. Ahora se comprueba en cada lectura.
+    let conns: any[] = [];
+    try {
+      conns = ((await st.connections.listBrokerageAuthorizations(sid)).data as any[]) ?? [];
+    } catch (e: any) {
+      console.warn("[snaptrade-refresh] listBrokerageAuthorizations falló:",
+        (e?.response?.data?.detail ?? e?.message ?? String(e)).toString().slice(0, 200));
+    }
+    const conn =
+      conns.find((c: any) => c?.id && c.id === profile.snaptrade_connection_id) ??
+      conns.find((c: any) => !c?.disabled) ??
+      conns[0] ?? null;
+    const anyLive = conns.some((c: any) => c && c.disabled !== true);
+    const allDisabled = conns.length > 0 && !anyLive;
+
+    // La conexión que el perfil tenía apuntada puede haber cambiado (reconexión, alta nueva,
+    // webhook perdido). Se re-apunta sola: snaptrade-connect necesita este id para el modo
+    // `reconnect`, y sin él la reconexión degenera en "añadir otra conexión" y no arregla nada.
+    if (conn?.id && conn.id !== profile.snaptrade_connection_id) {
+      await admin.from("profiles").update({ snaptrade_connection_id: conn.id }).eq("id", userId);
+    }
+
+    if (allDisabled) {
+      // Se sirven las ÚLTIMAS posiciones conocidas (mejor que una pantalla vacía) pero
+      // marcadas como rotas y viejas, para que la UI pida reconectar en vez de dejar que
+      // el usuario tome decisiones con una foto de hace días creyéndola de hoy.
+      await admin
+        .from("profiles")
+        .update({ snaptrade_connection_broken: true })
+        .eq("id", userId);
+      return jsonResponse(req, {
+        connected: true,
+        broken: true,
+        disabled: true,
+        stale: true,
+        disabledSince: conn?.disabled_date ?? null,
+        holdings: profile.snaptrade_holdings ?? null,
+        accountId: profile.snaptrade_account_id ?? null,
+        lastSync: profile.snaptrade_last_refresh ?? null,
+        fromCache: true,
+      });
+    }
 
     // Does a holdings array actually carry REAL data (positions, options, or cash)?
     // The aggregate endpoint can return an account object with empty positions for a
@@ -171,6 +240,52 @@ Deno.serve(async (req) => {
     for (const a of accts) {
       const d = a?.sync_status?.transactions?.first_transaction_date;
       if (typeof d === "string" && d && (!inceptionDate || d < inceptionDate)) inceptionDate = d;
+    }
+
+    // Cuándo fue la última vez que SnapTrade habló DE VERDAD con el broker. Es el dato que
+    // le faltaba al usuario: la app decía "Sincronizado ahora mismo" cuando lo único reciente
+    // era nuestra propia lectura de una foto de ayer.
+    let lastSync: string | null = null;
+    for (const a of accts) {
+      const s = a?.sync_status?.holdings?.last_successful_sync;
+      if (typeof s === "string" && s && (!lastSync || s > lastSync)) lastSync = s;
+    }
+
+    // ── Sincronización manual (ver cabecera): sólo con `force`, sólo si hace falta ──
+    let syncQueued = false;
+    let syncThrottled = false;
+    if (force && conn?.id && conn?.disabled !== true) {
+      const realtime = /real/i.test(String(conn?.data_freshness_mode ?? ""));
+      const syncAge = lastSync ? Date.now() - new Date(lastSync).getTime() : Infinity;
+      const lastManual = profile.snaptrade_last_manual_sync
+        ? new Date(profile.snaptrade_last_manual_sync).getTime()
+        : 0;
+      const throttleLeft = lastManual ? MANUAL_SYNC_MIN_MS - (Date.now() - lastManual) : 0;
+      if (realtime || !(syncAge > STALE_MS)) {
+        // Conexión en tiempo real, o SnapTrade acaba de sincronizar: pagar no traería
+        // ni un dato nuevo. La lectura de abajo ya devuelve lo último.
+      } else if (throttleLeft > 0) {
+        syncThrottled = true;
+      } else {
+        try {
+          await (st as any).connections.refreshBrokerageAuthorization({
+            authorizationId: conn.id,
+            ...sid,
+          });
+          syncQueued = true;
+          await admin
+            .from("profiles")
+            .update({ snaptrade_last_manual_sync: new Date().toISOString() })
+            .eq("id", userId);
+          // SnapTrade encola el sync y avisa por webhook (ACCOUNT_HOLDINGS_UPDATED, que
+          // invalida la caché). Esta espera corta basta para que muchos brokers ya
+          // devuelvan lo nuevo en la lectura de abajo; si no, el cliente reintenta.
+          await new Promise((r) => setTimeout(r, 6000));
+        } catch (e: any) {
+          console.warn("[snaptrade-refresh] refreshBrokerageAuthorization falló:",
+            (e?.response?.data?.detail ?? e?.message ?? String(e)).toString().slice(0, 200));
+        }
+      }
     }
 
     const ai: any = st.accountInformation;
@@ -236,6 +351,9 @@ Deno.serve(async (req) => {
         holdings: holdArr,
         accountId: profile.snaptrade_account_id ?? null,
         inceptionDate,
+        lastSync,
+        syncQueued,
+        syncThrottled,
         fromCache: false,
       });
     }
@@ -267,6 +385,9 @@ Deno.serve(async (req) => {
       holdings,
       accountId,
       inceptionDate,
+      lastSync,
+      syncQueued,
+      syncThrottled,
       fromCache: false,
     });
   } catch (e: any) {

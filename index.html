@@ -29227,7 +29227,9 @@ document.addEventListener('DOMContentLoaded', function(){
     try{ if(typeof showToast==='function'){ showToast(msg); return; } }catch(e){} _pvLog('[snaptrade]', msg); }
 
   // ── Connect: open the SnapTrade portal ──
-  function snapConnect(){
+  // `mode`: '' (por defecto: reconecta la conexión caída, o avisa de que ya hay una sana)
+  //         'add' (el usuario pidió enlazar OTRO broker → alta nueva siempre).
+  function snapConnect(mode){
     _setBusy(true);
     // Aviso a pantalla completa ANTES de pedir el portal. Va aquí y no en cada llamador
     // porque la espera existe en los tres caminos (tras el pago, fallback sin paywall y
@@ -29237,7 +29239,16 @@ document.addEventListener('DOMContentLoaded', function(){
     // iOS nativo: el portal SnapTrade se abre DENTRO de la app (in-app browser) y al terminar
     // vuelve por deep link portiv://  → nada se abre en Safari externo. Web: navegación normal.
     var _redir = _nativeCap ? 'portiv://snaptrade-return' : (location.origin + location.pathname);
-    return stCall('snaptrade-connect', { redirect: _redir }).then(function(j){
+    return stCall('snaptrade-connect', { redirect: _redir, mode: (mode||'') }).then(function(j){
+      // Ya hay un broker enlazado y sano. Abrir el portal sólo llevaría a duplicar la
+      // conexión (el broker la rechaza y la pantalla vuelve igual: "no conecta"). Lo que
+      // el usuario quiere en ese punto es ver sus datos al día → sincronización forzada.
+      if(j && j.alreadyConnected){
+        _setBusy(false);
+        try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(e){}
+        toast('Tu broker ya está conectado. Buscando tus últimos movimientos…');
+        return snapRefresh({ force:true });
+      }
       if(!(j && j.redirectURI)) throw new Error('No se recibió el portal de conexión.');
       try{ localStorage.setItem('pv_snap_pending','1'); }catch(e){}
       if(_nativeCap){ _snapOpenInApp(j.redirectURI); }
@@ -29526,7 +29537,10 @@ document.addEventListener('DOMContentLoaded', function(){
     // cuenta tardó más de lo previsto en tener balance history), el usuario se quedaba el resto de
     // la sesión sin curva del broker, sin forma de reintentar salvo recargar la app.
     if(!opts.silent){ _snapHistoryTries = 0; _snapHistoryForced = false; }
-    return stCall('snaptrade-refresh', {}).then(function(j){
+    // `force` = el usuario pulsó "Sincronizar ahora". Salta nuestra caché de 60 min y, si
+    // los datos del broker son viejos, el servidor le pide a SnapTrade una sincronización
+    // real (limitada a 1 cada 30 min por usuario porque SnapTrade la factura).
+    return stCall('snaptrade-refresh', opts.force ? { force:true } : {}).then(function(j){
       if(!j || !j.connected){
         // `unavailable` = la consulta a SnapTrade falló (429/5xx/timeout); NO significa que no
         // haya broker. Antes esto caía en el mismo saco que "nunca conectó": se borraba
@@ -29547,7 +29561,7 @@ document.addEventListener('DOMContentLoaded', function(){
       // Historial denso aún por llegar (snapHistory) → marca pendiente para NO pintar la recta
       // interpolada de 2 puntos [inception→hoy] mientras tanto. snapHistory lo limpia al resolver.
       try{ if(j.connected && !j.syncing){ window._BROKER_HISTORY_PENDING=true; localStorage.setItem('pv_broker_connected','1'); } }catch(e){}
-      if(j.broken){ _render('broken'); }
+      if(j.broken){ _render('broken', { lastSync: j.lastSync || null, disabled: !!j.disabled }); }
       // Bloque 4: conexión de broker REAL confirmada → borra la semilla personal del dueño ANTES
       // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
       try{
@@ -29603,8 +29617,18 @@ document.addEventListener('DOMContentLoaded', function(){
       return j;
     }).then(function(j){
       if(j && j.connected && j.syncing) _render('syncing');
-      else if(j && j.connected && !j.broken) _render('connected', { fromCache: j.fromCache });
+      else if(j && j.connected && !j.broken) _render('connected', { fromCache: j.fromCache, lastSync: j.lastSync });
       if(j && j.connected && !j.syncing) snapHistory();
+      // SnapTrade encoló la sincronización con el broker: tarda unos segundos y llega por
+      // webhook. Se vuelve a leer solo, sin que el usuario tenga que tocar nada. Esa segunda
+      // lectura va con force para saltar la caché, pero NO se paga: el límite de 30 min del
+      // servidor la deja pasar sin encolar otra sincronización.
+      if(j && j.syncQueued){
+        if(!opts.silent) toast('Pidiéndole a tu broker los movimientos más recientes…');
+        setTimeout(function(){ try{ snapRefresh({ force:true, silent:true }); }catch(e){} }, 20000);
+      } else if(j && j.syncThrottled && !opts.silent){
+        toast('Tus datos ya se sincronizaron hace poco. Vuelve a intentarlo en unos minutos.');
+      }
       return j;
     }).catch(function(e){
       var _m=(e&&e.message)||'', _st=(e&&e.status)||0;
@@ -29858,6 +29882,19 @@ document.addEventListener('DOMContentLoaded', function(){
     return '<div class="snap-note" style="border-left:3px solid #c98a00;padding-left:10px;margin-top:10px">⚠ '
          + out.join('<br>⚠ ') + '</div>';
   }
+  // Antigüedad REAL del dato: `lastSync` es el último `sync_status.holdings` que SnapTrade
+  // consiguió del broker. Sin fecha (aún no la sabemos) no se inventa nada.
+  function _snapSyncLabel(meta){
+    var iso = meta && meta.lastSync; if(!iso) return 'Conectado con tu broker';
+    var t = Date.parse(iso); if(!isFinite(t)) return 'Conectado con tu broker';
+    var m = Math.max(0, Math.round((Date.now()-t)/60000));
+    if(m < 5)  return 'Datos de tu broker de hace un momento';
+    if(m < 60) return 'Datos de tu broker de hace '+m+' min';
+    var h = Math.round(m/60);
+    if(h < 24) return 'Datos de tu broker de hace '+h+(h===1?' hora':' horas');
+    var d = Math.round(h/24);
+    return 'Datos de tu broker de hace '+d+(d===1?' día':' días');
+  }
   function _cardHTML(state, meta){
     var brokers='<div class="snap-brokers"><span class="snap-chip">Charles Schwab</span><span class="snap-chip">Interactive Brokers</span><span class="snap-chip">+ más</span></div>';
     // No pudimos preguntarle a SnapTrade (429 / 5xx / timeout). NO sabemos si tiene broker,
@@ -29870,21 +29907,22 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-note">Tu conexión sigue guardada. Reintentamos solos en unos segundos.</div>';
     }
     if(state==='connected'){
-      // `fromCache` se leía y no se usaba. El refresh sirve de la caché de 60 min de
-      // snaptrade-refresh, así que pulsar "Actualizar" suele no mover ni una cifra: sin
-      // decir de cuándo son los datos, el botón parece roto. Ahora se dice.
-      var cache = !!(meta && meta.fromCache);
+      // Lo que importa no es cuándo leímos NOSOTROS, sino cuándo habló SnapTrade con el
+      // broker (`lastSync`). Decir "Sincronizado ahora mismo" porque acabábamos de releer
+      // una foto de ayer era justamente lo que hacía pensar que la app estaba al día
+      // mientras faltaba una operación de hace dos días.
       return '<h3>Broker conectado</h3>'
         +'<div class="snap-status"><span class="snap-dot ok"></span>'
-        + (cache ? 'Datos de la última sincronización de tu broker' : 'Sincronizado con tu broker ahora mismo')
+        + _snapSyncLabel(meta)
         +'</div>'
         + _snapNotes()
-        +'<div class="snap-row"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Actualizar</button>'
-        +'<button class="snap-btn secondary" data-snap-connect data-snap-label="Reconectar / agregar">Reconectar</button></div>'
+        +'<div class="snap-row"><button class="snap-btn" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Sincronizar ahora</button></div>'
+        +'<div class="snap-row" style="margin-top:8px">'
+        +'<button class="snap-btn secondary" data-snap-connect data-snap-mode="add" data-snap-label="Añadir otro broker">Añadir otro broker</button>'
         // FIX 16 — Hasta ahora la ÚNICA vía a snaptrade-disconnect era eliminar la cuenta entera:
         // quien se iba sin borrarla seguía costando ~$1/mes de conexión activa.
-        +'<div class="snap-row" style="margin-top:8px"><button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar broker</button></div>'
-        +'<div class="snap-note">🔒 Los datos se actualizan una vez al día (sincronización incluida de tu broker).</div>';
+        +'<button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar broker</button></div>'
+        +'<div class="snap-note">🔒 Tu broker sincroniza solo una vez al día. Si acabas de operar, pulsa “Sincronizar ahora”.</div>';
     }
     // F11 — Salida del estado 'unknown'. Sin esto, agotados los reintentos del arranque (sin red,
     // 5xx persistente, supabase-js bloqueado por el CDN), la tarjeta se quedaba en "Comprobando el
@@ -29912,7 +29950,7 @@ document.addEventListener('DOMContentLoaded', function(){
         return '<h3>Tu broker está tardando más de lo normal</h3>'
           +'<p class="snap-sub">Seguimos esperando a que tu broker termine de preparar tus posiciones. Algunas cuentas tardan varias horas la primera vez, sobre todo fuera del horario de mercado.</p>'
           +'<div class="snap-status"><span class="snap-dot"></span>Dejamos de comprobar cada pocos segundos</div>'
-          +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Comprobar ahora</button></div>'
+          +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Comprobar ahora</button></div>'
           +'<div class="snap-note">Volvemos a comprobarlo solos cada 20 minutos y al abrir la app. No hace falta que hagas nada.</div>';
       }
       return '<h3>Sincronizando tu cuenta…</h3>'
@@ -29921,8 +29959,12 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh()">↻ Actualizar ahora</button></div>';
     }
     if(state==='broken'){
-      return '<h3>Reconecta tu broker</h3><p class="snap-sub">La conexión se interrumpió. Reconéctala para seguir viendo tus posiciones.</p>'
-        +'<button class="snap-btn" data-snap-connect data-snap-label="Reconectar mi broker">Reconectar mi broker</button>';
+      return '<h3>Reconecta tu broker</h3>'
+        +'<p class="snap-sub">Tu broker cortó la conexión — suele pasar al cambiar la contraseña o cuando caduca la sesión. '
+        +'Lo que ves abajo son tus últimas posiciones conocidas: <b>no se actualizarán</b> hasta que vuelvas a enlazarlo.</p>'
+        +'<div class="snap-status"><span class="snap-dot"></span>'+_snapSyncLabel(meta)+'</div>'
+        +'<button class="snap-btn" data-snap-connect data-snap-label="Reconectar mi broker">Reconectar mi broker</button>'
+        +'<div class="snap-note">Te llevamos directo a la pantalla de tu broker para renovar el permiso. No hace falta volver a elegirlo.</div>';
     }
     // Baja provocada por el fin de la suscripción. Se explica el porqué y se ofrece
     // el ÚNICO camino que funciona (reactivar), en vez del CTA genérico de conectar
@@ -29941,7 +29983,7 @@ document.addEventListener('DOMContentLoaded', function(){
   }
   function _bindConnectButtons(){ Array.prototype.forEach.call(document.querySelectorAll('[data-snap-connect]'),function(btn){
       if(btn._snapBound) return; btn._snapBound=true; btn.dataset.snapLabel=btn.dataset.snapLabel||btn.textContent;
-      btn.addEventListener('click', function(ev){ ev.preventDefault(); snapConnect(); }); }); }
+      btn.addEventListener('click', function(ev){ ev.preventDefault(); snapConnect(btn.dataset.snapMode||''); }); }); }
   window._snapBindConnect = _bindConnectButtons;
 
   // ── Inject portfolio-tab banner + perf tools once ──

@@ -145,8 +145,23 @@ Deno.serve(async (req) => {
 
   const admin = adminClient();
 
+  // Invalidar la caché = poner `snaptrade_last_refresh` a null. La siguiente lectura de
+  // snaptrade-refresh ve la caché vencida y vuelve a pedirle las posiciones a SnapTrade.
+  // Sin esto, SnapTrade podía terminar de sincronizar una operación y la app seguía
+  // sirviendo hasta 60 minutos la foto anterior — el usuario ve su compra "perdida"
+  // aunque el dato ya estuviera disponible.
+  const BUST = { snaptrade_last_refresh: null };
+
   let patch: Record<string, unknown> | null = null;
   switch (type) {
+    // Sincronización terminada al otro lado → lo que tenemos guardado ya es viejo.
+    case "ACCOUNT_HOLDINGS_UPDATED":
+    case "ACCOUNT_TRANSACTIONS_UPDATED":
+    case "ACCOUNT_TRANSACTIONS_INITIAL_UPDATE":
+    case "NEW_ACCOUNT_AVAILABLE":
+    case "TRADES_PLACED":
+      patch = { ...BUST };
+      break;
     case "CONNECTION_ADDED":
       // Fresh (re)connection → clear any prior "trial vencido" disconnect marker so
       // the client stops showing the resubscribe copy for a now-connected user.
@@ -155,11 +170,16 @@ Deno.serve(async (req) => {
         snaptrade_connection_broken: false,
         snaptrade_disconnected_reason: null,
         snaptrade_disconnected_at: null,
+        ...BUST,   // recién (re)conectado: la foto guardada es de antes del enlace
       };
       break;
     case "CONNECTION_UPDATED":
     case "CONNECTION_FIXED":
-      patch = { snaptrade_connection_broken: false };
+      patch = {
+        snaptrade_connection_broken: false,
+        ...(connectionId ? { snaptrade_connection_id: connectionId } : {}),
+        ...BUST,   // conexión arreglada → vuelve a haber datos nuevos que leer
+      };
       break;
     case "CONNECTION_BROKEN":
       patch = { snaptrade_connection_broken: true };
@@ -168,7 +188,11 @@ Deno.serve(async (req) => {
       patch = { snaptrade_connection_id: null, snaptrade_connection_broken: false };
       break;
     default:
-      return ok({ ok: true, ignored: type }); // holdings-updated, etc. — nothing to persist
+      // Cualquier otro evento de datos de cuenta también invalida la caché: es preferible
+      // una lectura de más (gratis, va contra el dato ya sincronizado) que enseñar cifras
+      // viejas. Los eventos ajenos a datos siguen sin tocar nada.
+      if (/ACCOUNT|HOLDING|TRANSACTION|TRADE|ORDER/i.test(type)) { patch = { ...BUST }; break; }
+      return ok({ ok: true, ignored: type });
   }
 
   const { error } = await admin

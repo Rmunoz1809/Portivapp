@@ -138,9 +138,56 @@ Deno.serve(async (req) => {
       catch (e) { if (_isAlreadyExists(e)) { await healOrphan(); } else throw e; }
     }
 
+    // ── ¿Reconectar, añadir, o ya está conectado? ────────────────────────────────
+    // Antes esto no existía: cada pulsación de "Conectar/Reconectar" abría el portal en
+    // modo ALTA. Con una conexión ya viva, el portal lleva al usuario a crear un DUPLICADO
+    // del mismo broker — el broker o SnapTrade lo rechazan y la pantalla vuelve igual que
+    // estaba: "le doy a conectar y no conecta". Y con una conexión CAÍDA era todavía peor,
+    // porque el arreglo real exige el parámetro `reconnect` con el id de esa conexión
+    // (https://docs.snaptrade.com/docs/fix-broken-connections); sin él SnapTrade nunca
+    // renueva el token de la conexión rota y el usuario se queda igual para siempre.
+    //
+    //   mode 'add'  → el usuario pidió explícitamente enlazar OTRO broker: alta normal.
+    //   conexión deshabilitada → portal en modo `reconnect` (el único que la arregla).
+    //   conexión sana          → no se abre nada: se responde alreadyConnected.
+    const mode = typeof body?.mode === "string" ? body.mode : "";
+    let conns: any[] = [];
+    if (mode !== "add") {
+      try {
+        conns = ((await st.connections.listBrokerageAuthorizations({
+          userId: snapUserId!, userSecret: userSecret!,
+        })).data as any[]) ?? [];
+      } catch (e: any) {
+        console.warn("[snaptrade-connect] no se pudo listar conexiones:", _detail(e).slice(0, 200));
+      }
+    }
+    const disabledConn = conns.find((c: any) => c?.disabled === true && c?.id) ?? null;
+    const liveConn = conns.find((c: any) => c && c.disabled !== true && c.id) ?? null;
+
+    if (mode !== "add" && !disabledConn && liveConn) {
+      // Ya hay broker enlazado y sano. Mandarlo al portal no arregla nada; lo que quiere
+      // es ver sus datos al día, y de eso se encarga snaptrade-refresh con force.
+      await admin
+        .from("profiles")
+        .update({ snaptrade_connection_id: liveConn.id, snaptrade_connection_broken: false })
+        .eq("id", userId);
+      return jsonResponse(req, {
+        alreadyConnected: true,
+        connectionId: liveConn.id,
+        brokerage: liveConn?.brokerage?.name ?? liveConn?.brokerage?.slug ?? null,
+      });
+    }
+    const reconnectId: string | null = disabledConn?.id ?? null;
+    if (reconnectId) {
+      await admin
+        .from("profiles")
+        .update({ snaptrade_connection_id: reconnectId, snaptrade_connection_broken: true })
+        .eq("id", userId);
+    }
+
     // Generate a fresh Connection Portal link (read-only). If the stored secret is
     // stale (auth failure), heal once and retry.
-    const doLogin = async () => {
+    const doLogin = async (withReconnect = !!reconnectId) => {
       const l = (await st.authentication.loginSnapTradeUser({
         userId: snapUserId!,
         userSecret: userSecret!,
@@ -150,6 +197,8 @@ Deno.serve(async (req) => {
         // Portiv still only READS data — it never places trades.
         connectionType: "trade-if-available",
         ...(redirect ? { customRedirect: redirect } : {}),
+        // El portal entra directo al flujo de reconexión de ESA conexión y renueva su token.
+        ...(withReconnect && reconnectId ? { reconnect: reconnectId } : {}),
       } as any)).data as any;
       // The SDK model field is `redirectURI` (some versions: `redirectUri`).
       return l?.redirectURI ?? l?.redirectUri ?? null;
@@ -158,13 +207,20 @@ Deno.serve(async (req) => {
     try { redirectURI = await doLogin(); }
     catch (e) {
       if (_isAuthish(e)) { await healOrphan(); redirectURI = await doLogin(); }
+      else if (reconnectId) {
+        // La conexión a reconectar puede haber desaparecido en SnapTrade (el usuario la
+        // borró desde el broker, o se depuró). Reintentar como alta normal es mejor que
+        // devolverle un error a alguien que sólo quiere volver a enlazar su cuenta.
+        console.warn("[snaptrade-connect] reconnect falló, se reintenta como alta:", _detail(e).slice(0, 200));
+        redirectURI = await doLogin(false);
+      }
       else throw e;
     }
     if (!redirectURI) {
       return jsonResponse(req, { error: "SnapTrade no devolvió redirectURI." }, 502);
     }
 
-    return jsonResponse(req, { redirectURI });
+    return jsonResponse(req, { redirectURI, mode: reconnectId ? "reconnect" : "new" });
   } catch (e: any) {
     // Surface the REAL SnapTrade error (the SDK hides it behind an axios
     // "Request failed with status code 400" message). The useful detail lives in
