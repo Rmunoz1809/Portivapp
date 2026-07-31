@@ -8744,8 +8744,11 @@ function renderDeepPortfolioAnalysis(T) {
     <div class="rbl-sub">
       Cada posición se compara con las demás usando los <strong>números que publica cada empresa</strong>
       —qué gana por lo que vende, cuánto crece, con cuánta deuda y a qué precio cotiza— y el peso se
-      inclina hacia los negocios que salen mejor parados, dentro de los límites de ${_perfilTxt}:
-      techo por posición, techo por sector y un mínimo por debajo del cual una posición no aporta.
+      inclina hacia los negocios que salen mejor parados. Qué rasgos pesan más lo decide
+      ${_perfilTxt}: un perfil conservador penaliza deuda, volatilidad y comprar el pico del ciclo;
+      uno agresivo prima el crecimiento que compone y acepta una cartera más concentrada.
+      Sobre eso van los límites: techo por posición, techo por sector y un mínimo por debajo del
+      cual una posición no aporta.
       La columna de la derecha explica las dos mitades: qué hace ese nombre <strong>dentro de tu
       cartera</strong> y qué está haciendo <strong>el negocio</strong>. Vender posiciones ganadoras
       puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
@@ -9017,6 +9020,14 @@ function _pvxRebalEngine(m, T){
   const MINW    = 0.025;                                                    // por debajo, la posición no mueve la aguja
   const SECTMAX = risk === 'alto' ? 0.55 : risk === 'bajo' ? 0.35 : 0.45;   // techo por sector
   const perfTxt = risk === 'alto' ? 'agresivo' : risk === 'bajo' ? 'conservador' : 'moderado';
+  // CUÁNTA CONVICCIÓN. El exponente decide cuánto se separa el peso del mejor negocio del
+  // peso del peor: con 2.6 la cartera es de convicción (el que más convence pesa ~3× el que
+  // menos), con 1.6 es casi equiponderada. Un perfil agresivo quiere lo primero; uno
+  // conservador quiere que ningún acierto —ni ningún error— decida el año él solo.
+  const CONC   = risk === 'alto' ? 2.6 : risk === 'bajo' ? 1.6 : 2.2;
+  // Y cuánto se descuenta a una cíclica en la parte alta de su ciclo: el conservador es el
+  // que menos puede permitirse comprar el pico.
+  const CYCMAX = risk === 'alto' ? 1.0 : risk === 'bajo' ? 2.0 : 1.5;
 
   const infoOf = tk => (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[tk]) ? _INFO_CACHE[tk] : null;
 
@@ -9101,6 +9112,61 @@ function _pvxRebalEngine(m, T){
 
   const cap1 = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
 
+  // ── EL PERFIL DECIDE, NO SOLO LIMITA ─────────────────────────────────────────────
+  // Hasta aquí el perfil solo ponía techos: el reparto salía idéntico para un jubilado y
+  // para alguien de 25 años, y luego se recortaba. Eso no es asesorar. La calidad del
+  // negocio la mide el análisis y es la misma para todos; lo que cambia con el perfil es
+  // QUÉ RASGOS de esa calidad importan al dimensionar la posición. A quien no puede
+  // permitirse un -40% le pesan la deuda, la volatilidad, la quema de caja y el múltiplo
+  // pagado. A quien tiene 20 años por delante le pesa el crecimiento que compone, y las
+  // pérdidas solo lo penalizan si además no crece —ahí no hay tesis, hay esperanza—.
+  // No se inventa nada: se repondera únicamente lo que la empresa YA publica.
+  const tiltOf = r => {
+    r.fit = null;
+    if (r.isEtf){
+      const broad = r.etf && (r.etf.nHold || 0) >= 50;
+      if (risk === 'bajo' && broad){ r.fit = 'ancla'; return 0.8; }
+      if (risk === 'alto') return -0.2;   // no lo castiga: solo deja de ser la prioridad
+      return 0;
+    }
+    const f = r.inf;
+    if (!f) return 0;
+    const beta = num(f,'beta') != null ? num(f,'beta') : (typeof r.it.beta === 'number' ? r.it.beta : null);
+    const de   = num(f,'debtToEquity'), fcf = num(f,'freeCashflow'), pm = num(f,'profitMargins'),
+          revG = num(f,'revenueGrowth'), gm = num(f,'grossMargins'), roic = num(f,'returnOnCapital'),
+          pe   = num(f,'trailingPE'),    cr  = num(f,'currentRatio');
+    let t = 0;
+    if (risk === 'bajo'){
+      if (pm  != null && pm < 0)      { t -= 1.5; r.fit = 'no gana dinero todavía'; }
+      if (de  != null && de > 100)    { t -= 0.8; r.fit = r.fit || `debe ${(de/100).toFixed(1)}× su capital`; }
+      if (fcf != null && fcf < 0)     { t -= 0.8; r.fit = r.fit || 'quema caja'; }
+      if (beta != null && beta > 1.3) { t -= Math.min(1.2, (beta-1.3)*1.5); r.fit = r.fit || `se mueve ${beta.toFixed(1)}× lo que el mercado`; }
+      if (pe  != null && pe > 45)     { t -= 0.6; r.fit = r.fit || `cotiza a ${pe.toFixed(0)}× ganancias`; }
+      // Un balance limpio NO convierte a una cíclica en un valor defensivo: una memoria en
+      // el pico del ciclo tiene caja y poca deuda justo el año antes de que se dé vuelta.
+      // Sin esto, el conservador subía MU de 2.1% a 6.6% —más que el agresivo— premiando
+      // precisamente el año que no se repite.
+      if (r.cycPeak){ t -= 0.8; r.fit = r.fit || 'sus ganancias van y vienen con el ciclo'; }
+      else {
+        if (fcf != null && fcf > 0 && de != null && de < 60) t += 0.7;   // caja propia y balance limpio
+        if (cr  != null && cr >= 1.5) t += 0.3;
+      }
+    } else if (risk === 'alto'){
+      if (revG != null && revG > 0.20) t += Math.min(1.0, (revG-0.20)*2.5);
+      if (gm != null && gm >= 0.60 && roic != null && roic >= 0.15) t += 0.6;
+      if (pm != null && pm < 0 && (revG == null || revG < 0.25)){ t -= 1.2; r.fit = 'pierde dinero sin crecer lo bastante para justificarlo'; }
+      if (fcf != null && fcf < 0) t -= 0.5;
+      if (de != null && de > 200) { t -= 0.5; r.fit = r.fit || `debe ${(de/100).toFixed(1)}× su capital`; }
+    } else {
+      if (pm != null && pm < 0)   { t -= 1.2; r.fit = 'todavía no gana dinero'; }
+      if (de != null && de > 150) { t -= 0.6; r.fit = r.fit || `debe ${(de/100).toFixed(1)}× su capital`; }
+      if (beta != null && beta > 1.6) t -= 0.4;
+      if (r.cycPeak) t -= 0.4;
+      else if (fcf != null && fcf > 0 && revG != null && revG > 0.10) t += 0.5;
+    }
+    return t;
+  };
+
   // ── Lectura de un FONDO: qué replica, qué cuesta y qué te duplica ────────────────
   // Lo único que de verdad importa de un ETF en el contexto de ESTA cartera: cuántas
   // empresas trae, cuánto cobra por traerlas y cuáles de ellas el usuario YA tiene sueltas
@@ -9108,20 +9174,18 @@ function _pvxRebalEngine(m, T){
   // desordena una cartera "diversificada").
   const etfRead = r => {
     const e = r.etf;
-    if (!e) return 'Es un fondo cotizado, pero no tengo su ficha —qué índice replica, cuántas posiciones trae, qué comisión cobra—, así que no lo comparo con tus acciones ni le muevo el peso.';
+    if (!e) return 'Es un fondo cotizado y no tengo su ficha, así que no lo comparo ni le muevo el peso.';
     let s = e.nHold
-      ? `No es una empresa: es un fondo que te da ${e.nHold} empresas en un solo ticker`
-      : `No es una empresa: es un fondo que replica un índice completo`;
-    if (e.cat) s += ` (${e.cat.toLowerCase()})`;
+      ? `No es una empresa: son ${e.nHold} compañías en un ticker`
+      : `No es una empresa: replica un índice entero`;
     if (typeof e.er === 'number')
-      s += `, cobrando ${(e.er*100).toFixed(2)}% al año` + (e.er <= 0.001 ? ', que a efectos prácticos es gratis' : '');
+      s += e.er <= 0.001 ? `, por ${(e.er*100).toFixed(2)}% al año` : `, por ${(e.er*100).toFixed(2)}% anual`;
     s += '.';
     const dup = (e.holdings || []).filter(h => rows.some(x => x.tk === String(h.t || '').toUpperCase()));
     if (dup.length){
-      const top = dup.slice(0,3).map(h => h.t);
       const w = dup.reduce((a,h) => a + (h.w || 0), 0);
-      s += ` Ojo: dentro ya lleva ${top.join(', ')}${dup.length > top.length ? ' y otras que tienes' : ''}` +
-           (w > 0 ? ` (${w.toFixed(0)}% del fondo)` : '') + `, así que a esos nombres estás expuesto por dos vías a la vez.`;
+      s += ` Ya lleva dentro ${dup.slice(0,3).map(h => h.t).join(', ')}` +
+           (w > 0 ? ` (${w.toFixed(0)}% del fondo)` : '') + `: a esos estás expuesto dos veces.`;
     }
     return s;
   };
@@ -9140,20 +9204,20 @@ function _pvxRebalEngine(m, T){
     // motivo tiene que reconocerlo ("aun con eso…") en vez de sonar a que no lo vio.
     let trait = null; r.warn = false;
     if (pm != null && pm < 0)
-      trait = `aún no gana dinero (margen neto ${sgn(pm)}): su valor depende de una mejora que todavía no ocurrió`;
+      trait = `aún no gana dinero (${sgn(pm)}): su valor depende de una mejora que no ocurrió`;
     else if (de != null && de > 150)
-      trait = `debe ${(de/100).toFixed(1)}× su capital: un año flojo le pega mucho más fuerte que a una empresa sin deuda`;
+      trait = `debe ${(de/100).toFixed(1)}× su capital: un año flojo le pega el doble`;
     else if (fcf != null && fcf < 0)
-      trait = `quema caja: su crecimiento depende de que alguien se lo financie`;
+      trait = `quema caja: depende de que alguien le financie el crecimiento`;
     else if (gm != null && gm >= 0.55 && ((roic != null && roic >= 0.15) || (roe != null && roe >= 0.20)))
       // Tres formas de decir "tiene ventaja competitiva", elegidas por cuál de los números la
       // sostiene mejor. Con una sola frase, media cartera repetía la misma línea palabra por
       // palabra y el lector deja de leer la columna.
       trait = gm >= 0.70
-          ? `vende con ${(gm*100).toFixed(0)}% de margen bruto algo que casi no le cuesta producir: le sobra margen para invertir o para bajar precios si alguien la ataca`
+          ? `vende con ${(gm*100).toFixed(0)}% de margen bruto: le sobra para invertir o bajar precios si la atacan`
         : (roic != null && roic >= 0.20)
-          ? `cada dólar que reinvierte le rinde ${(roic*100).toFixed(0)}%: puede crecer sin salir a pedir dinero`
-          : `${(gm*100).toFixed(0)}% de margen bruto y buen retorno sobre el capital: puede subir precios sin perder al cliente`;
+          ? `cada dólar reinvertido le rinde ${(roic*100).toFixed(0)}%: crece sin pedir prestado`
+          : `${(gm*100).toFixed(0)}% de margen bruto y buen retorno del capital: sube precios sin perder cliente`;
     else if (revG != null && epsG != null && revG > 0.03 && epsG > revG + 0.10)
       trait = `gana más rápido (${sgn(epsG)}) de lo que vende (${sgn(revG)}): escala sin que los costos sigan`;
     else if (revG != null && epsG != null && revG > 0.05 && epsG < revG - 0.10)
@@ -9161,7 +9225,7 @@ function _pvxRebalEngine(m, T){
     else if (pm != null && pm >= 0.18 && fcf != null && fcf > 0)
       trait = `convierte ${(pm*100).toFixed(0)} de cada 100 de venta en ganancia y en caja`;
     else if (de != null && de < 50 && cr != null && cr >= 1.5)
-      trait = `sin deuda relevante: aguanta un mal año sin vender activos ni diluirte`;
+      trait = `sin deuda relevante: aguanta un mal año sin diluirte`;
     else if (revG != null)
       trait = `crece ${sgn(revG)} en ventas${pm != null ? ` con ${(pm*100).toFixed(0)}% de margen neto` : ''}`;
 
@@ -9172,18 +9236,18 @@ function _pvxRebalEngine(m, T){
     // ② Aviso de ciclo: solo si el sector es cíclico Y viene de un año excepcional.
     let cycNote = null;
     if (isCyc(r.it.sector) && revG != null && revG > 0.35)
-      cycNote = `viene de un pico (${sgn(revG)}) y en ${secTxt(r.it.sector)} esos números se dan vuelta con el ciclo`;
+      cycNote = `viene de un pico (${sgn(revG)}) y en ${secTxt(r.it.sector)} eso se da vuelta con el ciclo`;
 
     // ③ Qué estás pagando por eso. El PEG manda cuando existe; si no, P/E contra crecimiento.
     let val = null;
     if (peg != null && peg > 0 && peg < 100)
       val = peg <= 1.0 ? `y a PEG ${peg.toFixed(1)} no pagas por ese crecimiento`
           : peg <= 2.0 ? `y a PEG ${peg.toFixed(1)} el precio va en línea`
-          : `aunque a PEG ${peg.toFixed(1)} el precio descuenta años de ejecución perfecta`;
+          : `aunque a PEG ${peg.toFixed(1)} el precio descuenta ejecución perfecta`;
     else if (pe != null && pe > 0 && revG != null)
       val = (pe > 40 && revG < 0.15) ? `aunque a ${pe.toFixed(0)}× ganancias pagas caro para lo que crece`
-          : (pe < 20 && revG > 0.15) ? `y a ${pe.toFixed(0)}× ganancias el precio se queda corto`
-          : `y a ${pe.toFixed(0)}× ganancias el precio va en línea`;
+          : (pe < 20 && revG > 0.15) ? `y a ${pe.toFixed(0)}× el precio se queda corto`
+          : `y a ${pe.toFixed(0)}× el precio va en línea`;
 
     // Dos clausulas como maximo. Con aviso de ciclo, ESE es el cierre: encadenar ademas la
     // valoracion producia frases de tres oraciones que nadie termina de leer.
@@ -9201,10 +9265,10 @@ function _pvxRebalEngine(m, T){
     out[r0.tk] = { sug: r0.it.weight, action: 'MANTENER',
       // Un fondo indexado en solitario NO es una cartera sin diversificar: decirle a alguien
       // 100% en el S&P 500 que "sume otro sector para bajar el riesgo" sería simplemente falso.
-      why: `Es tu única posición: no hay entre qué rebalancear, porque cualquier ajuste es comprar o vender ${r0.it.ticker}, no repartir. ${bizRead(r0)} ` +
+      why: `Es tu única posición: no hay entre qué rebalancear. ${bizRead(r0)} ` +
         (r0.isEtf && r0.etf && (r0.etf.nHold || 0) >= 50
-          ? `Aun siendo una sola línea en tu cuenta, por dentro ya estás repartido entre cientos de empresas: es una base perfectamente válida por sí sola.`
-          : `Con un solo nombre tu resultado ES el de ${r0.it.ticker}; lo que más te cambiaría el riesgo es sumar una segunda posición de otro sector.`) };
+          ? `Por dentro ya estás repartido entre cientos de empresas: es una base válida por sí sola.`
+          : `Tu resultado ES el de ${r0.it.ticker}; lo que más bajaría tu riesgo es sumar una segunda posición de otro sector.`) };
     return out;
   }
 
@@ -9274,9 +9338,13 @@ function _pvxRebalEngine(m, T){
     const rg = num(r.inf, 'revenueGrowth');
     if (r.q != null && isCyc(r.it.sector) && rg != null && rg > 0.35){
       r.cycPeak = true;
-      q = Math.max(1, q - Math.min(1.5, (rg - 0.35) * 3));
+      q = Math.max(1, q - Math.min(CYCMAX, (rg - 0.35) * 3));
     }
-    r.qEff = q; r.raw = Math.pow(Math.max(1,q), 2.2);
+    // Y aquí entra el criterio del cliente: mismo negocio, distinto tamaño según a quién
+    // se lo estás dimensionando.
+    r.tilt = tiltOf(r);
+    q = Math.max(1, Math.min(10, q + r.tilt));
+    r.qEff = q; r.raw = Math.pow(Math.max(1,q), CONC);
   });
   let rawSum = scored.reduce((s,r)=>s+r.raw, 0) || 1;
   scored.forEach(r => { r.tgt = poolW * r.raw / rawSum; });
@@ -9324,6 +9392,11 @@ function _pvxRebalEngine(m, T){
     scored.forEach(r => { if (!r.closed) r.tgt *= k; });
   }
   }   // fin del reparto (había pool evaluable)
+
+  // Las filas congeladas (sin datos, o núcleo indexado) no pasan por el reparto, pero sí
+  // entran en las comparaciones de texto. Sin esto contaban como calidad 0 y hacían parecer
+  // "de los más sólidos" a cualquier acción mediocre que estuviera por encima de ellas.
+  rows.forEach(r => { if (r.qEff == null && r.q != null) r.qEff = r.q; });
 
   // Redondeo a 0.1 pp. El residuo de REDONDEO —y solo ese, nunca un sobrante de verdad—
   // se absorbe en la posición más grande.
@@ -9375,27 +9448,27 @@ function _pvxRebalEngine(m, T){
     // ── Mitad "tu cartera": qué hace ESTA posición dentro de ESTE portafolio ──
     let port;
     if (r.closed)
-      port = `Con ${pctS(cur)} (nº${rank} de ${n}), ni duplicándose cambia tu resultado.`;
+      port = `Con ${pctS(cur)} (nº${rank} de ${n}) ni duplicándose te cambia el año.`;
     else if (r.capped && cur >= capFor(r) && action === 'REDUCIR')
-      port = `Es tu nº${rank} con ${pctS(cur)}, sobre el techo de ${pctS(capFor(r))} por posición de un perfil ${perfTxt}; tu top-3 ya concentra ${pctS(top3W)}.`;
+      port = `Nº${rank} con ${pctS(cur)}, sobre el techo de ${pctS(capFor(r))} de un perfil ${perfTxt}.`;
     // Los flags de techo describen por qué se movió el objetivo, pero tras la normalización
     // final una fila marcada puede terminar SUBIENDO. Explicar un recorte en una fila que
     // aumenta es peor que no explicar nada, así que estas ramas exigen que la acción cuadre.
     else if (r.secCapped && action === 'REDUCIR')
-      port = `${r.it.sector} ya pesa ${pctS(secW)}${peers.length ? ` entre esta y ${listTxt(peers.slice(0,3))}` : ''}: el recorte sale de donde te sobra, no de lo que te diversifica.`;
+      port = `${cap1(secTxt(r.it.sector))} ya pesa ${pctS(secW)} de tu cartera.`;
     else if (r.core)
-      port = `Es tu núcleo indexado y tu posición nº${rank} de ${n} con ${pctS(cur)}: la parte de la cartera que no depende de acertar con ninguna empresa en particular.`;
+      port = `Es tu núcleo indexado, nº${rank} de ${n} con ${pctS(cur)}: la parte que no depende de acertar con una empresa.`;
     else if (cur < MINW)
-      port = `Con ${pctS(cur)} es de tus más chicas (nº${rank} de ${n}): a ese peso, ni acertar cambia tu resultado.`;
+      port = `Con ${pctS(cur)} es de tus más chicas (nº${rank} de ${n}): ni acertar te cambia el año.`;
     else
-      port = `Pesa ${pctS(cur)} y es tu posición nº${rank} de ${n}.`;
+      port = `Pesa ${pctS(cur)}, nº${rank} de ${n}.`;
     // UNA sola coletilla, la que más informe: solapamiento de sector antes que volatilidad.
     // El aviso de sector se reserva a los DOS nombres que más pesan dentro de ese sector: si
     // se pone en todas las filas del sector, la misma frase se repite 8 veces y deja de leerse.
     if (!r.secCapped && peers.length && totW > 0 && secW / totW >= 0.30 && secRank(r) <= 2)
-      port += ` Con ${listTxt(peers.slice(0,3))} suman ${pctS(secW)} del mismo sector: caen a la vez.`;
+      port += ` Con ${listTxt(peers.slice(0,2))} suman ${pctS(secW)} del mismo sector: caen a la vez.`;
     else if ((r.it.beta || 0) >= 1.4 && (m.portBeta || 0) >= 1.3 && action === 'REDUCIR')
-      port += ` Además es de las más volátiles (beta ${(r.it.beta).toFixed(2)}) en una cartera que ya va en ${(m.portBeta).toFixed(2)}.`;
+      port += ` Además es de las más volátiles que tienes (beta ${(r.it.beta).toFixed(2)}).`;
 
     // ── POR QUÉ SUBIRLA O BAJARLA, y con qué. ────────────────────────────────────
     // El motivo NUNCA es "tiene mejor nota": eso no le dice nada a nadie. El motivo es la
@@ -9404,6 +9477,8 @@ function _pvxRebalEngine(m, T){
     // el tamaño que hoy tiene cada una. La nota se usa para calcular; jamás para explicar.
     const usd = Math.abs(d) * (T && T.mkt ? T.mkt : 0);
     const money = usd >= 1 ? ` (~$${Math.round(usd).toLocaleString('en-US')})` : '';
+    // ¿La lectura del negocio ya dijo lo mismo que va a decir el criterio del perfil?
+    const fitDicho = !!r.fit && biz.toLowerCase().indexOf(String(r.fit).slice(0,14).toLowerCase()) !== -1;
     let move;
     if (action === 'REDUCIR'){
       const dest = pickTxt(gainers, r, true);
@@ -9411,39 +9486,79 @@ function _pvxRebalEngine(m, T){
       const cut  = `recortar ${dpp} pp${money} ${to}`;
       const ellas = dest.includes(' y ') ? 'ellas' : 'ella';
       if (r.core)
-        move = `Un solo fondo por encima del 60% deja sin espacio al resto de tu cartera: ${cut}. Del resto no se recorta: el índice no se vende para financiar acciones sueltas.`;
+        move = `Un solo fondo por encima del 60% no deja espacio al resto: ${cut}. El índice no se vende para financiar acciones sueltas.`;
       else if (r.closed)
         move = `Y el negocio tampoco da para agrandarla: cerrarla${money}` +
                (dest ? ` y llevar ese dinero a ${dest}.` : ' y dejar el efectivo hasta tener un destino mejor.');
+      // El criterio del perfil manda cuando fue él quien decidió: para un cliente que no
+      // puede permitirse un mal año, "debe 2.6× su capital" es EL motivo, no un detalle.
+      // Si la lectura del negocio YA dijo ese mismo hecho, no se repite palabra por palabra
+      // dos frases más abajo: se referencia y se pasa a la acción.
+      else if (r.fit && (r.tilt || 0) < -0.3)
+        move = fitDicho
+          ? `Para un perfil ${perfTxt} eso es más de lo que conviene sostener a este peso: ${cut}.`
+          : `Para un perfil ${perfTxt}, ${r.fit}: ${cut}.`;
       else if (r.capped && cur >= capFor(r))
         move = `El problema no es el negocio, es el tamaño: ${cut}.`;
       else if (r.cycPeak)
-        move = `Estás pagando por un año que difícilmente se repita, y a este peso duele si el ciclo gira: ${cut}.`;
+        move = `Estás pagando un año que difícilmente se repita: ${cut}.`;
       else if (tier(r) === 'low')
-        move = `Es de los negocios más flojos que tienes y aun así pesa como los mejores: ${cut}.`;
+        move = `Es de los negocios más flojos que tienes y pesa como los mejores: ${cut}.`;
       else
         move = dest
           ? `Pesa más de lo que sostiene frente a ${dest}: recortar ${dpp} pp${money} hacia ${ellas}.`
-          : `Pesa más de lo que su negocio sostiene frente al resto de tu cartera: ${cut}.`;
+          : `Pesa más de lo que su negocio sostiene frente al resto: ${cut}.`;
     } else if (action === 'AUMENTAR'){
       const src  = pickTxt(losers, r, false);
       const with_ = src ? ` con lo que recortes de ${src}.` : ' con aportes nuevos.';
       const up   = `subir ${dpp} pp${money}`;
+      const revG = num(r.inf,'revenueGrowth'), fcf = num(r.inf,'freeCashflow'), de = num(r.inf,'debtToEquity');
+      const bta  = num(r.inf,'beta') != null ? num(r.inf,'beta') : (typeof r.it.beta === 'number' ? r.it.beta : null);
       if (cur < MINW)
-        move = `El negocio aguanta un peso mayor: ${up}${with_}`;
+        // Con el aviso de ciclo justo antes, "el negocio aguanta más peso" se lee como si
+        // el motor no hubiera leído su propia frase anterior. Se reconoce el descuento.
+        move = r.cycPeak
+          ? `Aun descontando el ciclo, a ${pctS(cur)} no mueve la aguja: ${up}${with_}`
+          : `El negocio aguanta un peso mayor: ${up}${with_}`;
       else if (r.warn)
         move = `Aun con eso, el resto de sus números sostiene más peso del que tiene hoy: ${up}${with_}`;
+      else if (r.fit === 'ancla')
+        move = `Es la base diversificada que pide un perfil ${perfTxt}: ${up}${with_}`;
+      // Mismo hecho, distinta lectura según a quién se le dimensiona: para el agresivo el
+      // argumento es el crecimiento que compone; para el conservador, la caja que no depende
+      // de nadie. Ninguna de las dos frases se usa sin el dato que la respalda.
+      else if (risk === 'alto' && revG != null && revG > 0.20)
+        move = `Crece a un ritmo que compone y tu horizonte lo aguanta: ${up}${with_}`;
+      // Cuatro nombres sólidos en una cartera conservadora salían con la MISMA frase palabra
+      // por palabra. Cada variante la elige el dato que de verdad la sostiene, y ninguna
+      // repite lo que la lectura del negocio acaba de decir dos líneas antes.
+      else if (risk === 'bajo' && fcf != null && fcf > 0 && de != null && de < 60)
+        move = (de < 20)
+            ? `Sin deuda que la ate, aguanta un mal año sin diluirte y hoy pesa menos que nombres más frágiles: ${up}${with_}`
+          : (bta != null && bta <= 1.05)
+            ? `Se mueve menos que el mercado y hoy pesa menos que otras que lo amplifican: ${up}${with_}`
+          : (tier(r) === 'top')
+            ? `Es de los negocios más sólidos que tienes y pesa menos que otros más frágiles: ${up}${with_}`
+            : `En una cartera ${perfTxt} este es el tipo de nombre que debe pesar más, no menos: ${up}${with_}`;
       else if (tier(r) === 'top')
         move = `Es de los negocios más sólidos que tienes y pesa menos que otros que rinden peor: ${up}${with_}`;
       else
         move = `Sus números sostienen más peso del que tiene hoy: ${up}${with_}`;
     } else {
       move = r.core
-        ? `Por eso el rebalanceo no la toca: vender índice para comprar acciones sueltas cambia diversificación por apuesta. Los ajustes salen del resto de tu cartera.`
+        ? `Por eso no se toca: vender índice para comprar acciones sueltas cambia diversificación por apuesta.`
         : `Ni el negocio ni el tamaño piden moverla: déjala como está.`;
     }
 
-    out[r.tk] = { sug, action, why: `${port} ${biz} ${move}` };
+    // ── TOPE DURO: 60 PALABRAS ──────────────────────────────────────────────────
+    // Un motivo que no se lee no asesora a nadie. Si las tres piezas no entran, la primera
+    // que cae es el contexto de cartera (el peso y el nº ya se ven en la fila de al lado);
+    // la razón de negocio y la acción concreta no se sacrifican nunca.
+    const wc = s => (String(s).match(/\S+/g) || []).length;
+    const why = [`${port} ${biz} ${move}`, `${biz} ${move}`, `${port} ${move}`, move]
+      .find(c => wc(c) <= 60) || move;
+
+    out[r.tk] = { sug, action, why };
   });
   return out;
 }
