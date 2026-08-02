@@ -11663,8 +11663,18 @@ async function _sharedAISet(cacheKey, dataObj){
       if(!_sharedPendingWrites.some(w=>w.key===cacheKey)) _sharedPendingWrites.push({ key: cacheKey, data: dataObj });
       return false;
     }
-    const { error } = await _sharedWrite('set', (String(cacheKey).indexOf('evt:')===0 ? 'event' : 'analysis'), cacheKey, dataObj);
-    if(error){ try{ console.warn('sharedAISet bloqueado:', error.message); }catch(_){} return false; }
+    const res = await _sharedWrite('set', (String(cacheKey).indexOf('evt:')===0 ? 'event' : 'analysis'), cacheKey, dataObj);
+    // `_sharedWrite` devuelve DOS formas distintas: `{ok:false, error}` cuando falla el invoke
+    // (sin sesión, red, 4xx) y el cuerpo TAL CUAL de la Edge Function cuando responde 200 — y ese
+    // cuerpo señala el rechazo con `ok:false` (rate-limit, lock ajeno, forma inválida), SIN campo
+    // `error`. Al mirar solo `error` se daba por subida una escritura rechazada y la clave entraba
+    // en `_sharedPushed`: en el resto de la sesión ya no se reintentaba, así que el contenido se
+    // quedaba únicamente en local y CADA dispositivo lo volvía a generar (y a pagar). Se exige
+    // ahora una confirmación positiva: sin `error` Y sin `ok:false`.
+    if (res && (res.error || res.ok === false)) {
+      try{ console.warn('sharedAISet bloqueado:', (res.error && res.error.message) || res.reason || 'rechazado'); }catch(_){}
+      return false;
+    }
     if (_immutable) _sharedPushed.add(cacheKey);
     return true;
   }catch(e){ return false; }
@@ -12263,8 +12273,14 @@ const SharedNews = (function(){
   // silencioso → si RLS lo bloqueaba, nunca nos enterábamos y nunca persistía).
   async function _cloudSet(o){
     try{ const sb=window.sbClient; if(!sb || !_authed()) return false;
-      const { error } = await _sharedWrite('set','news', CLOUD_KEY, o);
-      if(error){ try{ console.warn('SharedNews cloudSet bloqueado:', error.message); }catch(_){} return false; }
+      // Igual que en `_sharedAISet`: la Edge Function rechaza con `ok:false` en un 200, sin campo
+      // `error`. Mirar solo `error` daba por subida una escritura rechazada → el generador creía
+      // haber publicado, soltaba el lock y ningún dispositivo volvía a intentarlo.
+      const res = await _sharedWrite('set','news', CLOUD_KEY, o);
+      if(res && (res.error || res.ok === false)){
+        try{ console.warn('SharedNews cloudSet bloqueado:', (res.error && res.error.message) || res.reason || 'rechazado'); }catch(_){}
+        return false;
+      }
       return true;
     }catch(e){ return false; }
   }
@@ -23354,8 +23370,11 @@ const SharedOutlook = (function(){
   }
   async function _cloudSet(wk, payload){
     try{ const sb = window.sbClient; if(!sb || !_canWrite()) return false;
-      const { error } = await _sharedWrite('set','outlook', _key(wk), payload);
-      return !error;
+      // La Edge Function rechaza con `ok:false` dentro de un 200 (sin campo `error`): mirar solo
+      // `error` devolvía "subido" para una escritura que nunca ocurrió, y el generador soltaba el
+      // lock creyendo haber publicado el outlook de la semana.
+      const res = await _sharedWrite('set','outlook', _key(wk), payload);
+      return !!(res && !res.error && res.ok !== false);
     }catch(e){ return false; }
   }
   async function _lockGet(wk){
@@ -28328,12 +28347,66 @@ if (document.readyState === 'loading') {
     for (var i=0;i<_APP_SYNC_PREFIX.length;i++){ if (k.indexOf(_APP_SYNC_PREFIX[i]) === 0) return true; }
     return false;
   }
+  // ── TAMAÑO ACOTADO DEL BUNDLE (arranque rápido para TODOS) ─────────────────────────
+  // `profile_caches` se lee en el CAMINO CRÍTICO del arranque: mientras baja, la app sigue
+  // tapada por el overlay. Antes solo había un tope POR CLAVE (600 KB) y NINGUNO total, y las
+  // claves que más pesan crecen sin límite: `nm_ai_cache_v1` y `stock_ai_analysis_v1` acumulan
+  // texto de IA sin caducar, y `weekly_outlook_*` / `week_top_*` añaden una clave NUEVA cada
+  // semana que nadie borra jamás. O sea: el bundle engordaba de forma monótona y el login se
+  // hacía más lento cada semana de uso, hasta que el upsert empezaba a fallar por tamaño y la
+  // sincronización de cachés moría en silencio (el catch la traga).
+  //
+  // Ahora hay presupuesto TOTAL y orden de PRIORIDAD explícito. Primero lo que no se puede
+  // perder (el perfil del inversor: si no llega, al usuario se le vuelve a preguntar el quiz
+  // en el dispositivo nuevo), luego el historial de la gráfica, luego las cachés de IA, y al
+  // final los semanales — de los que solo viajan los más recientes, porque los de semanas
+  // pasadas ya no se pintan en ningún sitio. Lo que no cabe NO se borra: se queda en local.
+  // El presupuesto es TOTAL, sin tope aparte por clave: un tope por clave más bajo que el total
+  // crea una zona muerta (una caché de IA de 400 KB no viajaría aunque el bundle fuera a ir vacío)
+  // y el orden de prioridad ya impide que una clave grande desplace a las importantes — se sirven
+  // primero. Las cachés de IA son además las únicas prescindibles: su contenido también vive en
+  // `shared_analysis`, compartido por todos, así que no viajar aquí no obliga a regenerar (y pagar):
+  // como mucho cuesta un round trip a la copia global.
+  var _PV_BUNDLE_MAX_TOTAL = 600000;   // ~600 KB de JSON — arranque rápido incluso en móvil con 4G
+  var _PV_WEEKLY_KEEP      = 3;        // semanas recientes por prefijo (las claves llevan `AAAA-Www`)
+  function _appKeyPriority(k){
+    if (k === 'pv_profile_local' || k === 'portiv_profile_v1' || k.indexOf('pv_profile_') === 0) return 0;
+    if (k === 'portiv_prev_close_v1' || k === 'portiv_daily_v2' || k === 'portiv_daily_history_v1') return 1;
+    if (k === 'portiv_mover_why_v1') return 2;
+    if (k === 'stock_ai_analysis_v1' || k === 'nm_ai_cache_v1') return 3;
+    return 4;   // weekly_outlook_* · week_top_*
+  }
   function _appBundleGather(){
     var out = {};
     try {
+      var keys = [];
       for (var i=0;i<localStorage.length;i++){
         var k = localStorage.key(i);
-        if (_appKeyShouldSync(k)) { var v = localStorage.getItem(k); if (v != null && v.length < 600000) out[k] = v; }
+        if (_appKeyShouldSync(k)) keys.push(k);
+      }
+      // Semanales: solo las N más recientes de CADA prefijo. `_weekKey` produce `AAAA-Www` con
+      // el número de semana a dos dígitos → el orden lexicográfico ES el cronológico.
+      // Solo se poda lo que TERMINA en un token de semana: bajo el mismo prefijo conviven claves
+      // que no son semanas (p. ej. `weekly_outlook_seedver`, un marcador de versión). Sin este
+      // filtro esa clave gana el orden (una letra pesa más que un dígito), sobrevive siempre y
+      // encima ocupa uno de los tres huecos, dejando fuera una semana real.
+      var _WEEK_RE = /\d{4}-W\d{2}$/;
+      var drop = {};
+      _APP_SYNC_PREFIX.forEach(function(p){
+        if (p === 'pv_profile_') return;                       // el perfil no caduca por semana
+        keys.filter(function(k){ return k.indexOf(p) === 0 && _WEEK_RE.test(k); })
+            .sort().reverse().slice(_PV_WEEKLY_KEEP)
+            .forEach(function(k){ drop[k] = 1; });
+      });
+      keys = keys.filter(function(k){ return !drop[k]; })
+                 .sort(function(a,b){ return _appKeyPriority(a) - _appKeyPriority(b); });
+      var total = 0;
+      for (var j=0;j<keys.length;j++){
+        var kk = keys[j], v = null;
+        try { v = localStorage.getItem(kk); } catch(e){ v = null; }
+        if (v == null) continue;
+        if (total + v.length > _PV_BUNDLE_MAX_TOTAL) continue;   // no cabe → se queda solo en local
+        out[kk] = v; total += v.length;
       }
     } catch(e){}
     return out;
@@ -28370,14 +28443,19 @@ if (document.readyState === 'loading') {
   // deslogueado — por eso el purgado por cambio de cuenta lo conserva.
   var _PV_KEEP_AUTH_RE = /^(sb-|supabase\.auth)/;
 
-  // keepAuth  : conserva el token de sesión (cambio de cuenta en caliente).
-  // keepBind  : conserva `pv_bound_uid` (la marca "este navegador está ligado a este uid").
-  function _pvWipeLocal(keepAuth, keepBind){
+  // keepAuth   : conserva el token de sesión (cambio de cuenta en caliente).
+  // keepBind   : conserva `pv_bound_uid` (la marca "este navegador está ligado a este uid").
+  // keepRescue : conserva `pv_port_rescue`, el respaldo de ediciones que la nube NUNCA llegó a
+  //              ver (ver showLogin). Va etiquetado con el uid dueño y el gate solo lo reclama
+  //              si vuelve ESE usuario. Se conserva cuando no hay sesión (nadie más lo puede
+  //              leer) y se BORRA en un cambio de cuenta: ahí sí habría otra cuenta delante.
+  function _pvWipeLocal(keepAuth, keepBind, keepRescue){
     try {
       Object.keys(localStorage).forEach(function(k){
         if (_PV_KEEP_EXACT[k]) return;
         if (keepAuth && _PV_KEEP_AUTH_RE.test(k)) return;
         if (keepBind && k === 'pv_bound_uid') return;
+        if (keepRescue && k === 'pv_port_rescue') return;
         try{ localStorage.removeItem(k); }catch(e){}
       });
       Object.keys(sessionStorage).forEach(function(k){
@@ -28402,7 +28480,7 @@ if (document.readyState === 'loading') {
   // (keepAuth sigue en true a propósito: el token de supabase-js lo gestiona y lo borra
   //  la propia librería en signOut. Quitárselo por debajo a mitad del flujo es pedir un
   //  estado inconsistente, y un token de una cuenta ya eliminada el servidor lo rechaza.)
-  function _pvNukeLocalAll(){ _pvWipeLocal(true, true); }
+  function _pvNukeLocalAll(){ _pvWipeLocal(true, true, true); }
   window._pvNukeLocalAll = _pvNukeLocalAll;
 
   // ── Guard de entrada única ──────────────────────────────────────────────────
@@ -28415,6 +28493,39 @@ if (document.readyState === 'loading') {
   // 1.7 MB de app tres veces seguidas, todo con el body en `visibility:hidden`. Se ve
   // exactamente como una app congelada, y solo pasa en un dispositivo que arranca en frío.
   var _gateRunning = false;
+
+  // ── Lecturas del gate, extraídas para poder ADELANTARLAS ────────────────────────────────
+  // Devuelve [profiles, profile_caches]. Salen juntas (son independientes) y `profile_caches`
+  // se degrada a {data:null,error} si falla, para que un fallo suyo no tumbe el arranque.
+  function _gateFetch(uid){
+    return Promise.all([
+      sb.from('profiles').select('portfolio, updated_at').eq('id', uid).maybeSingle(),
+      Promise.resolve(sb.from('profile_caches').select('bundle').eq('user_id', uid).maybeSingle())
+        .catch(function(e){ return { data: null, error: e }; }),
+    ]);
+  }
+  // ARRANQUE: el camino crítico encadenaba DOS round trips completos antes de poder revelar la
+  // app — primero `getUser()` (validar que la cuenta no fue eliminada) y sólo DESPUÉS las dos
+  // lecturas del gate. En una conexión móvil eso son fácilmente 400-800 ms de pantalla tapada
+  // que nadie estaba usando para nada. Las lecturas son SOLO LECTURA e idempotentes, así que se
+  // lanzan a la vez que `getUser()`: si la cuenta resulta estar eliminada, `_pvKilled` corta
+  // igual y se recarga limpio — lo único que se habrá hecho de más es un SELECT que RLS ya
+  // devuelve vacío. El gate consume este prefetch si es del mismo uid; si no, relee.
+  var _gatePrefetch = null;
+  function _gatePrefetchFor(uid){
+    try {
+      if (!uid) return;
+      var _p = _gateFetch(uid);
+      _p.catch(function(){});          // si la cuenta resultó eliminada nadie consume esta promesa:
+      _gatePrefetch = { uid: uid, p: _p };   // el handler vacío evita un unhandledrejection suelto
+    } catch(e){ _gatePrefetch = null; }
+  }
+  function _gateReadsFor(uid){
+    var pre = _gatePrefetch;
+    _gatePrefetch = null;                                  // de un solo uso: un re-gate relee fresco
+    if (pre && pre.uid === uid && pre.p) return pre.p;
+    return _gateFetch(uid);
+  }
   function cloudLoadAndGate(s){
     if (window._pvKilled) return;
     if (_gateRunning) return;       // ya hay una pasada en curso → la segunda sobra
@@ -28512,11 +28623,7 @@ if (document.readyState === 'loading') {
       // sin `.catch` propio. Si profile_caches falla, se degrada a {data:null,error} y se
       // ignora abajo (igual que hoy); un fallo de `profiles` sí rechaza el Promise.all y cae
       // en el catch exterior, exactamente como antes.
-      var _gateReads = await Promise.all([
-        sb.from('profiles').select('portfolio, updated_at').eq('id', s.user.id).maybeSingle(),
-        Promise.resolve(sb.from('profile_caches').select('bundle').eq('user_id', s.user.id).maybeSingle())
-          .catch(function(e){ return { data: null, error: e }; }),
-      ]);
+      var _gateReads = await _gateReadsFor(s.user.id);
       var r = _gateReads[0], _pcRes = _gateReads[1];
 
       // BUG 1: el cliente de Supabase RESUELVE (no lanza) ante muchos errores (RLS, 4xx/5xx,
@@ -28540,6 +28647,28 @@ if (document.readyState === 'loading') {
       var cloudUpdatedAt = (r.data && r.data.updated_at) || null;
       var localRaw = localStorage.getItem(LS_KEY);
 
+      // RESCATE de ediciones que la nube nunca vio y que un cierre de sesión involuntario habría
+      // borrado (ver el bloque de cuarentena en showLogin). Se reclama SOLO si el respaldo es de
+      // ESTE usuario; si es de otro se descarta sin leerlo. Una vez restaurado se marca como
+      // pendiente y se deja que decida la MISMA regla de siempre (last-writer-wins contra
+      // `updated_at`): si mientras tanto se editó desde otro dispositivo y esa copia es más
+      // reciente, gana la nube, exactamente igual que sin rescate. La clave se consume siempre.
+      var _rescuedRaw = null;
+      try {
+        var _rsRaw = localStorage.getItem('pv_port_rescue');
+        if (_rsRaw) {
+          localStorage.removeItem('pv_port_rescue');
+          var _rs = JSON.parse(_rsRaw);
+          if (_rs && _rs.blob && _rs.uid && _rs.uid === (s.user && s.user.id)) {
+            localStorage.setItem(LS_KEY, _rs.blob);
+            localStorage.setItem('pv_port_synced', '0');
+            if (_rs.at) localStorage.setItem('pv_port_saved_at', _rs.at);
+            localRaw = _rs.blob;
+            _rescuedRaw = _rs.blob;
+          }
+        }
+      } catch(e){}
+
       // Restaura SIEMPRE lo que ya esté en la nube de ESTA cuenta (aunque el portafolio esté vacío):
       // perfil (no re-preguntar) + cachés de IA (no regenerar) + watchlist.
       // FORMATO VIEJO (filas escritas antes de profile_caches): venían embebidas en profiles.portfolio.
@@ -28558,7 +28687,7 @@ if (document.readyState === 'loading') {
         if (_bundle && (_bundle.__app || _bundle.__wl)) {
           if (_bundle.__app) _appBundleRestore(_bundle.__app);
           if (_bundle.__wl)  _wlRestore(_bundle.__wl);
-          _lastBundleHash = _pvBundleHash({ __app: _bundle.__app||{}, __wl: _bundle.__wl||{} });
+          _lastBundleHash = _pvBundleStableHash({ __app: _bundle.__app||{}, __wl: _bundle.__wl||{} });
         }
         // else: ya se restauró __app/__wl (si había) desde el portfolio blob arriba — se deja así.
       } catch(e){ _pvLogError('cloudLoadAndGate profile_caches', e); }
@@ -28606,6 +28735,15 @@ if (document.readyState === 'loading') {
           // BUG 2: la copia local ahora ES la de la nube → marcar sincronizado (no pendiente).
           try { localStorage.setItem('pv_port_synced', '1'); if (cloudUpdatedAt) localStorage.setItem('pv_port_saved_at', cloudUpdatedAt); } catch(e){}
         }
+      } else if (_rescuedRaw) {
+        // Rescate SIN fila en la nube. Que exista respaldo demuestra que esta cuenta TENÍA
+        // portafolio, así que sembrar EMPTY_STATE aquí lo destruiría justo en el único caso en
+        // que nadie más lo tiene. Se sube el rescate y la cuenta queda como estaba. (Si la fila
+        // faltara por un fallo de LECTURA no llegaríamos hasta aquí: `r.error` aborta el gate.)
+        localStorage.setItem(LS_KEY, _rescuedRaw);
+        sessionStorage.setItem(APPLIED, '1');
+        _pvReinitFromLocal();
+        try { cloudFlushNow(); } catch(e){}
       } else {
         // Cuenta SIN fila en la nube (incluida la del propietario) → empieza VACÍO.
         // No existe ningún camino especial de "propietario": nadie siembra datos hardcodeados.
@@ -28624,6 +28762,10 @@ if (document.readyState === 'loading') {
         }
         localStorage.setItem(LS_KEY, emptyRaw);
         try {
+          // Con las lecturas adelantadas, el veredicto de `getUser()` puede llegar mientras el
+          // gate ya va por aquí. Si la cuenta resultó eliminada, no se crea ninguna fila: se
+          // sale y el flujo de borrado recarga limpio.
+          if (window._pvKilled) return;
           var _newStamp = new Date().toISOString();
           var _newRes = await sb.from('profiles').upsert({ id: s.user.id, email: s.user.email, portfolio: EMPTY_STATE, updated_at: _newStamp });
           if (!_newRes || !_newRes.error) {
@@ -28661,18 +28803,73 @@ if (document.readyState === 'loading') {
   // los upsert a `profiles` se disparen por cambios de estado real (posiciones/cash/txLog/perfil),
   // no por ruido de precio. Antes: ~1 upsert/tick (~120/h/sesión). Ver PORTIV-AUDIT-fase0.md #20.
   var _PV_VOLATILE_KEYS = ['price','dayChgPct','_prevClose','_stale'];
+  // FIX #20b (egress): el MISMO ruido de mercado seguía entrando por ARRIBA. `perfMaster` es la
+  // serie de valor del portafolio y `_recordDailySnapshot` reescribe su ÚLTIMO punto con el total
+  // en vivo (hasta una vez cada 2 min en horario de mercado); además `_CHART_IMPORTED` vale `true`
+  // por defecto, así que `perfMaster` viaja SIEMPRE dentro del blob. Resultado: el blob cambiaba
+  // solo, el hash cambiaba con él y `profiles` recibía un upsert del portafolio COMPLETO cada dos
+  // minutos por sesión abierta, sin que el usuario tocara absolutamente nada.
+  // La serie es dato DERIVADO — se reconstruye de `portiv_daily_history_v1` / `portiv_daily_v2`,
+  // que ya viajan en profile_caches, y al cargar se re-ancla al total en vivo. Para el hash basta
+  // su FORMA: nº de puntos + primera y última fecha. Un cambio real (día nuevo, import del broker,
+  // reset) sí mueve la forma → sí se sube; el goteo intradía ya no. El blob que se sube sigue
+  // llevando la serie completa y fresca: lo único que cambia es CUÁNDO se decide subirlo.
+  function _pvSeriesShape(s){
+    try{
+      if(!s || typeof s!=='object' || !Array.isArray(s.dates)) return s;
+      var d = s.dates;
+      return 'series:' + d.length + ':' + (d[0] || '') + ':' + (d[d.length-1] || '');
+    }catch(e){ return s; }
+  }
   function _pvPortHash(o){
     try{
-      if(!o || typeof o!=='object' || !Array.isArray(o.holdings)) return _pvBundleHash(o);
+      if(!o || typeof o!=='object') return _pvBundleHash(o);
       var clone = Object.assign({}, o);
-      clone.holdings = o.holdings.map(function(h){
-        if(!h || typeof h!=='object') return h;
-        var c = Object.assign({}, h);
-        for(var i=0;i<_PV_VOLATILE_KEYS.length;i++) delete c[_PV_VOLATILE_KEYS[i]];
-        return c;
-      });
+      if (Array.isArray(o.holdings)) {
+        clone.holdings = o.holdings.map(function(h){
+          if(!h || typeof h!=='object') return h;
+          var c = Object.assign({}, h);
+          for(var i=0;i<_PV_VOLATILE_KEYS.length;i++) delete c[_PV_VOLATILE_KEYS[i]];
+          return c;
+        });
+      }
+      if (clone.perfMaster) clone.perfMaster = _pvSeriesShape(clone.perfMaster);
       return _pvBundleHash(clone);
     }catch(e){ return _pvBundleHash(o); }
+  }
+  // ── Hash ESTABLE del bundle de cachés (mismo problema, tabla `profile_caches`) ───────────
+  // El bundle incluye estructuras que el MERCADO reescribe solo: `wl_cache` (cotizaciones de la
+  // watchlist, refrescadas en cada tick), `portiv_daily_v2` y `portiv_daily_history_v1` (el punto
+  // de HOY se reescribe con el total en vivo) y `portiv_prev_close_v1` (mapa de precios de cierre).
+  // Como la compuerta comparaba el hash del bundle CRUDO, en horario de mercado el hash cambiaba
+  // SIEMPRE y `profile_caches` recibía un upsert del bundle ENTERO cada 45 s por sesión abierta —
+  // el blob más grande de la app (cachés de IA + historial + watchlist) subiendo en bucle sin un
+  // solo cambio real. Era, con diferencia, el mayor gasto de egress y de batería en móvil.
+  // El hash pasa a calcularse sobre una PROYECCIÓN ESTABLE: de cada estructura volátil se conserva
+  // su IDENTIDAD (qué tickers, qué fechas), no su VALOR. Lo que se SUBE sigue siendo el bundle
+  // completo y fresco — solo cambia el criterio para decidir que hay algo nuevo que subir.
+  function _pvDatedShape(v){
+    try{
+      if (typeof v !== 'string') return v;
+      var a = JSON.parse(v);
+      if (Array.isArray(a)) return 'd:' + a.length + ':' + a.map(function(p){ return (p && p.date) || ''; }).join(',');
+      if (a && typeof a === 'object') return 'o:' + Object.keys(a).sort().join(',') + ':' + (a.date || '');
+      return v;
+    }catch(e){ return v; }
+  }
+  var _PV_BUNDLE_VOLATILE = ['portiv_daily_v2','portiv_daily_history_v1','portiv_prev_close_v1'];
+  function _pvBundleStableHash(b){
+    try{
+      var app = Object.assign({}, (b && b.__app) || {});
+      for (var i=0;i<_PV_BUNDLE_VOLATILE.length;i++){
+        var k = _PV_BUNDLE_VOLATILE[i];
+        if (app[k] != null) app[k] = _pvDatedShape(app[k]);
+      }
+      var wl = (b && b.__wl) || {};
+      // De la watchlist solo importa QUÉ tickers hay; sus cotizaciones se refrescan al cargar.
+      var wlStable = { tickers: wl.tickers || [], cache: Object.keys(wl.cache || {}).sort() };
+      return _pvBundleHash({ __app: app, __wl: wlStable });
+    }catch(e){ return _pvBundleHash(b); }
   }
   var _lastPortHash = null;     // last portfolio blob pushed to profiles (hash estable, sin precios)
   var _lastBundleHash = null;   // last {__app,__wl} bundle pushed to profile_caches
@@ -28680,15 +28877,28 @@ if (document.readyState === 'loading') {
   // Cold path: sync AI caches + watchlist to profile_caches, slow debounce, hash-gated.
   // Núcleo (sin debounce) de la subida de cachés/watchlist. Self-gated por _lastBundleHash: no
   // reescribe si nada cambió. Reutilizable por el flush inmediato (BUG 3).
+  // `_cachesInflight` evita el upsert DUPLICADO: `cloudFlushNow` llama a este núcleo sin esperarlo
+  // y el temporizador de 45 s puede dispararse encima. Como `_lastBundleHash` solo se fija al
+  // terminar, las dos pasadas leían el mismo hash viejo y subían el bundle entero dos veces.
+  var _cachesInflight = null;
   async function _cachesPushCore(){
-    try {
-      var sb2 = window.sbClient; if(!sb2 || typeof session==='undefined' || !session || !session.user) return;
-      var bundle = { __app: _appBundleGather(), __wl: _wlGather() };
-      var h = _pvBundleHash(bundle);
-      if (h === _lastBundleHash) return;                 // nada cambió → no reescribir
-      var { error } = await sb2.from('profile_caches').upsert({ user_id: session.user.id, bundle: bundle, updated_at: new Date().toISOString() }, { onConflict:'user_id' });
-      if (!error) _lastBundleHash = h;
-    } catch(e){ try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', e); }catch(_){} }
+    if (_cachesInflight) return _cachesInflight;
+    _cachesInflight = (async function(){
+      try {
+        var sb2 = window.sbClient; if(!sb2 || typeof session==='undefined' || !session || !session.user) return;
+        var bundle = { __app: _appBundleGather(), __wl: _wlGather() };
+        var h = _pvBundleStableHash(bundle);
+        if (h === _lastBundleHash) return;                 // nada cambió (ignorando precios) → no reescribir
+        var { error } = await sb2.from('profile_caches').upsert({ user_id: session.user.id, bundle: bundle, updated_at: new Date().toISOString() }, { onConflict:'user_id' });
+        if (!error) { _lastBundleHash = h; try { localStorage.setItem('pv_caches_synced', '1'); } catch(e){} }
+        else { try { localStorage.setItem('pv_caches_synced', '0'); } catch(e){}   // pendiente → reintento al volver la red
+               try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', error); }catch(_){} }
+      } catch(e){
+        try { localStorage.setItem('pv_caches_synced', '0'); } catch(_){}
+        try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', e); }catch(_){}
+      }
+    })();
+    try { return await _cachesInflight; } finally { _cachesInflight = null; }
   }
   function _cachesPush(){
     clearTimeout(_cachesTimer);
@@ -28698,7 +28908,16 @@ if (document.readyState === 'loading') {
   // Núcleo (sin debounce) de la subida del portafolio. Respeta el hash-gate: no sube si nada
   // cambió. BUG 2/5: marca pv_port_synced='1' tras un upsert exitoso (local ya está en la nube),
   // y '0' si falla (queda pendiente de reintento al volver la conexión).
+  // Misma guarda de concurrencia que en las cachés: `cloudFlushNow` dispara este núcleo sin
+  // esperarlo y el debounce de 1,2 s puede caer encima. Sin guarda, ambas pasadas leen el mismo
+  // `_lastPortHash` viejo y suben el portafolio dos veces (dos upserts idénticos, dos timestamps).
+  var _pushInflight = null;
   async function _cloudPushCore(){
+    if (_pushInflight) return _pushInflight;
+    _pushInflight = _cloudPushCoreInner();
+    try { return await _pushInflight; } finally { _pushInflight = null; }
+  }
+  async function _cloudPushCoreInner(){
     if (!session || !session.user) return;
     try {
       // Cada cuenta guarda SU portafolio (puro). Watchlist + cachés de IA viajan aparte
@@ -28772,18 +28991,25 @@ if (document.readyState === 'loading') {
   // BUG 3: flush INMEDIATO (sin debounce) al ocultar/pausar la app. En iOS, al deslizar/matar la
   // app se perdía lo pendiente (hasta 45s de cachés + la última operación). Cancela los debounces
   // y dispara los upsert de inmediato; idempotente y respeta los hash-gates (no sube si nada cambió).
-  function cloudFlushNow(){
+  // `unloading` = la página se va (pagehide / visibilitychange / pause de Capacitor). SOLO en ese
+  // caso tiene sentido el beacon: es la red de seguridad para cuando el upsert normal no llega a
+  // completarse. Los otros dos llamadores (el gate cuando local va por delante, y el reintento del
+  // evento `online`) tienen todo el tiempo del mundo, y allí el beacon solo conseguía DUPLICAR la
+  // escritura: dos POST del mismo portafolio con timestamps distintos, y el que llegue último manda.
+  function cloudFlushNow(unloading){
     try {
       if (!session || !session.user) return;
       clearTimeout(pushTimer);
       clearTimeout(_cachesTimer);
       // Red de seguridad síncrona SOLO si el portafolio tiene cambios sin subir (hash-gate). Si el
       // upsert asíncrono de abajo alcanza a completar, el on_conflict=id lo vuelve idempotente.
-      try {
-        var raw = localStorage.getItem(LS_KEY);
-        var obj = raw ? JSON.parse(raw) : null;
-        if (obj && _pvPortHash(obj) !== _lastPortHash) _beaconPush(obj);
-      } catch(e){}
+      if (unloading) {
+        try {
+          var raw = localStorage.getItem(LS_KEY);
+          var obj = raw ? JSON.parse(raw) : null;
+          if (obj && _pvPortHash(obj) !== _lastPortHash) _beaconPush(obj);
+        } catch(e){}
+      }
       _cloudPushCore();     // subida asíncrona normal del portafolio (self-gated por _lastPortHash)
       _cachesPushCore();    // cachés frías + watchlist (self-gated por _lastBundleHash)
     } catch(e){ try{ if(typeof reportQuiet==='function') reportQuiet('cloud · flush', e); }catch(_){} }
@@ -28800,18 +29026,23 @@ if (document.readyState === 'loading') {
   };
 
   // BUG 3: enlaza el flush a los eventos de ocultar/descargar/pausar (orden de fiabilidad).
-  try { document.addEventListener('visibilitychange', function(){ if (document.hidden) cloudFlushNow(); }); } catch(e){}
-  try { window.addEventListener('pagehide', function(){ cloudFlushNow(); }); } catch(e){}
+  try { document.addEventListener('visibilitychange', function(){ if (document.hidden) cloudFlushNow(true); }); } catch(e){}
+  try { window.addEventListener('pagehide', function(){ cloudFlushNow(true); }); } catch(e){}
   try {
     // Capacitor: evento nativo 'pause' al mandar la app a segundo plano en iOS. Si el plugin
     // @capacitor/app no está incluido, se omite sin romper. // TODO Capacitor App pause
     var _capApp = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App) || null;
-    if (_capApp && typeof _capApp.addListener === 'function') { _capApp.addListener('pause', function(){ cloudFlushNow(); }); }
+    if (_capApp && typeof _capApp.addListener === 'function') { _capApp.addListener('pause', function(){ cloudFlushNow(true); }); }
   } catch(e){}
-  // BUG 5: al recuperar conectividad, reintenta subir si algo quedó pendiente (pv_port_synced==='0').
+  // BUG 5: al recuperar conectividad, reintenta subir si algo quedó pendiente. Antes solo miraba el
+  // portafolio: si lo que había fallado era el bundle de cachés (perfil del inversor, historial de
+  // la gráfica, watchlist), nadie lo reintentaba hasta el siguiente `savePortfolio` — y en una
+  // sesión sin operaciones eso podía no llegar nunca. Ahora `pv_caches_synced` entra en la condición.
   try {
     window.addEventListener('online', function(){
-      try { if (localStorage.getItem('pv_port_synced') === '0') cloudFlushNow(); } catch(e){}
+      try {
+        if (localStorage.getItem('pv_port_synced') === '0' || localStorage.getItem('pv_caches_synced') === '0') cloudFlushNow();
+      } catch(e){}
     });
   } catch(e){}
 
@@ -28951,7 +29182,30 @@ if (document.readyState === 'loading') {
     // eliminada, sesión cerrada o expirada). La nube es la fuente de verdad: al re-loguear
     // una cuenta válida, cloudLoadAndGate restaura todo desde su fila. Una cuenta eliminada
     // no tiene fila → no reaparece nada. Así "queda como si nunca hubiera existido".
+    //
+    // PÉRDIDA DE DATOS (arreglado): "la nube es la fuente de verdad" solo vale para lo que la
+    // nube YA VIO. Un cierre de sesión no siempre es voluntario — en móvil, un refresh de token
+    // que falla al saltar de Wi-Fi a datos llega hasta aquí como SIGNED_OUT — y si el portafolio
+    // local tenía cambios sin subir (`pv_port_synced === '0'`: se operó sin red, o la app se
+    // cerró antes del upsert), esta limpieza los destruía para siempre. Antes de borrar se
+    // guarda una copia ETIQUETADA CON EL UID dueño; el gate la reclama solo si vuelve a entrar
+    // ESE usuario y su fila es más vieja. Para cualquier otra cuenta es basura que se purga.
+    var _rescue = null;
+    try {
+      if (localStorage.getItem('pv_port_synced') === '0') {
+        var _rUid  = window.__pvUserId || '';
+        var _rBlob = localStorage.getItem(LS_KEY);
+        if (_rUid && _rUid !== 'local' && _rBlob) {
+          _rescue = JSON.stringify({
+            uid:  _rUid,
+            at:   localStorage.getItem('pv_port_saved_at') || new Date().toISOString(),
+            blob: _rBlob
+          });
+        }
+      }
+    } catch(e){}
     try { _pvNukeLocalAll(); } catch(e){}
+    try { if (_rescue) localStorage.setItem('pv_port_rescue', _rescue); } catch(e){}
     var boot = document.getElementById('authBoot'); if (boot) boot.style.display = 'none';
     var body = document.getElementById('authBody'); if (body) body.style.display = 'block';
     setMode('signin');
@@ -28965,6 +29219,9 @@ if (document.readyState === 'loading') {
   sb.auth.getSession().then(function(r){
     var s = r.data.session;
     if (!s) { showLogin(); return; }
+    // Las lecturas del gate viajan EN PARALELO con getUser() en vez de esperar su turno:
+    // se ahorra un round trip entero en CADA arranque en frío, para todos los usuarios.
+    try { _gatePrefetchFor(s.user && s.user.id); } catch(e){}
     sb.auth.getUser().then(function(u){
       var err = u && u.error;
       if (err) {
