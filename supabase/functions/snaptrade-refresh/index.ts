@@ -289,25 +289,80 @@ Deno.serve(async (req) => {
     }
 
     const ai: any = st.accountInformation;
+
+    // ── Una cuenta que no responde NO es una cuenta vacía ─────────────────────────
+    // Los `catch { /* not ready yet */ }` mudos de antes emitían esa cuenta con
+    // positions:[] y balances:[]. Con más de una cuenta el resultado pasaba igualmente
+    // el filtro carriesData (gracias a las que SÍ respondieron), así que esa foto
+    // TRUNCADA se guardaba en profiles.snaptrade_holdings y se sellaba last_refresh:
+    // el usuario veía su cartera sin una cuenta entera —o sin su efectivo— durante los
+    // 60 minutos siguientes, con el total y el donut cuadrando entre ellos y con la
+    // realidad no, y sin un solo aviso. Un 429 puntual bastaba. Ahora cada lectura
+    // reintenta una vez y, si vuelve a fallar, la cuenta se cuenta como ROTA.
+    const readAcct = async (fn: () => Promise<any>): Promise<{ ok: boolean; data: any[] }> => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try { return { ok: true, data: (await fn()).data ?? [] }; }
+        catch (e) {
+          if (attempt === 0) { await new Promise((r) => setTimeout(r, 800)); continue; }
+          console.warn("[snaptrade-refresh] lectura de cuenta falló:",
+            ((e as any)?.response?.data?.detail ?? (e as any)?.message ?? String(e)).toString().slice(0, 160));
+        }
+      }
+      return { ok: false, data: [] };
+    };
+
     let holdings: any[] = [];
+    let brokenAccounts = 0;
     for (const a of accts) {
       const accountId = a?.id ?? a?.account_id;
       if (!accountId) continue;
-      let positions: any[] = [];
-      let balances: any[] = [];
+      const pos = await readAcct(() => ai.getUserAccountPositions({ ...sid, accountId }));
+      const bal = await readAcct(() => ai.getUserAccountBalance({ ...sid, accountId }));
       let optionPositions: any[] = [];
-      try { positions = (await ai.getUserAccountPositions({ ...sid, accountId })).data ?? []; } catch { /* not ready yet */ }
-      try { balances = (await ai.getUserAccountBalance({ ...sid, accountId })).data ?? []; } catch { /* not ready yet */ }
+      // Las opciones sí son best-effort: el cliente no las valora, sólo las declara aparte.
       try { optionPositions = (await (st as any).options.listOptionHoldings({ ...sid, accountId })).data ?? []; } catch { /* optional */ }
+      if (!pos.ok || !bal.ok) brokenAccounts++;
       const total = a?.balance?.total?.amount ?? a?.balance?.total ?? null;
       holdings.push({
         account: { id: accountId, ...(total != null ? { balance: { total } } : {}) },
-        balances,
-        positions,
+        balances: bal.data,
+        positions: pos.data,
         option_positions: optionPositions,
       });
     }
     const holdArr = holdings;
+
+    // Foto incompleta → jamás se persiste ni se sirve como si fuera la cartera entera.
+    if (brokenAccounts > 0) {
+      console.error(
+        `[snaptrade-refresh] ${brokenAccounts}/${accts.length} cuenta(s) sin responder — no se persiste la foto parcial`,
+      );
+      if (profile.snaptrade_holdings != null) {
+        // La última foto COMPLETA conocida, marcada como vieja: mejor un dato entero de hace
+        // un rato que uno de ahora al que le falta una cuenta.
+        return jsonResponse(req, {
+          connected: true,
+          broken: !!profile.snaptrade_connection_broken,
+          holdings: profile.snaptrade_holdings,
+          accountId: profile.snaptrade_account_id ?? null,
+          inceptionDate,
+          lastSync: lastSync ?? profile.snaptrade_last_refresh ?? null,
+          stale: true,
+          partial: true,
+          fromCache: true,
+        });
+      }
+      // Sin foto previa no hay nada íntegro que servir. `unavailable` = el cliente conserva
+      // su estado local y reintenta con backoff (nunca borra pv_broker_* ni pinta el CTA).
+      return jsonResponse(req, {
+        connected: false,
+        needsConnection: false,
+        unavailable: true,
+        holdings: null,
+        accountId: null,
+        fromCache: false,
+      });
+    }
 
     const hasHoldings = carriesData(holdArr);
 

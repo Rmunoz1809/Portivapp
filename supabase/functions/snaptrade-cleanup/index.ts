@@ -99,10 +99,18 @@ async function stampAttempt(admin: any, uid: string, extra: Record<string, unkno
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
 
-  if (CRON_SECRET) {
-    const provided = req.headers.get("x-cron-secret") ?? "";
-    if (provided !== CRON_SECRET) return json({ ok: false, error: "unauthorized" }, 401);
+  // Fail-CLOSED. Con el `if (CRON_SECRET)` de antes bastaba con que el secreto no
+  // estuviera puesto en el entorno para que TODA la comprobación desapareciera — y esta
+  // función se despliega con --no-verify-jwt, así que no queda ninguna otra puerta: un
+  // POST anónimo desconectaba en masa los brokers de los usuarios sin derecho activo.
+  // Es el mismo agujero que ya se cerró en snaptrade-webhook. Sin secreto no corre nada;
+  // el 503 lo deja gritando en los logs en vez de fallar en silencio.
+  if (!CRON_SECRET) {
+    console.error("[snaptrade-cleanup] SNAPTRADE_CRON_SECRET sin configurar — ejecución rechazada");
+    return json({ ok: false, error: "cleanup not configured" }, 503);
   }
+  const provided = req.headers.get("x-cron-secret") ?? "";
+  if (provided !== CRON_SECRET) return json({ ok: false, error: "unauthorized" }, 401);
 
   let body: any = {};
   try { body = await req.json(); } catch { /* body opcional */ }
