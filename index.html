@@ -13437,6 +13437,31 @@ const PORTIV_CHART = {
     const m=p.h*60+p.mi;
     return m>=570&&m<990;
   },
+  // ¿`d` (Date) es día hábil de mercado? Fin de semana o feriado NYSE → no.
+  _isTradingDate(d){
+    const p=this._nyParts(d);
+    if(p.wd===0||p.wd===6)return false;
+    try{ if(typeof PORTIV_SYNC!=='undefined'&&PORTIV_SYNC.isHoliday&&PORTIV_SYNC.isHoliday(d))return false; }catch(e){}
+    return true;
+  },
+  // ── SESIÓN que debe dibujar la gráfica "Hoy" (1D) ────────────────────────────────────
+  //  Si hoy es día hábil y ya abrió (≥09:30 ET) → hoy. Si no (fin de semana, feriado, o
+  //  antes de la campana) → la ÚLTIMA sesión real. Antes se asumía "hoy" siempre: en sábado
+  //  o pre-market no existen barras, así que la curva se armaba con un ancla 09:30 inventada
+  //  + los snapshots sueltos del día → la línea vertical hacia arriba que se veía.
+  sessionDay(){
+    const now=new Date();
+    const p=this._nyParts(now);
+    if(this._isTradingDate(now)&&(p.h*60+p.mi)>=570)return this._todayET();
+    for(let i=1;i<=10;i++){
+      const d=new Date(now.getTime()-i*86400000);
+      if(this._isTradingDate(d)){
+        const q=this._nyParts(d);
+        return `${q.y}-${String(q.mo).padStart(2,'0')}-${String(q.d).padStart(2,'0')}`;
+      }
+    }
+    return this._todayET();
+  },
 
   // ── Snapshot intraday ─────────────────────────────────────────────────
   // Guarda un punto {ts, date, time, value} para la gráfica 1D.
@@ -13470,12 +13495,13 @@ const PORTIV_CHART = {
     }catch(e){}
     return isNew;
   },
-  // Lee los puntos intraday de HOY (solo hoy, no ayer).
-  loadIntraday(){
+  // Lee los puntos intraday de un día ET (por defecto, la SESIÓN que dibuja la gráfica 1D:
+  // hoy si el mercado ya abrió, si no la última sesión real).
+  loadIntraday(dayISO){
     try{
-      const today=this._todayET();
+      const day=dayISO||this.sessionDay();
       const arr=JSON.parse(localStorage.getItem(this.INTRADAY_KEY)||'[]');
-      return arr.filter(p=>p.date===today).sort((a,b)=>a.ts-b.ts);
+      return arr.filter(p=>p.date===day).sort((a,b)=>a.ts-b.ts);
     }catch(e){return[];}
   },
 
@@ -13531,34 +13557,64 @@ const PORTIV_CHART = {
         }
       } catch(e){}
       const cur=typeof calcTotals==='function'?+calcTotals().total.toFixed(2):0;
-      // Valor de apertura del día = total actual − cambio del día (lo da el API).
-      // Si no hay día-cambio, se cae a prevClose; y si tampoco, al primer punto.
-      const pc=typeof PORTIV_SYNC!=='undefined'?PORTIV_SYNC.prevClose():null;
+      // ── ANCLA DE APERTURA (09:30) ────────────────────────────────────────────────────
+      //  FUENTE PRIMARIA: total en vivo − cambio del día. Ese cambio sale del `prevClose`
+      //  POR POSICIÓN que entrega el API en cada refresh → es SIEMPRE el cierre de la sesión
+      //  anterior real.
+      //  El cierre guardado en localStorage (PORTIV_SYNC.prevClose) pasó a ser el respaldo y
+      //  SÓLO si es reciente: se graba únicamente si el app estaba abierto entre 16:30 y 16:45
+      //  ET, así que puede ser de hace semanas. Anclar el 09:30 de hoy en un total viejo era
+      //  exactamente lo que dibujaba el escalón vertical al inicio de la gráfica "Hoy".
       let openVal=0;
-      if(pc&&pc.value>0){
-        openVal=pc.value;
-      } else if(typeof _dayChangeNow==='function'&&cur>0){
+      if(typeof _dayChangeNow==='function'&&cur>0){
         const dc=_dayChangeNow();
         if(isFinite(dc))openVal=+(cur-dc).toFixed(2);
       }
-      // Cargar puntos reales del día y anteponer el ancla de apertura.
-      const pts=this.loadIntraday();
+      if(!(openVal>0)){
+        const pc=typeof PORTIV_SYNC!=='undefined'?PORTIV_SYNC.prevClose():null;
+        // "Reciente" = de los últimos 5 días de calendario (cubre fin de semana largo).
+        if(pc&&pc.value>0&&pc.date){
+          const _ageD=(new Date(today+'T00:00:00')-new Date(pc.date+'T00:00:00'))/86400000;
+          if(isFinite(_ageD)&&_ageD>0&&_ageD<=5)openVal=pc.value;
+        }
+      }
+      // Cargar puntos reales del día. SÓLO sesión regular (09:30–16:00): los buckets grabados
+      // en pre-market o after-hours cotizan contra el cierre previo y entraban en la curva como
+      // un tramo plano que luego salta de golpe a la apertura.
+      const _sd=this.sessionDay();
+      const pts=this.loadIntraday(_sd).filter(p=>{
+        const t=String(p.time||'');
+        return /^\d{2}:\d{2}$/.test(t)&&t>='09:30'&&t<='16:00';
+      });
+      // RED DE SEGURIDAD: un ancla que difiera >12% del primer punto REAL de la sesión no es la
+      // apertura de hoy (dato viejo o cartera modificada desde entonces) → se descarta antes que
+      // dibujar un salto que nunca ocurrió.
+      if(openVal>0){
+        const _ref=pts.length?+pts[0].value:cur;
+        if(_ref>0&&Math.abs(openVal-_ref)/_ref>0.12)openVal=0;
+      }
       const series=[];
       // Ancla "09:30": solo si aún no existe el bucket exacto de apertura.
       const hasOpen=pts.some(p=>p.time==='09:30');
       if(openVal>0&&!hasOpen){
-        series.push({time:'09:30',date:today,value:openVal});
+        series.push({time:'09:30',date:_sd,value:openVal,_anchor:true});
       }
       pts.forEach(p=>series.push({time:p.time,date:p.date,value:p.value}));
       // Orden cronológico por HH:MM (labels 0-padded → localeCompare = tiempo real). Evita
       // zigzag si el ancla sintética 09:30 se mezcla con buckets pre-market (08:xx) o tardíos.
       series.sort((a,b)=>a.time.localeCompare(b.time));
-      // Garantizar el punto en vivo actual al final.
+      // Garantizar el punto en vivo actual al final. La etiqueta del punto vivo es la hora
+      // actual sólo si se está dibujando la sesión de HOY; si la gráfica muestra la última
+      // sesión (finde/feriado/pre-market) el cierre va rotulado 16:00, no a una hora en la
+      // que ese mercado no operaba.
       if(cur>0){
         const lastPt=series[series.length-1];
-        const nowLbl=this._nowHHMM();
-        if(!lastPt){
-          series.push({time:nowLbl,date:today,value:cur});
+        const nowLbl=(_sd===today)?this._nowHHMM():'16:00';
+        if(!lastPt||lastPt._anchor){
+          // Sin buckets reales, el único punto es el ANCLA de apertura: el valor en vivo se
+          // AÑADE. Antes se le pisaba el valor al ancla → la serie quedaba plana (dos puntos
+          // idénticos) aunque la tarjeta seguía anunciando el cambio del día.
+          series.push({time:nowLbl,date:_sd,value:cur});
         } else if(lastPt.value!==cur){
           lastPt.value=cur; // refleja el total en vivo en el último bucket
         }
@@ -13566,7 +13622,7 @@ const PORTIV_CHART = {
       if(!series.length)return null;
       // Aún con un solo punto: anteponer ancla plana para que dibuje línea.
       if(series.length===1){
-        series.unshift({time:'09:30',date:today,value:series[0].value});
+        series.unshift({time:'09:30',date:_sd,value:series[0].value});
       }
       const base=openVal>0?openVal:series[0].value;
       const last=series[series.length-1].value;
@@ -13576,7 +13632,7 @@ const PORTIV_CHART = {
         values:series.map(p=>p.value),
         change:+(last-base).toFixed(2),
         changePct:+(base>0?(last-base)/base*100:0).toFixed(2),
-        since:'apertura',
+        since:(_sd===today)?'apertura':('sesión '+fmtDate(_sd)),
       };
     }
 
@@ -14102,9 +14158,20 @@ const PORTIV_HIST = {
   //  09:30→ahora. Así la curva de HOY es REAL y va de la apertura al momento actual SIN
   //  IMPORTAR a qué hora entró el usuario (antes solo existían los snapshots grabados desde
   //  que se abrió el app → la línea arrancaba tarde y salía corta/plana).
-  intra: {},            // ticker → { 'HH:MM': precio }  (solo HOY, hora de NY)
+  intra: {},            // ticker → { 'HH:MM': precio }  (una sola sesión, hora de NY)
   _intraReady:false, _intraLoading:false, _intraAt:0,
-  intradayReady(){ return this._intraReady; },
+  _intraDay:'',         // día ET al que pertenecen las barras cargadas en `intra`
+  intradayReady(){
+    // Barras de OTRA sesión (el app quedó abierto y cruzó la campana / cambió el día) = no listas:
+    // así generate('1D') dispara la recarga en vez de repintar la sesión anterior como si fuera hoy.
+    try { if (this._intraDay && this._intraDay !== this._sessionDay()) return false; } catch(e){}
+    return this._intraReady;
+  },
+  // Sesión que se debe reconstruir: hoy si el mercado ya abrió, si no la última real.
+  _sessionDay(){
+    try { if (typeof PORTIV_CHART!=='undefined' && PORTIV_CHART.sessionDay) return PORTIV_CHART.sessionDay(); } catch(e){}
+    return this._todayETsafe() || '';
+  },
   // ── ¿Hay cobertura SUFICIENTE para dibujar la sesión? ──────────────────────────────────
   //  Exigir las N posiciones al 100% era frágil: el feed IEX gratuito no cubre algunos ADR y
   //  ETF delgados, y UNA sola posición sin barras dejaba la gráfica 1D entera en el plan B de
@@ -14141,6 +14208,14 @@ const PORTIV_HIST = {
   async ensureIntradayAsync(){
     if (this._intraLoading) return;
     try { this._hydrate(); } catch(e){}
+    // Cambió la sesión a dibujar (pasó la campana, o hoy es finde/feriado y toca la anterior):
+    // las barras en memoria son de OTRO día → se tiran, si no la curva mezcla dos sesiones.
+    const _day = this._sessionDay();
+    if (this._intraDay && _day && this._intraDay !== _day) {
+      this.intra = {}; this._intraReady = false; this._intraAt = 0;
+      this._tryFails['intra'] = 0; this._tryAt['intra'] = 0;   // sesión nueva = backoff limpio
+    }
+    this._intraDay = _day;
     if (this._intraReady && (Date.now()-this._intraAt) < this._INTRA_TTL) return;   // Fase 3: throttle 90s → 5min
     if (!this._canRetry('intra')) return;                        // intento reciente fallido → backoff
     const tks = this._tickers();
@@ -14157,7 +14232,7 @@ const PORTIV_HIST = {
       // app. De ahí la línea que arrancaba a media mañana con un salto desde el ancla 09:30.
       // Con Alpaca la sesión se reconstruye entera 09:30→ahora sin importar cuándo se abrió.
       const got = (typeof _alpacaIntradayBars === 'function')
-        ? await _alpacaIntradayBars(tks, 12000) : {};
+        ? await _alpacaIntradayBars(tks, 12000, _day) : {};
       Object.keys(got || {}).forEach(t => {
         if (got[t] && Object.keys(got[t]).length) this.intra[t] = got[t];
       });
@@ -14203,14 +14278,25 @@ const PORTIV_HIST = {
       const cash = (liveTotal>0) ? (liveTotal - posLast) : 0;
       const values = times.map(k=>{ const mt=toMin(k); let v=0; withBars.forEach(t=> v += (qty[t]||0)*priceAt(t,mt)); return +(v+cash).toFixed(2); });
       const today = (typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART._todayET() : '';
+      const day = this._intraDay || this._sessionDay() || today;
       const base = values[0], last = values[values.length-1];
+      let _since = 'apertura';
+      if (day && today && day !== today) {
+        // Se está dibujando la ÚLTIMA sesión (finde, feriado o antes de la campana): la
+        // tarjeta lo dice en vez de rotularlo como si fuera la sesión de hoy.
+        try {
+          const MON=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+          const dd=new Date(day+'T12:00:00');
+          _since = `sesión ${dd.getDate()} ${MON[dd.getMonth()]}`;
+        } catch(e){ _since = 'última sesión'; }
+      }
       return {
         labels: times.slice(),
-        dates: times.map(()=>today),
+        dates: times.map(()=>day),
         values,
         change: +(last-base).toFixed(2),
         changePct: +(base>0?(last-base)/base*100:0).toFixed(2),
-        since: 'apertura',
+        since: _since,
       };
     } catch(e){ return null; }
   },
@@ -14222,7 +14308,7 @@ const PORTIV_HIST = {
   },
   _persistDaily(){ try { const s=JSON.stringify({at:this._at,data:this.data});
     (typeof _lsSet==='function'?_lsSet(this._LS_DAILY,s):localStorage.setItem(this._LS_DAILY,s)); } catch(e){} },
-  _persistIntra(){ try { const s=JSON.stringify({at:this._intraAt,day:this._todayETsafe(),intra:this.intra});
+  _persistIntra(){ try { const s=JSON.stringify({at:this._intraAt,day:(this._intraDay||this._sessionDay()),intra:this.intra});
     (typeof _lsSet==='function'?_lsSet(this._LS_INTRA,s):localStorage.setItem(this._LS_INTRA,s)); } catch(e){} },
   // Hidrata data/intra desde LS una sola vez (antes del primer render → recarga en frío sin refetch).
   _hydrate(){
@@ -14232,9 +14318,10 @@ const PORTIV_HIST = {
         if (o && o.data && typeof o.data==='object'){ this.data = o.data; this._at = +o.at||0;
           const tks=this._tickers(); this._ready = tks.length>0 && tks.every(t => this.data[t]); } } } catch(e){}
     try { const raw = localStorage.getItem(this._LS_INTRA);
-      if (raw){ const o = JSON.parse(raw); const today = this._todayETsafe();
-        if (o && o.intra && typeof o.intra==='object' && o.day && today && o.day===today){
-          this.intra = o.intra; this._intraAt = +o.at||0;
+      if (raw){ const o = JSON.parse(raw); const day = this._sessionDay();
+        // Sólo se rehidrata si las barras guardadas son de la MISMA sesión que toca dibujar.
+        if (o && o.intra && typeof o.intra==='object' && o.day && day && o.day===day){
+          this.intra = o.intra; this._intraAt = +o.at||0; this._intraDay = o.day;
           this._intraReady = this._intraCovered(); } } } catch(e){}
   }
 };
@@ -15523,10 +15610,14 @@ function _pvRunZoom(snap, period) {
     const rat = Math.min(snap._srcDays, snap._tgtDays) / Math.max(snap._srcDays, snap._tgtDays);
     i0 = Math.round((1 - rat) * last);
   }
-  // Ventana degenerada (casi todo o casi nada) → el encuadre no aporta. Cambio DIRECTO,
-  // nunca 'periodChange': entre largos distintos esa transición es justo la que dibuja
-  // la segunda curva.
-  if (!(i0 > 1 && i0 < last - 3)) { perfChart.update('none'); return; }
+  // Ventana degenerada (casi todo o casi nada) → el encuadre no aporta NADA que ver. Antes
+  // esto era un cambio DIRECTO (update('none')) y se sentía como un salto instantáneo; ahora
+  // cae al morph, que deforma la curva vieja hasta la nueva con largo constante (sin curva
+  // fantasma) y deja igualmente el dataset real pintado al cerrar.
+  if (!(i0 > 1 && i0 < last - 3)) {
+    try { _pvRunMorph(snap, period); } catch(e) { try { perfChart.update('none'); } catch(e2){} }
+    return;
+  }
 
   const N = _PV_ZOOM_N;
   // Serie del OTRO extremo re-muestreada a N: con ella se cruza el cierre ('in') o el
@@ -15606,10 +15697,14 @@ function _pvMorphLabels(labels, n) {
 
 // ¿Procede el morph? Mismas guardas que el zoom: gráfica visible, sin "reduce motion" y con
 // curva previa suficiente para re-muestrear. Devuelve la foto de la curva vieja o null.
+// RED UNIVERSAL: el morph ya NO es sólo para 1D↔histórico. Es el respaldo de CUALQUIER
+// cambio de período que el zoom rechace — mismo lapso pintado (cartera joven: 6M y 3M
+// dibujan casi los mismos días → el encuadre no aporta y devolvía null), ventana degenerada,
+// o series demasiado cortas. Antes esos casos caían en update('none') = CORTE SECO, que es
+// justo el "cambio instantáneo" que se veía al pasar de 6M a 3M. Ahora siempre hay animación.
 function _pvMorphPrep(prev, next) {
   try {
     if (!perfChart || !prev || !next || prev === next) return null;
-    if (prev !== '1D' && next !== '1D') return null;            // el resto ya lo cubre el zoom
     if (document.hidden) return null;
     if (!perfChart.canvas || perfChart.canvas.offsetParent === null) return null;
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
@@ -15669,6 +15764,59 @@ function _pvRunMorph(snap, period) {
     perfChart.update('none');
   };
   _pvZoomRAF = requestAnimationFrame(step);
+}
+
+// ── MORPH GENÉRICO (cualquier gráfica de línea, no sólo la del portafolio) ────────────────
+//  Deforma la serie pintada en `chart` hasta `nextValues` con el MISMO número de puntos por
+//  frame (nunca hay interpolación entre datasets de distinto largo → sin curva fantasma) y
+//  lleva el color de la línea de la vieja a la nueva en el mismo gesto. Devuelve true si la
+//  animación arrancó; false si no procede (y quien llama hace su camino normal).
+//  Lo usa la gráfica de la ACCIÓN (research): antes destruía y recreaba el canvas en cada
+//  cambio de período — un parpadeo, no una transición.
+function _pvChartMorph(chart, nextLabels, nextValues, nextColor, nextFill, ms) {
+  try {
+    if (!chart || !chart.data || !chart.data.datasets) return false;
+    const s0 = chart.data.datasets[0];
+    if (!s0 || !Array.isArray(s0.data)) return false;
+    const prevVals = s0.data.map(v => (v && typeof v === 'object') ? +v.y : +v).filter(v => isFinite(v));
+    if (prevVals.length < 2 || !Array.isArray(nextValues) || nextValues.length < 2) return false;
+    if (document.hidden) return false;
+    if (!chart.canvas || chart.canvas.offsetParent === null) return false;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+
+    const N = _PV_ZOOM_N;
+    const fromN = _pvZoomResample(prevVals, 0, prevVals.length - 1, N);
+    const toN   = _pvZoomResample(nextValues.map(Number), 0, nextValues.length - 1, N);
+    const midLabels = _pvMorphLabels(nextLabels || [], N);
+    const fromColor = s0.borderColor;
+    const dur = ms || _PV_MORPH_MS;
+    if (chart._pvMorphRAF != null) { try { cancelAnimationFrame(chart._pvMorphRAF); } catch(e){} chart._pvMorphRAF = null; }
+    const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+
+    const step = (now) => {
+      chart._pvMorphRAF = null;
+      if (!chart.ctx) return;                                  // el chart murió a mitad (destroy)
+      const t = Math.min(1, Math.max(0, ((now || Date.now()) - t0) / dur));
+      const e = 1 - Math.pow(1 - t, 3);                        // ease-out, sin rebote
+      const vals = new Array(N);
+      for (let i = 0; i < N; i++) vals[i] = +(fromN[i] + (toN[i] - fromN[i]) * e).toFixed(4);
+      chart.data.labels = midLabels;
+      s0.data = vals;
+      s0.borderColor = (typeof fromColor === 'string' && typeof nextColor === 'string')
+        ? _pvMixColor(fromColor, nextColor, Math.min(1, e * 1.4)) : nextColor;
+      if (e >= 0.5 && nextFill) s0.backgroundColor = nextFill;
+      try { chart.update('none'); } catch(err) { return; }
+      if (t < 1) { chart._pvMorphRAF = requestAnimationFrame(step); return; }
+      // Cierre: la serie REAL del período (etiquetas y puntos exactos) queda pintada.
+      chart.data.labels = nextLabels;
+      s0.data = nextValues;
+      s0.borderColor = nextColor;
+      if (nextFill) s0.backgroundColor = nextFill;
+      try { chart.update('none'); } catch(err) {}
+    };
+    chart._pvMorphRAF = requestAnimationFrame(step);
+    return true;
+  } catch(e) { return false; }
 }
 
 // Permite que PORTIV_CHART inyecte un dataset directamente (sin pasar por setPeriod).
@@ -16226,7 +16374,10 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
 // viable refrescar cada 5 min sin castigar la cuota del proxy ni la batería del teléfono.
 // Devuelve { TICKER: { 'HH:MM': precio } } SOLO con barras de HOY (hora de NY) dentro de la
 // sesión regular 09:30–16:00. Sin dato → objeto vacío. Nunca inventa un precio.
-async function _alpacaIntradayBars(tickers, timeoutMs = 12000){
+// `dayISO` = sesión ET a bajar. Por defecto la que dibuja la gráfica 1D (hoy si el mercado ya
+// abrió; si no, la última sesión real). Pedir siempre "hoy" en fin de semana o antes de la
+// campana devolvía CERO barras → la 1D caía al plan B y se dibujaba una diagonal inventada.
+async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO){
   const out = {};
   const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean))].sort();
   if (!syms.length) return out;
@@ -16240,7 +16391,12 @@ async function _alpacaIntradayBars(tickers, timeoutMs = 12000){
   try {
     const p = PORTIV_CHART._nyParts();
     today = `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
+    if (!dayISO) { try { dayISO = PORTIV_CHART.sessionDay(); } catch(e2){ dayISO = today; } }
   } catch(e){ return out; }
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(dayISO||'')) ? dayISO : today;
+  // Ventana cerrada cuando la sesión NO es la de hoy: sin `end`, Alpaca devolvería también los
+  // días posteriores (y el filtro por día ET los tiraría igual, pero bajando dato de más).
+  const endQS = (day === today) ? '' : `&end=${day}T23:59:59Z`;
   const _etDay = ms => { const p = PORTIV_CHART._nyParts(new Date(ms));
     return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`; };
   const _etHM  = ms => { const p = PORTIV_CHART._nyParts(new Date(ms));
@@ -16250,7 +16406,7 @@ async function _alpacaIntradayBars(tickers, timeoutMs = 12000){
   const CHUNK = 25;
   for (let i = 0; i < syms.length; i += CHUNK) {
     const grp = syms.slice(i, i + CHUNK);
-    const qs = `symbols=${encodeURIComponent(grp.join(','))}&timeframe=5Min&start=${today}`
+    const qs = `symbols=${encodeURIComponent(grp.join(','))}&timeframe=5Min&start=${day}${endQS}`
              + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
     let d = null;
     try { d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs); } catch(e){}
@@ -16263,7 +16419,7 @@ async function _alpacaIntradayBars(tickers, timeoutMs = 12000){
       for (const b of arr) {
         if (!b || typeof b.c !== 'number' || !isFinite(b.c) || b.c <= 0) continue;
         const ms = Date.parse(b.t); if (!isFinite(ms)) continue;
-        if (_etDay(ms) !== today) continue;                   // solo HOY
+        if (_etDay(ms) !== day) continue;                     // solo la sesión pedida
         const hhmm = _etHM(ms);
         const mins = (+hhmm.slice(0,2)) * 60 + (+hhmm.slice(3,5));
         if (mins < 570 || mins > 960) continue;               // sesión regular 09:30–16:00
@@ -21031,16 +21187,25 @@ function _drawResearchChart(chartData, isPos) {
 
   // (Expansión intradía desactivada — estilo Apple Stocks con cierres diarios limpios)
 
+  const canvas = $('researchChartCanvas');
+  if (!canvas) return;
+  const col = isPos ? '#0e8c5c' : '#ba1a1a';
+  const ctx = canvas.getContext('2d');
+  const _lbls = pts.map(p => p.x), _vals = pts.map(p => p.y);
+
+  // MISMA transición que la gráfica del portafolio: al cambiar de período (1D/1W/1M/…) la
+  // línea se DEFORMA hasta la nueva serie en vez de destruir el canvas y redibujar de cero
+  // —que es lo que se veía como un corte/parpadeo. Si el morph no procede (primer dibujo,
+  // pestaña oculta, "reduce motion", serie de <2 puntos) cae al camino de siempre.
+  if (researchChartInst && researchChartInst.canvas === canvas) {
+    if (_pvChartMorph(researchChartInst, _lbls, _vals, col, _researchFill(ctx, isPos))) return;
+  }
+
   // Siempre destruir y recrear para evitar bugs de estado
   if (researchChartInst) {
     try { researchChartInst.destroy(); } catch(e) {}
     researchChartInst = null;
   }
-
-  const canvas = $('researchChartCanvas');
-  if (!canvas) return;
-  const col = isPos ? '#0e8c5c' : '#ba1a1a';
-  const ctx = canvas.getContext('2d');
 
   researchChartInst = new Chart(ctx, {
     type:'line',
@@ -28163,12 +28328,56 @@ if (document.readyState === 'loading') {
     for (var i=0;i<_APP_SYNC_PREFIX.length;i++){ if (k.indexOf(_APP_SYNC_PREFIX[i]) === 0) return true; }
     return false;
   }
+  // ── TAMAÑO ACOTADO DEL BUNDLE (arranque rápido para TODOS) ─────────────────────────
+  // `profile_caches` se lee en el CAMINO CRÍTICO del arranque: mientras baja, la app sigue
+  // tapada por el overlay. Antes solo había un tope POR CLAVE (600 KB) y NINGUNO total, y las
+  // claves que más pesan crecen sin límite: `nm_ai_cache_v1` y `stock_ai_analysis_v1` acumulan
+  // texto de IA sin caducar, y `weekly_outlook_*` / `week_top_*` añaden una clave NUEVA cada
+  // semana que nadie borra jamás. O sea: el bundle engordaba de forma monótona y el login se
+  // hacía más lento cada semana de uso, hasta que el upsert empezaba a fallar por tamaño y la
+  // sincronización de cachés moría en silencio (el catch la traga).
+  //
+  // Ahora hay presupuesto TOTAL y orden de PRIORIDAD explícito. Primero lo que no se puede
+  // perder (el perfil del inversor: si no llega, al usuario se le vuelve a preguntar el quiz
+  // en el dispositivo nuevo), luego el historial de la gráfica, luego las cachés de IA, y al
+  // final los semanales — de los que solo viajan los más recientes, porque los de semanas
+  // pasadas ya no se pintan en ningún sitio. Lo que no cabe NO se borra: se queda en local.
+  var _PV_BUNDLE_MAX_TOTAL = 600000;   // ~600 KB de JSON — arranque rápido incluso en móvil con 4G
+  var _PV_BUNDLE_MAX_KEY   = 300000;   // una sola clave no puede comerse el presupuesto entero
+  var _PV_WEEKLY_KEEP      = 3;        // semanas recientes por prefijo (las claves llevan `AAAA-Www`)
+  function _appKeyPriority(k){
+    if (k === 'pv_profile_local' || k === 'portiv_profile_v1' || k.indexOf('pv_profile_') === 0) return 0;
+    if (k === 'portiv_prev_close_v1' || k === 'portiv_daily_v2' || k === 'portiv_daily_history_v1') return 1;
+    if (k === 'portiv_mover_why_v1') return 2;
+    if (k === 'stock_ai_analysis_v1' || k === 'nm_ai_cache_v1') return 3;
+    return 4;   // weekly_outlook_* · week_top_*
+  }
   function _appBundleGather(){
     var out = {};
     try {
+      var keys = [];
       for (var i=0;i<localStorage.length;i++){
         var k = localStorage.key(i);
-        if (_appKeyShouldSync(k)) { var v = localStorage.getItem(k); if (v != null && v.length < 600000) out[k] = v; }
+        if (_appKeyShouldSync(k)) keys.push(k);
+      }
+      // Semanales: solo las N más recientes de CADA prefijo. `_weekKey` produce `AAAA-Www` con
+      // el número de semana a dos dígitos → el orden lexicográfico ES el cronológico.
+      var drop = {};
+      _APP_SYNC_PREFIX.forEach(function(p){
+        if (p === 'pv_profile_') return;                       // el perfil no caduca por semana
+        keys.filter(function(k){ return k.indexOf(p) === 0; })
+            .sort().reverse().slice(_PV_WEEKLY_KEEP)
+            .forEach(function(k){ drop[k] = 1; });
+      });
+      keys = keys.filter(function(k){ return !drop[k]; })
+                 .sort(function(a,b){ return _appKeyPriority(a) - _appKeyPriority(b); });
+      var total = 0;
+      for (var j=0;j<keys.length;j++){
+        var kk = keys[j], v = null;
+        try { v = localStorage.getItem(kk); } catch(e){ v = null; }
+        if (v == null || v.length > _PV_BUNDLE_MAX_KEY) continue;
+        if (total + v.length > _PV_BUNDLE_MAX_TOTAL) continue;   // no cabe → se queda solo en local
+        out[kk] = v; total += v.length;
       }
     } catch(e){}
     return out;
