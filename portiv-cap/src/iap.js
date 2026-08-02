@@ -50,7 +50,10 @@ const _RC_INJ = (typeof __PV_RC_KEY__ !== 'undefined') ? __PV_RC_KEY__ : '';
 const REVENUECAT_IOS_API_KEY = _RC_INJ || RC_KEYS[RC_ENV] || RC_KEYS.test;
 const RC_IS_TEST_KEY = /^test_/.test(REVENUECAT_IOS_API_KEY) || RC_ENV !== 'prod';
 
-const ENTITLEMENT_ID = 'Portiv Pro';
+// Identifier del entitlement en RevenueCat (minúscula). NO es el display name
+// ("Portiv Pro"): usar el display name aquí devuelve siempre undefined en
+// info.entitlements.active[...] y deja bloqueado al usuario que sí pagó.
+const ENTITLEMENT_ID = 'pro';
 const OFFERING_ID    = 'default';
 
 const state = {
