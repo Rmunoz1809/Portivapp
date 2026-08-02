@@ -4854,6 +4854,15 @@ window._pvAwaitIAP = function(totalMs){
   .ai-chat-page { display:flex; flex-direction:column; height:var(--vvh, 100dvh); background:#f4f6fb; font-family:'Manrope',sans-serif; }
   /* Móvil: al abrir el teclado NO scrollear el documento — el chat queda quieto y el input visible. */
   @media(max-width:760px){ body:has(#tab-aianalyst.active){ overflow:hidden; height:100vh; height:100dvh; } }
+  /* ── Teclado abierto (iOS/WKWebView) ────────────────────────────────────────────────
+     Sin plugin nativo, iOS no encoge el viewport de layout: desplaza el viewport VISIBLE.
+     Los elementos position:fixed siguen anclados al layout, así que la app entera "se va
+     para abajo" al enfocar el input. Se compensa moviendo el chat justo lo que el sistema
+     desplazó (--vv-top) y se retira el tab bar, que si no queda flotando sobre el teclado. */
+  body.pv-kb-open .ai-chat-page { transform: translateY(var(--vv-top, 0px)); will-change: transform; }
+  body.pv-kb-open .bottom-tabs, body.pv-kb-open .bottom-nav { display: none !important; }
+  /* Aviso legal del chat: discreto, en una línea de texto fina bajo el input. */
+  .ai-chat-inputarea .pv-ai-foot { font-size:9.5px; line-height:1.4; letter-spacing:.1px; opacity:.72; margin-top:6px !important; padding-top:6px !important; }
   .ai-chat-header { padding:18px 24px; background:#fff; border-bottom:1px solid #e8eaf0; display:flex; align-items:center; gap:14px; flex-shrink:0; }
   .ai-chat-header-avatar { width:40px; height:40px; border-radius:50%; background:var(--blue); display:flex; align-items:center; justify-content:center; color:#fff; font-size:15px; font-weight:700; flex-shrink:0; line-height:1; }
   .ai-chat-header-info { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
@@ -7972,6 +7981,7 @@ function _pvAdvisorBlock(m, techWeight, perfil){
 // ══════════════════════════════════════════════════════════
 const EPS = {
   _cache: {},   // ticker -> { hasData, quarters:[], reason? }
+  _pending: {}, // ticker -> promesa en vuelo (dedup entre renderStock y el análisis)
   _inst:  {},   // cardId -> { selected }
   _mode: 'Normalized',
   _portSig: null,
@@ -7984,7 +7994,19 @@ const EPS = {
   _beat(x){ return (x.surprise!=null) ? x.surprise>=0 : (x.actual>=x.estimate); },
   _diff(x){ return (x.surprise!=null) ? x.surprise : (x.actual - x.estimate); },
 
+  // Dedup EN VUELO: renderStock y el análisis cualitativo piden el MISMO ticker en el mismo
+  // tick. Sin esto se disparaban 2 ráfagas idénticas a Finnhub (4 llamadas en vez de 2) y el
+  // proxy compartido respondía 403 a alguna por exceso de ráfaga.
   async fetch(ticker){
+    ticker=(ticker||'').toUpperCase();
+    if(this._cache[ticker]) return this._cache[ticker];
+    if(this._pending[ticker]) return this._pending[ticker];
+    const _p = this._fetchNow(ticker);
+    this._pending[ticker] = _p;
+    try { return await _p; } finally { delete this._pending[ticker]; }
+  },
+
+  async _fetchNow(ticker){
     ticker=(ticker||'').toUpperCase();
     if(this._cache[ticker]) return this._cache[ticker];
     if(this._ETF.has(ticker)) return this._cache[ticker]={ hasData:false, reason:'ETF', quarters:[] };
@@ -16215,7 +16237,16 @@ function _fhEndpoint(path) {
   return null;
 }
 
+// Endpoints que Finnhub NO incluye en el plan (responden 403 desde el UPSTREAM, no desde el
+// proxy). Antes se trataban como el 403 transitorio de ráfaga del proxy: 4 intentos con backoff
+// exponencial (~11 s de esperas) POR CADA carga de acción, y como el bloque `info` los mete en
+// un Promise.all, TODA la ficha se quedaba esperando esos 11 s aunque el resto ya hubiera
+// respondido. Se marcan una vez por sesión y a partir de ahí ni se piden.
+const _fhPlanBlocked = new Set();
+function _fhPathKey(path){ return String(path || '').split('?')[0]; }
+
 async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
+  if (_fhPlanBlocked.has(_fhPathKey(path))) throw new Error('Endpoint no incluido en el plan de datos');
   const ep = _fhEndpoint(path);
   if (!ep) throw new Error('Sin API Key — configúrala primero');
   const ctrl = new AbortController();
@@ -16236,6 +16267,17 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
     // son transitorios y se recuperan con el MISMO backoff serial: una cotización sola sí
     // responde. Antes el 403 se tiraba de inmediato → esa llamada quedaba en null y podía
     // provocar el falso "Ticker no encontrado" y el "+0.00%".
+    // 403 del UPSTREAM = el endpoint no está en el plan de Finnhub (p. ej. /stock/price-target).
+    // Es permanente: reintentarlo solo quema ~11 s de backoff en cada carga. Se marca y se
+    // descarta de inmediato; el 403 del PROXY (ráfaga) sigue cayendo al backoff de abajo.
+    if (res.status === 403) {
+      let _b403 = '';
+      try { _b403 = await res.clone().text(); } catch(_){}
+      if (/upstream\s*403/i.test(_b403)) {
+        _fhPlanBlocked.add(_fhPathKey(path));
+        throw new Error('Endpoint no incluido en el plan de datos');
+      }
+    }
     if (res.status === 429 || res.status === 403) {
       if (_retry < 3) {
         // Respeta Retry-After si el servidor lo envía; si no, backoff exponencial
@@ -19563,16 +19605,67 @@ async function _pvxExtras(ticker, info){
     ];
   }
 
-  // Escenarios a 1 año — anclados en objetivos REALES de analistas (si existen).
-  let scenarios=null;
+  // ── Escenarios a 1 año ────────────────────────────────────────────────────────────────
+  // Fuente 1 (preferida): objetivos REALES de analistas.
+  // Fuente 2: el propio historial de múltiplo de ESTA acción. /stock/price-target es un
+  //   endpoint de pago que el plan actual no incluye (403 del upstream), así que targetMean
+  //   es null para TODOS los tickers — incluido AAPL con 54 analistas cubriéndolo — y la
+  //   sección se quedaba permanentemente en "ningún analista cubre esta acción". Se arma
+  //   ahora con números publicados de la propia empresa: el máximo y el mínimo de 52 semanas
+  //   (= el múltiplo más caro y más barato que el mercado le pagó en 12 meses) aplicados
+  //   sobre su crecimiento esperado real. Nada de constantes genéricas: si no hay crecimiento
+  //   real ni rango de 52 semanas, no se inventa un escenario y la sección queda vacía.
+  let scenarios=null, scenariosNote='';
+  const _r1 = t => ((t/px-1)*100);
   if (px>0 && tMean>0){
     const bear=(tLow>0?tLow:tMean*0.8), base=tMean, bull=(tHigh>0?tHigh:tMean*1.15);
-    const r=t=>((t/px-1)*100);
     scenarios=[
-      {cls:'bear',tag:'PESIMISTA',target:bear,retPct:r(bear),assumption:'El crecimiento decepciona y el múltiplo se comprime; alineado con el analista más pesimista.',prob:25},
-      {cls:'base',tag:'BASE',      target:base,retPct:r(base),assumption:'Crecimiento y márgenes en línea con lo que espera el consenso de analistas.',prob:50},
-      {cls:'bull',tag:'OPTIMISTA', target:bull,retPct:r(bull),assumption:'La ejecución supera lo previsto y el múltiplo se expande; alineado con el analista más optimista.',prob:25},
+      {cls:'bear',tag:'PESIMISTA',target:bear,retPct:_r1(bear),assumption:'El crecimiento decepciona y el múltiplo se comprime; alineado con el analista más pesimista.',prob:25},
+      {cls:'base',tag:'BASE',      target:base,retPct:_r1(base),assumption:'Crecimiento y márgenes en línea con lo que espera el consenso de analistas.',prob:50},
+      {cls:'bull',tag:'OPTIMISTA', target:bull,retPct:_r1(bull),assumption:'La ejecución supera lo previsto y el múltiplo se expande; alineado con el analista más optimista.',prob:25},
     ];
+    scenariosNote = `Anclados en los objetivos de precio publicados por analistas: mínimo $${(+bear).toFixed(2)}, medio $${(+base).toFixed(2)}, máximo $${(+bull).toFixed(2)}.`;
+  } else if (px>0){
+    const hi = info.fiftyTwoWeekHigh, lo = info.fiftyTwoWeekLow, eps = info.trailingEps;
+    let er2 = null; try { er2 = _expReturn(ticker); } catch(e){ er2 = null; }
+    const gOk = !!(er2 && er2.known && isFinite(er2.apprec));
+    const rangeOk = (hi>0 && lo>0 && hi>lo && lo<=px*1.02 && hi>=px*0.98);
+    // Los tres casos deben quedar ORDENADOS (pesimista < base < optimista). Si el crecimiento
+    // esperado es negativo o el rango de 52 semanas es degenerado, el orden se rompe y se
+    // prefiere no pintar escenarios antes que pintar tres números incoherentes.
+    const _ordered = gOk && rangeOk && (lo < px*(1+er2.apprec)) && (px*(1+er2.apprec) < px*(1+er2.apprec)*(hi/px));
+    if (gOk && rangeOk && _ordered){
+      const g = er2.apprec;
+      const base = px*(1+g);                 // mismo crecimiento que la fila "1 año" de Proyecciones
+      // PESIMISTA: el múltiplo vuelve a su mínimo de 12 meses Y el crecimiento esperado no
+      // llega — por eso NO se le aplica `g`. Si se le aplicaba, en una acción que cotiza cerca
+      // de su mínimo de 52 semanas el caso "pesimista" salía POSITIVO (PLTR: +2%), que es un
+      // escenario a la baja que no baja.
+      const bear = lo;
+      const bull = base*(hi/px);             // (hi/px) = múltiplo máximo de los últimos 12 meses
+      const gTxt = (g*100).toFixed(1)+'%';
+      // gSrc viene en jerga interna ("crecimiento EPS YoY reportado"): se traduce a prosa.
+      const gWhy = /consenso/i.test(er2.gSrc) ? 'el consenso de analistas'
+                 : /eps/i.test(er2.gSrc)      ? 'su crecimiento de ganancias por acción interanual'
+                 : /revenue|ingres/i.test(er2.gSrc) ? 'su crecimiento de ingresos interanual'
+                 : er2.gSrc;
+      // P/E SOLO para el caso base: es el único que compara el precio de hoy con las ganancias
+      // de hoy. Anotar "P/E en el mínimo de 52 semanas" mezclaría un precio de hace meses con
+      // el EPS actual y en empresas de ganancias explosivas sale un múltiplo absurdo (MU: 2.3x).
+      // Los extremos se citan por PRECIO, que sí es un hecho verificable.
+      const peNow = (eps>0) ? (px/eps) : null;
+      const _d2  = v => (+v).toFixed(2);
+      const _upP = ((hi/px-1)*100).toFixed(0);
+      scenarios=[
+        {cls:'bear',tag:'PESIMISTA',target:bear,retPct:_r1(bear),prob:25,
+         assumption:`El crecimiento esperado de ${gTxt} no se materializa y la acción devuelve todo lo ganado, hasta el mínimo al que cotizó en los últimos 12 meses ($${_d2(lo)}).`},
+        {cls:'base',tag:'BASE',target:base,retPct:_r1(base),prob:50,
+         assumption:`El múltiplo se mantiene donde está hoy${peNow!=null?` (P/E ${peNow.toFixed(1)}x)`:''} y las ganancias crecen ${gTxt}, en línea con ${gWhy}.`},
+        {cls:'bull',tag:'OPTIMISTA',target:bull,retPct:_r1(bull),prob:25,
+         assumption:`Las ganancias crecen ${gTxt} y además el mercado vuelve a pagar el múltiplo más alto de los últimos 12 meses, un ${_upP}% por encima del actual (la acción llegó a $${_d2(hi)}).`},
+      ];
+      scenariosNote = `Sin objetivos de analistas publicados para ${ticker}, los tres escenarios se construyen con datos de la propia acción: crecimiento esperado ${gTxt}, derivado de ${gWhy}, y el rango de múltiplo de los últimos 12 meses ($${(+lo).toFixed(2)} – $${(+hi).toFixed(2)}). Las probabilidades son una convención, no una medición.`;
+    }
   }
 
   // Salud financiera + márgenes (solo filas con dato real).
@@ -19611,7 +19704,7 @@ async function _pvxExtras(ticker, info){
   // análisis principal, ni compite con las llamadas core bajo el límite del proxy compartido.
   const recentGrowth = _recentGrowthData(ticker, info);
 
-  return { px, consensus, targetRange, retBox, proj, scenarios, health: health.length?health:null, catalysts, recentGrowth };
+  return { px, consensus, targetRange, retBox, proj, scenarios, scenariosNote, health: health.length?health:null, catalysts, recentGrowth };
 }
 
 // ── CALIFICACIÓN POR APARTADO (1-10) ──────────────────────────────────────────────
@@ -19929,8 +20022,8 @@ function _renderQualAnalysis(a, el){
     const sc1 = (a.scenarios && a.scenarios.length) ? a.scenarios : null;
     h += `<div class="px-card">${stitle('Escenarios a 1 año')}
       <p class="px-intro">En vez de un solo número, tres futuros posibles. La realidad casi siempre cae en un punto intermedio.</p>
-      ${sc1 ? `<div class="px-scen" style="margin-top:16px">${sc1.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div><div class="sprob">Probabilidad estimada: ${s.prob}%</div></div>`).join('')}</div>`
-          : `<div style="margin-top:14px">${empty('Ningún analista cubre esta acción con objetivos de precio publicados, así que no hay base real para armar escenarios.')}</div>`}</div>`;
+      ${sc1 ? `<div class="px-scen" style="margin-top:16px">${sc1.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div><div class="sprob">Probabilidad estimada: ${s.prob}%</div></div>`).join('')}</div>${a.scenariosNote ? `<div class="px-hint">${esc(a.scenariosNote)}</div>` : ''}`
+          : `<div style="margin-top:14px">${empty('Esta acción no publica ni crecimiento de ganancias ni un rango de 52 semanas utilizable, así que no hay números reales con los que armar escenarios.')}</div>`}</div>`;
   }
 
   // 11) PROYECCIONES de precio: consenso + rango de objetivos + retorno esperado + filas.
@@ -20545,6 +20638,20 @@ async function _upgradeAnalysisToAI(ticker, info){
   if (_isEtfTicker(ticker, info)) { el.innerHTML = ''; el.style.display = 'none'; try{_pvxRatingFallback(ticker);}catch(e){} return; }   // ETF → sin análisis por empresa
   el.dataset.tk = ticker;
   el.style.display = 'block';
+  // BUG: "Earnings análisis" no se generaba NUNCA en una apertura en frío.
+  // _analysisEarningsKey() lee el último trimestre reportado de EPS._cache, pero esta función
+  // se dispara ANTES que EPS.renderStock() (mismo tick, _renderResearch), así que la caché
+  // todavía estaba vacía → eKey='na' → _getEarningsReaction() abortaba y la sección quedaba
+  // en el placeholder "todavía no hay un reporte analizado". Peor: el análisis se cacheaba
+  // bajo eKey='na'. Se espera a la MISMA promesa que usa renderStock (dedup en vuelo → cero
+  // llamadas extra), replicando su invalidación por datos rancios.
+  try {
+    if (typeof EPS !== 'undefined' && typeof EPS.fetch === 'function') {
+      if (EPS._isStale && EPS._isStale(ticker)) delete EPS._cache[ticker];
+      await EPS.fetch(ticker);
+    }
+  } catch(e){}
+  if (el.dataset.tk !== ticker) return;            // el usuario cambió de acción mientras esperábamos
   const eKey = _analysisEarningsKey(ticker);
 
   // ── RE-ENTRADA INSTANTÁNEA: hay análisis ensamblado del MISMO earnings → píntalo YA ──
@@ -26802,6 +26909,15 @@ const PORTIV_VAL = {
   // confidence/needs_review) como el viejo (price/cost_basis/market_value/gain_loss/...).
   validateImport(positions){
     this.reviewFlags = [];
+    // ── Ruta BROKER: no se valida NADA ────────────────────────────────────────────────
+    // Todo lo de abajo existe para corregir un OCR: huella qty+coste, cruce nombre↔ticker,
+    // "¿está este símbolo en STOCK_DB?". Con el dato del broker no hay lectura que corregir
+    // —el símbolo, la cantidad y el coste son los oficiales de la cuenta— y cada heurística
+    // sólo puede producir FALSOS positivos. El más visible: cualquiera con cripto, un fondo
+    // monetario, un valor extranjero o una small cap fuera de STOCK_DB recibía el panel
+    // flotante "Revisión de importación" pidiéndole "confirmar manualmente" sus propias
+    // posiciones — y volvía a salir en cada sync silencioso, cada 20 minutos.
+    if (window._BROKER_APPLYING) { this.renderPanel(); return this.reviewFlags; }
     (positions || []).forEach(p => {
       const tk   = String(p.ticker || '').toUpperCase();
       const qty  = _aiNum(p.shares);
@@ -27250,7 +27366,9 @@ async function aiPortApply(){
       return tk && q > 0 && !(px > 0);
     });
     if (_need.length && typeof apiCall === 'function') {
-      showToast('Buscando precios en vivo de ' + _need.length + ' posición(es)…');
+      // Silencioso en la ruta broker: este sync corre solo (arranque, cada 20 min, al volver
+      // a la app) y el toast aparecía de la nada para cualquiera con una posición sin precio.
+      if (!window._BROKER_APPLYING) showToast('Buscando precios en vivo de ' + _need.length + ' posición(es)…');
       await Promise.all(_need.map(async tr => {
         const tk = (tr.querySelector('.ai-t').value || '').trim().toUpperCase();
         try {
@@ -27309,7 +27427,13 @@ async function aiPortApply(){
   // el portafolio aquí dejaba "0 activos" tras un OCR fallido. En ese caso abortamos sin
   // tocar HOLDINGS y pedimos corregir las filas marcadas.
   if (!rows.length && _allRows.some(p => p.ticker)) {
-    showToast('Las posiciones no tienen precio/cantidad válidos — corrige las filas marcadas y vuelve a Aplicar (no se borró nada).', 'var(--red)');
+    // Abortar sin tocar HOLDINGS es correcto en las dos rutas. El toast rojo NO: en la ruta
+    // broker esto lo dispara un payload en el que ninguna posición traía precio (broker lento,
+    // fondos monetarios), y el usuario recibía una alarma roja de "corrige las filas marcadas"
+    // sobre una pantalla donde no hay ninguna fila que corregir. El aviso real y accionable
+    // (_SNAP_NO_PRICE) ya lo pinta la tarjeta del broker.
+    if (!window._BROKER_APPLYING) showToast('Las posiciones no tienen precio/cantidad válidos — corrige las filas marcadas y vuelve a Aplicar (no se borró nada).', 'var(--red)');
+    else console.warn('[snaptrade] ninguna posición con precio y cantidad válidos — no se aplica nada (HOLDINGS intacto).');
     return;
   }
 
@@ -31048,6 +31172,14 @@ document.addEventListener('DOMContentLoaded', function(){
             try { if (typeof window._brokerClearSeed==='function') window._brokerClearSeed(); }catch(e){}
           }
           try{ window._BROKER_EMPTY_OK = _settled; }catch(e){}
+          // El flag se levanta ANTES de aiPortImportData, no sólo alrededor de aiPortApply:
+          // aiPortImportData ejecuta PORTIV_VAL.validateImport, que es el validador ANTI-OCR.
+          // Sobre datos del BROKER —autoritativos, sin lectura de imagen— sus heurísticas sólo
+          // pueden equivocarse: marcaba "ticker fuera del universo conocido" a todo lo que no
+          // está en STOCK_DB (cripto, fondos monetarios, valores extranjeros, small caps) y
+          // pintaba el panel flotante "Revisión de importación" en CADA sync silencioso — al
+          // arrancar, cada 20 min y al volver a la app.
+          try{ window._BROKER_APPLYING=true; }catch(e){}
           if(typeof aiPortImportData==='function') aiPortImportData(data);
           // Broker path: aplica en SILENCIO (sin toast "AI Portfolio" ni salto de pestaña en cada
           // poll de 2 min). El estado del broker ya se refleja en _render('connected').
@@ -31082,7 +31214,13 @@ document.addEventListener('DOMContentLoaded', function(){
             .catch(function(){ return j; });
           }
         }
-      }catch(e){ console.warn('[snaptrade] apply failed', e); }
+      }catch(e){ console.warn('[snaptrade] apply failed', e);
+        // El flag se levanta antes de importar; si algo revienta ANTES de que la promesa de
+        // aiPortApply exista, nadie lo bajaría y la siguiente importación por foto correría
+        // creyéndose un sync de broker (sin toasts, sin confirm de descuadre, con los % del
+        // broker). Sólo aquí: en el camino feliz lo baja el .finally de la promesa.
+        try{ window._BROKER_APPLYING=false; }catch(_){}
+      }
       finally { try{ window._BROKER_EMPTY_OK=false; }catch(_e){} }
       return j;
     }).then(function(j){
@@ -31564,7 +31702,11 @@ document.addEventListener('DOMContentLoaded', function(){
       // 'offline' incluido por lo mismo: si nos quedamos sin red durante el arranque, este
       // refresco (y el de volver a la app) es lo que devuelve al usuario a su estado real
       // sin pedirle nada.
-      if(_state!=='connected' && _state!=='syncing' && _state!=='unavailable' && _state!=='offline') return;
+      // 'broken' incluido: el servidor comprueba el estado REAL de la conexión en cada lectura
+      // (listBrokerageAuthorizations), así que este refresco es lo que devuelve al usuario a
+      // 'connected' cuando el broker restablece la sesión por su cuenta. Sin él, una conexión
+      // ya sana seguía mostrando "Reconecta tu broker" hasta que el usuario matara la app.
+      if(_state!=='connected' && _state!=='syncing' && _state!=='unavailable' && _state!=='offline' && _state!=='broken') return;
       _lastAuto = Date.now();
       snapRefresh({silent:true});
     }
@@ -31645,11 +31787,22 @@ document.addEventListener('DOMContentLoaded', function(){
     if(!vv) return;
     root.style.setProperty('--vvh', vv.height + 'px');
     root.style.setProperty('--vv-top', (vv.offsetTop||0) + 'px');
+    // Teclado abierto = el viewport visible es sensiblemente más bajo que el de layout.
+    // El umbral (120px) descarta las barras del navegador, que también encogen vv.height.
+    var kb = (window.innerHeight - vv.height) > 120;
+    document.body.classList.toggle('pv-kb-open', kb);
+    // iOS desplaza el documento para "enseñar" el input aunque ya sea visible; devolverlo a 0
+    // deja la app quieta y la compensación de --vv-top se encarga del resto.
+    if(kb && (window.scrollY || document.body.scrollTop)){
+      try{ window.scrollTo(0,0); document.body.scrollTop=0; }catch(_){}
+    }
     var tab = document.getElementById('tab-aianalyst');
     if(tab && tab.classList.contains('active')){ var m=document.getElementById('aiChatMessages'); if(m) m.scrollTop=m.scrollHeight; }
   }
   if(vv){ vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); }
   window.addEventListener('load', sync);
+  // Al cerrar el teclado, iOS no siempre emite un resize final → limpia el estado al perder foco.
+  document.addEventListener('focusout', function(){ setTimeout(sync, 120); });
   document.addEventListener('focusin', function(e){
     if(e.target && e.target.id === 'aiChatInput'){
       setTimeout(function(){ try{ window.scrollTo(0,0); document.body.scrollTop=0; }catch(_){}
