@@ -2243,9 +2243,12 @@ window._ensureChartJs = (function(){
   .wo-skel-line { height:13px; background:linear-gradient(90deg,#f0f2f5 25%,#e8eaf0 50%,#f0f2f5 75%); background-size:200% 100%; border-radius:6px; animation:woSkel 1.4s ease infinite; }
   @keyframes woSkel { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
   /* ── Weekly Outlook Structured ── */
-  .wo-theme-bar { font-size:13px; font-weight:600; color:#374259; background:#f6f8fc; padding:10px 14px; border-radius:8px; border:1px solid #eef1f6; margin-bottom:12px; line-height:1.5; }
+  /* Resumen de la semana (tema + contexto de mercado) — MISMO lenguaje visual que las
+     tarjetas de "Temas clave" (.swc-day-group / .swc-item-title / .swc-theme-ctx):
+     misma tipografía, mismos colores, mismo borde y radio. Solo cambia el diseño. */
+  .wo-theme-bar { font-family:'Manrope',sans-serif; font-size:13.5px; font-weight:600; color:var(--st-primary,#04162c); background:#fff; padding:13px 16px; border-radius:12px; border:1px solid var(--st-surface-highest,#d3e4fe); margin-bottom:10px; line-height:1.4; }
   .wo-theme-short { display:none; }
-  .wo-ctx { font-size:12.5px; color:#6b7a8d; line-height:1.65; margin-bottom:14px; padding:12px 14px; background:#fff; border:1px solid #eef1f6; border-radius:10px; }
+  .wo-ctx { font-family:'Manrope',sans-serif; font-size:12.5px; color:var(--st-on-surf-var,#74777e); line-height:1.55; margin-bottom:10px; padding:13px 16px; background:#fff; border:1px solid var(--st-surface-highest,#d3e4fe); border-radius:12px; }
   .wo-narrative { font-size:13px; color:#374259; line-height:1.7; background:#fff; border:1px solid #eef1f6; border-radius:10px; padding:14px 16px; margin-bottom:14px; }
   .wo-narrative p { margin:0 0 10px; } .wo-narrative p:last-child { margin-bottom:0; }
   .wo-narrative strong { color:#0F1D35; font-weight:700; }
@@ -3249,7 +3252,9 @@ window._ensureChartJs = (function(){
   /* ── Esta Semana / Próxima Semana: análisis corto en móvil ── */
   /* Fuera el contexto largo; se muestra el resumen corto (1ª oración), no la versión larga */
   .wo-ctx { display: none !important; }
-  .wo-theme-bar { font-size: 12px !important; line-height: 1.4 !important; }
+  /* Mismo tamaño que .swc-item-title (temas clave) también en móvil: solo se acorta el
+     TEXTO (wo-theme-short), no la tipografía. */
+  .wo-theme-bar { font-size: 13.5px !important; line-height: 1.4 !important; }
   .wo-theme-full { display: none !important; }
   .wo-theme-short { display: inline !important; }
   /* Eventos de la semana: solo título + tags (impacto / hora / empresas), sin blurb */
@@ -5166,13 +5171,13 @@ window._pvAwaitIAP = function(totalMs){
   body.dark-theme .wo-ctx,
   body.dark-theme .wo-narrative,
   body.dark-theme .wo-day,
+  body.dark-theme .wo-theme-bar,
   body.dark-theme .wo-theme-item {
     background: var(--surface) !important;
     border-color: var(--border) !important;
   }
   body.dark-theme .wo-nar-ev,
-  body.dark-theme .wo-day-hdr,
-  body.dark-theme .wo-theme-bar {
+  body.dark-theme .wo-day-hdr {
     background: var(--surface2) !important;
     border-color: var(--border) !important;
   }
@@ -23351,7 +23356,7 @@ function _buildFallbackOutlookData(offset) {
 const SharedOutlook = (function(){
   const TTL      = 24 * 60 * 60 * 1000;   // 1 regeneración/día global por semana
   const LOCK_TTL = 90 * 1000;             // lock caduca a los 90s (anti-zombie)
-  const VER      = 'shared-4';   // bump → invalida cache viejo (sin earnings por bug TICKERS); regenera esta/próxima semana con resultados (bancos/megacaps) 1× global
+  const VER      = 'shared-5';   // bump → invalida cache viejo; regenera 1× global con el resumen largo de ESTA semana (5-7 frases de contexto)
   const _key     = wk => '__OUTLOOK__' + wk;
   const _lockKey = wk => '__OUTLOOK_LOCK__' + wk;
   const _wkOf    = off => (typeof _weekKey === 'function' ? _weekKey(off) : String(off));
@@ -23445,11 +23450,13 @@ VOZ: prosa natural en español, frases completas, sin jerga en inglés (di "post
 
 MERCADO GENERAL, NO CARTERA: escribe para el mercado de EE.UU. en general. Puedes referenciar índices y ETF grandes (S&P 500, Nasdaq, Dow, SOXX). NUNCA menciones "el portafolio", "tus posiciones" ni porcentajes/pesos de una cartera. Solo nombra una empresa concreta si un titular o evento listado arriba es específicamente sobre ella; si no, habla por sector o por índice.
 
-Devuelve SOLO JSON válido, sin bloques de código:
-{"theme":"1 frase con el tema central de la semana","market_context":"3 a 5 frases de contexto de mercado","key_themes":[{"title":"título corto del tema","detail":"2-3 frases"}]}
+${off === 0 ? `CONTEXTO DE ESTA SEMANA — EXTENSIÓN: el resumen de la semana en curso debe tener el mismo cuerpo y profundidad que el de la próxima semana. Cubre, en este orden: (1) de dónde viene el mercado y qué lo ha marcado hasta ahora en la semana, (2) cómo han reaccionado los índices y los sectores más sensibles, (3) qué queda por delante en los días que restan y por qué importa.
+
+` : ''}Devuelve SOLO JSON válido, sin bloques de código:
+{"theme":"1 frase con el tema central de la semana","market_context":"${off === 0 ? '5 a 7' : '3 a 5'} frases de contexto de mercado","key_themes":[{"title":"título corto del tema","detail":"2-3 frases"}]}
 key_themes = exactamente 3 temas clave.`;
     const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model:AI_MODELS.reasoning, max_tokens:1400,   // Outlook semanal: Haiku (misma info, más barato/rápido)
+      body: JSON.stringify({ model:AI_MODELS.reasoning, max_tokens:(off === 0 ? 1800 : 1400),   // Outlook semanal: Haiku (misma info, más barato/rápido). Esta semana pide 5-7 frases de contexto → más techo para que el JSON no se corte.
         system:'Eres un estratega de mercado. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
         // COSTO: web_search SOLO para "esta semana" (off 0), que sí gana con verificación de
         // contexto vivo. "Próxima semana" (off 1) es prospectiva y se arma del calendario Finnhub
