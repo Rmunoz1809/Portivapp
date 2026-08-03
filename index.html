@@ -222,33 +222,38 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
-/* ─── iPad → layout de tablet (bottom-nav), no el de escritorio ───────────────
-   El CSS conmuta de paradigma en 900px: ≥900 = sidebar de escritorio, ≤899 = bottom-nav
-   con safe-area (la versión ya afinada para iPad). El iPad VERTICAL (820/834) caía en el
-   lado móvil, pero el HORIZONTAL (1180/1194/1366) caía en escritorio → sidebar en un
-   equipo táctil. En vez de reescribir ~40 media queries (riesgo de layout híbrido: nav
-   móvil con grids de escritorio), se fija el ancho del VIEWPORT a 899 en iPad: TODAS las
-   media queries y el matchMedia del JS (PV_isMobile) leen el mismo ancho a la vez, así que
-   no hay forma de quedar a medio camino. Safari escala la página para llenar la pantalla.
+/* ─── iPad → layout de ESCRITORIO (sidebar), en todos los modelos ─────────────
+   El CSS conmuta de paradigma en 900px: ≥900 = sidebar navy de 220px, ≤899 = bottom-nav
+   con safe-area (el layout de iPhone). Todo iPad debe caer del lado de la sidebar, en
+   vertical y en horizontal, para coincidir con las capturas aprobadas del App Store.
+
+   En horizontal (1180/1194/1366) el ancho real ya supera 900, así que basta con
+   device-width. En vertical (744/820/834) no llega, así que se FIJA el viewport a 1024:
+   TODAS las media queries y el matchMedia del JS (PV_isMobile) leen el mismo ancho a la
+   vez, así que no hay forma de quedar a medio camino. Safari escala la página para llenar
+   la pantalla (en un mini, 1024 lógicos sobre 744 físicos ≈ escala 0.73).
 
    Detección: iPadOS 13+ se anuncia como "Macintosh" en el UA, así que se combina con
    maxTouchPoints (un Mac real reporta 0, incluido el de Touch Bar). No toca iPhone ni Mac.
 
-   Split View / Stage Manager: si la ventana ya mide ≤899 NO se fija nada (forzar 899 en una
-   ventana de 507 encogería el texto). Se recalcula al rotar/redimensionar. Estando fijado,
-   innerWidth vale 899, así que el ancho real se recupera con visualViewport.scale. */
+   Split View / Stage Manager: por debajo de SPLIT_MIN la ventana es demasiado angosta para
+   la sidebar y se respeta el layout móvil (forzar 1024 en una ventana de 507 encogería el
+   texto a la mitad). Se recalcula al rotar/redimensionar. Estando fijado, clientWidth vale
+   1024, así que el ancho real se recupera con visualViewport.scale — y sigue cayendo en
+   [SPLIT_MIN, IPAD_MIN_W), así que la decisión es idempotente y no oscila al rotar. */
 (function () {
   var m = document.querySelector('meta[name="viewport"]');
   if (!m) return;
-  var TABLET_W = 899;                       // mismo número que el breakpoint del CSS
-  var DESKTOP  = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+  var IPAD_MIN_W = 1024;   // ancho lógico mínimo para que aplique el layout de sidebar
+  var SPLIT_MIN  = 700;    // por debajo (Split View angosto) se respeta el layout móvil
+  var DESKTOP = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
   /* Sin initial-scale al fijar el ancho: el viewport final es el MAYOR entre `width` y el
-     que implica la escala, así que initial-scale=1 anularía el width=899.
-     Tampoco `maximum-scale`: la escala inicial en iPad es deviceWidth/899 (≈1.3) y
-     maximum-scale la recortaría a 1 → el viewport volvería a 1180 y con él el layout de
-     escritorio. `user-scalable=no` sí es seguro: sólo bloquea el pinch del usuario, no
-     toca la escala calculada. */
-  var TABLET   = 'width=' + TABLET_W + ', user-scalable=no, viewport-fit=cover';
+     que implica la escala, así que initial-scale=1 anularía el width=1024.
+     Tampoco `maximum-scale`: la escala inicial en iPad es deviceWidth/1024 (<1) y
+     maximum-scale la recortaría → el viewport volvería al ancho del dispositivo y con él
+     el layout móvil. `user-scalable=no` sí es seguro: sólo bloquea el pinch del usuario,
+     no toca la escala calculada. */
+  var FIXED   = 'width=' + IPAD_MIN_W + ', user-scalable=no, viewport-fit=cover';
   var ua = navigator.userAgent || '';
   /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama del Mac
      táctil. (No cambiaría el layout — nunca superan 899 px — pero sí marcaría la clase.) */
@@ -262,7 +267,8 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
     return Math.round(w * (s > 0 ? s : 1));
   }
   function apply() {
-    var want = realW() > TABLET_W ? TABLET : DESKTOP;
+    var w = realW();
+    var want = (w >= SPLIT_MIN && w < IPAD_MIN_W) ? FIXED : DESKTOP;
     if (m.getAttribute('content') !== want) m.setAttribute('content', want);
   }
   apply();
@@ -1293,11 +1299,11 @@ window._ensureChartJs = (function(){
     .tab { margin-right: 14px; padding: 12px 2px; font-size: 13px; }
   }
 
+  /* Oculta SIEMPRE la fila de pestañas superior: ≤899 navega con .bottom-tabs y ≥900 con la
+     sidebar, así que el rango está cubierto sin solapamiento. La regla de rescate que la
+     reponía en (max-width:900px) sólo llegaba a aplicar en la banda 761–900, donde
+     .bottom-tabs ya está visible → duplicaba la navegación en iPad. */
   .tabs { display: none !important; }
-  /* on mobile the navbar links hide — restore the tabs row so you can still navigate */
-  @media (max-width: 900px) {
-    .tabs { display: flex !important; }
-  }
   .page { max-width: none; margin-left: 256px; padding: 0; }
   @media (max-width: 700px) { .page { padding: 18px 14px 40px; } }
 
@@ -2297,7 +2303,9 @@ window._ensureChartJs = (function(){
 
   /* News grid (cards) */
   .sn-news-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-  @media (max-width: 1000px) { .sn-news-grid { grid-template-columns: repeat(2,1fr); } }
+  /* 1320 (no 1000): la sidebar de 220px come ancho, así que un viewport de 1024 deja ~748px
+     de contenido — 4 columnas darían tarjetas de 175px y titulares de 6 líneas. */
+  @media (max-width: 1320px) { .sn-news-grid { grid-template-columns: repeat(2,1fr); } }
   @media (max-width: 600px) { .sn-news-grid { grid-template-columns: 1fr; } }
 
   /* News card — Stitch exact */
@@ -2870,7 +2878,10 @@ window._ensureChartJs = (function(){
     height: 100dvh !important;
     flex-direction: column !important;
     align-items: flex-start !important;
-    padding: 20px 14px 20px !important;
+    /* safe-area: en iPad esta rama ya es la activa y viewport-fit=cover mete el contenido
+       debajo de la barra de estado / home indicator. En escritorio los env() valen 0 y el
+       max() devuelve los 20px de siempre. */
+    padding: max(20px, env(safe-area-inset-top)) 14px max(20px, env(safe-area-inset-bottom)) !important;
     background: var(--st-navy) !important;
     border-bottom: none !important;
     border-right: 1px solid rgba(255,255,255,0.07) !important;
@@ -2926,11 +2937,18 @@ window._ensureChartJs = (function(){
   body > * { box-sizing: border-box; }
   #tab-portfolio, #tab-noticias, #tab-watchlist, #tab-analizar, #tab-settings, #tab-aianalyst {
     margin-left: var(--sidebar-w) !important;
-    padding: 24px 28px !important;
+    padding: max(24px, env(safe-area-inset-top)) 28px max(24px, env(safe-area-inset-bottom)) !important;
     min-height: 100vh;
     min-height: 100dvh;
     box-sizing: border-box;
   }
+  /* Chat a pantalla completa: .ai-chat-page mide var(--vvh, 100dvh); con el padding de
+     24px del contenedor desbordaría 48px y saldría un scroll doble. Se le da al contenedor
+     una altura DEFINIDA (no sólo min-height) para que el 100% del hijo resuelva. */
+  #tab-aianalyst { padding: 0 !important; height: 100dvh !important; }
+  .ai-chat-page  { height: 100% !important; min-height: 0 !important; }
+  /* Sin el padding del contenedor, el input queda pegado al home indicator. */
+  .ai-chat-inputarea { padding-bottom: max(18px, env(safe-area-inset-bottom)) !important; }
   .dash-topbar-mobile { display: none !important; }
   .bottom-tabs { display: none !important; }
 
@@ -3026,7 +3044,9 @@ window._ensureChartJs = (function(){
   /* Mobile header */
   .dash-topbar-mobile {
     display: flex !important; align-items: center; justify-content: space-between;
-    padding: 14px 18px 10px; background: #fff;
+    /* safe-area: con viewport-fit=cover el logo y el buscador se metían debajo de la hora
+       y la batería. Aplica en iPhone y en ventanas angostas de Split View. */
+    padding: calc(env(safe-area-inset-top, 0px) + 14px) 18px 10px; background: #fff;
     border-bottom: 1px solid #e8ecf2; position: sticky; top: 0; z-index: 100;
   }
   .dash-topbar-mobile .dh-logo { display: flex; align-items: center; gap: 9px; }
@@ -4238,7 +4258,9 @@ window._pvAwaitIAP = function(totalMs){
     #tab-analizar .ra-btn-dark{background:var(--st-primary);color:#fff}
     #tab-analizar .ra-btn-dark:hover{opacity:.9}
     #tab-analizar .ra-grid{display:grid;grid-template-columns:1fr 340px;gap:16px;margin-bottom:16px}
-    @media(max-width:900px){#tab-analizar .ra-grid{grid-template-columns:1fr}}
+    /* 1280 (no 900): con la sidebar, 1fr+340px dejaría el chart en 448px. Apilado coincide
+       con la captura aprobada. */
+    @media(max-width:1280px){#tab-analizar .ra-grid{grid-template-columns:1fr}}
     #tab-analizar .ra-card{background:#fff;border:1px solid var(--st-surface-highest);border-radius:18px;box-shadow:0 10px 30px -12px rgba(11,28,48,.06);padding:20px 22px;margin-bottom:0}
     #tab-analizar .ra-card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
     #tab-analizar .ra-card-title{font-size:16px;font-weight:700;color:var(--st-primary);margin:0 0 14px}
@@ -4299,7 +4321,9 @@ window._pvAwaitIAP = function(totalMs){
     #tab-analizar .rax-chip-l{font-size:10px;color:var(--st-on-surf-var);font-weight:600;letter-spacing:.4px;text-transform:uppercase;margin-bottom:4px}
     #tab-analizar .rax-chip-v{font-size:20px;font-weight:800}
     #tab-analizar .ra-metrics4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:16px}
-    @media(max-width:800px){#tab-analizar .ra-metrics4{grid-template-columns:repeat(2,1fr)}}
+    /* 1240 (no 800): con la sidebar, 4 columnas dan ~180px y "52W Range" ($94.31 – $195.69)
+       no cabe. En 2×2 se lee completo. */
+    @media(max-width:1240px){#tab-analizar .ra-metrics4{grid-template-columns:repeat(2,1fr)}}
     #tab-analizar .ra-mcard{background:#fff;border:1px solid var(--st-surface-highest);border-radius:16px;box-shadow:0 10px 30px -12px rgba(11,28,48,.06);padding:18px 20px}
     #tab-analizar .ra-mlabel{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--st-on-surf-var);margin-bottom:10px}
     #tab-analizar .ra-mval{font-size:24px;font-weight:700;color:var(--st-primary)}
