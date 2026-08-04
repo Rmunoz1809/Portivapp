@@ -3352,6 +3352,23 @@ window._ensureChartJs = (function(){
   body.chat-active .ai-chat-page { height: calc(100dvh - (64px + env(safe-area-inset-bottom, 0px))) !important; }
   body.chat-active .ai-chat-header { position: sticky; top: 0; z-index: 20; padding-top: max(18px, env(safe-area-inset-top)) !important; }
 
+  /* ── Teclado abierto: el chat se ancla al viewport VISIBLE ──
+     iOS no encoge la ventana al abrir el teclado: desplaza el documento entero, así que la
+     cabecera "Portiv IA" se salía por arriba y quedaba un hueco muerto entre la barra de
+     escribir y el teclado. Con --vvh (alto del viewport visible, lo fija el script del final
+     del documento) el chat mide EXACTAMENTE lo que se ve, fijado arriba, y la barra de
+     escribir queda pegada al teclado. La barra de pestañas no aporta nada mientras se
+     escribe y roba altura: se oculta. La clase la pone el script sólo con el foco dentro
+     del chat, así que ningún otro buscador de la app se ve afectado. */
+  body.pv-kb-open { overflow: hidden !important; }
+  body.pv-kb-open #tab-aianalyst {
+    position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+    height: var(--vvh, 100dvh) !important; z-index: 900 !important;
+  }
+  body.pv-kb-open .ai-chat-page { height: 100% !important; min-height: 0 !important; }
+  body.pv-kb-open .bottom-tabs { display: none !important; }
+  body.pv-kb-open .ai-chat-inputarea { padding-bottom: 10px !important; }
+
   /* ── Watchlist: cards compactas, todo cabe sin desbordar ── */
   #tab-watchlist { padding: 6px 14px 86px !important; background: var(--surface) !important; }
   .wl2-sector { margin-bottom: 8px !important; gap: 8px !important; }
@@ -3479,6 +3496,18 @@ html.pv-ipad .ai-chat-page { height: 100% !important; min-height: 0 !important; 
 /* El nav ya ocupa la safe-area de abajo: sin esto el input sumaba el home indicator
    por segunda vez y quedaba un hueco muerto sobre la barra. */
 html.pv-ipad .ai-chat-inputarea { padding-bottom: 14px !important; }
+/* La webview arranca DEBAJO de la barra de estado (contentInset: never), y el chat es la
+   única pantalla sin .m-topbar: sin esta reserva la hora del sistema caía justo encima de
+   "Portiv IA". El mínimo cubre los iPad que reportan safe-area-inset-top = 0. */
+html.pv-ipad .ai-chat-header {
+  padding-top: max(26px, calc(env(safe-area-inset-top, 0px) + 14px)) !important;
+}
+/* Con el teclado abierto el chat se ancla al viewport visible, igual que en móvil. */
+html.pv-ipad body.pv-kb-open #tab-aianalyst {
+  position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+  height: var(--vvh, 100dvh) !important; z-index: 900 !important;
+}
+html.pv-ipad body.pv-kb-open { overflow: hidden !important; }
 
 /* ── Panel "Revisión de importación" ──
    Se crea desde JS con estilo inline (bottom:16px; right:16px; z-index:9999), pensado para
@@ -4012,7 +4041,6 @@ window._pvAwaitIAP = function(totalMs){
         </button>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
-      <div class="pv-ai-foot" style="margin-top:8px;padding-top:8px;text-align:center;">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
     </div>
 
   </div>
@@ -5020,8 +5048,6 @@ window._pvAwaitIAP = function(totalMs){
      desplazó (--vv-top) y se retira el tab bar, que si no queda flotando sobre el teclado. */
   body.pv-kb-open .ai-chat-page { transform: translateY(var(--vv-top, 0px)); will-change: transform; }
   body.pv-kb-open .bottom-tabs, body.pv-kb-open .bottom-nav { display: none !important; }
-  /* Aviso legal del chat: discreto, en una línea de texto fina bajo el input. */
-  .ai-chat-inputarea .pv-ai-foot { font-size:9.5px; line-height:1.4; letter-spacing:.1px; opacity:.72; margin-top:6px !important; padding-top:6px !important; }
   .ai-chat-header { padding:18px 24px; background:#fff; border-bottom:1px solid #e8eaf0; display:flex; align-items:center; gap:14px; flex-shrink:0; }
   .ai-chat-header-avatar { width:40px; height:40px; border-radius:50%; background:var(--blue); display:flex; align-items:center; justify-content:center; color:#fff; font-size:15px; font-weight:700; flex-shrink:0; line-height:1; }
   .ai-chat-header-info { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
@@ -32097,6 +32123,11 @@ document.addEventListener('DOMContentLoaded', function(){
     // Teclado abierto = el viewport visible es sensiblemente más bajo que el de layout.
     // El umbral (120px) descarta las barras del navegador, que también encogen vv.height.
     var kb = (window.innerHeight - vv.height) > 120;
+    // Sólo el chat se re-ancla: en el resto de la app (buscadores, importación…) el teclado
+    // debe comportarse como siempre, así que la clase se limita al foco dentro del chat.
+    var ae = document.activeElement;
+    var inChat = !!(ae && (ae.id === 'aiChatInput' || ae.closest && ae.closest('.ai-chat-page')));
+    kb = kb && inChat;
     document.body.classList.toggle('pv-kb-open', kb);
     // iOS desplaza el documento para "enseñar" el input aunque ya sea visible; devolverlo a 0
     // deja la app quieta y la compensación de --vv-top se encarga del resto.
