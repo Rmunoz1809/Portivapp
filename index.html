@@ -13127,15 +13127,69 @@ function renderNewsTab() {
 }
 
 
+// Ticker abierto ahora mismo en "Noticias por Posición" (para repintarlo cuando
+// llegue el feed del ciclo de 30 min sin que el usuario tenga que volver a hacer clic).
+var _snOpenTicker = '';
+var _snFetching   = {};   // ticker → true mientras hay una carga bajo demanda en curso
+
+// Carga bajo demanda del feed de UN ticker. autoUpdateNews solo corre al arrancar y cada
+// 30 min (y en fin de semana ni siquiera pedía noticias por posición), así que abrir una
+// posición antes de que ese ciclo termine dejaba la tarjeta en "No se pudieron cargar las
+// noticias" hasta media hora. Ahora la posición pide sus propias noticias al abrirse.
+async function _snFetchTickerNews(ticker) {
+  if (_snFetching[ticker]) return false;
+  _snFetching[ticker] = true;
+  try {
+    const d    = await apiCall({action:'news', ticker}, 9000);
+    const raw  = (d && d.news) || [];
+    if (!raw.length) return false;
+    const built = _buildTickerArticles(ticker, raw);
+    const _keyOf = a => ((a && (a.link || a.h || a.headline)) || '').trim().toLowerCase();
+    const _existing = Array.isArray(STOCK_NEWS[ticker]) ? STOCK_NEWS[ticker] : [];
+    const _seen  = new Set(_existing.map(_keyOf));
+    const _fresh = built.filter(a => { const k = _keyOf(a); if (!k || _seen.has(k)) return false; _seen.add(k); return true; });
+    STOCK_NEWS[ticker] = [..._fresh, ..._existing].slice(0, 12);
+    try { _saveNewsCache(); } catch(e) {}
+    return true;
+  } catch(e) {
+    return false;
+  } finally {
+    _snFetching[ticker] = false;
+  }
+}
+
+// Repinta la posición abierta cuando llega feed nuevo (renderNewsTab solo rehace los chips,
+// no el panel de la posición → sin esto había que volver a hacer clic para ver las noticias).
+function _snRepaintOpen() {
+  try {
+    if (!_snOpenTicker) return;
+    if (!(STOCK_NEWS[_snOpenTicker] || []).length) return;
+    if (!HOLDINGS.some(h => h.ticker === _snOpenTicker)) return;
+    showStockNews(_snOpenTicker, null);
+  } catch(e) {}
+}
+
 function showStockNews(ticker, btn) {
   document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('sel'));
-  btn.classList.add('sel');
+  if (btn) btn.classList.add('sel');
+  _snOpenTicker = ticker;
   const news = STOCK_NEWS[ticker] || [];
   const h = HOLDINGS.find(x=>x.ticker===ticker);
+  if (!h) return;
   const c = calcH(h);
   const dc = {pos:'var(--green)',neg:'var(--red)',neu:'var(--text3)'};
   const sc = {pos:'sp',neg:'sn',neu:'su'};
   const sl = {pos:'Positivo',neg:'Negativo',neu:'Neutral'};
+  // Sin noticias en caché → spinner + fetch bajo demanda, y se repinta al llegar.
+  if (!news.length) {
+    _snFetchTickerNews(ticker).then(ok => {
+      if (_snOpenTicker !== ticker) return;                 // el usuario ya abrió otra posición
+      if (ok) { showStockNews(ticker, null); return; }
+      const cont = $('newsContainer');
+      const grid = cont && cont.querySelector('.sn-news-grid');
+      if (grid) grid.innerHTML = `<div style="grid-column:1/-1;padding:28px 16px;text-align:center;color:var(--text3);font-size:13px;border:1px dashed var(--border);border-radius:8px">No se pudieron cargar las noticias.<br><button onclick="showStockNews('${ticker}',null)" style="margin-top:10px;padding:6px 14px;border-radius:999px;border:1.5px solid var(--st-outline-var);background:var(--surface);cursor:pointer;font-family:'Manrope',sans-serif;font-size:12px;font-weight:700;color:var(--st-primary)">Reintentar</button></div>`;
+    });
+  }
   $('newsContainer').innerHTML = `
     <div style="padding:12px 0 10px;border-top:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <span style="font-size:15px;font-weight:700">${ticker}</span>
@@ -13151,7 +13205,7 @@ function showStockNews(ticker, btn) {
       n._ticker = ticker;                    // fuerza el badge del ticker en la card
       const idx = _newsCache.push(n) - 1;
       return _snCard(n, idx);                // mismo estilo card que "Movimientos Diarios"
-    }).join('') : `<div style="grid-column:1/-1;padding:28px 16px;text-align:center;color:var(--text3);font-size:13px;border:1px dashed var(--border);border-radius:8px">No se pudieron cargar las noticias.</div>`}
+    }).join('') : `<div style="grid-column:1/-1;padding:28px 16px;text-align:center;color:var(--text3);font-size:13px;border:1px dashed var(--border);border-radius:8px"><span class="pv-spinner"></span></div>`}
     </div>`;
 }
 
@@ -24244,17 +24298,81 @@ async function _refreshGeneralNews(timeoutMs) {
   } catch(e) { return 0; }
 }
 
+// Construye las tarjetas de noticias de UN ticker desde el feed crudo de Finnhub.
+// Se usa en el ciclo de 30 min (autoUpdateNews) y en la carga bajo demanda al abrir
+// una posición (showStockNews) → mismas tarjetas por las dos vías.
+function _buildTickerArticles(ticker, news) {
+  const held = HOLDINGS.find(h => h.ticker === ticker);
+  const pct  = held?.dayChgPct ?? 0;
+  // First article inherits sentiment from today's price change; rest are neutral
+  const sentFromChg = pct > 1.5 ? 'pos' : pct < -1.5 ? 'neg' : 'neu';
+
+  return news.map((n, i) => {
+    const pubDate = n.providerPublishTime
+      ? new Date(n.providerPublishTime * 1000)
+      : null;
+    const dateStr = pubDate
+      ? pubDate.toLocaleDateString('es-MX', {month:'short', day:'numeric'})
+      : '';
+    const longDate = pubDate
+      ? pubDate.toLocaleDateString('es-MX', {weekday:'long', day:'numeric', month:'long'})
+      : '';
+    const src = n.publisher || 'fuente desconocida';
+    const title = n.title || '';
+    // Sentimiento por palabras clave del titular; si es neutro, usa el sesgo del precio del día
+    const kw = _classifyNewsSentiment(title + ' ' + (n.summary || ''));
+    const sentiment = kw !== 'neu' ? kw : (i === 0 ? sentFromChg : 'neu');
+    const impactStr = _detectPortfolioImpact(title, n.summary, ticker);
+    return {
+      headline: title,
+      h: title,
+      source: src,
+      date: dateStr,
+      _ts: n.providerPublishTime ? n.providerPublishTime * 1000 : Date.now(),
+      link: n.link || '',
+      img: n.image || '',
+      s: sentiment,
+      impact: impactStr,
+      // Resumen real de la fuente (si lo hay) + bandera de auto-fetch, para poder
+      // filtrar en "Most Important News" las que NO traen contexto entendible.
+      summary: (n.summary || '').trim(),
+      _auto: true,
+      // Corroboración cruzada Yahoo+Finnhub: confirmada si ambas fuentes la reportaron.
+      corroborated: !!n.corroborated,
+      sources: Array.isArray(n._sources) ? n._sources : [],
+      // Extended text — minimal but informative auto-generated summary
+      ext: `${title}.\n\n${n.summary ? n.summary + '\n\n' : ''}Publicado por ${src}${longDate ? ' el ' + longDate : ''}.\n\n` +
+        `Esta noticia afecta a ${ticker} (${held?.name || ticker}) que hoy cotiza ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a $${held ? held.price.toFixed(2) : '—'}. ` +
+        `${Math.abs(pct) > 3
+          ? `El movimiento del ${Math.abs(pct).toFixed(1)}% es notable — revisa si esta noticia es el catalizador principal o hay factores adicionales como el entorno macro o movimientos sectoriales amplios.`
+          : Math.abs(pct) > 1.5
+          ? `El movimiento de hoy tiene un sesgo ${sentFromChg === 'pos' ? 'positivo' : 'negativo'} moderado. Evalúa si la noticia cambia la tesis de inversión a largo plazo o es ruido de corto plazo.`
+          : `El movimiento de hoy está dentro del rango normal de variación. Mantén tu plan de inversión si la tesis fundamental no ha cambiado.`}`
+    };
+  });
+}
+
 async function autoUpdateNews(force) {
   const TICKERS = HOLDINGS.map(h => h.ticker);
 
   // En fin de semana: no hacemos fetch en vivo (mercados cerrados) pero SÍ mostramos
   // las noticias del viernes que quedaron guardadas en el caché de la semana.
   if (_isWeekend()) {
+    // El caché se limpia cada medianoche local (_loadNewsCache), así que el sábado STOCK_NEWS
+    // arranca VACÍO y "Noticias por Posición" se quedaba sin nada que mostrar todo el fin de
+    // semana. Se repuebla desde Finnhub (que sigue sirviendo los artículos del viernes), solo
+    // para los tickers que no tienen nada en caché.
+    const _pend = TICKERS.filter(t => !(STOCK_NEWS[t] || []).length);
+    for (let i = 0; i < _pend.length; i += 4) {
+      await Promise.allSettled(_pend.slice(i, i + 4).map(t => _snFetchTickerNews(t)));
+      if (i + 4 < _pend.length) await new Promise(r => setTimeout(r, 150));
+    }
     await _refreshGeneralNews(7000);   // noticias del mercado siguen llegando el finde → refresca
     await _buildWeekCatalysts();
     _refreshNewsWeekDates();
     _saveNewsCache();
     renderNewsTab();
+    _snRepaintOpen();
     // Rebuild PORTIV_NEWS desde el pool acumulado (week_top_* + caché) para mostrar noticias del viernes.
     if (typeof PORTIV_NEWS !== 'undefined') {
       PORTIV_NEWS.buildThisWeek(true).then(() => PORTIV_NEWS.renderThisWeek()).catch(() => {});
@@ -24285,54 +24403,7 @@ async function autoUpdateNews(force) {
     gotAny = true;
     const {ticker, news} = r.value;
     if (!news.length) return; // sin datos reales → conserva lo existente (semilla o fetch previo)
-    const held = HOLDINGS.find(h => h.ticker === ticker);
-    const pct  = held?.dayChgPct ?? 0;
-    // First article inherits sentiment from today's price change; rest are neutral
-    const sentFromChg = pct > 1.5 ? 'pos' : pct < -1.5 ? 'neg' : 'neu';
-
-    const _built = news.map((n, i) => {
-      const pubDate = n.providerPublishTime
-        ? new Date(n.providerPublishTime * 1000)
-        : null;
-      const dateStr = pubDate
-        ? pubDate.toLocaleDateString('es-MX', {month:'short', day:'numeric'})
-        : '';
-      const longDate = pubDate
-        ? pubDate.toLocaleDateString('es-MX', {weekday:'long', day:'numeric', month:'long'})
-        : '';
-      const src = n.publisher || 'fuente desconocida';
-      const title = n.title || '';
-      // Sentimiento por palabras clave del titular; si es neutro, usa el sesgo del precio del día
-      const kw = _classifyNewsSentiment(title + ' ' + (n.summary || ''));
-      const sentiment = kw !== 'neu' ? kw : (i === 0 ? sentFromChg : 'neu');
-      const impactStr = _detectPortfolioImpact(title, n.summary, ticker);
-      return {
-        headline: title,
-        h: title,
-        source: src,
-        date: dateStr,
-        _ts: n.providerPublishTime ? n.providerPublishTime * 1000 : Date.now(),
-        link: n.link || '',
-        img: n.image || '',
-        s: sentiment,
-        impact: impactStr,
-        // Resumen real de la fuente (si lo hay) + bandera de auto-fetch, para poder
-        // filtrar en "Most Important News" las que NO traen contexto entendible.
-        summary: (n.summary || '').trim(),
-        _auto: true,
-        // Corroboración cruzada Yahoo+Finnhub: confirmada si ambas fuentes la reportaron.
-        corroborated: !!n.corroborated,
-        sources: Array.isArray(n._sources) ? n._sources : [],
-        // Extended text — minimal but informative auto-generated summary
-        ext: `${title}.\n\n${n.summary ? n.summary + '\n\n' : ''}Publicado por ${src}${longDate ? ' el ' + longDate : ''}.\n\n` +
-          `Esta noticia afecta a ${ticker} (${held?.name || ticker}) que hoy cotiza ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a $${held ? held.price.toFixed(2) : '—'}. ` +
-          `${Math.abs(pct) > 3
-            ? `El movimiento del ${Math.abs(pct).toFixed(1)}% es notable — revisa si esta noticia es el catalizador principal o hay factores adicionales como el entorno macro o movimientos sectoriales amplios.`
-            : Math.abs(pct) > 1.5
-            ? `El movimiento de hoy tiene un sesgo ${sentFromChg === 'pos' ? 'positivo' : 'negativo'} moderado. Evalúa si la noticia cambia la tesis de inversión a largo plazo o es ruido de corto plazo.`
-            : `El movimiento de hoy está dentro del rango normal de variación. Mantén tu plan de inversión si la tesis fundamental no ha cambiado.`}`
-      };
-    });
+    const _built = _buildTickerArticles(ticker, news);
     // Conserva las noticias ya mostradas (calidad estable) y solo antepone las NUEVAS.
     const _existing = (_newsSeeded && Array.isArray(STOCK_NEWS[ticker])) ? STOCK_NEWS[ticker] : [];
     const _keyOf = a => ((a && (a.link || a.h || a.headline)) || '').trim().toLowerCase();
@@ -24350,7 +24421,7 @@ async function autoUpdateNews(force) {
 
   // Todas las llamadas fallaron (sin API key, rate-limit o red): NO dejes spinner infinito —
   // pinta lo que haya (semilla/caché) y reintenta en el próximo ciclo de 30 min.
-  if (TICKERS.length && !gotAny) { try { await _refreshGeneralNews(7000); } catch(e){} try { renderNewsTab(); } catch(e){} return; }
+  if (TICKERS.length && !gotAny) { try { await _refreshGeneralNews(7000); } catch(e){} try { renderNewsTab(); _snRepaintOpen(); } catch(e){} return; }
   if (gotAny) { try { localStorage.setItem('news_api_seeded', '1'); } catch(e){} } // Había tickers pero todas las llamadas fallaron — conserva lo previo. (Cartera vacía sigue para traer noticias generales.)
 
   // ── Rebuild DAILY_NEWS from biggest movers ──────────────────────────────────
@@ -24461,6 +24532,7 @@ async function autoUpdateNews(force) {
   // ── Siempre actualiza fechas a esta semana y re-renderiza ────────────────────
   _refreshNewsWeekDates();
   renderNewsTab();
+  _snRepaintOpen();
 
   // ── Notificar a PORTIV_NEWS: el pool de noticias ya está lleno → rebuild Esta Semana ──
   if (typeof PORTIV_NEWS !== 'undefined') {
