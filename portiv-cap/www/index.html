@@ -222,10 +222,15 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
-/* ─── iPad → layout de ESCRITORIO (sidebar), en todos los modelos ─────────────
-   El CSS conmuta de paradigma en 900px: ≥900 = sidebar navy de 220px, ≤899 = bottom-nav
-   con safe-area (el layout de iPhone). Todo iPad debe caer del lado de la sidebar, en
-   vertical y en horizontal, para coincidir con las capturas aprobadas del App Store.
+/* ─── iPad → densidad de ESCRITORIO, en todos los modelos ─────────────────────
+   OJO: esto NO pone la sidebar. La navegación de iPad es la barra de iconos de abajo
+   (bloque "iPad — NAVEGACIÓN INFERIOR" al final del <style>, que se activa con la clase
+   `pv-ipad` que marca este mismo script). Lo único que se fija aquí es el ANCHO lógico.
+
+   El CSS conmuta de paradigma en 900px: ≥900 = grillas y tablas completas, ≤899 = layout
+   de iPhone (una columna, columnas de tabla ocultas). Todo iPad debe caer del lado ≥900,
+   en vertical y en horizontal, para que el contenido use el ancho de la tablet y para que
+   NO haya dos diseños distintos según el modelo (744 mini vs 1024 del 13").
 
    En horizontal (1180/1194/1366) el ancho real ya supera 900, así que basta con
    device-width. En vertical (744/820/834) no llega, así que se FIJA el viewport a 1024:
@@ -3367,6 +3372,128 @@ window._ensureChartJs = (function(){
   .wl2-spark { display: none !important; }   /* la gráfica no cabe con precio+cambio legibles: se quita en móvil */
   .wl2-remove { padding: 2px 3px !important; font-size: 15px !important; }
 }
+
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  iPad — NAVEGACIÓN INFERIOR (sin sidebar)                                 ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝
+   QUÉ cambia: la barra lateral navy desaparece y se navega con la misma barra de
+   iconos de abajo del móvil (.bottom-tabs) + la topbar de marca (.m-topbar).
+
+   QUÉ NO cambia: la DENSIDAD del contenido. El script del <head> sigue fijando el
+   viewport a 1024 en vertical, así que TODO iPad (mini→13", vertical y apaisado)
+   cae siempre en la rama ≥900 del CSS: mismas grillas, mismas tablas, misma
+   tipografía ya validadas. Un solo layout para todos los modelos — no hay banda de
+   anchos donde el diseño cambie de golpe al rotar o al cambiar de iPad.
+
+   POR QUÉ por clase y no por media query: el ancho no distingue un iPad Pro
+   apaisado (1366) de un portátil (1366); la clase `pv-ipad` (detección por UA) sí.
+   Especificidad: `html.pv-ipad X` lleva un selector más que las reglas de la rama
+   ≥900 y ambas son !important → gana siempre, sin depender del orden. */
+:root{
+  --pv-ipad-nav-h: 72px;                                               /* alto del contenido del nav */
+  --pv-ipad-nav-total: calc(var(--pv-ipad-nav-h) + var(--pv-safe-b));  /* + home indicator */
+}
+
+/* ── El body vuelve a apilar en vertical ──
+   Con la sidebar, `body` es un flex ROW (sidebar | contenido). La topbar de marca es hija
+   directa del body, así que en esa fila se colocaba AL LADO del contenido: 260px de ancho
+   y 1366 de alto, una columna vertical absurda. En móvil el body es `block` — se usa lo
+   mismo, que es lo ya probado. La sidebar iba `position:fixed`, fuera del flujo, así que
+   nada del layout de escritorio dependía de ese flex. */
+html.pv-ipad body { display: block !important; }
+
+/* ── Fuera la sidebar y cualquier nav duplicado ── */
+html.pv-ipad .navbar,
+html.pv-ipad .dash-topbar-mobile,
+html.pv-ipad .bottom-nav,
+html.pv-ipad .tabs { display: none !important; }
+
+/* ── Contenido a ancho completo + hueco para el nav de abajo ── */
+html.pv-ipad #tab-portfolio, html.pv-ipad #tab-noticias, html.pv-ipad #tab-watchlist,
+html.pv-ipad #tab-analizar,  html.pv-ipad #tab-settings, html.pv-ipad #tab-aianalyst {
+  margin-left: 0 !important;
+  padding-bottom: calc(var(--pv-ipad-nav-total) + 16px) !important;
+}
+/* .stitch-layout mide 100dvh; sumado al padding del contenedor dejaba ~110px de
+   scroll muerto al final del portafolio. Se le descuenta el alto del nav. */
+html.pv-ipad .stitch-layout { min-height: calc(100dvh - var(--pv-ipad-nav-total)) !important; }
+/* El detalle de noticia arrancaba tras los 220px de la sidebar: ahora full screen. */
+html.pv-ipad .nm-overlay { left: 0 !important; }
+
+/* ── Topbar de marca (el mismo diseño del móvil, escalado a tablet) ── */
+html.pv-ipad .m-topbar {
+  display: flex !important; align-items: center; justify-content: space-between; gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 28px 12px;
+  background: #fff; border-bottom: 1px solid var(--st-border);
+  position: sticky; top: 0; z-index: 500;
+}
+html.pv-ipad .m-tb-brand { display: flex; align-items: center; gap: 10px; }
+html.pv-ipad .m-tb-fulllogo { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+html.pv-ipad .m-tb-name { font-size: 19px; font-weight: 800; color: #0b1c30; letter-spacing: -0.3px; font-family: 'Manrope', sans-serif; }
+html.pv-ipad .m-tb-icons { display: flex; align-items: center; gap: 8px; }
+html.pv-ipad .m-tb-btn {
+  background: none; border: none; color: #44474D; padding: 6px;
+  min-width: 44px; min-height: 44px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+/* En el chat la topbar estorba: el perfil de la IA ocupa toda la pantalla (igual que en móvil). */
+html.pv-ipad body.chat-active .m-topbar { display: none !important; }
+
+/* ── Barra de iconos inferior ── */
+html.pv-ipad .bottom-tabs {
+  display: flex !important; position: fixed !important;
+  bottom: 0 !important; left: 0 !important; right: 0 !important;
+  height: var(--pv-ipad-nav-total) !important; padding-bottom: var(--pv-safe-b) !important;
+  background: #fff !important; border-top: 1px solid #E5EEFF !important;
+  box-shadow: 0 -2px 16px rgba(11,28,48,.08) !important; z-index: 9000 !important;
+  align-items: stretch !important;
+  /* Centrado, no estirado: 6 pestañas repartidas en 1366px dejaban cada icono
+     perdido en el centro de 227px de vacío. */
+  justify-content: center !important;
+}
+html.pv-ipad .bottom-tab {
+  flex: 0 1 150px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
+  background: none; border: none; cursor: pointer; padding: 10px 6px;
+  color: #9aa0ab !important; font-size: 11px !important; font-weight: 600 !important;
+  white-space: nowrap !important; transition: color .15s;
+}
+html.pv-ipad .bottom-tab svg {
+  width: 24px !important; height: 24px !important; stroke: currentColor; fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+html.pv-ipad .bottom-tab.active { color: #04162C !important; font-weight: 800 !important; }
+html.pv-ipad .bottom-tab.active svg { stroke-width: 2.2; }
+/* Teclado abierto: el nav se va. La regla general `body.pv-kb-open .bottom-tabs`
+   tiene MENOS especificidad que las de arriba, así que hay que repetirla con el
+   mismo prefijo o el nav se quedaría flotando sobre el teclado. */
+html.pv-ipad body.pv-kb-open .bottom-tabs { display: none !important; }
+
+/* ── Portiv IA: alto exacto, sin quedar por debajo del nav ── */
+html.pv-ipad #tab-aianalyst {
+  padding: 0 !important;
+  height: calc(100dvh - var(--pv-ipad-nav-total)) !important;
+  min-height: 0 !important;
+}
+html.pv-ipad .ai-chat-page { height: 100% !important; min-height: 0 !important; }
+/* El nav ya ocupa la safe-area de abajo: sin esto el input sumaba el home indicator
+   por segunda vez y quedaba un hueco muerto sobre la barra. */
+html.pv-ipad .ai-chat-inputarea { padding-bottom: 14px !important; }
+
+/* ── Panel "Revisión de importación" ──
+   Se crea desde JS con estilo inline (bottom:16px; right:16px; z-index:9999), pensado para
+   escritorio. En móvil y en iPad eso lo dejaba ENCIMA de la barra de navegación: tapaba las
+   dos últimas pestañas y el pie de la tabla, y por z-index ganaba él, así que los iconos
+   quedaban además sin poder pulsarse. Aquí se le baja por debajo del nav y se le sube el
+   borde inferior por encima de él (más la safe-area del home indicator). */
+#portivReviewPanel { z-index: 8500 !important; }
+@media (max-width: 899px) {
+  #portivReviewPanel {
+    left: 12px !important; right: 12px !important; max-width: none !important;
+    bottom: calc(var(--pv-nav-total) + 12px) !important;
+  }
+}
+html.pv-ipad #portivReviewPanel { bottom: calc(var(--pv-ipad-nav-total) + 12px) !important; }
 </style>
 <!-- Supabase Auth (login por email + código).
      La etiqueta de script se MOVIÓ junto al bloque que lo consume (justo antes del IIFE de auth,
@@ -13427,6 +13554,12 @@ function showTab(name) {
     // Portafolio.
     let pg = $('tab-'+name);
     if (!pg) { name = 'portfolio'; pg = $('tab-portfolio'); if (!pg) return; }
+    /* La barra de iconos de abajo (móvil e iPad) también refleja el tab activo. Antes sólo
+       se pintaba desde el onclick del propio botón (_btActive), así que navegar desde otro
+       sitio — la lupa/engranaje de la topbar, una card, el fallback a 'portfolio' de arriba —
+       dejaba encendido el icono anterior. Va DESPUÉS del fallback para que un nombre
+       inválido encienda Portafolio, que es la pestaña que realmente se abre. */
+    document.querySelectorAll('.bottom-tab').forEach(b => b.classList.toggle('active', b.id === 'bt-' + name));
     pg.classList.add('active');
     // La pestaña nueva SIEMPRE abre desde arriba (no hereda el scroll anterior).
     try { window.scrollTo(0,0); pg.scrollTop = 0; var _sc = pg.querySelector('.stitch-layout, .ai-chat-body, .nm-overlay'); if(_sc) _sc.scrollTop = 0; } catch(e){}
@@ -16085,6 +16218,13 @@ function _renderHeaderBadge(period, ds){
   const pv = document.getElementById('perf-period-val');
   if (!pv) return;
   if (period === '1D' || !ds || typeof ds.changePct !== 'number'){ _renderHeaderDayBadge(); return; }
+  // Cuenta recién creada / sin historial: la serie del período son 1-2 puntos con el MISMO
+  // valor (el de hoy repetido para poder trazar algo). Su "cambio" es 0 por construcción, no
+  // porque el portafolio no se haya movido — y quedaba pintado como "+0.00 (+0.00%)" al lado
+  // del valor total, contradiciendo al "Today: +$491.44" del propio card de arriba. Sin
+  // período real que mostrar, el badge cae al cambio del día, que sí es un dato de verdad.
+  const _vals = (ds && Array.isArray(ds.values)) ? ds.values : [];
+  if (_vals.length < 2 || new Set(_vals).size < 2){ _renderHeaderDayBadge(); return; }
   const chg = (typeof ds.change === 'number') ? ds.change : 0;
   const pct = ds.changePct;
   pv.textContent = `${chg>=0?'+':'-'}${Math.abs(chg).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} (${pct>=0?'+':''}${pct.toFixed(2)}%)`;
@@ -17035,7 +17175,11 @@ async function fetchLivePrices() {
 
         // CAPA 1+2: solo actualizar si el precio es plausible (>0, sin saltos absurdos vs el último bueno).
         const plausible = (typeof PORTIV_VAL !== 'undefined')
-          ? PORTIV_VAL.isPlausiblePrice(px, h.price)
+          ? PORTIV_VAL.isPlausiblePrice(px, h.price, {
+              ticker: q.symbol,
+              prevClose: freshPrevClose[q.symbol],           // cierre previo de la propia cotización
+              pct: q.regularMarketChangePercent,             // …o su % del día, si no vino el cierre
+            })
           : (typeof px === 'number' && isFinite(px) && px > 0);
         if (plausible) {
           // FIX: actualización ATÓMICA por holding (price + dayChgPct + _prevClose juntos). El
@@ -25907,7 +26051,7 @@ const PORTIV_SYNC = {
     if(obs(1,1))return true;
     if(mo===1&&wd===1&&Math.ceil(dy/7)===3)return true;
     if(mo===2&&wd===1&&Math.ceil(dy/7)===3)return true;
-    const ea=(yr=>{const G=yr%19,C=Math.floor(yr/100),H=(C-Math.floor(C/4)-Math.floor((8*C+13)/25)+19*G+15)%30,I=H-Math.floor(H/28)*(1-Math.floor(H/28)*Math.floor(29/(H+1))*Math.floor((21-G)/11)),J=(yr+Math.floor(yr/4)+I+2-C+Math.floor(C/4))%7,L=I-J,em=1+Math.floor((L+40)/44),ed=L+28-31*Math.floor(em/4);return new Date(yr,em-1,ed);})(y);
+    const ea=(yr=>{const G=yr%19,C=Math.floor(yr/100),H=(C-Math.floor(C/4)-Math.floor((8*C+13)/25)+19*G+15)%30,I=H-Math.floor(H/28)*(1-Math.floor(H/28)*Math.floor(29/(H+1))*Math.floor((21-G)/11)),J=(yr+Math.floor(yr/4)+I+2-C+Math.floor(C/4))%7,L=I-J,em=3+Math.floor((L+40)/44),ed=L+28-31*Math.floor(em/4);return new Date(yr,em-1,ed);})(y);
     const gf=new Date(ea);gf.setDate(ea.getDate()-2);if(mo===gf.getMonth()+1&&dy===gf.getDate())return true;
     if(mo===5&&wd===1&&dy>24)return true;
     if(obs(6,19))return true;
@@ -26935,9 +27079,17 @@ const PORTIV_VAL = {
     cash: 1.12, total: 9841.99, dayPct: -0.47,
   },
   // Umbrales configurables (FASE 2.5 / 2.6)
-  THRESH: { priceJump: 0.35, glReview: 0.85, reconMktval: 0.50, reconTotal: 1.00 },
+  // glReview NO es "cuánto puede subir una acción" — es "a partir de qué punto el número
+  // solo se explica por una lectura mal hecha". Estaba en 0.85: cualquiera con un +86% en
+  // una posición (una NVDA comprada hace dos años, sin ir más lejos) recibía "Revisión de
+  // importación" EN CADA ARRANQUE, sobre una posición perfectamente correcta. El fallo real
+  // del OCR es de orden de magnitud (coma decimal corrida → 10×), así que el umbral se sube
+  // a 4× (+400%): sigue cazando el decimal perdido y deja en paz a los ganadores de verdad.
+  THRESH: { priceJump: 0.35, glReview: 4.00, reconMktval: 0.50, reconTotal: 1.00 },
   reviewFlags: [],   // [{ticker, reason, kind}]  kind: 'needs_review' | 'misread'
   staleTickers: [],  // tickers usando último precio bueno por fetch dudoso
+  _pendingPx: {},    // ticker → precio "raro" a la espera de una segunda lectura que lo confirme
+  _panelSig: '',     // firma del último set de avisos que el usuario cerró a mano
   _known: null,
   knownSet(){
     if (!this._known){
@@ -27078,25 +27230,64 @@ const PORTIV_VAL = {
     return this.reviewFlags;
   },
   // FASE 2 — ¿Es plausible este precio en vivo vs el último bueno? (rechaza saltos absurdos / 0 / NaN)
-  isPlausiblePrice(newPx, lastGood){
+  //
+  // El guardia está para tirar ticks corruptos del feed (0, NaN, el precio de otro símbolo),
+  // NO para discutirle al mercado. Comparar SIEMPRE contra el precio guardado se atascaba
+  // solo: si la cartera lleva días sin abrirse —o se sembró desde una foto vieja— el precio
+  // real ya se movió más del umbral y queda rechazado PARA SIEMPRE, porque el guardado nunca
+  // avanza y por tanto el salto nunca se cierra. Ese era el bucle que dejaba las posiciones
+  // congeladas, la columna DÍA en "—" y el panel "precio desactualizado" encendido en cada
+  // sync. Ahora el salto vs. lo guardado solo decide cuando no hay nada mejor con qué juzgar:
+  //   1) Si la cotización trae su PROPIO cierre previo (o su % del día), se valida contra él:
+  //      un tick corrupto es incoherente con su propio cierre; un rally de meses no lo es.
+  //   2) Si no trae nada, se acepta a la SEGUNDA lectura consecutiva del mismo precio: el feed
+  //      no se contradice a sí mismo dos veces seguidas, así que gana el feed y no lo guardado.
+  // `ctx` es opcional: sin él se conserva el comportamiento anterior (solo salto vs. guardado).
+  isPlausiblePrice(newPx, lastGood, ctx){
     if (!(typeof newPx === 'number' && isFinite(newPx) && newPx > 0)) return false;
-    if (_validPrice(lastGood)){
-      const jump = Math.abs(newPx / lastGood - 1);
-      if (jump > this.THRESH.priceJump) return false;   // salto > 35% en un tick → sospechoso
+    const tk = ctx && ctx.ticker;
+    if (!_validPrice(lastGood)) { if (tk) delete this._pendingPx[tk]; return true; }
+    if (Math.abs(newPx / lastGood - 1) <= this.THRESH.priceJump) { if (tk) delete this._pendingPx[tk]; return true; }
+
+    // (1) Coherencia interna de la propia cotización.
+    const pc  = ctx && _validPrice(ctx.prevClose) ? ctx.prevClose : null;
+    const pct = ctx && typeof ctx.pct === 'number' && isFinite(ctx.pct) ? ctx.pct : null;
+    if (pc != null || pct != null){
+      const ok = (pc != null)
+        ? Math.abs(newPx / pc - 1) <= this.THRESH.priceJump
+        : Math.abs(pct) <= this.THRESH.priceJump * 100;
+      if (ok && tk) delete this._pendingPx[tk];
+      return ok;
     }
-    return true;
+
+    // (2) Sin señal interna: se exige confirmación en la lectura siguiente (±0.5%).
+    if (!tk) return false;
+    const prev = this._pendingPx[tk];
+    if (prev != null && Math.abs(newPx / prev - 1) <= 0.005){ delete this._pendingPx[tk]; return true; }
+    this._pendingPx[tk] = newPx;
+    return false;
   },
   markStale(ticker){ if (!this.staleTickers.includes(ticker)) this.staleTickers.push(ticker); this.renderPanel(); },
-  clearStale(ticker){ this.staleTickers = this.staleTickers.filter(t => t !== ticker); },
+  // Sin renderPanel() el aviso sobrevivía a su propia causa: el ticker se recuperaba, salía de
+  // la lista y el panel seguía pintado con la línea vieja hasta que algo más lo re-renderizara.
+  clearStale(ticker){
+    if (!this.staleTickers.includes(ticker)) return;
+    this.staleTickers = this.staleTickers.filter(t => t !== ticker);
+    this.renderPanel();
+  },
   // FASE 2.6 — Marca posiciones con G/L extremo para revisión (no bloquea).
   reviewExtremeGL(){
+    // Mismo motivo que en validateImport: con la cuenta del broker no hay ninguna lectura que
+    // revisar —cantidad y costo son los oficiales— así que este chequeo solo puede producir
+    // falsos positivos, y encima en cada arranque.
+    try { if (localStorage.getItem('pv_broker_connected') === '1') return; } catch(e){}
     HOLDINGS.forEach(h => {
       if (h.costBasis > 0){
         const ratio = Math.abs((h.qty * h.price) / h.costBasis - 1);
         if (ratio > this.THRESH.glReview){
           console.warn(`[PORTIV_VAL] ${h.ticker}: G/L extremo ${(ratio*100).toFixed(0)}% — revisar`);
           if (!this.reviewFlags.some(f => f.ticker === h.ticker))
-            this._flag(h.ticker, `G/L ${(((h.qty*h.price)/h.costBasis - 1)*100).toFixed(1)}% inusual — revisar precio`, 'needs_review');
+            this._flag(h.ticker, `G/L ${(((h.qty*h.price)/h.costBasis - 1)*100).toFixed(1)}% inusual — revisar la cantidad y el costo importados`, 'needs_review');
         }
       }
     });
@@ -27141,7 +27332,12 @@ const PORTIV_VAL = {
       ...this.reviewFlags.map(f => ({ cls:f.kind==='misread'?'#BA1A1A':'#6B5E3A', txt:`⚠ ${f.ticker}: ${f.reason}` })),
       ...this.staleTickers.map(t => ({ cls:'#6B5E3A', txt:`${t}: precio desactualizado (usando último bueno)` })),
     ];
-    if (!items.length){ if (el) el.remove(); return; }
+    if (!items.length){ if (el) el.remove(); this._panelSig = ''; return; }
+    // Cerrarlo tenía que significar algo: el sync silencioso llama a renderPanel cada 20 min y
+    // volvía a plantar el MISMO panel que el usuario acababa de descartar. Se recuerda la
+    // firma del set cerrado; si aparece un aviso nuevo (o distinto), el panel vuelve solo.
+    const sig = items.map(i => i.txt).join('|');
+    if (this._panelSig === sig){ if (el) el.remove(); return; }
     if (!el){
       el = document.createElement('div');
       el.id = 'portivReviewPanel';
@@ -27152,8 +27348,15 @@ const PORTIV_VAL = {
     }
     el.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`
       + `<strong style="font-size:12px;color:#0F1D35">Revisión de importación (${items.length})</strong>`
-      + `<span onclick="document.getElementById('portivReviewPanel').remove()" style="cursor:pointer;color:#8a96a3;font-weight:700">×</span></div>`
+      + `<span onclick="PORTIV_VAL.dismissPanel()" style="cursor:pointer;color:#8a96a3;font-weight:700;padding:0 4px">×</span></div>`
       + items.map(i => `<div style="padding:4px 0;line-height:1.45;color:${i.cls}">${i.txt}</div>`).join('');
+    this._panelSig = '';
+  },
+  dismissPanel(){
+    const el = document.getElementById('portivReviewPanel');
+    if (!el) return;
+    this._panelSig = [...el.querySelectorAll('div[style*="line-height"]')].map(d => d.textContent).join('|');
+    el.remove();
   },
 };
 window.portivReconcile = () => PORTIV_VAL.reconcile();
