@@ -17093,6 +17093,62 @@ function _pvHydratePrevCloseFromCache() {
 }
 
 
+// ── ÚLTIMA COTIZACIÓN REGISTRADA (anti-parpadeo a $0.00 al actualizar) ────────
+// Al recargar/actualizar la app, HOLDINGS puede volver del estado guardado (o de la nube)
+// SIN el movimiento del día: `dayChgPct` en 0 y sin `_prevClose`. calcH() cae entonces en
+// prevClose = price y TODAS las filas se pintaban en +$0.00 / +0.00% durante los ~3 s que
+// tarda fetchLivePrices en responder — el usuario ve el portafolio "en cero" y de golpe
+// salta al precio nuevo. Aquí se persiste la última cotización BUENA de cada ticker y se
+// rehidrata antes del primer render: primero se ve el último precio registrado y, cuando
+// llega la cotización nueva, se sustituye por la actualizada.
+const _LQ_KEY = 'portiv_last_quotes_v1';   // {TICKER:{price,pct,prevClose,ts}}
+
+function _pvSaveLastQuotes() {
+  try {
+    if (!Array.isArray(HOLDINGS) || !HOLDINGS.length) return;
+    let prev = {};
+    try { prev = JSON.parse(localStorage.getItem(_LQ_KEY) || '{}') || {}; } catch(e) { prev = {}; }
+    const map = Object.assign({}, prev);
+    HOLDINGS.forEach(h => {
+      if (!_validPrice(h.price)) return;
+      map[h.ticker] = {
+        price: h.price,
+        pct: (typeof h.dayChgPct === 'number' && isFinite(h.dayChgPct)) ? h.dayChgPct : 0,
+        prevClose: (h._prevClose && h._prevClose > 0) ? h._prevClose : null,
+        ts: Date.now(),
+      };
+    });
+    localStorage.setItem(_LQ_KEY, JSON.stringify(map));
+  } catch(e) {}
+}
+
+// Solo RELLENA huecos: nunca pisa un precio/cierre válido que ya venga del estado guardado
+// ni el que acaba de traer la API. Se llama DESPUÉS de _pvHydratePrevCloseFromCache() para
+// que el cierre previo de HOY (autoritativo) tenga prioridad sobre el último registrado.
+function _pvHydrateFromLastQuotes() {
+  try {
+    if (!Array.isArray(HOLDINGS) || !HOLDINGS.length) return false;
+    const raw = localStorage.getItem(_LQ_KEY);
+    if (!raw) return false;
+    const map = JSON.parse(raw) || {};
+    let hit = 0;
+    HOLDINGS.forEach(h => {
+      const q = map[h.ticker];
+      if (!q || !_validPrice(q.price)) return;
+      if (!_validPrice(h.price)) h.price = q.price;
+      if (!(h._prevClose > 0) && _validPrice(q.prevClose)) h._prevClose = q.prevClose;
+      const pct = (typeof q.pct === 'number' && isFinite(q.pct)) ? q.pct : 0;
+      if ((typeof h.dayChgPct !== 'number' || !isFinite(h.dayChgPct) || h.dayChgPct === 0) && pct !== 0) h.dayChgPct = pct;
+      // Sin cierre previo guardado se deriva del propio par (precio, %) para que el día$ de
+      // la fila salga con el ÚLTIMO movimiento conocido en vez de $0.00.
+      if (!(h._prevClose > 0) && pct !== 0) h._prevClose = q.price / (1 + pct / 100);
+      hit++;
+    });
+    return hit > 0;
+  } catch(e) { return false; }
+}
+
+
 // Calcula el valor de cierre anterior del portafolio completo usando los prev-closes guardados.
 // Si no hay datos guardados, usa el fallback de h.dayChgPct.
 function _calcPreviousDayPortfolioClose() {
@@ -17245,6 +17301,7 @@ async function fetchLivePrices() {
       }
 
       savePortfolio();
+      _pvSaveLastQuotes();   // última cotización buena → sobrevive al reload/actualización
       // ── Snapshot de portfolio para gráficas (1D intraday + 1W…ALL histórico) ──
       const _chartNewBucket = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART.record() : false;
       renderAll();
@@ -27953,6 +28010,7 @@ function init() {
     try { renderNewsTab(); } catch(e) {} // pinta lo cacheado AL INSTANTE (sin esperar el fetch) → fluido
     profLoad();               // carga perfil guardado (nombre, divisa, estrategia)
     _pvHydratePrevCloseFromCache(); // cierre previo de hoy → el cambio del día sale ya en el primer paint
+    _pvHydrateFromLastQuotes();     // último precio/movimiento registrado → nada se pinta en 0 mientras llega el nuevo
     renderAll();
     // FASE 4.11 — Auto-test de reconciliación al arrancar: compara las posiciones cargadas
     // contra la verdad de referencia (Schwab) y registra PASS/FAIL en consola. Si difiere
@@ -28261,7 +28319,7 @@ if (document.readyState === 'loading') {
     </div>
 
     <div id="authBoot" style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 10px;">
-      <div style="width:30px;height:30px;border-radius:50%;border:3px solid #e2e6f0;border-top-color:#1e2a44;animation:authSpin .8s linear infinite;"></div>
+      <div style="width:32px;height:32px;border-radius:50%;border:4px solid #e2e6f0;border-top-color:#1e2a44;animation:authSpin .8s linear infinite;"></div>
       <div style="color:#64748b;font-size:14px;">Cargando tu portafolio…</div>
     </div>
 
@@ -28752,6 +28810,7 @@ if (document.readyState === 'loading') {
         // 1.5) el blob de la nube trae las posiciones sin `_prevClose`: rehidratarlo aquí también,
         //      o este render volvería a dejar el cambio del día en blanco tras la carga remota.
         if (typeof _pvHydratePrevCloseFromCache === 'function') _pvHydratePrevCloseFromCache();
+        if (typeof _pvHydrateFromLastQuotes === 'function') _pvHydrateFromLastQuotes();
         // 2) re-renderizar el portafolio (cabecera, resumen, tabla, donut, leyenda, perf)
         if (typeof window.renderAll === 'function') window.renderAll();
         // 3) refrescar watchlist (el gate la limpió y la restauró desde la fila de la cuenta)
