@@ -25689,7 +25689,11 @@ function _chatMarkdown(s){
   h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
   // onclick → en nativo abre el navegador in-app (SFSafariViewController) en vez de dejar al
   // usuario atrapado en una WKWebView de terceros sin barra de navegación.
-  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener">$1</a>');
+  // La URL se interpola DENTRO de un atributo, y _chatEscape() no escapa comillas: con
+  // [^)]+ una salida del modelo tipo [x](https://a/" onmouseover="…) cerraba el href e
+  // inyectaba atributos propios. Los caracteres excluidos aquí no aparecen nunca en una
+  // URL legítima ya escrita en el markdown, así que ningún enlace real cambia.
+  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)"'`<>\s]+)\)/g,'<a href="$2" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener">$1</a>');
   h=h.replace(/^[\-•]\s+(.*)$/gm,'<li>$1</li>');
   h=h.replace(/(<li>[\s\S]*?<\/li>)/g,'<ul>$1</ul>');
   h=h.split(/\n{2,}/).map(p=>p.match(/^<ul>/)?p:'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('');
