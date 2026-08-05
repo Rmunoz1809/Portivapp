@@ -113,15 +113,26 @@ export async function loadProfile(
  * service-role client — the client cannot forge this. Throws
  * { status: 403, message: 'subscription_required' } when the user is not entitled.
  *
- * Fail-CLOSED on a definite "not entitled"; fail-OPEN only if the check itself
- * errors (so a transient DB hiccup never locks out a paying user mid-session).
+ * Fail-CLOSED on a definite "not entitled".
+ *
+ * When the check ITSELF errors the default is fail-OPEN, so a transient DB hiccup never
+ * locks out a paying user mid-session. Callers that would incur a NEW recurring cost by
+ * being wrong must pass { failClosed: true }: an unchecked connect creates a SnapTrade
+ * brokerage link that bills ~$1/month for as long as it exists, so "let them through and
+ * sort it out later" is not a recoverable mistake there. Read paths keep the open default —
+ * nobody who already pays should lose their data because our RPC blinked.
  */
 export async function requireEntitlement(
   admin: SupabaseClient,
   userId: string,
+  opts?: { failClosed?: boolean },
 ): Promise<void> {
   const { data, error } = await admin.rpc("has_active_entitlement", { uid: userId });
   if (error) {
+    if (opts?.failClosed) {
+      console.error("[requireEntitlement] rpc failed (fail-CLOSED):", error.message);
+      throw { status: 503, message: "entitlement_check_unavailable" };
+    }
     console.error("[requireEntitlement] rpc failed (fail-open):", error.message);
     return; // check unavailable → don't punish the user for our outage
   }

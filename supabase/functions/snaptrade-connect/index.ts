@@ -30,7 +30,14 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { /* body optional */ }
 
     const userId = await requireUser(req, admin, body?.userId);
-    await requireEntitlement(admin, userId); // gate: only entitled users may link a broker
+    // gate: only entitled users may link a broker.
+    // failClosed: enlazar un broker es lo ÚNICO de este servicio que crea un coste NUEVO y
+    // recurrente (~$1/mes por conexión activa, mientras exista). Si el RPC del candado falla
+    // y dejamos pasar, ese cobro ya está hecho y no se deshace solo. Las rutas de lectura
+    // (-refresh, -history) siguen fallando abiertas a propósito: ahí equivocarse solo le
+    // quita datos a alguien que sí paga. Aquí el error correcto es 503, no 403: no decimos
+    // "no tienes suscripción" (no lo sabemos), decimos "no pudimos comprobarlo".
+    await requireEntitlement(admin, userId, { failClosed: true });
     // Where SnapTrade's Connection Portal returns the user after "Done".
     const redirect = typeof body?.redirect === "string" && body.redirect ? body.redirect : undefined;
     const st = snaptrade();

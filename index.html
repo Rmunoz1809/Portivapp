@@ -31274,6 +31274,13 @@ document.addEventListener('DOMContentLoaded', function(){
         try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
         try{ if(window._pvSubGate) { window._pvSubGate(); return; } }catch(_){}
       }
+      // 503 'entitlement_check_unavailable': el servidor NO pudo comprobar la suscripción y,
+      // como enlazar un broker crea un coste recurrente, prefiere no dejar pasar. NO es lo
+      // mismo que "no tienes suscripción": no se manda al paywall a alguien que quizá sí
+      // paga. Es transitorio, así que el reintento de _pvConnectingError sí sirve.
+      if (/entitlement_check_unavailable/i.test(String(_m))) {
+        _m = 'No pudimos comprobar tu suscripción en este momento. Vuelve a intentarlo en unos segundos.';
+      }
       try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
       try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
       toast(_m);
