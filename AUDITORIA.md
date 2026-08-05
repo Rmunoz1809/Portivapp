@@ -42,7 +42,7 @@ Consecuencias, sin resolverlas:
 
 - **Fases completadas: 13,5 / 14.** La 10 (UI/responsive/i18n/tema) está incompleta a propósito: no se puede verificar sin ejecutar la app en dispositivos. Ver §7.
 - **P0 encontrados: 0.** No se ha hallado ningún fallo que cause pérdida de datos, pérdida de dinero, cifras financieras erróneas persistentes, brecha de seguridad explotable sin cadena, app inutilizable, ni rechazo seguro de Apple.
-- **P1: 7** — 4 arreglados, 3 pendientes (documentados con parche propuesto).
+- **P1: 7 — los 7 arreglados.** (Los tres que quedaron pendientes en la primera pasada se arreglaron después, a petición de Rafael: P1-5, P1-6 y P1-7.)
 - **P2: 9** · **P3: 8**.
 - **Veredicto de lanzamiento: LISTO CON RESERVAS.**
 
@@ -52,7 +52,8 @@ Ninguno en el código de esta rama. Los tres bloqueantes son operativos y están
 
 1. **Verificar en Supabase que las políticas RLS del SQL versionado están realmente aplicadas en producción** (§5.2). El SQL es correcto; no puedo ejecutar `select` para comprobar que está desplegado.
 2. **Confirmar en Paddle que `pri_01kxps87qstgex009vr5w6z1sn` y `pri_01kxpseeyhn7d9yw29fxc6rvse` son precios LIVE** y no de sandbox (§5.1). Desde el archivo son indistinguibles.
-3. **Decidir qué se hace con la divergencia web ↔ iOS** (§0). No bloquea el envío, pero cualquier arreglo que hagas ahora en `index.html` no llega al binario.
+3. **Decidir qué se hace con la divergencia web ↔ iOS** (§0). No bloquea el envío, pero cualquier arreglo que hagas ahora en `index.html` no llega al binario. **Esto aplica a los 7 arreglos de esta rama**: ninguno está en `portiv-cap/www/index.html` todavía.
+4. **Desplegar `snaptrade-connect` y `_shared`** (§5.6). El arreglo P1-6 vive en Edge Functions y no surte efecto hasta el redeploy.
 
 Aparte: **el checkout web no funciona** (`PADDLE_CLIENT_TOKEN` sigue con el placeholder). Esto **no** bloquea el envío a App Store —en iOS el pago va por StoreKit y Paddle ni se inicializa— pero sí significa que en portivapp.com nadie puede suscribirse. El código degrada de forma honesta (§6.4).
 
@@ -108,42 +109,44 @@ Esta sección se deja vacía a propósito. Las cinco hipótesis de P0 que traía
 - **Impacto:** la identidad del SDK de RevenueCat vive en el lado nativo, así que el `localStorage.clear()` de esa función no la toca. El dispositivo seguía identificado como la cuenta borrada hasta que el gate de B ejecutase `PortivIAP.login(uidB)`. El comentario del propio `_pvIapLogout` dice que se llama "en TODO cierre de sesión: manual, cuenta eliminada y la salida del muro" — pero en la rama de cuenta eliminada **desde Ajustes** faltaba. Sí estaba en `_authLogout` y en la detección de cuenta borrada del arranque.
 - **Estado:** ARREGLADO — commit `c789de7`. Una línea, calcada de `_authLogout`.
 
-### P1-5 · PENDIENTE · El candado del cliente ignora `expires_at`
+### P1-5 · ARREGLADO · El candado del cliente ignoraba `expires_at`
 
 - **Qué falla:** `_pvSubStatus` decide el acceso solo con `entitlement_active === true`; nunca compara `expires_at` con la fecha actual.
 - **Dónde:** `_pvSubStatus` y `_pvSubGate`.
 - **Cómo reproducirlo:** fila en `subscriptions` con `entitlement_active = true`, `status = 'canceled'`, `expires_at` en el pasado (webhook de expiración perdido o retrasado; `entitlement-sweeper` aún no ha pasado).
 - **Impacto:** `_pvSubGate` entra en la rama `st.active && STATUS_WARN[st.status]` → llama a `_unblock()` y pinta *"Conservas el acceso hasta el \<fecha ya pasada\>"*. El usuario ve la app desbloqueada, pero **el servidor sí comprueba la fecha**: `has_active_entitlement()` devuelve `false` pasadas 48 h de `expires_at`, así que SnapTrade y la IA responden `403 subscription_required`. Resultado: la app parece funcionar y nada funciona, y el mensaje que explica por qué nunca aparece porque `snapConnect` deriva el 403 a `_pvSubGate()`, que vuelve a leer la misma fila y a desbloquear. Bucle sin salida ni explicación.
   La cuenta cancelada-pero-vigente (el caso que sí quería el diseño) **funciona correctamente**: `expires_at` futuro, acceso conservado, banner con la fecha.
-- **Estado:** PENDIENTE. **No lo he tocado** porque el arreglo cambia comportamiento visible (empieza a bloquear usuarios) y hay dos criterios posibles: replicar el colchón de 48 h del servidor, o cortar en seco en `expires_at`. Esa decisión es tuya.
-  Parche propuesto (replicando el criterio del servidor, dentro de `_pvSubStatus`, justo después de construir `srv`):
-  ```js
-  // Mismo criterio que has_active_entitlement(): la fecha manda aunque el webhook de
-  // expiración no haya llegado. 48 h de colchón por desfase de reloj y retraso de Apple.
-  if (srv.active && srv.expiresAt) {
-    var _exp = Date.parse(srv.expiresAt);
-    if (isFinite(_exp) && _exp < Date.now() - 48*3600*1000) srv.active = false;
-  }
-  ```
+- **Estado:** ARREGLADO — commit `480b59a`. De los dos criterios posibles (replicar el colchón de 48 h del servidor, o cortar en seco en `expires_at`) se eligió **replicar el del servidor**: si cliente y servidor usan el mismo umbral, no pueden discrepar, que es exactamente el fallo que producía el bucle. Bloque nuevo en `_pvSubStatus`, después de construir `srv` y **antes** del camino rápido de StoreKit — así, si la renovación sí ocurrió, StoreKit y `entitlement-sync` siguen pudiendo rescatar el acceso en nativo.
 
-### P1-6 · PENDIENTE · El candado del servidor falla ABIERTO si el RPC falla
+  Detalle deliberado: **solo se apaga `active`, el `status` se deja intacto.** Reescribirlo a `'expired'` habría hecho que `_pvSubGate` dijera *"Tu pago fue rechazado"* a alguien que simplemente dejó vencer su plan. Dejándolo, cada motivo conserva su mensaje real: `past_due` vencido sigue hablando de cobro fallido, `refunded`/`paused`/`transferred` conservan su explicación, y `canceled`/`active` vencidos caen en el mensaje neutro *"Necesitas una suscripción activa"*.
+
+  **Efecto visible del cambio:** un usuario con la fila encendida pero vencida hace más de 48 h ahora ve el muro de suscripción en vez de una app desbloqueada que no funciona. Es el comportamiento correcto, pero es un cambio de comportamiento: si prefieres un umbral distinto, está en una sola línea.
+
+### P1-6 · ARREGLADO · El candado del servidor fallaba ABIERTO si el RPC falla
 
 - **Qué falla:** `requireEntitlement` e `isEntitled` devuelven "con derecho" cuando la llamada a `has_active_entitlement` da error.
 - **Dónde:** `supabase/functions/_shared/snaptrade.ts`, funciones `requireEntitlement` (línea con el comentario `rpc failed (fail-open)`) e `isEntitled`.
 - **Cómo reproducirlo:** provocar un error del RPC (Postgres saturado, la función SQL sin `grant execute`, migración a medias) y llamar a `snaptrade-connect` sin suscripción.
 - **Impacto:** un usuario sin pagar puede enlazar un broker. Cada conexión activa cuesta ~$1/mes de forma indefinida — no es un fallo puntual, es un coste recurrente. La Fase 4 del encargo pide explícitamente fallo CERRADO para las funciones de coste. El cliente también falla abierto (`_pvSubStatus` devuelve `null` → `_pvSubGate` no bloquea), así que **no hay ninguna capa que falle cerrado**.
-- **Estado:** PENDIENTE. Está documentado en el código como decisión consciente ("don't punish the user for our outage"), y cambiarlo es un cambio de política de producto, no un arreglo de bug. Mi recomendación: **fallo cerrado solo en `snaptrade-connect`** (crear una conexión nueva es lo único que genera coste nuevo y no tiene urgencia; refresh/history pueden seguir abiertos para no cortar a quien ya paga). Un `throw { status: 503, message: 'entitlement_check_unavailable' }` en el `if (error)` de `requireEntitlement`, invocado solo desde `snaptrade-connect`, resolvería la fuga sin afectar a nadie que ya esté conectado.
+- **Estado:** ARREGLADO — commit `64a3181`. Se implementó la recomendación: **fallo cerrado solo en `snaptrade-connect`**. `requireEntitlement` recibe un tercer parámetro opcional `opts?: { failClosed?: boolean }`; por defecto es `false`, así que **ningún otro llamador cambia de comportamiento**. `snaptrade-connect` es el único que pasa `{ failClosed: true }`; `snaptrade-history` y el `isEntitled` de `snaptrade-refresh` siguen abiertos a propósito — ahí equivocarse solo le quita datos a alguien que sí paga, mientras que enlazar un broker crea un cargo recurrente que no se deshace solo.
 
-### P1-7 · PENDIENTE · Contenido de noticias sin escapar en `innerHTML`
+  El error es **`503 entitlement_check_unavailable`**, no un 403: no se afirma que el usuario no tenga suscripción (no se sabe), se dice que no se pudo comprobar. `snapConnect` lo traduce a *"No pudimos comprobar tu suscripción en este momento. Vuelve a intentarlo en unos segundos."* y **no** lo manda al paywall — el reintento de `_pvConnectingError` sí sirve aquí porque es transitorio.
 
-- **Qué falla:** títulos, resúmenes y descripciones de noticias se interpolan en `innerHTML` sin escape HTML.
-- **Dónde:** al menos 18 puntos distintos. Los más claros: `${ev.description||ev.summary||'Sin descripción disponible.'}` en el modal de evento del outlook; `${t.title||''}` en `_renderWeeklyOutlook`; `${n.summary}`; `${e.title}` / `${e.description||''}` en el render de catalizadores.
+  ⚠️ **Requiere redeploy.** Este arreglo vive en Edge Functions, no en el HTML: no surte efecto hasta que despliegues `snaptrade-connect` (y `_shared`). Ver §5.6.
+
+### P1-7 · ARREGLADO · Contenido de noticias sin escapar en `innerHTML`
+
+- **Qué falla:** títulos, resúmenes, descripciones, horas y tickers de noticias y eventos se interpolaban en `innerHTML` sin escape HTML.
+- **Dónde:** `openNewsModal` (cuerpo del artículo), `_openOutlookEvent`, `_renderWeeklyOutlook`, `_renderNextWeekOutlook` y el render de catalizadores de `PORTIV_NEWS`.
 - **Cómo reproducirlo:** que Finnhub (o el modelo que genera el feed) entregue un titular con `<img src=x onerror=…>`. `_cleanNewsText` limpia `<cite>`, artefactos de tooling y fences de markdown, pero **no escapa HTML**, y `_mergeNews` tampoco sanea al ingerir.
-- **Impacto:** mismo alcance que P1-2/P1-3 (XSS en el WebView). Probabilidad baja —hace falta que entre por el feed de un tercero— pero la superficie es amplia.
-- **Estado:** PENDIENTE. **No lo he tocado**: el arreglo correcto toca ~18 funciones de render y cambiaría el comportamiento en los sitios donde hoy se inyecta HTML a propósito (negritas, enlaces). Un `pvEsc()` a ciegas rompería esos.
-  Parche propuesto, en dos pasos y en este orden:
-  1. Sanear **al ingerir**, no al renderizar: en `_mergeNews`, dentro de `add(item)`, pasar `item.title`, `item.summary`, `item.description` por `pvEsc()` una sola vez. Es un punto único y todo el feed pasa por ahí.
-  2. Revisar después los 4-5 sitios donde un título saneado se muestre con entidades visibles (`&amp;` en vez de `&`) y ajustar solo esos.
+- **Impacto:** mismo alcance que P1-2/P1-3 (XSS en el WebView, donde vive el token de sesión). Probabilidad baja —hace falta que entre por el feed de un tercero— pero la superficie era amplia.
+- **Estado:** ARREGLADO — commit `89d39a7`. **16 sustituciones, 13 patrones.**
+
+  **Se descartó el parche de dos pasos que había propuesto** (sanear en `_mergeNews` al ingerir). Al implementarlo se vio que rompía cosas: el mismo objeto de noticia alimenta `_newsTitleKey` (dedup), las claves de caché de nube y local, los prompts de IA, y varios sitios que usan `textContent` — donde un `&amp;` se vería literal. Además dejaría mezclados en localStorage items escapados y sin escapar. **Escapar en el punto de render es lo correcto aquí**, aunque sean más sitios.
+
+  Antes de tocar nada se verificó que los campos son texto plano por contrato: los 17 200 bytes de seeds embebidos del outlook contienen **cero etiquetas HTML y cero entidades**. Donde había `.slice(0,140)`, el recorte va **antes** del escape, para no partir una entidad `&amp;` por la mitad.
+
+  Tres sitios se dejaron intactos tras comprobarlos: `_outlookNarrativeHtml` **ya escapa aguas arriba** (`const esc = pvEsc; ... esc(text).split('\n')`) y su `meta` lleva HTML construido a propósito; los titulares del modal de noticia ya iban por `textContent` (`set()`, no `html()`); y `${title}`/`${r.desc}`/`${f.detail}` de los helpers de análisis son literales del código y números formateados, sin ninguna entrada de terceros.
 
 ---
 
@@ -243,6 +246,26 @@ Además, documentar/verificar las políticas de las otras tablas que toca el cli
 
 Si vuelves a generar el bundle, usa `npm run sync:prod` (no `npm run sync`) para que corra el guard que rechaza claves `test_`. El bundle actual se generó sin él (ver P2-8).
 
+⚠️ **Ninguno de los 7 arreglos de esta rama está en el bundle de iOS.** Viven en `~/Desktop/index.html`; el binario se construye desde `portiv-cap/www/index.html`, que es un archivo distinto (§0). Si quieres que lleguen a la app, hay que portarlos — y al hacerlo, decidir qué pasa con las 34 líneas que solo existen en el lado de iOS.
+
+### 5.6 Redeploy de Edge Functions (necesario para P1-6)
+
+El arreglo del fallo cerrado no está en el HTML: está en Deno, en el servidor. Hasta que se despliegue, `snaptrade-connect` sigue dejando pasar si el RPC del candado falla.
+
+```bash
+cd /Users/rafael/Desktop && npx supabase functions deploy snaptrade-connect
+```
+
+`_shared/snaptrade.ts` no se despliega por separado: se empaqueta con cada función que lo importa. Como **también** lo importan `snaptrade-history`, `snaptrade-refresh` y las demás, conviene redesplegarlas todas para que no queden con dos versiones distintas del módulo compartido conviviendo:
+
+```bash
+cd /Users/rafael/Desktop && for f in snaptrade-connect snaptrade-history snaptrade-refresh snaptrade-disconnect snaptrade-cleanup; do npx supabase functions deploy "$f"; done
+```
+
+Su comportamiento no cambia (`failClosed` es opcional y por defecto `false`); es solo higiene de despliegue.
+
+**Prueba después del deploy:** con una cuenta sin suscripción, `snaptrade-connect` debe seguir devolviendo `403 subscription_required` (no 503). El 503 solo aparece si el propio RPC falla, que es un caso que no se puede provocar desde fuera — por eso esta ruta **no queda verificada en ejecución**.
+
 ---
 
 ## 6. Verificado y correcto
@@ -317,7 +340,7 @@ cloudLoadAndGate  (guard _gateRunning: la 2ª pasada concurrente se descarta)
 - **`Purchases.logIn` se llama en el punto correcto.** En `_cloudLoadAndGateInner`, que es "el único punto por el que pasan las tres transiciones sin sesión → con sesión". Sin `await` (un fallo del SDK no puede retrasar la entrada) y con `__pvPendingIapUid` para el arranque en frío donde `portiv-iap.js` (defer) aún no cargó. `_pvRestorePurchases` vincula **antes** de restaurar y luego llama a `_pvEntitlementSync(true)`: orden `logIn → restore → sync` ✅.
 - **`_pvIapLogout` en todos los cierres de sesión:** `_authLogout` ✅, cuenta borrada detectada en el arranque ✅, salida del muro del candado ✅, y **cuenta eliminada desde Ajustes** ✅ tras el arreglo P1-4.
 - **`_pvRestorePurchases` maneja objeto y booleano.** Ninguna rama devuelve `undefined` tratado como `true`.
-- **Cancelada-pero-vigente conserva el acceso.** `STATUS_OK` incluye `canceled`; `STATUS_WARN` la manda a la rama que hace `_unblock()` y pinta *"Conservas el acceso hasta el \<fecha\>"* con `_fmtDate`. Implementado de verdad, no solo comentado. (El caso con `expires_at` pasado es P1-5.)
+- **Cancelada-pero-vigente conserva el acceso.** `STATUS_OK` incluye `canceled`; `STATUS_WARN` la manda a la rama que hace `_unblock()` y pinta *"Conservas el acceso hasta el \<fecha\>"* con `_fmtDate`. Implementado de verdad, no solo comentado. (El caso con `expires_at` ya pasado era P1-5, ahora arreglado: esa fila deja de dar acceso pasadas 48 h del vencimiento.)
 - **`past_due` conserva el acceso** a propósito, con banner distinto en iOS (Apple reintenta; no se promete un checkout propio → evita Guideline 3.1.1).
 - **`snapConnect` es inalcanzable sin entitlement por la ruta normal.** Cliente: los 3 puntos de entrada pasan por el paywall o por `_pvAwaitEntitlement` (que solo llama a `snapConnect()` si `st.active`). Servidor: `snaptrade-connect` llama a `requireEntitlement(admin, userId)` en su tercera línea, igual que `snaptrade-history`; `snaptrade-cleanup` revalida antes de actuar. (La excepción es el fallo del RPC → P1-6.)
 - **El 403 se maneja como candado, no como transporte.** `stCall` adjunta `_e.status = r.status`; `snapConnect` detecta `/subscription_required/i` y deriva a `_pvSubGate()` **sin reintentar**; `snapRefresh` comprueba `_st===403 && /subscription_required/i` y hace lo mismo. Ninguno lo trata como error de red con reintento.
@@ -421,13 +444,17 @@ Toda la auditoría es **estática**: lectura del código, `node --check`, `grep`
 14. **`portiv-iap.js`: revisadas ~160 de sus 374 líneas.** Verifiqué la clave, el entitlement, `configure`, `login`, `logout` y `refresh`. **No auditados:** el flujo de compra (`purchase`), el paywall de RevenueCatUI, `loadOfferings`, y el manejo de `PURCHASES_ERROR_CODE`.
 15. **El bundle de iOS (`portiv-cap/www/index.html`) no se auditó como tal.** Solo se hizo el `diff` contra la raíz. Las 34 líneas que solo existen ahí (CSS de teclado, header de iPad, guard `inChat`) **no han pasado por esta auditoría**.
 16. **`_pvLogError` / `pvReportError` / `reportQuiet`: no tracé su destino final.** Vi que alimentan `PV_DEBUG.log` (en memoria, visible solo con `pv_debug=1`), pero **no confirmé si además salen a algún sitio** ni qué llevan dentro.
-17. **Fase 1.5 (`await`/`fetch` sin `try/catch`) no se completó como lista exhaustiva.** Revisé a fondo la **ruta de arranque**, que es lo que importa (§6.2), y ahí no hay promesas sin capturar que puedan dejar la app bloqueada — salvo un hueco estrecho que sí encontré y **no** he arreglado: en `_cloudLoadAndGateInner`, las llamadas a `showOverlay()`, `_wlClearLocal()` y `_newsClearLocal()` quedan **fuera** de cualquier `try`. Si alguna lanzara, la promesa se rechaza, el `.catch` de `cloudLoadAndGate` solo lo registra, y la app se queda en el spinner "Cargando…" para siempre — y como el overlay **sí** está visible, la red de seguridad de los 10 s no lo detecta. No lo arreglé porque no encontré ninguna forma realista de que esas tres funciones lancen (las tres tienen `try/catch` internos), pero el hueco existe. Envolverlas en `try{…}catch(e){}` sería un arreglo de una línea si quieres cerrarlo. **Las promesas fuera de la ruta de arranque no se inventariaron.**
+17. **Los tres arreglos de la segunda pasada no se probaron en ejecución.** Ninguno: solo `node --check` / `deno fmt --check` y lectura. En concreto:
+    - **P1-5 (`expires_at`)**: no se probó con una fila real vencida. Hay que crear una en `subscriptions` con `expires_at` a −3 días y `entitlement_active = true`, y comprobar que la app muestra el muro y que `has_active_entitlement()` devuelve `false` para el mismo usuario (§5.2, consulta 4). Es el arreglo con más efecto visible de los siete.
+    - **P1-6 (fallo cerrado)**: la rama del 503 **no se puede provocar desde fuera** — hace falta que el RPC falle de verdad. Lo único comprobable tras el deploy es que el camino normal sigue devolviendo `403 subscription_required` sin suscripción. La traducción del mensaje en el cliente tampoco se vio en pantalla.
+    - **P1-7 (escapes)**: no se abrió la pestaña de Noticias ni el outlook para confirmar visualmente que nada muestra `&amp;` literal ni perdió formato. Es el riesgo cosmético del cambio y se detectaría al primer vistazo. Tampoco se probó con un titular malicioso real.
+18. **Fase 1.5 (`await`/`fetch` sin `try/catch`) no se completó como lista exhaustiva.** Revisé a fondo la **ruta de arranque**, que es lo que importa (§6.2), y ahí no hay promesas sin capturar que puedan dejar la app bloqueada — salvo un hueco estrecho que sí encontré y **no** he arreglado: en `_cloudLoadAndGateInner`, las llamadas a `showOverlay()`, `_wlClearLocal()` y `_newsClearLocal()` quedan **fuera** de cualquier `try`. Si alguna lanzara, la promesa se rechaza, el `.catch` de `cloudLoadAndGate` solo lo registra, y la app se queda en el spinner "Cargando…" para siempre — y como el overlay **sí** está visible, la red de seguridad de los 10 s no lo detecta. No lo arreglé porque no encontré ninguna forma realista de que esas tres funciones lancen (las tres tienen `try/catch` internos), pero el hueco existe. Envolverlas en `try{…}catch(e){}` sería un arreglo de una línea si quieres cerrarlo. **Las promesas fuera de la ruta de arranque no se inventariaron.**
 
 ---
 
 ## 8. Cambios realizados
 
-Cuatro commits, cuatro arreglos, **20 líneas añadidas y 2 modificadas** en total (de las cuales 13 son comentarios). Ninguna función reescrita, ningún archivo reformateado, nada borrado, ninguna dependencia nueva, ningún cambio de arquitectura.
+Siete commits, siete arreglos, en tres archivos. Ninguna función reescrita, ningún archivo reformateado, nada borrado, ninguna dependencia nueva, ningún cambio de arquitectura. Los cuatro primeros son de la pasada inicial; los tres últimos son los P1 que quedaron pendientes y se arreglaron después a petición de Rafael.
 
 | Commit | Función tocada | Qué cambió | Por qué | Riesgo de regresión |
 |---|---|---|---|---|
@@ -436,4 +463,18 @@ Cuatro commits, cuatro arreglos, **20 líneas añadidas y 2 modificadas** en tot
 | `34ae59e` | `_aiChatAddMsg` | 1 línea: `${s.url}` → `${pvEsc(s.url)}` | La URL de las fuentes web se interpolaba sin ningún escape dentro de `href` | **Muy bajo.** `pvEsc` solo convierte `& < > " ' \`` en entidades; el navegador las decodifica al resolver el `href`. El título de la fuente ya pasaba por `_chatEscape` |
 | `c789de7` | `_acctDeleteAccount` | 1 línea: `try { await window._pvIapLogout(); } catch(e){}` antes de `signOut()` | Faltaba desvincular RevenueCat al borrar la cuenta desde Ajustes | **Muy bajo.** `_pvIapLogout` está definida antes en el mismo IIFE, nunca lanza (devuelve una promesa con `.catch` interno) y en web es un no-op porque `window.PortivIAP` no existe. Es literalmente la misma línea que ya ejecuta `_authLogout` |
 
-**Verificación posterior a los cambios:** los 17 bloques `<script>` vuelven a pasar `node --check` sin un solo error. `git diff` contra `HEAD` vacío (árbol de trabajo == último commit). Rama `auditoria-final-prelanzamiento`, **sin push y sin merge**.
+| `89d39a7` | `openNewsModal`, `_openOutlookEvent`, `_renderWeeklyOutlook`, `_renderNextWeekOutlook`, render de `PORTIV_NEWS` | 16 sustituciones en 13 patrones: `pvEsc()` sobre título, descripción, resumen, contexto de mercado, hora y tickers de noticias y eventos | Contenido de terceros llegaba crudo a `innerHTML`; `_cleanNewsText` no escapa HTML y `_mergeNews` no sanea al ingerir | **Bajo.** Los campos son texto plano por contrato (verificado: cero etiquetas y cero entidades en los 17 200 B de seeds). El riesgo real sería ver `&amp;` literal si alguna fuente trajera un `&` — cosmético y visible al primer vistazo. Donde había `.slice(140)` el recorte va antes del escape, así que no se parten entidades |
+| `480b59a` | `_pvSubStatus` | 5 líneas de código: apaga `active` si `expires_at` está vencido hace más de 48 h | El candado del cliente ignoraba la fecha; el servidor sí la mira, y la discrepancia dejaba al usuario en una app desbloqueada donde nada funciona, sin explicación | **Medio — es el único con efecto visible.** Un usuario con la fila encendida pero vencida hace >48 h pasa de ver la app a ver el muro. Es el comportamiento correcto y coincide con el del servidor, pero es un cambio de comportamiento real. El `status` se deja intacto para no degradar el mensaje. En nativo, StoreKit y `entitlement-sync` siguen pudiendo rescatar el acceso |
+| `64a3181` | `requireEntitlement` (`_shared/snaptrade.ts`), `snaptrade-connect`, `snapConnect` | Parámetro opcional `opts.failClosed` (default `false`); `snaptrade-connect` lo pasa en `true`; 503 `entitlement_check_unavailable`; el cliente lo traduce | Fuga de coste: sin pagar se podía enlazar un broker (~$1/mes recurrente) si el RPC del candado fallaba | **Bajo en código, pero NO SURTE EFECTO SIN REDEPLOY** (§5.6). El default preserva el comportamiento de todos los demás llamadores. En el peor caso (Postgres caído), un usuario legítimo ve *"No pudimos comprobar tu suscripción"* con reintento, en vez de conectar |
+
+**Verificación posterior a los cambios:** los 17 bloques `<script>` vuelven a pasar `node --check` sin un solo error (re-ejecutado tras los 7 arreglos). Los dos archivos TypeScript parsean con `deno fmt --check` — no se pudo correr `deno check` completo porque exige instalar el SDK de SnapTrade desde npm, y no se añaden dependencias. `git status` limpio en los tres archivos tocados. Rama `auditoria-final-prelanzamiento`, **sin push y sin merge**.
+
+### Cambios en el árbol de trabajo que NO son míos
+
+Al commitear aparecieron tres archivos modificados y sin commitear que **no toqué y no he commiteado** (fechados el 3 de agosto, un día antes de esta auditoría):
+
+- `.gitignore` — añade `.env` y `.env.local`
+- `supabase/functions/paddle-webhook/index.ts` — +73 líneas, allowlist de IPs de Paddle con TTL y flag `PADDLE_IP_ALLOWLIST_STRICT`
+- `.DS_Store`
+
+Los dejo tal cual. **No están auditados** (el webhook de Paddle está en la lista de §7 como no revisado, y ese cambio nuevo tampoco).
