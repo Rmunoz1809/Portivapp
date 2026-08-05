@@ -4506,7 +4506,6 @@ window._pvAwaitIAP = function(totalMs){
         <div class="ra-price-row">
           <span class="ra-price" id="r-price"></span>
           <span id="r-change" class="ra-change"></span>
-          <span id="r-ytd-badge" style="display:none;font-size:12px;font-weight:600;padding:3px 9px;border-radius:6px;margin-left:8px;background:var(--surface2);border:1px solid var(--border2);"></span>
         </div>
         <div id="r-sub" style="display:none"></div>
         <div class="ra-subline">
@@ -10539,6 +10538,13 @@ function updatePreview(idx) {
 
 // ─── Request → show modal ───
 function requestTrade(idx) {
+  // El Enter del input de monto llama aquí DIRECTAMENTE, saltándose el botón. Con "Cash
+  // insuficiente" updatePreview() deja el botón deshabilitado, pero el Enter abría el modal
+  // igual: mostraba "Cash restante" en negativo y, al confirmar, buyAsset() recortaba la
+  // compra al efectivo real → el resumen prometía una operación distinta de la ejecutada.
+  // Se respeta el mismo veredicto que updatePreview() ya calculó.
+  const _execBtn = document.getElementById(`exec-${idx}`);
+  if (_execBtn && _execBtn.disabled) return;
   const h = HOLDINGS[idx];
   const c = calcH(h);
   const mode      = activeDrawer.mode;
@@ -11036,7 +11042,10 @@ function openNewsModal(idx, src) {
   let bodyHtml = '';
   paras.forEach(p => {
     if (/^Publicado por/i.test(p)) bodyHtml += _aiAnchor;
-    bodyHtml += `<p>${p}</p>`;
+    // pvEsc: el cuerpo viene de la fuente de la noticia (Finnhub) o del modelo, y
+    // _cleanNewsText() limpia artefactos pero NO escapa HTML. Estos párrafos son texto
+    // plano por contrato — ningún campo de noticia trae etiquetas a propósito.
+    bodyHtml += `<p>${pvEsc(p)}</p>`;
   });
   if (!bodyHtml.includes('nmAiInline')) bodyHtml += _aiAnchor;
   if (!bodyHtml) bodyHtml = _aiAnchor + '<p>Información no disponible para esta noticia.</p>';
@@ -11742,13 +11751,13 @@ function _openOutlookEvent(evKey, outlookKey) {
   const _tk = ev.tickers_affected || ev.tickers || [];
   htm('nmText', `
     <div class="nm-ev-sec-lbl">Qué está pasando</div>
-    <p style="font-size:15px;line-height:1.75;color:var(--text2);margin:0">${ev.description||ev.summary||'Sin descripción disponible.'}</p>
+    <p style="font-size:15px;line-height:1.75;color:var(--text2);margin:0">${pvEsc(ev.description||ev.summary||'Sin descripción disponible.')}</p>
     <div class="nm-chip-row">
-      <span class="nm-chip"><span class="nm-chip-k">Categoría</span>${catLabels[ev.category]||ev.category}</span>
-      <span class="nm-chip"><span class="nm-chip-k">Hora</span>${ev.time||'TBD'}</span>
-      <span class="nm-chip"><span class="nm-chip-k">Impacto</span>${impLabel[ev.impact]||ev.impact}</span>
+      <span class="nm-chip"><span class="nm-chip-k">Categoría</span>${pvEsc(catLabels[ev.category]||ev.category)}</span>
+      <span class="nm-chip"><span class="nm-chip-k">Hora</span>${pvEsc(ev.time||'TBD')}</span>
+      <span class="nm-chip"><span class="nm-chip-k">Impacto</span>${pvEsc(impLabel[ev.impact]||ev.impact)}</span>
     </div>
-    ${_tk.length?`<div class="nm-chip-row" style="margin-top:12px"><span class="nm-chip-k" style="align-self:center;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Tickers afectados</span>${_tk.map(t=>`<span class="nm-chip-tk">${t}</span>`).join('')}</div>`:''}`);
+    ${_tk.length?`<div class="nm-chip-row" style="margin-top:12px"><span class="nm-chip-k" style="align-self:center;font-size:11px;text-transform:uppercase;letter-spacing:.05em">Tickers afectados</span>${_tk.map(t=>`<span class="nm-chip-tk">${pvEsc(t)}</span>`).join('')}</div>`:''}`);
   // "Cómo afecta al mercado" ahora vive en la sección inline nmMktSection (no en caja derecha).
   const _mktSec = document.getElementById('nmMktSection');
   if (_mktSec) _mktSec.style.display = '';
@@ -19977,7 +19986,7 @@ async function _pvxExtras(ticker, info){
         {cls:'bull',tag:'OPTIMISTA',target:bull,retPct:_r1(bull),prob:25,
          assumption:`Las ganancias crecen ${gTxt} y además el mercado vuelve a pagar el múltiplo más alto de los últimos 12 meses, un ${_upP}% por encima del actual (la acción llegó a $${_d2(hi)}).`},
       ];
-      scenariosNote = `Sin objetivos de analistas publicados para ${ticker}, los tres escenarios se construyen con datos de la propia acción: crecimiento esperado ${gTxt}, derivado de ${gWhy}, y el rango de múltiplo de los últimos 12 meses ($${(+lo).toFixed(2)} – $${(+hi).toFixed(2)}). Las probabilidades son una convención, no una medición.`;
+      scenariosNote = `Sin objetivos de analistas publicados para ${ticker}, los tres escenarios se construyen con datos de la propia acción: crecimiento esperado ${gTxt}, derivado de ${gWhy}, y el rango de múltiplo de los últimos 12 meses ($${(+lo).toFixed(2)} – $${(+hi).toFixed(2)}).`;
     }
   }
 
@@ -20335,7 +20344,7 @@ function _renderQualAnalysis(a, el){
     const sc1 = (a.scenarios && a.scenarios.length) ? a.scenarios : null;
     h += `<div class="px-card">${stitle('Escenarios a 1 año')}
       <p class="px-intro">En vez de un solo número, tres futuros posibles. La realidad casi siempre cae en un punto intermedio.</p>
-      ${sc1 ? `<div class="px-scen" style="margin-top:16px">${sc1.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div><div class="sprob">Probabilidad estimada: ${s.prob}%</div></div>`).join('')}</div>${a.scenariosNote ? `<div class="px-hint">${esc(a.scenariosNote)}</div>` : ''}`
+      ${sc1 ? `<div class="px-scen" style="margin-top:16px">${sc1.map(s=>`<div class="px-scol ${s.cls}"><span class="stag">${s.tag}</span><div class="starget">$${s.target.toFixed(2)}</div><div class="sret ${s.retPct>=0?'pos':'neg'}">${s.retPct>=0?'+':'−'}${Math.abs(s.retPct).toFixed(0)}%</div><div class="sass">${esc(s.assumption)}</div></div>`).join('')}</div>${a.scenariosNote ? `<div class="px-hint">${esc(a.scenariosNote)}</div>` : ''}`
           : `<div style="margin-top:14px">${empty('Esta acción no publica ni crecimiento de ganancias ni un rango de 52 semanas utilizable, así que no hay números reales con los que armar escenarios.')}</div>`}</div>`;
   }
 
@@ -23171,10 +23180,10 @@ function _renderWeeklyOutlook(data) {
         const evKey = (outlookKey + '_' + (d.short||'') + '_' + ei).replace(/[^a-z0-9_]/gi,'_');
         window._outlookEvents[outlookKey][evKey] = e;
         const ct = catTag[e.category]||catTag.other;
-        const tickers = (e.tickers_affected||[]).map(t => `<span class="swc-tag ${HOLDINGS.some(h=>h.ticker===t)?'swc-tag-held':''}">${t}</span>`).join('');
+        const tickers = (e.tickers_affected||[]).map(t => `<span class="swc-tag ${HOLDINGS.some(h=>h.ticker===t)?'swc-tag-held':''}">${pvEsc(t)}</span>`).join('');
         // Catalizador PROGRAMADO: nunca chip de resultado (bueno/malo) en la card.
         const _resChip = '';
-        daysHtml += `<div class="swc-item" data-evkey="${evKey}" data-outlookkey="${outlookKey}" onclick="_openOutlookEvent('${evKey}','${outlookKey}')" onmouseenter="_prefetchOutlookEvent('${evKey}','${outlookKey}')" ontouchstart="_prefetchOutlookEvent('${evKey}','${outlookKey}')"><div class="swc-item-body"><div class="swc-item-title">${e.title||''}</div><div class="swc-item-ctx">${(e.description||'').slice(0,140)}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span><span class="swc-tag">${e.time||'TBD'}</span>${tickers}</div>${_resChip}</div></div>`;
+        daysHtml += `<div class="swc-item" data-evkey="${evKey}" data-outlookkey="${outlookKey}" onclick="_openOutlookEvent('${evKey}','${outlookKey}')" onmouseenter="_prefetchOutlookEvent('${evKey}','${outlookKey}')" ontouchstart="_prefetchOutlookEvent('${evKey}','${outlookKey}')"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(e.title||'')}</div><div class="swc-item-ctx">${pvEsc((e.description||'').slice(0,140))}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span><span class="swc-tag">${pvEsc(e.time||'TBD')}</span>${tickers}</div>${_resChip}</div></div>`;
       });
       daysHtml += '</div></div>';
     });
@@ -23184,7 +23193,7 @@ function _renderWeeklyOutlook(data) {
     if ((data.key_themes||[]).length) {
       themesHtml = '<div class="swc-list">';
       data.key_themes.forEach(t => {
-        themesHtml += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${t.title||''}</div><div class="swc-theme-ctx">${t.detail||''}</div></div></div></div></div>`;
+        themesHtml += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(t.title||'')}</div><div class="swc-theme-ctx">${pvEsc(t.detail||'')}</div></div></div></div></div>`;
       });
       themesHtml += '</div>';
     }
@@ -23197,7 +23206,7 @@ function _renderWeeklyOutlook(data) {
     const _themeBar = data.theme
       ? `<div class="wo-theme-bar"><span class="wo-theme-full">${data.theme}</span><span class="wo-theme-short">${_shortTheme(data.theme)}</span></div>`
       : '';
-    const _ctxBar   = data.market_context ? `<div class="wo-ctx">${data.market_context}</div>` : '';
+    const _ctxBar   = data.market_context ? `<div class="wo-ctx">${pvEsc(data.market_context)}</div>` : '';
     wrap.innerHTML = `<div class="wo-report">${_themeBar}${_ctxBar}${daysHtml}${data.narrative?`<div class="wo-section-lbl">Outlook — Próxima Semana</div><div class="wo-narrative">${_outlookNarrativeHtml(data.narrative)}</div>`:''}${themesHtml?`<div class="wo-section-lbl">Temas clave</div>${themesHtml}`:''}${ts?`<div class="wo-footer">Actualizado ${ts}</div>`:''}<div class="wo-footer" style="opacity:.85">Perspectiva generada por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div></div>`;
     // Pre-genera en background el Market Context de los eventos ya ocurridos / de hoy,
     // para que al abrir el detalle aparezca al instante (sin spinner).
@@ -23431,7 +23440,7 @@ function _renderNextWeekOutlook(){
   const impLabel = {high:'Alto impacto', medium:'Impacto medio', low:'Impacto bajo'};
   let topHtml = '';
   if (seed.theme) { const _shT = (function(t){ var m = String(t).match(/^[\s\S]*?[.!?](?=\s|$)/); return (m ? m[0] : String(t)).trim(); })(seed.theme); topHtml += `<div class="wo-theme-bar"><span class="wo-theme-full">${seed.theme}</span><span class="wo-theme-short">${_shT}</span></div>`; }
-  if (seed.market_context) topHtml += `<div class="wo-ctx">${seed.market_context}</div>`;
+  if (seed.market_context) topHtml += `<div class="wo-ctx">${pvEsc(seed.market_context)}</div>`;
   // Store de eventos para que los items de "Próxima Semana" SEAN clicables (abren el mismo
   // modal que Esta Semana / Outlook). Antes se renderizaban con cursor:default y SIN onclick
   // → "no me deja entrar". Se guardan en window._outlookEvents[outlookKey][evKey] y el item
@@ -23471,7 +23480,7 @@ function _renderNextWeekOutlook(){
         const tk = (ev.tickers_affected||[]).slice(0,5);
         const ctx = ev.description || '';
         const _evKey = _nwKey + '_' + _dIdx + '_' + _ei;
-        html += `<div class="swc-item" onclick="_openOutlookEvent('${_evKey}','${_nwKey}')" onmouseenter="_prefetchOutlookEvent('${_evKey}','${_nwKey}')" ontouchstart="_prefetchOutlookEvent('${_evKey}','${_nwKey}')"><div class="swc-item-body"><div class="swc-item-title">${ev.title||''}</div><div class="swc-item-ctx">${ctx.slice(0,140)}${ctx.length>140?'…':''}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span>${ev.time && ev.time!=='TBD' ? `<span class="swc-tag">${ev.time}</span>` : ''}${tk.map(t=>`<span class="swc-tag">${t}</span>`).join('')}</div></div></div>`;
+        html += `<div class="swc-item" onclick="_openOutlookEvent('${_evKey}','${_nwKey}')" onmouseenter="_prefetchOutlookEvent('${_evKey}','${_nwKey}')" ontouchstart="_prefetchOutlookEvent('${_evKey}','${_nwKey}')"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(ev.title||'')}</div><div class="swc-item-ctx">${pvEsc(ctx.slice(0,140))}${ctx.length>140?'…':''}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span>${ev.time && ev.time!=='TBD' ? `<span class="swc-tag">${pvEsc(ev.time)}</span>` : ''}${tk.map(t=>`<span class="swc-tag">${pvEsc(t)}</span>`).join('')}</div></div></div>`;
         _shownAny = true;
       });
     }
@@ -23490,7 +23499,7 @@ function _renderNextWeekOutlook(){
   }
   if (_themes.length){
     bottom += `<div class="wo-section-lbl">Temas clave</div><div class="swc-list">`;
-    _themes.forEach(t => { bottom += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${t.title||''}</div><div class="swc-theme-ctx">${t.detail||''}</div></div></div></div></div>`; });
+    _themes.forEach(t => { bottom += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(t.title||'')}</div><div class="swc-theme-ctx">${pvEsc(t.detail||'')}</div></div></div></div></div>`; });
     bottom += `</div>`;
   }
   const _nwHtml = `<div class="wo-report">${topHtml}${html}${bottom}</div>`;
@@ -25708,7 +25717,11 @@ function _chatMarkdown(s){
   h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
   // onclick → en nativo abre el navegador in-app (SFSafariViewController) en vez de dejar al
   // usuario atrapado en una WKWebView de terceros sin barra de navegación.
-  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,'<a href="$2" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener">$1</a>');
+  // La URL se interpola DENTRO de un atributo, y _chatEscape() no escapa comillas: con
+  // [^)]+ una salida del modelo tipo [x](https://a/" onmouseover="…) cerraba el href e
+  // inyectaba atributos propios. Los caracteres excluidos aquí no aparecen nunca en una
+  // URL legítima ya escrita en el markdown, así que ningún enlace real cambia.
+  h=h.replace(/\[([^\]]+)\]\((https?:\/\/[^)"'`<>\s]+)\)/g,'<a href="$2" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener">$1</a>');
   h=h.replace(/^[\-•]\s+(.*)$/gm,'<li>$1</li>');
   h=h.replace(/(<li>[\s\S]*?<\/li>)/g,'<ul>$1</ul>');
   h=h.split(/\n{2,}/).map(p=>p.match(/^<ul>/)?p:'<p>'+p.replace(/\n/g,'<br>')+'</p>').join('');
@@ -25750,7 +25763,9 @@ function _aiChatAddMsg(role, html, sources){
   let srcHtml = '';
   if(sources && sources.length){
     srcHtml = '<div class="chat-sources" style="margin-top:8px;padding-top:8px;border-top:1px solid #e8eaf0;font-size:10px;color:#8a96a3;">Fuentes: '+
-      sources.slice(0,3).map((s,i)=>`<a href="${s.url}" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
+      // s.url llega de la búsqueda web del modelo (tercero): interpolarla cruda dentro de
+      // href="…" permitía cerrar el atributo e inyectar otros. pvEsc() sí escapa comillas.
+      sources.slice(0,3).map((s,i)=>`<a href="${pvEsc(s.url)}" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
       '</div>';
   }
   if(role === 'user'){
@@ -26926,13 +26941,13 @@ const PORTIV_NEWS = {
           : `<span class="swc-tag" style="background:rgba(180,83,9,0.10);color:#b45309;font-weight:700">Programado · Impacto ${_impES}</span>`;
         html += `<div class="swc-item" onclick="PORTIV_NEWS.openEvent('${k}')">
             <div class="swc-item-body">
-              <div class="swc-item-title">${ev.title}</div>
-              <div class="swc-item-ctx">${ctxText.slice(0,140)}${ctxText.length>140?'…':''}</div>
+              <div class="swc-item-title">${pvEsc(ev.title)}</div>
+              <div class="swc-item-ctx">${pvEsc(ctxText.slice(0,140))}${ctxText.length>140?'…':''}</div>
               <div class="swc-item-tags">
                 ${realizedTag}
                 <span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span>
-                ${ev.time && ev.time!=='TBD' ? `<span class="swc-tag">${ev.time}</span>` : ''}
-                ${tk.map(t=>`<span class="swc-tag ${held.has(t)?'swc-tag-held':''}">${t}</span>`).join('')}
+                ${ev.time && ev.time!=='TBD' ? `<span class="swc-tag">${pvEsc(ev.time)}</span>` : ''}
+                ${tk.map(t=>`<span class="swc-tag ${held.has(t)?'swc-tag-held':''}">${pvEsc(t)}</span>`).join('')}
               </div>
             </div></div>`;
       });
@@ -26999,11 +27014,11 @@ const PORTIV_NEWS = {
         const _shortT = (function(t){ var m = String(t).match(/^[\s\S]*?[.!?](?=\s|$)/); return (m ? m[0] : String(t)).trim(); })(_theme);
         seedTop += `<div class="wo-theme-bar"><span class="wo-theme-full">${_theme}</span><span class="wo-theme-short">${_shortT}</span></div>`;
       }
-      if (_ctx)   seedTop += `<div class="wo-ctx">${_ctx}</div>`;
+      if (_ctx)   seedTop += `<div class="wo-ctx">${pvEsc(_ctx)}</div>`;
       if (Array.isArray(_kt) && _kt.length) {
         seedBottom += `<div class="wo-section-lbl">Temas clave</div><div class="swc-list">`;
         _kt.forEach(t => {
-          seedBottom += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${t.title||''}</div><div class="swc-theme-ctx">${t.detail||''}</div></div></div></div></div>`;
+          seedBottom += `<div class="swc-day-group" style="margin-bottom:8px"><div class="swc-items"><div class="swc-item" style="cursor:default"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(t.title||'')}</div><div class="swc-theme-ctx">${pvEsc(t.detail||'')}</div></div></div></div></div>`;
         });
         seedBottom += `</div>`;
       }
@@ -29931,6 +29946,11 @@ if (document.readyState === 'loading') {
       // 4) Borrar la cuenta de auth server-side (valida el JWT, borra SOLO a su dueño).
       await window.stCall('delete-account', {});
       // 5) Limpiar TODO el estado local + cerrar sesión.
+      // Desvincular RevenueCat va ANTES del signOut, igual que en _authLogout: la identidad
+      // del SDK vive en el lado nativo, no en localStorage, así que localStorage.clear() no
+      // la toca. Sin esto el dispositivo seguía identificado como la cuenta ya borrada hasta
+      // el siguiente login, y el usuario siguiente heredaba su entitlement.
+      try { await window._pvIapLogout(); } catch(e){}
       try { await sb.auth.signOut(); } catch(e){}
       try { localStorage.clear(); } catch(e){}
       try { sessionStorage.clear(); } catch(e){}
@@ -30525,6 +30545,33 @@ document.addEventListener('DOMContentLoaded', function(){
         willRenew: d.will_renew
       } : { active:false, status:'never' };
     } catch(e){ return null; }
+
+    // ── La FECHA manda, aunque la fila siga encendida ───────────────────────
+    // `entitlement_active` lo apaga un webhook (EXPIRATION de Apple, subscription.canceled
+    // de Paddle) o el barrido horario de entitlement-sweeper. Si ese webhook se pierde o
+    // llega tarde, la fila se queda en `true` con un `expires_at` ya vencido — y hasta aquí
+    // eso daba acceso: la app se desbloqueaba entera y luego SnapTrade y la IA respondían
+    // 403 subscription_required, porque el servidor SÍ mira la fecha. El usuario veía una
+    // app que "funciona" donde nada funciona, sin ninguna explicación: snapConnect deriva
+    // ese 403 a _pvSubGate(), que releía esta misma fila y volvía a desbloquear.
+    //
+    // Mismo criterio EXACTO que has_active_entitlement() en el servidor: 48 h de colchón
+    // por desfase de reloj y por el retraso real con el que Apple emite la notificación de
+    // renovación. Así cliente y servidor no pueden discrepar. Si la renovación sí ocurrió,
+    // el camino rápido de StoreKit de abajo (nativo) y entitlement-sync lo rescatan.
+    //
+    // Sólo se apaga `active`; el `status` se deja INTACTO a propósito, para que _pvSubGate
+    // siga eligiendo el mensaje por el motivo real: 'past_due' vencido sigue diciendo que
+    // el cobro falló, 'refunded'/'paused'/'transferred' conservan su explicación, y
+    // 'canceled'/'active' vencidos caen en el mensaje neutro "Necesitas una suscripción
+    // activa". Reescribirlo a 'expired' habría dicho "Tu pago fue rechazado" a quien
+    // simplemente dejó vencer su plan.
+    try {
+      if (srv.active && srv.expiresAt) {
+        var _exp = Date.parse(srv.expiresAt);
+        if (isFinite(_exp) && _exp < Date.now() - 48 * 3600 * 1000) srv.active = false;
+      }
+    } catch(e){}
 
     // ── Camino rápido nativo (iOS) ─────────────────────────────────────────
     // Sin esto, el hueco entre el pago en StoreKit y la llegada del webhook
@@ -31251,6 +31298,13 @@ document.addEventListener('DOMContentLoaded', function(){
       if (/subscription_required/i.test(String(_m))) {
         try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
         try{ if(window._pvSubGate) { window._pvSubGate(); return; } }catch(_){}
+      }
+      // 503 'entitlement_check_unavailable': el servidor NO pudo comprobar la suscripción y,
+      // como enlazar un broker crea un coste recurrente, prefiere no dejar pasar. NO es lo
+      // mismo que "no tienes suscripción": no se manda al paywall a alguien que quizá sí
+      // paga. Es transitorio, así que el reintento de _pvConnectingError sí sirve.
+      if (/entitlement_check_unavailable/i.test(String(_m))) {
+        _m = 'No pudimos comprobar tu suscripción en este momento. Vuelve a intentarlo en unos segundos.';
       }
       try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
       try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
