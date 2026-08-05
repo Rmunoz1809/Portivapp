@@ -29918,6 +29918,11 @@ if (document.readyState === 'loading') {
       // 4) Borrar la cuenta de auth server-side (valida el JWT, borra SOLO a su dueño).
       await window.stCall('delete-account', {});
       // 5) Limpiar TODO el estado local + cerrar sesión.
+      // Desvincular RevenueCat va ANTES del signOut, igual que en _authLogout: la identidad
+      // del SDK vive en el lado nativo, no en localStorage, así que localStorage.clear() no
+      // la toca. Sin esto el dispositivo seguía identificado como la cuenta ya borrada hasta
+      // el siguiente login, y el usuario siguiente heredaba su entitlement.
+      try { await window._pvIapLogout(); } catch(e){}
       try { await sb.auth.signOut(); } catch(e){}
       try { localStorage.clear(); } catch(e){}
       try { sessionStorage.clear(); } catch(e){}
