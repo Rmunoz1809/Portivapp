@@ -30521,6 +30521,33 @@ document.addEventListener('DOMContentLoaded', function(){
       } : { active:false, status:'never' };
     } catch(e){ return null; }
 
+    // ── La FECHA manda, aunque la fila siga encendida ───────────────────────
+    // `entitlement_active` lo apaga un webhook (EXPIRATION de Apple, subscription.canceled
+    // de Paddle) o el barrido horario de entitlement-sweeper. Si ese webhook se pierde o
+    // llega tarde, la fila se queda en `true` con un `expires_at` ya vencido — y hasta aquí
+    // eso daba acceso: la app se desbloqueaba entera y luego SnapTrade y la IA respondían
+    // 403 subscription_required, porque el servidor SÍ mira la fecha. El usuario veía una
+    // app que "funciona" donde nada funciona, sin ninguna explicación: snapConnect deriva
+    // ese 403 a _pvSubGate(), que releía esta misma fila y volvía a desbloquear.
+    //
+    // Mismo criterio EXACTO que has_active_entitlement() en el servidor: 48 h de colchón
+    // por desfase de reloj y por el retraso real con el que Apple emite la notificación de
+    // renovación. Así cliente y servidor no pueden discrepar. Si la renovación sí ocurrió,
+    // el camino rápido de StoreKit de abajo (nativo) y entitlement-sync lo rescatan.
+    //
+    // Sólo se apaga `active`; el `status` se deja INTACTO a propósito, para que _pvSubGate
+    // siga eligiendo el mensaje por el motivo real: 'past_due' vencido sigue diciendo que
+    // el cobro falló, 'refunded'/'paused'/'transferred' conservan su explicación, y
+    // 'canceled'/'active' vencidos caen en el mensaje neutro "Necesitas una suscripción
+    // activa". Reescribirlo a 'expired' habría dicho "Tu pago fue rechazado" a quien
+    // simplemente dejó vencer su plan.
+    try {
+      if (srv.active && srv.expiresAt) {
+        var _exp = Date.parse(srv.expiresAt);
+        if (isFinite(_exp) && _exp < Date.now() - 48 * 3600 * 1000) srv.active = false;
+      }
+    } catch(e){}
+
     // ── Camino rápido nativo (iOS) ─────────────────────────────────────────
     // Sin esto, el hueco entre el pago en StoreKit y la llegada del webhook
     // (segundos, minutos, o infinito si el webhook se perdió) le muestra el muro
