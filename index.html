@@ -3352,6 +3352,26 @@ window._ensureChartJs = (function(){
   body.chat-active .ai-chat-page { height: calc(100dvh - (64px + env(safe-area-inset-bottom, 0px))) !important; }
   body.chat-active .ai-chat-header { position: sticky; top: 0; z-index: 20; padding-top: max(18px, env(safe-area-inset-top)) !important; }
 
+  /* ── Teclado abierto: el chat se ancla al viewport VISIBLE ──
+     iOS no encoge la ventana al abrir el teclado: desplaza el documento entero, así que la
+     cabecera "Portiv IA" se salía por arriba y quedaba un hueco muerto entre la barra de
+     escribir y el teclado. Con --vvh (alto del viewport visible, lo fija el script del final
+     del documento) el chat mide EXACTAMENTE lo que se ve, fijado arriba, y la barra de
+     escribir queda pegada al teclado. La barra de pestañas no aporta nada mientras se
+     escribe y roba altura: se oculta. La clase la pone el script sólo con el foco dentro
+     del chat, así que ningún otro buscador de la app se ve afectado. */
+  body.pv-kb-open { overflow: hidden !important; }
+  body.pv-kb-open #tab-aianalyst {
+    position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+    height: var(--vvh, 100dvh) !important; z-index: 900 !important;
+  }
+  body.pv-kb-open .ai-chat-page { height: 100% !important; min-height: 0 !important; }
+  body.pv-kb-open .bottom-tabs { display: none !important; }
+  body.pv-kb-open .ai-chat-inputarea { padding-bottom: 10px !important; }
+  /* Sin esto, llegar al final de los mensajes encadena el scroll al documento y la
+     pantalla vuelve a irse hacia abajo pese al anclaje. */
+  body.pv-kb-open .ai-chat-messages { overscroll-behavior: contain !important; }
+
   /* ── Watchlist: cards compactas, todo cabe sin desbordar ── */
   #tab-watchlist { padding: 6px 14px 86px !important; background: var(--surface) !important; }
   .wl2-sector { margin-bottom: 8px !important; gap: 8px !important; }
@@ -3479,6 +3499,18 @@ html.pv-ipad .ai-chat-page { height: 100% !important; min-height: 0 !important; 
 /* El nav ya ocupa la safe-area de abajo: sin esto el input sumaba el home indicator
    por segunda vez y quedaba un hueco muerto sobre la barra. */
 html.pv-ipad .ai-chat-inputarea { padding-bottom: 14px !important; }
+/* La webview arranca DEBAJO de la barra de estado (contentInset: never), y el chat es la
+   única pantalla sin .m-topbar: sin esta reserva la hora del sistema caía justo encima de
+   "Portiv IA". El mínimo cubre los iPad que reportan safe-area-inset-top = 0. */
+html.pv-ipad .ai-chat-header {
+  padding-top: max(26px, calc(env(safe-area-inset-top, 0px) + 14px)) !important;
+}
+/* Con el teclado abierto el chat se ancla al viewport visible, igual que en móvil. */
+html.pv-ipad body.pv-kb-open #tab-aianalyst {
+  position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+  height: var(--vvh, 100dvh) !important; z-index: 900 !important;
+}
+html.pv-ipad body.pv-kb-open { overflow: hidden !important; }
 
 /* ── Panel "Revisión de importación" ──
    Se crea desde JS con estilo inline (bottom:16px; right:16px; z-index:9999), pensado para
@@ -32198,37 +32230,80 @@ document.addEventListener('DOMContentLoaded', function(){
 })();
 </script>
 <script>
-/* Chat IA — teclado iOS: ancla la altura del chat al viewport VISIBLE (visualViewport) para que
-   la pantalla no se desplace hacia arriba al abrir el teclado; el input queda siempre visible y
-   los mensajes scrollean internamente. Sin plugin nativo; no-op donde no exista visualViewport. */
+/* Chat IA — teclado: la pantalla se queda ARRIBA. Dos comportamientos conviven: WKWebView
+   "puro" NO encoge la ventana y desplaza el documento entero para enseñar el campo, mientras
+   que con redimensionado nativo la ventana sí encoge — y entonces innerHeight - vv.height
+   vale ~0, así que detectar el teclado por diferencia de alturas fallaba y el chat se iba
+   hacia abajo con la barra de pestañas encima del teclado. El disparador ahora es el FOCO en
+   un campo del chat (válido en ambos casos) y cualquier scroll del documento se revierte al
+   instante mientras dura. El chat se ancla al viewport VISIBLE (--vvh/--vv-top) y los
+   mensajes scrollean por dentro. No-op donde no exista visualViewport. */
 (function(){
-  var vv = window.visualViewport, root = document.documentElement;
-  function sync(){
-    if(!vv) return;
-    root.style.setProperty('--vvh', vv.height + 'px');
-    root.style.setProperty('--vv-top', (vv.offsetTop||0) + 'px');
-    // Teclado abierto = el viewport visible es sensiblemente más bajo que el de layout.
-    // El umbral (120px) descarta las barras del navegador, que también encogen vv.height.
-    var kb = (window.innerHeight - vv.height) > 120;
-    document.body.classList.toggle('pv-kb-open', kb);
-    // iOS desplaza el documento para "enseñar" el input aunque ya sea visible; devolverlo a 0
-    // deja la app quieta y la compensación de --vv-top se encarga del resto.
-    if(kb && (window.scrollY || document.body.scrollTop)){
-      try{ window.scrollTo(0,0); document.body.scrollTop=0; }catch(_){}
-    }
-    var tab = document.getElementById('tab-aianalyst');
-    if(tab && tab.classList.contains('active')){ var m=document.getElementById('aiChatMessages'); if(m) m.scrollTop=m.scrollHeight; }
+  var vv = window.visualViewport, root = document.documentElement, body = document.body;
+  var locked = false;
+
+  // Sólo con teclado virtual: con teclado físico (escritorio, iPad con Magic Keyboard) no hay
+  // nada que compensar y re-anclar el chat rompería el layout.
+  function virtualKb(){
+    try{
+      return matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches
+             || 'ontouchstart' in window;
+    }catch(_){ return 'ontouchstart' in window; }
   }
-  if(vv){ vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); }
-  window.addEventListener('load', sync);
-  // Al cerrar el teclado, iOS no siempre emite un resize final → limpia el estado al perder foco.
-  document.addEventListener('focusout', function(){ setTimeout(sync, 120); });
-  document.addEventListener('focusin', function(e){
-    if(e.target && e.target.id === 'aiChatInput'){
-      setTimeout(function(){ try{ window.scrollTo(0,0); document.body.scrollTop=0; }catch(_){}
-        sync(); var m=document.getElementById('aiChatMessages'); if(m) m.scrollTop=m.scrollHeight; }, 60);
+  // Sólo el chat se re-ancla: en el resto de la app (buscadores, importación…) el teclado
+  // debe comportarse como siempre.
+  function isChatField(el){
+    if(!el) return false;
+    if(el.id === 'aiChatInput') return true;
+    var t = el.tagName;
+    return (t === 'INPUT' || t === 'TEXTAREA' || el.isContentEditable)
+           && !!(el.closest && el.closest('.ai-chat-page'));
+  }
+  // iOS desplaza el documento por su cuenta al enfocar, aunque el campo ya se vea; devolverlo
+  // a 0 en cuanto ocurre es lo que mantiene la pantalla quieta.
+  function pin(){
+    try{
+      if(window.scrollY) window.scrollTo(0, 0);
+      if(body.scrollTop) body.scrollTop = 0;
+      if(root.scrollTop) root.scrollTop = 0;
+    }catch(_){}
+  }
+  function toBottom(){
+    var m = document.getElementById('aiChatMessages');
+    if(m) m.scrollTop = m.scrollHeight;
+  }
+  function sync(){
+    if(vv){
+      root.style.setProperty('--vvh', vv.height + 'px');
+      root.style.setProperty('--vv-top', (vv.offsetTop || 0) + 'px');
     }
+    if(locked) pin();
+  }
+  function setLocked(on){
+    if(locked === on){ if(on) sync(); return; }
+    locked = on;
+    body.classList.toggle('pv-kb-open', on);
+    sync();
+    if(on) toBottom();
+  }
+
+  document.addEventListener('focusin', function(e){
+    if(!isChatField(e.target) || !virtualKb()) return;
+    setLocked(true);
+    // El teclado se anima ~300 ms y iOS reajusta el scroll durante toda la animación:
+    // se repite el anclaje hasta que asienta.
+    [0, 60, 150, 300, 500].forEach(function(ms){ setTimeout(function(){ pin(); sync(); }, ms); });
+    setTimeout(toBottom, 320);
   });
+  // Al cerrar el teclado iOS no siempre emite un resize final → se limpia al perder el foco.
+  document.addEventListener('focusout', function(e){
+    if(!isChatField(e.target)) return;
+    setTimeout(function(){ if(!isChatField(document.activeElement)) setLocked(false); }, 120);
+  });
+  window.addEventListener('scroll', function(){ if(locked) pin(); }, { passive: true });
+  if(vv){ vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); }
+  window.addEventListener('orientationchange', function(){ setTimeout(sync, 300); });
+  window.addEventListener('load', sync);
   try{ sync(); }catch(_){}
 })();
 </script>
