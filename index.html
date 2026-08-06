@@ -30473,6 +30473,60 @@ document.addEventListener('DOMContentLoaded', function(){
   var _last = null;      // último estado conocido (evita repintar en cada recheck)
   var _busy = false;
 
+  /* ── Internet caído ≠ suscripción caída ──────────────────────────────────
+     Los dos fallos se parecen desde aquí (una lectura que no contesta) y hasta
+     ahora acababan en el mismo sitio: el muro de "Necesitas una suscripción
+     activa". A quien paga y entra en el metro le anunciábamos un cobro
+     rechazado que nunca ocurrió, y no tiene forma de saber que la app se
+     equivoca. Se separan explícitamente: sin red no se AFIRMA nada sobre el
+     pago — se dice que no hay red.
+
+     navigator.onLine sólo sirve en NEGATIVO: `false` es fiable (no hay
+     interfaz); `true` sólo dice que hay una interfaz arriba, no que nuestro
+     servidor conteste — un portal cautivo o un DNS caído dan `true` igual. Por
+     eso se complementa con el fallo REAL de transporte que ven las lecturas.
+  ───────────────────────────────────────────────────────────────────────── */
+  var _netFail = 0;        // ts del último fallo de transporte observado
+  var NET_TTL  = 25000;    // ventana en la que ese fallo se sigue tomando por "sin red"
+
+  // Separa un error de RED de uno del SERVIDOR (RLS, 4xx, SQL). postgrest-js
+  // envuelve el fallo de fetch como "FetchError: …"; WebKit lo llama "Load
+  // failed" donde Chrome dice "Failed to fetch".
+  function _isNetErr(e){
+    var m = String((e && (e.message || e.msg)) || e || '').toLowerCase();
+    return /fetcherror|failed to fetch|load failed|networkerror|network error|network request failed|timeout|timed out|err_internet|offline/.test(m);
+  }
+  function _markNet(e){ if (_isNetErr(e)) _netFail = Date.now(); }
+
+  // true = ahora mismo NO hay forma de comprobar el estado de la suscripción.
+  // Se publica en window porque el módulo de SnapTrade tiene el mismo problema.
+  window._pvIsOffline = function(){
+    try { if (navigator && navigator.onLine === false) return true; } catch(e){}
+    return (Date.now() - _netFail) < NET_TTL;
+  };
+  var _offline = window._pvIsOffline;
+
+  /* Último veredicto DEFINITIVO del servidor (el que sí se pudo comprobar), por
+     usuario. Sin esto, un arranque en frío sin red no tiene con qué decidir y
+     cualquier salida es a ciegas: o se tapa a quien paga, o se abre a quien no.
+     Guarda active/status y nada más — ni tokens ni datos de cobro. */
+  function _ck(uid){ return 'pv_sub_last:' + (uid || 'anon'); }
+  function _cacheGet(uid){ try { return JSON.parse(localStorage.getItem(_ck(uid)) || 'null'); } catch(e){ return null; } }
+  function _cacheSet(uid, st){
+    try { localStorage.setItem(_ck(uid), JSON.stringify({
+      active: !!(st && st.active), status: (st && st.status) || '', ts: Date.now()
+    })); } catch(e){}
+  }
+  // uid LOCAL: getSession() lee el JWT guardado y no sale a la red — justo lo que
+  // hace falta cuando lo que falta es la red.
+  async function _localUid(){
+    try {
+      var sb = window.sbClient; if (!sb || !sb.auth) return null;
+      var s = await sb.auth.getSession();
+      return (s && s.data && s.data.session && s.data.session.user && s.data.session.user.id) || null;
+    } catch(e){ return null; }
+  }
+
   // El email se pide a Supabase y no a la variable `session` del módulo de auth: esa
   // vive en el ámbito de su IIFE y desde aquí sale undefined, lo que haría fallar el
   // bypass del dueño y bloquearía justo a quien nunca debe bloquearse.
@@ -30480,8 +30534,25 @@ document.addEventListener('DOMContentLoaded', function(){
     try {
       var sb = window.sbClient;
       if (!sb || !sb.auth) return false;
-      var r = await sb.auth.getUser();
-      var em = ((r && r.data && r.data.user && r.data.user.email) || '').toLowerCase();
+      // getSession() lee el JWT ya guardado y NO sale a la red; getUser() sí. Se
+      // pregunta primero al local A PROPÓSITO: con la red caída getUser() volvía
+      // vacío, el dueño dejaba de serlo y —al no tener fila en `subscriptions`—
+      // caía en el muro de "Necesitas una suscripción activa". Ése era el camino
+      // exacto por el que un corte de internet se veía como un problema de pago.
+      // El email viaja firmado dentro del propio JWT, y esto sólo levanta el
+      // candado VISUAL: has_active_entitlement() aplica el MISMO bypass en el
+      // servidor por su cuenta, así que leerlo en local no concede nada.
+      var em = '';
+      try {
+        var s = await sb.auth.getSession();
+        em = ((s && s.data && s.data.session && s.data.session.user && s.data.session.user.email) || '').toLowerCase();
+      } catch(e){}
+      if (!em) {
+        try {
+          var r = await sb.auth.getUser();
+          em = ((r && r.data && r.data.user && r.data.user.email) || '').toLowerCase();
+        } catch(e){ _markNet(e); }
+      }
       var own = OWNER_EMAILS.indexOf(em) >= 0;
       // Espejo SÍNCRONO del check, para consumidores que no pueden esperar a una promesa
       // (PORTIV_VAL corre dentro del pipeline de importación). Arranca en false y sólo
@@ -30542,7 +30613,9 @@ document.addEventListener('DOMContentLoaded', function(){
       // Fallo de red / RLS: se devuelve null y el llamador NO bloquea. Mismo criterio
       // fail-open que requireEntitlement en el servidor: una caída nuestra no debe
       // dejar fuera a alguien que sí pagó.
-      if (r && r.error) return null;
+      // Se anota si el fallo fue de RED antes de salir: es lo que luego permite a
+      // _pvSubGate decir "sin conexión" en vez de inventarse un motivo de pago.
+      if (r && r.error) { _markNet(r.error); return null; }
       var d = (r && r.data) || null;
       srv = d ? {
         active: d.entitlement_active === true,
@@ -30550,7 +30623,7 @@ document.addEventListener('DOMContentLoaded', function(){
         expiresAt: d.expires_at || null,
         willRenew: d.will_renew
       } : { active:false, status:'never' };
-    } catch(e){ return null; }
+    } catch(e){ _markNet(e); return null; }
 
     // ── La FECHA manda, aunque la fila siga encendida ───────────────────────
     // `entitlement_active` lo apaga un webhook (EXPIRATION de Apple, subscription.canceled
@@ -30665,7 +30738,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Bloqueo duro ─────────────────────────────────────────────────────────
   // z-index 12500: por encima del quiz y del paywall (12000), pero por DEBAJO del
   // toast (13000) — si algo falla al reintentar el pago, el mensaje tiene que verse.
-  function _block(title, body, ctaLabel){
+  function _block(title, body, ctaLabel, onCta){
     var o = document.getElementById('pvSubBlock');
     if (!o) {
       o = document.createElement('div');
@@ -30695,8 +30768,15 @@ document.addEventListener('DOMContentLoaded', function(){
         try { if (typeof window._authSignout === 'function') { window._authSignout(); return; } } catch(e){}
         try { window.sbClient.auth.signOut().then(function(){ return window._pvIapLogout(); }).then(function(){ location.reload(); }); } catch(e){ location.reload(); }
       };
-      o.querySelector('#pvSubBlockCta').onclick = function(){ window._pvRetryPayment(); };
+      // El handler se resuelve EN CADA CLIC y no al crear el overlay: el muro se
+      // reutiliza, y el de "sin conexión" tiene que reintentar la comprobación,
+      // no abrir un cobro que nadie ha rechazado.
+      o.querySelector('#pvSubBlockCta').onclick = function(){
+        var f = o._pvCta || window._pvRetryPayment;
+        try { f(); } catch(e){}
+      };
     }
+    o._pvCta = onCta || null;
     o.querySelector('#pvSubBlockTitle').textContent = title;
     o.querySelector('#pvSubBlockBody').textContent = body;
     o.querySelector('#pvSubBlockCta').textContent = ctaLabel;
@@ -30771,11 +30851,56 @@ document.addEventListener('DOMContentLoaded', function(){
     if (mg) mg.style.display = active ? '' : 'none';
   };
 
+  // ── Qué pintar cuando NO se puede comprobar la suscripción ──────────────
+  // Se apoya en el último veredicto que SÍ se pudo comprobar:
+  //   · no hay veredicto previo, o el último daba acceso → no se tapa nada.
+  //     Alguien que paga no puede perder su app por meterse en un túnel.
+  //   · el último decía que NO había acceso → se mantiene el muro (si no,
+  //     bastaría el modo avión para saltárselo), pero con el texto honesto:
+  //     "no hemos podido comprobarlo", nunca "tu pago fue rechazado".
+  // En ningún caso se habla de cobros: eso es justo lo que aquí no se sabe.
+  async function _gateOffline(){
+    var last = null;
+    try { last = _cacheGet(await _localUid()); } catch(e){}
+    var _retry = function(){ try { window._pvSubGate(); } catch(e){} };
+    if (!last || last.active) {
+      _unblock();
+      _banner('warn',
+        'Sin conexión a internet. Estás viendo tus últimos datos guardados — no es un problema con tu suscripción.',
+        'Reintentar', _retry);
+      return null;
+    }
+    _bannerHide();
+    if (!ENFORCE) { _unblock(); return null; }
+    _block('Sin conexión a internet',
+      'No pudimos comprobar el estado de tu suscripción porque el dispositivo no tiene conexión. Conéctate a internet y vuelve a intentarlo.',
+      'Reintentar', _retry);
+    return null;
+  }
+
   // ── Evaluación + pintado ────────────────────────────────────────────────
   window._pvSubGate = async function(){
+    // Sólo la señal DURA corta antes de leer: si el sistema dice que no hay
+    // interfaz, la petición no va a ninguna parte y el muro que se pintara sería
+    // una acusación inventada con el wifi caído como única prueba.
+    //
+    // El fallo de transporte reciente NO se usa aquí a propósito: cortar por él
+    // dejaba muerto el botón "Reintentar" durante toda su ventana (se salía sin
+    // llegar a pedir nada, así que la red podía haber vuelto y nadie se enteraba).
+    // Se decide DESPUÉS de intentarlo — que es lo único que distingue de verdad
+    // "no hay red" de "ya volvió".
+    try { if (navigator && navigator.onLine === false) return _gateOffline(); } catch(e){}
+
     var st = await window._pvSubStatus();
-    if (!st) return null;                       // fail-open (ver _pvSubStatus)
+    // La lectura falló (red, RLS, 5xx) → fail-open: una caída nuestra no expulsa
+    // a quien pagó. Si el fallo fue de transporte, además se explica.
+    if (!st) { if (_offline()) return _gateOffline(); return null; }
+    // Contestó el servidor: la red está viva, se retira la sospecha.
+    _netFail = 0;
     _last = st;
+    // Veredicto DEFINITIVO (vino del servidor): es el que se recuerda para poder
+    // decidir la próxima vez que no haya red.
+    try { _cacheSet(await _localUid(), st); } catch(e){}
     try { window._pvRenderAcctPlan(); } catch(e){}
     if (st.active && !STATUS_WARN[st.status]) { _bannerHide(); _unblock(); return st; }
 
@@ -30871,6 +30996,24 @@ document.addEventListener('DOMContentLoaded', function(){
     setTimeout(function(){ try { window._pvSubGate(); } catch(e){} }, 15000);
     return false;
   };
+
+  // La vuelta de la red es el momento EXACTO para volver a preguntar: el aviso de
+  // "sin conexión" (o el muro) se resuelve solo, sin que el usuario tenga que
+  // adivinar que hay que reabrir la app. Y al perderla se repinta enseguida, para
+  // que ningún mensaje de pago sobreviva a un corte.
+  try {
+    window.addEventListener('online', function(){
+      _netFail = 0;
+      if (!window._pvAuthReady) return;
+      try { window._pvEntitlementSync(true); } catch(e){}
+      try { window._pvSubGate(); } catch(e){}
+    });
+    window.addEventListener('offline', function(){
+      _netFail = Date.now();
+      if (!window._pvAuthReady) return;
+      try { window._pvSubGate(); } catch(e){}
+    });
+  } catch(e){}
 
   // Recheck al volver a la pestaña: una suscripción puede expirar con la app abierta.
   document.addEventListener('visibilitychange', function(){
@@ -31245,12 +31388,32 @@ document.addEventListener('DOMContentLoaded', function(){
                      .catch(function(){ return null; });
     }catch(e){ return Promise.resolve(null); }
   }
+  // El candado de suscripción publica el detector de red (navigator.onLine + los
+  // fallos de transporte que ya ha visto). Aquí sólo se consume; si todavía no
+  // existe, se cae al navegador, que en negativo sí es fiable.
+  function _isOffline(){
+    try { if (typeof window._pvIsOffline === 'function') return !!window._pvIsOffline(); } catch(e){}
+    try { return !!(navigator && navigator.onLine === false); } catch(e){ return false; }
+  }
   function stCall(name, body){
     return _token().then(function(tok){
-      if(!tok) throw new Error('Inicia sesión para conectar tu broker.');
+      // Sin token puede ser que no haya sesión… o que la sesión caducara y el
+      // refresco no llegue al servidor por falta de red. Mandar a "inicia sesión"
+      // a quien ya la tiene es enviarle a arreglar lo que no está roto.
+      if(!tok) throw new Error(_isOffline()
+        ? 'Sin conexión a internet. Conéctate y vuelve a intentarlo.'
+        : 'Inicia sesión para conectar tu broker.');
       return fetch(FN(name), { method:'POST',
         headers:{ 'content-type':'application/json', 'apikey':_anon(), 'Authorization':'Bearer '+tok },
         body: JSON.stringify(body||{}) })
+      // El .catch va PEGADO al fetch y no al final de la cadena: así captura sólo
+      // el fallo de TRANSPORTE y deja pasar los errores del .then de abajo, que
+      // traen status HTTP y significan algo completamente distinto.
+      .catch(function(e){
+        var _e = new Error('Sin conexión con Portiv. Revisa tu conexión a internet e inténtalo de nuevo.');
+        _e.status = 0; _e.offline = true; _e.cause = e;
+        throw _e;
+      })
       .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
         // FIX 13/17 — El status HTTP viaja en el error. Sin él, quien lo captura tenía que adivinar
         // con un regex sobre el mensaje (y "status code 4"/"unauthor" matcheaban 401 de Supabase,
@@ -31298,6 +31461,13 @@ document.addEventListener('DOMContentLoaded', function(){
       // 12000, así que el error quedaba tapado y el fallo se veía como "la pantalla se quedó
       // parada tras pagar". El error se pinta ahora sobre el propio overlay, con reintento.
       var _m = (e && e.message) || 'No se pudo iniciar la conexión.';
+      // Sin red no hay nada que diagnosticar: ni de SnapTrade, ni de la
+      // suscripción. Se dice lo que pasa y se deja el reintento, que aquí sí sirve.
+      if (e && e.offline) {
+        try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
+        try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
+        toast(_m); return;
+      }
       // 'subscription_required' es el 403 del candado del servidor, no un fallo de SnapTrade.
       // Mostrar el código crudo con un botón "Reintentar" era engañoso: reintentar nunca
       // iba a funcionar. Se deriva al bloqueo de suscripción, que sí ofrece la salida real.
@@ -31693,6 +31863,12 @@ document.addEventListener('DOMContentLoaded', function(){
     }).catch(function(e){
       var _m=(e&&e.message)||'', _st=(e&&e.status)||0;
       console.warn('[snaptrade] refresh:', _st||'', _m);
+      // Fallo de transporte: el enlace con el broker sigue intacto, lo que falta es
+      // internet. Pintar 'broken' aquí mandaba a reconectar algo que está bien.
+      if(e && e.offline){
+        if(!(opts&&opts.silent)) toast('Sin conexión a internet. Tus posiciones se actualizarán al volver la conexión.');
+        return null;
+      }
       // FIX 13 — Un 401/403 es el TRANSPORTE (JWT de Supabase recién vencido), no una conexión de
       // broker rota. Antes "status code 4" matcheaba 400/401/403/404 y "unauthor" matcheaba el
       // "Unauthorized" de Supabase → un fallo de auth transitorio pintaba el banner rojo de
