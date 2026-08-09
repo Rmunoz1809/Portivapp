@@ -41,6 +41,60 @@ const INTERNAL_SECRET =
 // pasados 5 minutos (la firma incluye el ts, así que no puede moverlo sin el secreto).
 const MAX_SKEW_MS = 5 * 60 * 1000;
 
+// ── Allowlist de IPs de Paddle ───────────────────────────────────────────────
+// Segunda capa por delante de la firma: descarta el ruido de internet antes de
+// leer el cuerpo y calcular un HMAC. La lista NO se hardcodea — Paddle la publica
+// y la cambia; el endpoint es la fuente de verdad. Se cachea por cold start.
+const PADDLE_IPS_TTL_MS = 6 * 60 * 60 * 1000;
+// Fail-closed opcional. Por defecto, si el endpoint de IPs no responde se sigue
+// adelante y manda la firma HMAC (que ya es la autenticación real): un corte de
+// api.paddle.com no debe convertirse en un agujero negro de webhooks de pago.
+// Con PADDLE_IP_ALLOWLIST_STRICT=true se rechaza también en ese caso.
+const IP_STRICT = (Deno.env.get("PADDLE_IP_ALLOWLIST_STRICT") ?? "").toLowerCase() === "true";
+
+let ipCache: { cidrs: Set<string>; at: number } | null = null;
+
+async function fetchPaddleIps(): Promise<Set<string> | null> {
+  const now = Date.now();
+  if (ipCache && now - ipCache.at < PADDLE_IPS_TTL_MS) return ipCache.cidrs;
+
+  // En producción sólo cuentan las IPs live. Si esta función todavía recibe envíos
+  // de un destino de sandbox (PADDLE_ENV != production), se unen las dos listas.
+  const urls = ["https://api.paddle.com/ips"];
+  if (PADDLE_ENV_FALLBACK !== "production") urls.push("https://sandbox-api.paddle.com/ips");
+
+  const out = new Set<string>();
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { headers: { accept: "application/json" } });
+      if (!r.ok) { console.error("[paddle-webhook] ips http", r.status, url); continue; }
+      const j: any = await r.json();
+      // Vienen como CIDR /32, es decir una IP exacta por entrada.
+      for (const c of (j?.data?.ipv4_cidrs ?? [])) {
+        const ip = String(c).split("/")[0].trim();
+        if (ip) out.add(ip);
+      }
+    } catch (e) {
+      console.error("[paddle-webhook] ips fetch falló:", url, (e as any)?.message ?? e);
+    }
+  }
+
+  if (out.size === 0) {
+    // Sin lista nueva, se conserva la cacheada aunque esté vencida: es mejor dato
+    // que ninguno. Si tampoco hay cache, el llamador decide según IP_STRICT.
+    return ipCache?.cidrs ?? null;
+  }
+  ipCache = { cidrs: out, at: now };
+  return out;
+}
+
+/** IP del cliente. En Supabase Edge Functions llega en x-forwarded-for; el primer
+ *  elemento es el emisor original y el resto son proxies intermedios. */
+function clientIp(req: Request): string {
+  const xff = req.headers.get("x-forwarded-for") ?? "";
+  return (xff.split(",")[0] ?? "").trim();
+}
+
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -213,6 +267,25 @@ async function triggerDisconnect(userId: string, reason: string): Promise<void> 
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+
+  // ── Capa 1: origen ─────────────────────────────────────────────────────────
+  // 403 (no 401/500) a propósito: es un rechazo definitivo y Paddle nunca lo verá,
+  // porque por definición sólo se dispara con emisores que NO son Paddle.
+  {
+    const ip = clientIp(req);
+    const allowed = await fetchPaddleIps();
+    if (!allowed) {
+      const msg = "[paddle-webhook] lista de IPs de Paddle no disponible";
+      if (IP_STRICT) {
+        console.error(msg, "— rechazado (STRICT)");
+        return json({ ok: false, error: "ip_allowlist_unavailable" }, 403);
+      }
+      console.warn(msg, "— se continúa sólo con verificación de firma");
+    } else if (!ip || !allowed.has(ip)) {
+      console.warn("[paddle-webhook] IP no permitida:", ip || "(sin x-forwarded-for)");
+      return json({ ok: false, error: "ip_not_allowed" }, 403);
+    }
+  }
 
   // Sin secreto NO se acepta nada: aceptar sin verificar dejaría a cualquiera activar
   // entitlements con un curl. 500 (no 200) para que el fallo sea visible y Paddle
