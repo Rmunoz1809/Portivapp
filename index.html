@@ -28477,7 +28477,7 @@ if (document.readyState === 'loading') {
   </div>
 
   <div class="av-foot">
-    <a href="https://portivapp.com/precios.html" onclick="return _pvOpenExternal('precios.html')" target="_blank" rel="noopener">Precios</a>
+    <a id="authFootPricing" style="display:none" href="https://portivapp.com/precios.html" onclick="return _pvOpenExternal('precios.html')" target="_blank" rel="noopener">Precios</a>
     <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
     <a href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
     <a href="https://portivapp.com/reembolsos.html" onclick="return _pvOpenExternal('reembolsos.html')" target="_blank" rel="noopener">Reembolsos</a>
@@ -28805,6 +28805,22 @@ if (document.readyState === 'loading') {
   //    salía el estado invisible permanente.
   var _ovGen = 0, _ovTimer = null;
   function showOverlay(){
+    // Guideline 3.1.1: "Precios" del pie apunta a una página que nombra a Paddle como
+    // procesador de pago. Dentro de la app de iOS eso es un método de pago externo.
+    // El enlace NACE oculto en el HTML y sólo se revela en el build web: si esta
+    // comprobación fallara, el fallo seguro es NO enseñarlo. Se detecta Capacitor directo
+    // en vez de usar _pvIsNativeApp() porque esa función se define mucho más abajo en el
+    // archivo y aquí todavía no existe. Va en showOverlay() y no en showLogin() porque el
+    // pie vive FUERA de #authBody: se ve también con la cubierta "Cargando…", y por aquí
+    // pasan TODAS las rutas que muestran el overlay (boot, login, logout, borrado).
+    try {
+      var _fp = document.getElementById('authFootPricing');
+      if (_fp) {
+        var _nativo = false;
+        try { _nativo = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch(e){}
+        _fp.style.display = _nativo ? 'none' : '';
+      }
+    } catch(e){}
     _ovGen++;
     if (_ovTimer) { clearTimeout(_ovTimer); _ovTimer = null; }
     overlay.style.opacity = '';            // el estado lo define el atributo, no el estilo en línea
