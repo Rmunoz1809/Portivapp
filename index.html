@@ -3342,7 +3342,10 @@ window._ensureChartJs = (function(){
   /* ── Portiv IA: chat a pantalla completa ── */
   #tab-aianalyst { padding: 0 !important; }
   .ai-chat-page { height: calc(100dvh - 146px) !important; min-height: 0 !important; background: #F8F9FF !important; }
-  .ai-chat-inputarea { padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px)) !important; }
+  /* El home indicator ya lo cubre el propio bottom-nav (padding-bottom: var(--pv-safe-b)),
+     que va JUSTO debajo: sumarlo otra vez aquí dejaba ~48px de blanco muerto entre la barra
+     de escribir y el menú. Con 10px la caja de escribir queda pegada al menú. */
+  .ai-chat-inputarea { padding: 12px 14px 10px !important; }
   /* Transición profesional de entrada de pestañas (solo móvil; no afecta escritorio). */
   .page.pv-tab-in { animation: pvTabIn .30s cubic-bezier(.22,.61,.36,1) both; }
   @keyframes pvTabIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }
@@ -3368,6 +3371,10 @@ window._ensureChartJs = (function(){
   body.pv-kb-open .ai-chat-page { height: 100% !important; min-height: 0 !important; }
   body.pv-kb-open .bottom-tabs { display: none !important; }
   body.pv-kb-open .ai-chat-inputarea { padding-bottom: 10px !important; }
+  /* Las sugerencias sólo sirven con el chat en reposo. Si suben con el teclado roban ~130px
+     al hilo (el último mensaje quedaba cortado a la mitad) y parecen "saltar". Con el foco
+     dentro, lo único que queda sobre el teclado es la caja de escribir. */
+  body.pv-kb-open .ai-chat-chips { display: none !important; }
   /* Sin esto, llegar al final de los mensajes encadena el scroll al documento y la
      pantalla vuelve a irse hacia abajo pese al anclaje. */
   body.pv-kb-open .ai-chat-messages { overscroll-behavior: contain !important; }
@@ -4044,7 +4051,6 @@ window._pvAwaitIAP = function(totalMs){
         </button>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
-      <div class="pv-ai-foot" style="margin-top:8px;padding-top:8px;text-align:center;">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
     </div>
 
   </div>
@@ -5051,8 +5057,6 @@ window._pvAwaitIAP = function(totalMs){
      desplazó (--vv-top) y se retira el tab bar, que si no queda flotando sobre el teclado. */
   body.pv-kb-open .ai-chat-page { transform: translateY(var(--vv-top, 0px)); will-change: transform; }
   body.pv-kb-open .bottom-tabs, body.pv-kb-open .bottom-nav { display: none !important; }
-  /* Aviso legal del chat: discreto, en una línea de texto fina bajo el input. */
-  .ai-chat-inputarea .pv-ai-foot { font-size:9.5px; line-height:1.4; letter-spacing:.1px; opacity:.72; margin-top:6px !important; padding-top:6px !important; }
   .ai-chat-header { padding:18px 24px; background:#fff; border-bottom:1px solid #e8eaf0; display:flex; align-items:center; gap:14px; flex-shrink:0; }
   .ai-chat-header-avatar { width:40px; height:40px; border-radius:50%; background:var(--blue); display:flex; align-items:center; justify-content:center; color:#fff; font-size:15px; font-weight:700; flex-shrink:0; line-height:1; }
   .ai-chat-header-info { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
@@ -32827,18 +32831,22 @@ document.addEventListener('DOMContentLoaded', function(){
     if(m) m.scrollTop = m.scrollHeight;
   }
   function sync(){
+    // Primero devolver el documento a 0 y DESPUÉS leer el viewport: al revés, --vv-top se
+    // quedaba con el desplazamiento viejo y el transform empujaba el chat hacia abajo justo
+    // lo que pin() ya había corregido (compensación doble).
+    if(locked) pin();
     if(vv){
       root.style.setProperty('--vvh', vv.height + 'px');
-      root.style.setProperty('--vv-top', (vv.offsetTop || 0) + 'px');
+      // Con el documento anclado en 0 no hay nada que compensar mientras el teclado esté
+      // abierto; fuera del chat se mantiene el valor real.
+      root.style.setProperty('--vv-top', locked ? '0px' : ((vv.offsetTop || 0) + 'px'));
     }
-    if(locked) pin();
   }
   function setLocked(on){
     if(locked === on){ if(on) sync(); return; }
     locked = on;
     body.classList.toggle('pv-kb-open', on);
     sync();
-    if(on) toBottom();
   }
 
   document.addEventListener('focusin', function(e){
@@ -32847,7 +32855,9 @@ document.addEventListener('DOMContentLoaded', function(){
     // El teclado se anima ~300 ms y iOS reajusta el scroll durante toda la animación:
     // se repite el anclaje hasta que asienta.
     [0, 60, 150, 300, 500].forEach(function(ms){ setTimeout(function(){ pin(); sync(); }, ms); });
-    setTimeout(toBottom, 320);
+    // iOS reajusta el visual viewport de forma asíncrona: un doble rAF captura el valor ya
+    // asentado sin esperar al primer setTimeout.
+    requestAnimationFrame(function(){ requestAnimationFrame(sync); });
   });
   // Al cerrar el teclado iOS no siempre emite un resize final → se limpia al perder el foco.
   document.addEventListener('focusout', function(e){
