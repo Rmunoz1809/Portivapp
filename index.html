@@ -31968,6 +31968,10 @@ document.addEventListener('DOMContentLoaded', function(){
       if(j && j.connected && j.syncing) _render('syncing');
       else if(j && j.connected && !j.broken) _render('connected', { fromCache: j.fromCache, lastSync: j.lastSync });
       if(j && j.connected && !j.syncing) snapHistory();
+      // F4 — Los flujos van aparte del historial: uno dice cuánto VALE la cartera y el otro
+      // cuánto de eso lo pusiste tú. Mismo disparador (conectado y ya sincronizado) porque
+      // antes de eso el broker todavía no tiene movimientos que dar.
+      if(j && j.connected && !j.syncing) snapActivities();
       // SnapTrade encoló la sincronización con el broker: tarda unos segundos y llega por
       // webhook. Se vuelve a leer solo, sin que el usuario tenga que tocar nada. Esa segunda
       // lectura va con force para saltar la caché, pero NO se paga: el límite de 30 min del
@@ -32208,6 +32212,69 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Avisos de fidelidad del dato (F3 / F5 / F6) ──────────────────────────────────
   // Todo esto existía ya como console.warn, que no lee ningún usuario. Cuando la cifra
   // que mostramos NO es el patrimonio completo, hay que decirlo donde se ve.
+  // ── Flujos de efectivo (F4) ─────────────────────────────────────────────────────
+  // Cuánto has METIDO tú, separado de cuánto ha ganado la cartera. Sin esa separación
+  // cualquier rendimiento que enseñemos es mentira: quien aporta cada mes ve una curva
+  // preciosa que no dice nada de si invierte bien o mal.
+  //
+  // La criba de qué cuenta como aportación la hace el servidor (ver snaptrade-activities:
+  // dividendos, intereses y comisiones NO son aportaciones, y los traspasos de activos se
+  // declaran pero no se suman). Aquí sólo se guarda el resultado y se avisa de lo que se
+  // quedó fuera. Si falla, no pasa nada: la tarjeta se queda como estaba.
+  function snapActivities(){
+    return stCall('snaptrade-activities', {}).then(function(j){
+      try{
+        if(!j || !j.available){ window._SNAP_FLOWS = null; window._SNAP_FLOW_GAPS = null; return j; }
+        window._SNAP_FLOWS = j.currencies || null;
+        var tr = 0; try{ Object.keys(j.transfers||{}).forEach(function(k){ tr += j.transfers[k]; }); }catch(e){}
+        var uk = []; try{ uk = Object.keys(j.unknownTypes||{}); }catch(e){}
+        window._SNAP_FLOW_GAPS = {
+          transfers: tr, unknown: uk,
+          truncated: !!j.truncated, partial: !!j.partial,
+          unusable: j.unusable||0, undated: j.undated||0
+        };
+        // signMismatches NO se le enseña al usuario: es una señal de integridad —un broker
+        // etiquetando el signo al revés—, no algo que él pueda accionar. A la consola, que
+        // es la única traza de campo que tenemos.
+        if(j.signMismatches){
+          console.warn('[snaptrade] signMismatches='+j.signMismatches
+            +' — algún broker informa el importe con el signo contrario a su tipo; el neto puede salir invertido');
+        }
+      }catch(e){}
+      // Los flujos llegan después del primer pintado: hay que repintar o no se ven hasta
+      // el siguiente refresco.
+      try{ if(_state==='connected') _render(_state, _lastMeta); }catch(e){}
+      return j;
+    }).catch(function(e){ _pvLogError('snaptrade activities', e); });
+  }
+
+  // Línea de "lo que has aportado". Nunca funde divisas en una cifra (mismo criterio que
+  // _SNAP_FX): 1.000 € y 1.000 $ no son 2.000 de nada.
+  function _snapFlowLine(){
+    var f = window._SNAP_FLOWS; if(!f) return '';
+    try{
+      // Divisas con movimiento, AUNQUE el neto sea cero: aportar 5.000 y retirar 5.000 no
+      // es "no hay dato", es un neto de cero, y decirlo es más honesto que callarlo.
+      var ccys = Object.keys(f).filter(function(c){ var b=f[c]||{}; return b.in || b.out || b.net; });
+      if(!ccys.length) return '';
+      var money = function(c, abs){ var n=(f[c]||{}).net||0; return _fmtMoney(abs?Math.abs(n):n, c); };
+      var pos=0, neg=0;
+      ccys.forEach(function(c){ var n=(f[c]||{}).net||0; if(n>0) pos++; else if(n<0) neg++; });
+      var txt;
+      if(neg && !pos){
+        // "Has aportado -3.000 €" no lo entiende nadie. Si sólo has sacado, se dice así.
+        txt = 'Has retirado <b>'+ccys.map(function(c){ return money(c,true); }).join('</b> + <b>')+'</b> netos';
+      } else if(pos && !neg){
+        txt = 'Has aportado <b>'+ccys.map(function(c){ return money(c,false); }).join('</b> + <b>')+'</b> netos';
+      } else {
+        // Divisas que van en sentidos opuestos (o todo a cero): meterlas en una sola frase
+        // con un único verbo diría de una lo contrario de lo que pasó.
+        txt = 'Saldo de tus movimientos: <b>'+ccys.map(function(c){ return money(c,false); }).join('</b> · <b>')+'</b>';
+      }
+      return '<div class="snap-status" style="opacity:.85">'+txt+' (lo que ingresaste menos lo que retiraste)</div>';
+    }catch(e){ return ''; }
+  }
+
   function _fmtMoney(n, ccy){
     try{ return new Intl.NumberFormat('es-ES',{style:'currency',currency:ccy||'USD',maximumFractionDigits:0}).format(n); }
     catch(e){ return Math.round(n).toLocaleString('es-ES')+' '+(ccy||''); }
@@ -32266,6 +32333,24 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       var ns = window._SNAP_NO_SYNC;
       if(ns) out.push('<b>'+ns+'</b> cuenta'+(ns>1?'s':'')+' sin marca de última sincronización: no sabemos de cuándo son esos datos.');
+      // ── Lo que se quedó FUERA de "has aportado" (F4) ────────────────────────────────
+      // Sólo si la cifra de aportaciones se está enseñando: avisar de lo que falta en un
+      // número que el usuario no ve por ninguna parte es ruido, no transparencia.
+      var gp = window._SNAP_FLOW_GAPS;
+      if(window._SNAP_FLOWS && gp){
+        if(gp.transfers){
+          out.push('<b>'+gp.transfers+'</b> traspaso'+(gp.transfers>1?'s':'')+' de activos desde o hacia otro broker no cuenta'
+                 +(gp.transfers>1?'n':'')+' como aportación: mueven tu patrimonio pero no son dinero nuevo que hayas puesto.');
+        }
+        if(gp.unknown && gp.unknown.length){
+          out.push('<b>'+gp.unknown.length+'</b> tipo'+(gp.unknown.length>1?'s':'')+' de movimiento que no reconocemos ('
+                 +_escHtml(gp.unknown.slice(0,3).join(', '))+(gp.unknown.length>3?'…':'')
+                 +'): no los sumamos ni los restamos de lo aportado.');
+        }
+        if(gp.partial)   out.push('Falta al menos una cuenta en el cálculo de lo aportado: la cifra real es mayor.');
+        if(gp.truncated) out.push('Tu historial de movimientos es tan largo que no lo hemos leído entero: lo aportado sale por debajo de lo real.');
+        if(gp.unusable)  out.push('<b>'+gp.unusable+'</b> movimiento'+(gp.unusable>1?'s':'')+' sin importe informado por tu broker: no entra'+(gp.unusable>1?'n':'')+' en lo aportado.');
+      }
     }catch(e){}
     if(!out.length) return '';
     return '<div class="snap-note" style="border-left:3px solid #c98a00;padding-left:10px;margin-top:10px">⚠ '
@@ -32304,6 +32389,7 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-status"><span class="snap-dot ok"></span>'
         + _snapSyncLabel(meta)
         +'</div>'
+        + _snapFlowLine()
         + _snapNotes()
         +'<div class="snap-row"><button class="snap-btn" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Sincronizar ahora</button></div>'
         +'<div class="snap-row" style="margin-top:8px">'
