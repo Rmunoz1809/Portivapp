@@ -168,7 +168,15 @@ Deno.serve(async (req) => {
         console.warn("[snaptrade-connect] no se pudo listar conexiones:", _detail(e).slice(0, 200));
       }
     }
-    const disabledConn = conns.find((c: any) => c?.disabled === true && c?.id) ?? null;
+    // El cliente puede pedir una conexión CONCRETA ("Reconectar Fidelity" cuando hay dos
+    // brokers caídos). Sin esto, find() cogía siempre la primera de la lista: el usuario
+    // arreglaba esa y no tenía ninguna forma de llegar a la otra —el botón repetía el mismo
+    // broker una y otra vez—. El id se valida contra SU propia lista y sólo vale si esa
+    // conexión está de verdad deshabilitada: uno de fuera no abre nada.
+    const askedId = typeof body?.connectionId === "string" ? body.connectionId : "";
+    const disabledConn =
+      (askedId ? conns.find((c: any) => c?.id === askedId && c?.disabled === true) : null) ??
+      conns.find((c: any) => c?.disabled === true && c?.id) ?? null;
     const liveConn = conns.find((c: any) => c && c.disabled !== true && c.id) ?? null;
 
     if (mode !== "add" && !disabledConn && liveConn) {

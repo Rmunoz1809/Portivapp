@@ -310,13 +310,50 @@ Deno.serve(async (req) => {
     // cifras congeladas mezcladas con cifras vivas bajo la etiqueta "Conectado", sin un aviso.
     // No se deja de servir esas posiciones —el dato viejo es mejor que una pantalla vacía—:
     // lo que faltaba era DECIR que es viejo y de qué broker.
-    const staleConnections = conns
-      .filter((c: any) => c?.disabled === true)
-      .map((c: any) => ({
+    // ── Quién es tu broker, de verdad (F5) ──────────────────────────────────────────
+    // La tarjeta enseñaba siempre los mismos chips de adorno ("Charles Schwab ·
+    // Interactive Brokers · + más") daba igual con quién estuvieras conectado: alguien
+    // con Fidelity veía el nombre de dos brokers que no son el suyo. Y cuando una
+    // conexión se rompía, el aviso decía "tu broker" sin decir CUÁL, que con dos
+    // conectados es justo el dato que hace falta para saber dónde ir a arreglarlo.
+    //
+    // `display_name` antes que `name`: el primero es el nombre comercial que el usuario
+    // reconoce; el segundo suele ser el identificador interno.
+    //
+    // `maintenance_mode` / `is_degraded` los reporta SnapTrade sobre el broker, no sobre
+    // la conexión: explican unos datos congelados mucho mejor que cualquier cosa que
+    // podamos deducir nosotros, y hasta ahora se tiraban a la basura.
+    const institutions = conns.map((c: any) => {
+      const mine = accts.filter((a: any) => a?.brokerage_authorization === c?.id);
+      let instSync: string | null = null;
+      for (const a of mine) {
+        const s = a?.sync_status?.holdings?.last_successful_sync;
+        // El MÁS VIEJO de sus cuentas, mismo criterio que `lastSync` global: si una cuenta
+        // de este broker lleva tres días sin sincronizar, el broker no está "al día".
+        if (typeof s === "string" && s && (!instSync || s < instSync)) instSync = s;
+      }
+      return {
         id: c?.id ?? null,
-        name: c?.brokerage?.name ?? c?.name ?? null,
+        name: c?.brokerage?.display_name ?? c?.brokerage?.name ?? c?.name ?? null,
+        accounts: mine.length,
+        disabled: c?.disabled === true,
         disabledSince: c?.disabled_date ?? null,
-        accounts: accts.filter((a: any) => a?.brokerage_authorization === c?.id).length,
+        lastSync: instSync,
+        maintenance: c?.brokerage?.maintenance_mode === true,
+        degraded: c?.brokerage?.is_degraded === true,
+      };
+    });
+
+    // Se deriva de `institutions` en vez de recalcularse: dos listas construidas por
+    // separado acaban discrepando, y discrepar aquí significa que el aviso nombra a un
+    // broker y los chips a otro.
+    const staleConnections = institutions
+      .filter((i) => i.disabled)
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        disabledSince: i.disabledSince,
+        accounts: i.accounts,
       }));
 
     // ── Sincronización manual (ver cabecera): sólo con `force`, sólo si hace falta ──
@@ -506,6 +543,7 @@ Deno.serve(async (req) => {
           stale: true,
           partial: true,
           staleConnections,
+          institutions,
           accountsWithoutSync,
           closedAccounts,
           fromCache: true,
@@ -574,6 +612,7 @@ Deno.serve(async (req) => {
         inceptionDate,
         lastSync,
         staleConnections,
+        institutions,
         accountsWithoutSync,
         closedAccounts,
         syncQueued,
@@ -611,6 +650,7 @@ Deno.serve(async (req) => {
       inceptionDate,
       lastSync,
       staleConnections,
+      institutions,
       accountsWithoutSync,
       closedAccounts,
       syncQueued,
