@@ -231,6 +231,30 @@ Deno.serve(async (req) => {
     try {
       accts = ((await st.accountInformation.listUserAccounts(sid)).data as any[]) ?? [];
     } catch (e) { acctsErr = e; accts = []; }
+
+    // ── Cuentas cerradas ────────────────────────────────────────────────────────────
+    // SnapTrade sigue listando las cuentas cerradas y archivadas: iterarlas gasta lecturas y
+    // mete en la cartera un $0 de algo que el usuario ya no tiene. `status` es opcional y sus
+    // valores son 'open' | 'closed' | 'archived' | 'unavailable' — 'unavailable' NO significa
+    // cerrada, significa que el broker no supo decirlo, así que sólo se filtra lo explícito:
+    // filtrar de más deja al usuario sin una cuenta VIVA, que es peor que enseñarle una
+    // cerrada a $0. Y si TODAS quedaran filtradas no se filtra ninguna: dejar `accts` vacío
+    // convertiría al usuario en needsConnection y el cliente borraría pv_broker_* para
+    // pintarle el cartel de captación a alguien que SÍ tiene un broker enlazado.
+    let closedAccounts = 0;
+    if (accts.length > 0) {
+      const open = accts.filter((a: any) => {
+        const s = String(a?.status ?? "").toLowerCase();
+        return s !== "closed" && s !== "archived";
+      });
+      if (open.length > 0 && open.length < accts.length) {
+        closedAccounts = accts.length - open.length;
+        console.warn(
+          `[snaptrade-refresh] ${closedAccounts}/${accts.length} cuenta(s) cerrada(s)/archivada(s) filtrada(s)`,
+        );
+        accts = open;
+      }
+    }
     const hasAccount = Array.isArray(accts) && accts.length > 0;
 
     // Earliest real inception across accounts (SnapTrade's first_transaction_date). The
@@ -245,17 +269,63 @@ Deno.serve(async (req) => {
     // Cuándo fue la última vez que SnapTrade habló DE VERDAD con el broker. Es el dato que
     // le faltaba al usuario: la app decía "Sincronizado ahora mismo" cuando lo único reciente
     // era nuestra propia lectura de una foto de ayer.
+    //
+    // Se toma el MÍNIMO, no el máximo. Con Schwab sincronizado hace 2 minutos e IBKR hace 3
+    // días, quedarse con el más reciente hacía que _snapSyncLabel() pintara "Datos de tu
+    // broker de hace un momento" y el usuario tomaba decisiones sobre una cartera cuya mitad
+    // tenía tres días. La antigüedad honesta del conjunto es la de su cuenta MÁS VIEJA.
+    // (Ojo: `inceptionDate`, arriba, SÍ es un mínimo por otro motivo y ya estaba bien.)
     let lastSync: string | null = null;
+    let accountsWithoutSync = 0;
     for (const a of accts) {
       const s = a?.sync_status?.holdings?.last_successful_sync;
-      if (typeof s === "string" && s && (!lastSync || s > lastSync)) lastSync = s;
+      if (typeof s === "string" && s) {
+        if (!lastSync || s < lastSync) lastSync = s;
+      } else {
+        // Una cuenta sin marca de sync no debe hacer parecer fresco al conjunto: no sabemos
+        // de cuándo son sus datos, así que se declara aparte en vez de ignorarla.
+        accountsWithoutSync++;
+      }
     }
+
+    // ── ¿Terminó la sincronización INICIAL de todas las cuentas? ─────────────────────
+    // Hoy `syncing` se deduce heurísticamente ("hay cuenta pero no hay datos → estará
+    // sincronizando"). Para una cuenta real a $0 —recién abierta o liquidada— eso nunca deja
+    // de ser cierto: la tarjeta se queda en "Sincronizando…" para siempre, el cliente agota
+    // sus 14 reintentos de historial y _BROKER_HISTORY_PENDING bloquea el gráfico.
+    // `initial_sync_completed` es el dato autoritativo. Si llega `undefined` (broker que no
+    // lo reporta) se trata como false → comportamiento de siempre. NUNCA asumir `true` por
+    // ausencia: eso convertiría un sync en curso en "cartera vacía" y pondría el portafolio
+    // a $0 al conectar, que es exactamente el bug que documenta el Bloque 4 del cliente.
+    const allInitialSyncDone = accts.length > 0 &&
+      accts.every((a: any) => a?.sync_status?.holdings?.initial_sync_completed === true);
+
+    // ── Rotura PARCIAL de conexión ──────────────────────────────────────────────────
+    // `allDisabled` (arriba) sólo salta si se caen TODAS. Con dos brokers y uno caído seguía
+    // en false, el flujo continuaba normal y las cuentas del broker muerto SEGUÍAN devolviendo
+    // datos: una conexión deshabilitada sirve su último estado cacheado sin error. Resultado:
+    // cifras congeladas mezcladas con cifras vivas bajo la etiqueta "Conectado", sin un aviso.
+    // No se deja de servir esas posiciones —el dato viejo es mejor que una pantalla vacía—:
+    // lo que faltaba era DECIR que es viejo y de qué broker.
+    const staleConnections = conns
+      .filter((c: any) => c?.disabled === true)
+      .map((c: any) => ({
+        id: c?.id ?? null,
+        name: c?.brokerage?.name ?? c?.name ?? null,
+        disabledSince: c?.disabled_date ?? null,
+        accounts: accts.filter((a: any) => a?.brokerage_authorization === c?.id).length,
+      }));
 
     // ── Sincronización manual (ver cabecera): sólo con `force`, sólo si hace falta ──
     let syncQueued = false;
     let syncThrottled = false;
     if (force && conn?.id && conn?.disabled !== true) {
       const realtime = /real/i.test(String(conn?.data_freshness_mode ?? ""));
+      // `lastSync` es ahora el de la cuenta MÁS VIEJA (ver arriba), así que esto mide "¿le
+      // queda a alguna cuenta dato viejo?" y no "¿está fresca la más reciente?". Es lo que el
+      // usuario quiere decir al pulsar el botón: con Schwab de hace 2 min e IBKR de hace 3
+      // días, el criterio anterior concluía "acaban de sincronizar" y no refrescaba nada.
+      // El gasto sigue acotado por MANUAL_SYNC_MIN_MS, que no se toca.
       const syncAge = lastSync ? Date.now() - new Date(lastSync).getTime() : Infinity;
       const lastManual = profile.snaptrade_last_manual_sync
         ? new Date(profile.snaptrade_last_manual_sync).getTime()
@@ -349,6 +419,9 @@ Deno.serve(async (req) => {
           lastSync: lastSync ?? profile.snaptrade_last_refresh ?? null,
           stale: true,
           partial: true,
+          staleConnections,
+          accountsWithoutSync,
+          closedAccounts,
           fromCache: true,
         });
       }
@@ -398,15 +471,25 @@ Deno.serve(async (req) => {
       // running. SnapTrade pulls holdings asynchronously after CONNECTION_ADDED (usually
       // 1–2 min, sometimes more). Report `syncing` so the client shows "Sincronizando…"
       // and keeps polling. Only a webhook-confirmed break is reported as genuinely broken.
+      //
+      // …salvo que SnapTrade ya haya dado por terminada la sincronización inicial de TODAS
+      // las cuentas: entonces el vacío es un dato real (cuenta recién abierta o liquidada) y
+      // no un sync en curso. `settled` se lo dice al cliente, cuya lógica `_settled` en
+      // snapRefresh ya sabe aplicar una cartera vacía de verdad.
       const brokenFlag = !!profile.snaptrade_connection_broken;
+      const settled = allInitialSyncDone && !brokenFlag;
       return jsonResponse(req, {
         connected: true,
         broken: brokenFlag,
-        syncing: !brokenFlag,
+        syncing: !brokenFlag && !allInitialSyncDone,
+        settled,
         holdings: holdArr,
         accountId: profile.snaptrade_account_id ?? null,
         inceptionDate,
         lastSync,
+        staleConnections,
+        accountsWithoutSync,
+        closedAccounts,
         syncQueued,
         syncThrottled,
         fromCache: false,
@@ -441,6 +524,9 @@ Deno.serve(async (req) => {
       accountId,
       inceptionDate,
       lastSync,
+      staleConnections,
+      accountsWithoutSync,
+      closedAccounts,
       syncQueued,
       syncThrottled,
       fromCache: false,

@@ -138,7 +138,22 @@ Deno.serve(async (req) => {
     let accountIds: string[] = [];
     try {
       const accts = ((await st.accountInformation.listUserAccounts(sid)).data as any[]) ?? [];
-      accountIds = accts.map((a) => a?.id ?? a?.account_id).filter((x): x is string => !!x);
+      // Cuentas cerradas/archivadas fuera: pedir su curva gasta una llamada a un endpoint
+      // experimental y lento por una cuenta que ya no existe, y su serie plana ensucia el
+      // agregado. Sólo se filtra el `status` explícito ('unavailable' NO es cerrada, es "el
+      // broker no supo decirlo") y nunca hasta vaciar la lista: quedarse sin cuentas
+      // degradaría la gráfica a `no_account` en vez de servir lo que haya.
+      const openAccts = accts.filter((a) => {
+        const s = String(a?.status ?? "").toLowerCase();
+        return s !== "closed" && s !== "archived";
+      });
+      const usable = openAccts.length > 0 ? openAccts : accts;
+      if (usable.length < accts.length) {
+        console.warn(
+          `[snaptrade-history] ${accts.length - usable.length} cuenta(s) cerrada(s)/archivada(s) omitida(s)`,
+        );
+      }
+      accountIds = usable.map((a) => a?.id ?? a?.account_id).filter((x): x is string => !!x);
     } catch (e) {
       console.warn("[snaptrade-history] listUserAccounts falló:", String(e).slice(0, 200));
     }
