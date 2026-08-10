@@ -191,6 +191,8 @@ Deno.serve(async (req) => {
       Array.isArray(arr) && arr.some((h) => {
         const pos = h?.positions ?? [];
         const opt = h?.option_positions ?? h?.optionPositions ?? [];
+        // Una cuenta SÓLO de futuros tampoco es una cuenta vacía (ver other_positions abajo).
+        const oth = h?.other_positions ?? [];
         const bals = h?.balances ?? h?.balance ?? [];
         const cash = Array.isArray(bals)
           ? bals.reduce((s: number, b: any) => s + Number(b?.cash ?? b?.amount ?? 0), 0)
@@ -203,6 +205,7 @@ Deno.serve(async (req) => {
         );
         return (Array.isArray(pos) && pos.length > 0) ||
           (Array.isArray(opt) && opt.length > 0) ||
+          (Array.isArray(oth) && oth.length > 0) ||
           (Number.isFinite(cash) && cash !== 0) ||
           (Number.isFinite(total) && total !== 0);
       });
@@ -381,6 +384,38 @@ Deno.serve(async (req) => {
       return { ok: false, data: [] };
     };
 
+    // ── Clases de activo que los endpoints clásicos NO devuelven ────────────────────
+    // getUserAccountPositions da equity / ETF / cripto / fondos y listOptionHoldings las
+    // opciones. Un FUTURO de tastytrade o IBKR no salía por ninguno de los dos: ni como fila,
+    // ni en el aviso de la tarjeta, ni descontado del total. Un descuadre silencioso.
+    //
+    // GET /accounts/{id}/positions/all lo devuelve TODO, así que SUSTITUYE a
+    // listOptionHoldings —el presupuesto de llamadas por cuenta no cambia— y de paso saca a la
+    // luz futuros y CFDs. Su forma es OTRA (`instrument` es una unión discriminada por `kind`,
+    // y units/price llegan como CADENA), por eso NO se usa para la cartera: las clases que el
+    // endpoint clásico ya cubre se ignoran aquí para no contarlas dos veces. El camino de
+    // equity, que es el que alimenta la UI, se queda exactamente como estaba.
+    const OTHER_KINDS = new Set(["future", "cfd", "other"]);
+    const splitAllPositions = (rows: any[]) => {
+      const opts: any[] = [], others: any[] = [];
+      for (const r of Array.isArray(rows) ? rows : []) {
+        const inst = r?.instrument ?? {};
+        const kind = String(inst?.kind ?? "").toLowerCase();
+        const units = Number(r?.units ?? 0);
+        const price = Number(r?.price ?? 0);
+        // Forma que snapMapHoldings ya espera para las opciones (units/price numéricos; el
+        // multiplicador de 100 del contrato lo aplica el cliente, como hasta ahora).
+        if (kind === "option") opts.push({ symbol: inst?.symbol ?? null, units, price });
+        // Del resto se declara sólo lo que SnapTrade dice, sin derivar ninguna valoración:
+        // el notional de un futuro no es lo que aporta a tu patrimonio, y no vamos a inventar
+        // una cifra para restarla del total.
+        else if (OTHER_KINDS.has(kind)) {
+          others.push({ kind, symbol: inst?.symbol ?? null, units, price });
+        }
+      }
+      return { opts, others };
+    };
+
     let holdings: any[] = [];
     let brokenAccounts = 0;
     for (const a of accts) {
@@ -389,8 +424,19 @@ Deno.serve(async (req) => {
       const pos = await readAcct(() => ai.getUserAccountPositions({ ...sid, accountId }));
       const bal = await readAcct(() => ai.getUserAccountBalance({ ...sid, accountId }));
       let optionPositions: any[] = [];
+      let otherPositions: any[] = [];
       // Las opciones sí son best-effort: el cliente no las valora, sólo las declara aparte.
-      try { optionPositions = (await (st as any).options.listOptionHoldings({ ...sid, accountId })).data ?? []; } catch { /* optional */ }
+      try {
+        const all = (await ai.getAllAccountPositions({ ...sid, accountId })).data?.results ?? [];
+        const split = splitAllPositions(all);
+        optionPositions = split.opts;
+        otherPositions = split.others;
+      } catch {
+        // Broker o plan sin el endpoint unificado (404/410/501) → se vuelve al de siempre y se
+        // pierde sólo la visibilidad de futuros, que es lo que había hasta hoy. Ni éste ni el
+        // fallback marcan la cuenta como ROTA: esto es declarativo, no alimenta la cartera.
+        try { optionPositions = (await (st as any).options.listOptionHoldings({ ...sid, accountId })).data ?? []; } catch { /* optional */ }
+      }
       if (!pos.ok || !bal.ok) brokenAccounts++;
       const total = a?.balance?.total?.amount ?? a?.balance?.total ?? null;
       holdings.push({
@@ -398,6 +444,7 @@ Deno.serve(async (req) => {
         balances: bal.data,
         positions: pos.data,
         option_positions: optionPositions,
+        other_positions: otherPositions,
       });
     }
     const holdArr = holdings;

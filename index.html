@@ -31688,6 +31688,7 @@ document.addEventListener('DOMContentLoaded', function(){
     // decírselo en pantalla (_SNAP_OPTIONS lo pinta la tarjeta del broker), no sólo en
     // console.warn, que no lee nadie.
     var _optValue=0, _optCount=0;
+    var _othCount=0, _othKinds=[];   // F2.1 — futuros/CFDs: se declaran, no se valoran
     var _dropped=[];    // posiciones sin ticker reconocible
     var _noPrice=[];    // con acciones pero sin precio ni market_value
     accounts.forEach(function(acc){
@@ -31730,6 +31731,17 @@ document.addEventListener('DOMContentLoaded', function(){
         var mv = _n(o.market_value); if(!mv) mv = u*px*100;   // contrato = 100 subyacentes
         _optValue += mv; _optCount++;
       });
+      // F2.1 — Clases que SnapTrade SÍ reporta y Portiv no sabe valorar (futuros, CFDs). Hasta
+      // ahora no aparecían en ninguna parte: ni como fila, ni en un aviso, ni descontadas del
+      // total. Se cuentan y se declaran, pero NO se les asigna valor: el notional de un futuro
+      // no es lo que aporta a tu patrimonio, y restar una cifra inventada del total sería peor
+      // que decir que no la sabemos.
+      var othr = acc.other_positions || [];
+      if(Array.isArray(othr)) othr.forEach(function(o){
+        _othCount++;
+        var k = String((o && o.kind) || '').toLowerCase();
+        if(k && _othKinds.indexOf(k) < 0) _othKinds.push(k);
+      });
     });
     // FIX 1 — Agrega por ticker ANTES de entregar a aiPortImportData: ese pipeline (diseñado para
     // OCR) DESCARTA tickers repetidos, y snapMapHoldings emite una entrada por cuenta. Con AAPL en
@@ -31755,7 +31767,16 @@ document.addEventListener('DOMContentLoaded', function(){
       });
       return order.map(function(k){
         var a=by[k];
-        var covered = a._costShares > 0 && Math.abs(a._costShares - a.shares) < 1e-6;
+        // Con el MISMO ticker largo en una cuenta y CORTO en otra, _costShares puede quedar
+        // pegado a cero: `>0` lo dejaba pasar y _costSum/_costShares explotaba a Infinity o a
+        // un coste absurdo, con la comparación de cobertura satisfecha porque `shares` también
+        // rondaba el cero. Se exige magnitud real y que el coste vaya en el MISMO sentido que
+        // la posición neta. De paso, una posición íntegramente corta con coste ya sí resuelve
+        // (antes caía siempre en _noCost). Misma filosofía de siempre: antes un hueco honesto
+        // que un número inventado.
+        var _cs = a._costShares;
+        var covered = Math.abs(_cs) > 1e-6 && ((_cs > 0) === (a.shares > 0)) &&
+                      Math.abs(_cs - a.shares) < 1e-6;
         if(covered) a.avg_cost = a._costSum / a._costShares;
         else { delete a.avg_cost; _noCost.push(a.ticker); }   // sin clave → cost basis desconocido
         delete a._costSum; delete a._costShares;
@@ -31791,6 +31812,7 @@ document.addEventListener('DOMContentLoaded', function(){
       window._SNAP_FX = _mixed ? { dominant:_dom, excluded:_excluded } : null;
       window._SNAP_FX_WARNING = _mixed ? Object.keys(_excluded) : null;   // compat
       window._SNAP_OPTIONS = _optCount ? { count:_optCount, value:_optValue } : null;
+      window._SNAP_OTHER = _othCount ? { count:_othCount, kinds:_othKinds } : null;
       window._SNAP_OPTIONS_VALUE = _optValue || 0;                        // compat
       window._SNAP_NO_COST = _noCost.length ? _noCost : null;
       window._SNAP_NO_PRICE = _noPrice.length ? _noPrice : null;
@@ -32209,8 +32231,17 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       var op = window._SNAP_OPTIONS;
       if(op && op.count){
-        out.push('Tienes <b>'+op.count+'</b> posición'+(op.count>1?'es':'')+' en opciones que no mostramos ni sumamos'
+        out.push('Tienes <b>'+op.count+'</b> '+(op.count>1?'posiciones':'posición')+' en opciones que no mostramos ni sumamos'
                +(op.value ? ' (~'+_fmtMoney(op.value)+' según tu broker)' : '')+'. Tu cartera real es mayor que la que ves aquí.');
+      }
+      // F2.1 — Futuros y CFDs: se dicen en número y clase, nunca en dinero (ver snapMapHoldings).
+      var ot = window._SNAP_OTHER;
+      if(ot && ot.count){
+        var _kn = { future:'futuros', cfd:'CFDs', other:'otras clases' };
+        var etq = (ot.kinds||[]).map(function(k){ return _kn[k] || k; }).join(', ');
+        out.push('Tienes <b>'+ot.count+'</b> '+(ot.count>1?'posiciones':'posición')
+               +(etq ? ' ('+_escHtml(etq)+')' : '')
+               +' que no mostramos ni sumamos. Tu cartera real es mayor que la que ves aquí.');
       }
       var np = window._SNAP_NO_PRICE;
       if(np && np.length) out.push('Tu broker no dio precio para '+np.slice(0,4).join(', ')+(np.length>4?' y '+(np.length-4)+' más':'')+': no cuentan en el total.');
