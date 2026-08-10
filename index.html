@@ -31304,13 +31304,81 @@ document.addEventListener('DOMContentLoaded', function(){
         <span class="pq-chip">${p.horizonLabel}</span>
       </div>
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
-      <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>`;
+      <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
+      <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     document.getElementById('pqFinish').onclick = ()=>{
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
       try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
     };
+    // Aviso IBKR: informativo, independiente del CTA. No toca el flujo del paywall.
+    try {
+      var _ib = document.getElementById('pqIbkrNote');
+      if (_ib) _ib.onclick = function(){ try { window._pvShowIbkrNote(); } catch(e){} };
+    } catch(e){}
   }
+
+  // Aviso de conexión con Interactive Brokers. Contenido embebido: sin red, sin navegador in-app.
+  // z-index 12500 > 12000 de .pq-overlay/paywall; con un valor menor el modal queda detrás de la tarjeta.
+  window._pvShowIbkrNote = function(){
+    var ov = document.getElementById('pvIbkrNoteOv');
+    if (!ov) {
+      var S_SEC  = 'font-size:11.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--st-on-surface,#0b1c30);margin:18px 0 8px';
+      var S_LIST = 'margin:0;padding-left:18px';
+      var S_LI   = 'margin-bottom:7px';
+      ov = document.createElement('div');
+      ov.id = 'pvIbkrNoteOv';
+      ov.style.cssText = 'position:fixed;inset:0;z-index:12500;display:none;'
+        + 'align-items:center;justify-content:center;background:rgba(4,22,44,0.55);'
+        + "font-family:'Manrope','Inter',sans-serif;overscroll-behavior:contain;"
+        + 'padding:calc(20px + env(safe-area-inset-top)) 16px calc(20px + env(safe-area-inset-bottom));';
+      ov.innerHTML = `
+        <div id="pvIbkrNoteCard" style="width:100%;max-width:480px;max-height:100%;display:flex;flex-direction:column;background:var(--st-surface,#f8f9ff);border-radius:20px;border:1px solid var(--st-surface-highest,#d3e4fe);box-shadow:0 20px 60px -16px rgba(11,28,48,0.35);overflow:hidden">
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:20px 20px 12px;flex-shrink:0">
+            <div style="flex:1;font-size:17px;font-weight:800;line-height:1.3;color:var(--st-on-surface,#0b1c30)">Conectar Interactive Brokers</div>
+            <button type="button" id="pvIbkrNoteX" aria-label="Cerrar" style="flex-shrink:0;width:32px;height:32px;padding:0;border:none;border-radius:50%;background:var(--st-surface-cont,#e5eeff);color:var(--st-on-surf-var,#44474d);cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:inherit;font-size:20px;line-height:1;text-transform:none">×</button>
+          </div>
+          <div id="pvIbkrNoteBody" style="flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding:0 20px 22px;font-size:13px;line-height:1.6;color:var(--st-on-surf-var,#44474d)">
+            <p style="margin:0">Interactive Brokers requiere una configuración adicional que otros brokers no piden. El proceso es más largo, pero solo se hace una vez.</p>
+
+            <div style="${S_SEC}">Antes de empezar</div>
+            <ul style="${S_LIST}">
+              <li style="${S_LI}">La cuenta de IBKR debe estar completamente abierta y fondeada.</li>
+              <li style="${S_LI}">Se necesita acceso al portal web de IBKR desde un navegador. El proceso no puede completarse desde la app de IBKR.</li>
+            </ul>
+
+            <div style="${S_SEC}">Pasos</div>
+            <ol style="${S_LIST}">
+              <li style="${S_LI}">Iniciar sesión en el portal web de Interactive Brokers.</li>
+              <li style="${S_LI}">Abrir el menú Performance &amp; Reports.</li>
+              <li style="${S_LI}">Entrar en Third-Party Reports y pulsar el icono de engranaje bajo Third-Party Services.</li>
+              <li style="${S_LI}">Activar el servicio SnapTrade en la página de configuración.</li>
+              <li style="${S_LI}">IBKR mostrará un Query ID (6–7 dígitos) y un Token (24 dígitos).</li>
+              <li style="${S_LI}">Copiar ambos valores y pegarlos en Portiv cuando se soliciten.</li>
+            </ol>
+
+            <div style="${S_SEC}">Tiempos de activación</div>
+            <div style="padding:12px 14px;border-radius:12px;background:var(--blue-bg,#e5eeff);border:1px solid var(--st-surface-highest,#d3e4fe);color:var(--st-on-surface,#0b1c30)">La primera vez, IBKR puede tardar hasta 48 horas en habilitar el acceso. Es una limitación de IBKR, no de Portiv.</div>
+            <p style="margin:10px 0 0">Una vez habilitado, las posiciones se actualizan de forma periódica, no en tiempo real.</p>
+
+            <div style="${S_SEC}">Qué se sincroniza</div>
+            <ul style="${S_LIST}">
+              <li style="${S_LI}">Posiciones actuales y saldos en efectivo.</li>
+              <li style="${S_LI}">El historial de transacciones no está disponible por esta vía. Las operaciones anteriores pueden registrarse manualmente.</li>
+            </ul>
+
+            <p style="margin:18px 0 0;padding-top:14px;border-top:1px solid var(--st-outline-var,#c4c6cd);font-size:12.5px">Si prefieres una conexión inmediata, el resto de brokers compatibles se conectan en pocos toques. Mientras tanto, puedes registrar tus posiciones manualmente en Portiv.</p>
+          </div>
+        </div>`;
+      document.body.appendChild(ov);
+      var _hide = function(){ ov.style.display = 'none'; };
+      ov.addEventListener('click', function(e){ if (e.target === ov) _hide(); });   // tap en el fondo
+      var _x = ov.querySelector('#pvIbkrNoteX');
+      if (_x) _x.onclick = _hide;
+    }
+    ov.style.display = 'flex';
+    try { ov.querySelector('#pvIbkrNoteBody').scrollTop = 0; } catch(e){}
+  };
 
   function _openQuiz(){
     _ans = new Array(PQ.length).fill(-1); _step = 0;
