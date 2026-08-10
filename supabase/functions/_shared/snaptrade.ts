@@ -99,6 +99,11 @@ export async function loadProfile(
       // snaptrade_connected_at / _disconnected_at: snaptrade-refresh los usa para separar
       // "nunca conectó un broker" de "se lo desconectamos". Sin ellos en el select llegan
       // como undefined y todo el mundo cae en el segundo caso.
+      // snaptrade_activities NO va aquí a propósito: la lee sólo snaptrade-activities, con
+      // su propia consulta tolerante. Este select se empaqueta en TODAS las funciones
+      // snaptrade, así que añadirle una columna que aún no existe en la base las rompería
+      // todas a la vez en el primer despliegue. El coste de la consulta extra es de esa
+      // única función; el de equivocarse aquí, de la aplicación entera.
       "snaptrade_user_id, snaptrade_user_secret, snaptrade_connection_id, snaptrade_account_id, snaptrade_last_refresh, snaptrade_holdings, snaptrade_history, snaptrade_connection_broken, snaptrade_disconnected_reason, snaptrade_connected_at, snaptrade_disconnected_at, snaptrade_last_manual_sync",
     )
     .eq("id", userId)
