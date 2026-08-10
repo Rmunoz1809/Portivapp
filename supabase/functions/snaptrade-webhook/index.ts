@@ -156,11 +156,18 @@ Deno.serve(async (req) => {
   switch (type) {
     // Sincronización terminada al otro lado → lo que tenemos guardado ya es viejo.
     case "ACCOUNT_HOLDINGS_UPDATED":
+      patch = { ...BUST };
+      break;
+    // Movimientos nuevos: además de las posiciones invalidan los FLUJOS. La caché de
+    // snaptrade_activities es DIARIA (el endpoint origen sirve datos diarios), así que sin
+    // esto una aportación de hoy no aparecía en "has aportado" hasta mañana: el valor de la
+    // cartera subía por el ingreso y las aportaciones seguían sin contarlo, o sea un
+    // rendimiento inflado justo el día en que metes dinero, que es cuando más se mira.
     case "ACCOUNT_TRANSACTIONS_UPDATED":
     case "ACCOUNT_TRANSACTIONS_INITIAL_UPDATE":
     case "NEW_ACCOUNT_AVAILABLE":
     case "TRADES_PLACED":
-      patch = { ...BUST };
+      patch = { ...BUST, snaptrade_activities: null };
       break;
     case "CONNECTION_ADDED":
       // Fresh (re)connection → clear any prior "trial vencido" disconnect marker so
