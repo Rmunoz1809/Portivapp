@@ -416,11 +416,12 @@ Deno.serve(async (req) => {
       return { opts, others };
     };
 
-    let holdings: any[] = [];
-    let brokenAccounts = 0;
-    for (const a of accts) {
+    // Lectura completa de UNA cuenta. Es el cuerpo del bucle de siempre, extraído tal cual
+    // para poder lanzarlo en paralelo. Devuelve null si la cuenta no trae id: ni se lee, ni
+    // cuenta como rota —no hay nada que leer, no es que el broker no respondiera.
+    const readOneAccount = async (a: any) => {
       const accountId = a?.id ?? a?.account_id;
-      if (!accountId) continue;
+      if (!accountId) return null;
       const pos = await readAcct(() => ai.getUserAccountPositions({ ...sid, accountId }));
       const bal = await readAcct(() => ai.getUserAccountBalance({ ...sid, accountId }));
       let optionPositions: any[] = [];
@@ -437,15 +438,53 @@ Deno.serve(async (req) => {
         // fallback marcan la cuenta como ROTA: esto es declarativo, no alimenta la cartera.
         try { optionPositions = (await (st as any).options.listOptionHoldings({ ...sid, accountId })).data ?? []; } catch { /* optional */ }
       }
-      if (!pos.ok || !bal.ok) brokenAccounts++;
       const total = a?.balance?.total?.amount ?? a?.balance?.total ?? null;
-      holdings.push({
-        account: { id: accountId, ...(total != null ? { balance: { total } } : {}) },
-        balances: bal.data,
-        positions: pos.data,
-        option_positions: optionPositions,
-        other_positions: otherPositions,
-      });
+      return {
+        broken: !pos.ok || !bal.ok,
+        entry: {
+          account: { id: accountId, ...(total != null ? { balance: { total } } : {}) },
+          balances: bal.data,
+          positions: pos.data,
+          option_positions: optionPositions,
+          other_positions: otherPositions,
+        },
+      };
+    };
+
+    // ── Las cuentas en paralelo, pero con la correa corta ────────────────────────────
+    // En serie cada cuenta encadenaba sus lecturas a la latencia total: con 5 cuentas eran
+    // 15 viajes de ida y vuelta uno detrás de otro —y el reintento de 800 ms de readAcct
+    // encima— mientras el usuario mira un esqueleto. Ninguna cuenta depende de otra.
+    //
+    // Con TECHO de 4, no Promise.all a pelo: los rate limits de SnapTrade son por clientId,
+    // o sea del proyecto ENTERO, no de este usuario. Alguien con 12 cuentas dispararía 12
+    // peticiones simultáneas y se llevaría por delante los refrescos de los demás con 429s
+    // —que readAcct convertiría en "cuenta rota" y el afectado vería su cartera a medias.
+    // El número de llamadas es exactamente el mismo que antes; sólo cambia cuántas viajan
+    // a la vez.
+    const CONCURRENCY = 4;
+    const slots: Awaited<ReturnType<typeof readOneAccount>>[] = new Array(accts.length).fill(null);
+    let nextIdx = 0;
+    const worker = async () => {
+      while (true) {
+        const i = nextIdx++;   // seguro sin cerrojo: el bucle de eventos de Deno es un solo hilo
+        if (i >= accts.length) return;
+        slots[i] = await readOneAccount(accts[i]);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, accts.length) }, () => worker()));
+
+    // El recuento de rotas y el montaje del array van DESPUÉS, recorriendo `slots` en orden.
+    // Dos motivos: incrementar brokenAccounts desde dentro de las tareas lo haría depender de
+    // quién termine antes, y sobre todo el orden de `holdings` tiene que seguir siendo el de
+    // `accts` —el cliente casa cuentas por posición en más de un sitio, y reordenarlas según
+    // cuál conteste primero movería el efectivo de una cuenta a otra entre dos refrescos.
+    const holdings: any[] = [];
+    let brokenAccounts = 0;
+    for (const r of slots) {
+      if (!r) continue;
+      if (r.broken) brokenAccounts++;
+      holdings.push(r.entry);
     }
     const holdArr = holdings;
 
