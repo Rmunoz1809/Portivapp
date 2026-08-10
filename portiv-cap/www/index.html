@@ -14219,9 +14219,16 @@ const PORTIV_CHART = {
     const p=period||(typeof activePeriod!=='undefined'?activePeriod:'1M');
     const ds=this.generate(p);
     if(!ds||!ds.values.length)return;
-    if(typeof setPeriodData==='function'){ setPeriodData(p, ds); return; }
+    // Repintado automático (ticks de 60 s / vuelta a la app): con las cotizaciones del día en
+    // vuelo, setPeriodData conserva la curva ya dibujada en vez de pintar la provisional plana.
+    if(typeof setPeriodData==='function'){
+      if(typeof _pvAutoRedraw==='function') _pvAutoRedraw(function(){ setPeriodData(p, ds); });
+      else setPeriodData(p, ds);
+      return;
+    }
     // Fallback: actualizar Chart.js directamente
     if(typeof perfChart==='undefined'||!perfChart)return;
+    if(typeof _pvQuotesPending==='function' && _pvQuotesPending() && typeof _pvChartHasSeries==='function' && _pvChartHasSeries()) return;
     const isPos=ds.change>=0;
     const col=isPos?'#0e8c5c':'#ba1a1a';
     const ctx=document.getElementById('perfChart')?.getContext('2d');
@@ -14995,6 +15002,9 @@ function _redrawActiveChart() {
   if (!perfChart) return;
   var p = (typeof activePeriod !== 'undefined' && activePeriod) ? activePeriod : '1M';
   var btn = document.querySelector('.period-btn[data-period="' + p + '"]');
+  // Repintado automático: si las cotizaciones del día siguen en vuelo, setPeriodData conserva
+  // la curva ya dibujada en vez de sustituirla por la provisional plana.
+  if (typeof _pvAutoRedraw === 'function') { _pvAutoRedraw(function(){ setPeriod(p, btn || undefined); }); return; }
   setPeriod(p, btn || undefined);
 }
 
@@ -15259,7 +15269,12 @@ function unlockPeriods() {
       const _cur = _dur(activePeriod);
       const fb = avail.sort((a, b2) => Math.abs(_dur(a) - _cur) - Math.abs(_dur(b2) - _cur))[0] || '1M';
       const b = container.querySelector(`.period-btn[data-period="${fb}"]`);
-      if (b && typeof setPeriod === 'function') setPeriod(fb, b);
+      // Salto automático de período (no lo pidió el usuario) → mismo trato que _redrawActiveChart:
+      // con las cotizaciones del día en vuelo no se sustituye la curva ya dibujada.
+      if (b && typeof setPeriod === 'function') {
+        if (typeof _pvAutoRedraw === 'function') _pvAutoRedraw(function(){ setPeriod(fb, b); });
+        else setPeriod(fb, b);
+      }
     }
   } else {
     _pvUnavailStreak = 0;
@@ -15553,6 +15568,14 @@ function initPerfChart() {
     const _snap = JSON.parse(localStorage.getItem('pv_perf_snap_1M') || 'null');
     const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
     if (_snap && _snap.day === _day && Array.isArray(_snap.values) && _snap.values.length > 2) d = _snap;
+    // PRIMERA APERTURA DEL DÍA: la foto es de la sesión ANTERIOR, así que el gate de arriba la
+    // descartaba y se acababa dibujando la serie provisional (recta plana, +0.00%) hasta que
+    // llegaban las cotizaciones ~3 s después. Con los precios aún en vuelo se prefiere esa curva
+    // de ayer: es la última REAL que el usuario vio y difiere de la de hoy en un solo punto —
+    // además fija la banda del eje Y en el rango bueno, así que no hay salto de escala. El
+    // repintado que dispara fetchLivePrices la sustituye por la del día en cuanto hay precios.
+    else if (_snap && Array.isArray(_snap.values) && _snap.values.length > 2
+             && typeof _pvQuotesPending === 'function' && _pvQuotesPending()) d = _snap;
   } catch(e) {}
   if (!d) { try { if (typeof PORTIV_CHART !== 'undefined') d = PORTIV_CHART.generate('1M'); } catch(e) {} }
   if (!d || !d.values || !d.values.length) d = _scaleSeriesToTotal(PERF_DATA['1M']);
@@ -16119,10 +16142,47 @@ function _pvChartMorph(chart, nextLabels, nextValues, nextColor, nextFill, ms) {
   } catch(e) { return false; }
 }
 
+// ── PRIMERA CARGA DEL DÍA: LA GRÁFICA YA DIBUJADA NO SE TIRA ──────────────────────────
+// Al abrir el app, HOLDINGS vuelve de localStorage con los precios de la sesión ANTERIOR.
+// Durante los ~3 s que tarda el primer fetchLivePrices, cualquier serie que genere
+// PORTIV_CHART termina en ese total viejo y su último tramo sale plano (+0.00%). Eso se
+// pintaba encima de la curva buena y, al llegar las cotizaciones, la gráfica saltaba de golpe.
+// Ahora los repintados AUTOMÁTICOS (renderAll, tick de 60 s, PORTIV_CHART.refresh) se abstienen
+// mientras las cotizaciones están en vuelo: se conserva la curva que el usuario ya ve y la
+// sustituye el repintado que dispara fetchLivePrices cuando los precios reales llegan.
+// Nunca bloquea al usuario: tocar un chip de período pinta siempre (no pasa por este gate).
+window._PV_QUOTES_PENDING = true;   // lo apaga el 1er fetchLivePrices (éxito o fallo) o el timeout de arranque
+function _pvQuotesPending(){
+  try { return !!window._PV_QUOTES_PENDING && !isLive; } catch(e){ return false; }
+}
+// Sólo se puede conservar lo que ya está pintado: sin serie previa (usuario nuevo, primer
+// arranque absoluto) se dibuja lo que haya, aunque sea provisional — mejor eso que un hueco.
+function _pvChartHasSeries(){
+  try {
+    const s = perfChart && perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0];
+    return !!(s && Array.isArray(s.data) && s.data.length >= 2);
+  } catch(e){ return false; }
+}
+// `window._PV_AUTO_REDRAW` > 0 ⇒ el repintado en curso es automático, no lo pidió el usuario.
+// Cubre también updMode 'skip' (zoom/morph): un cambio de período AUTOMÁTICO —el que dispara
+// unlockPeriods cuando el activo se queda sin datos— entraría por ahí y comprometería la serie
+// provisional sin pasar por el gate. Con el usuario al mando el contador vale 0 y no aplica nada.
+function _pvHoldChartWhileLoading(updMode){
+  return ((window._PV_AUTO_REDRAW|0) > 0) && _pvQuotesPending() && _pvChartHasSeries();
+}
+// Marca el repintado que envuelve como AUTOMÁTICO (contador, soporta anidamiento).
+function _pvAutoRedraw(fn){
+  window._PV_AUTO_REDRAW = (window._PV_AUTO_REDRAW|0) + 1;
+  try { return fn(); }
+  finally { window._PV_AUTO_REDRAW = Math.max(0, (window._PV_AUTO_REDRAW|0) - 1); }
+}
+
 // Permite que PORTIV_CHART inyecte un dataset directamente (sin pasar por setPeriod).
 // `updMode`: modo de update de Chart.js. 'skip' = no pintar (lo hace el zoom por frames).
 function setPeriodData(period, ds, updMode) {
   if (!perfChart || !ds || !ds.values || !ds.values.length) return;
+  // Cotizaciones del día aún en vuelo → se conserva la curva ya dibujada (ver bloque de arriba).
+  if (_pvHoldChartWhileLoading(updMode)) return;
   // Largo de la serie pintada AHORA (antes de reemplazarla): decide si la transición
   // animada de Chart.js es segura. Ver el update() del final.
   const _prevLen = (perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0]
@@ -16418,7 +16478,9 @@ function updatePerfHeader() {
   const ap = (typeof activePeriod !== 'undefined') ? activePeriod : '1M';
   let ds = null;
   try { if (typeof PORTIV_CHART !== 'undefined') ds = PORTIV_CHART.generate(ap); } catch(e) {}
-  if (ds && ds.values && ds.values.length && typeof setPeriodData === 'function') setPeriodData(ap, ds);
+  // Repintado automático (lo dispara renderAll): con las cotizaciones del día en vuelo,
+  // setPeriodData conserva la curva ya dibujada. Los KPIs de abajo sí se actualizan siempre.
+  if (ds && ds.values && ds.values.length && typeof setPeriodData === 'function') _pvAutoRedraw(function(){ setPeriodData(ap, ds); });
   try { _updatePerfTotals(ap, ds); } catch(e) {}
 }
 
@@ -17356,6 +17418,14 @@ async function fetchLivePrices() {
   } catch(e) {
     console.warn('Live prices failed:', e);
     updateLiveBadge();
+  } finally {
+    // La 1ª cotización del día ya se resolvió (con datos o con error): a partir de aquí los
+    // repintados automáticos vuelven a mandar sobre la gráfica. Si no hubo precios buenos se
+    // repinta una vez, para no dejar congelada indefinidamente la curva de la sesión anterior.
+    if (window._PV_QUOTES_PENDING) {
+      window._PV_QUOTES_PENDING = false;
+      if (!isLive) { try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); } catch(e2) {} }
+    }
   }
 }
 
@@ -28082,6 +28152,14 @@ function init() {
     // ARRANQUE: el primer frame se pinta desde caché local; recotizar precios NO debe
     // bloquear el primer paint del portafolio → se difiere tras pintar (doble rAF).
     requestAnimationFrame(() => requestAnimationFrame(() => { try { fetchLivePrices(); } catch(e){} }));
+    // RED DE SEGURIDAD del gate "no tirar la gráfica mientras cargan los precios": si el primer
+    // fetchLivePrices nunca resuelve (red colgada, app dormida a media petición), el gate no debe
+    // dejar la gráfica congelada para siempre. A los 15 s se libera y se repinta una vez.
+    setTimeout(() => {
+      if (!window._PV_QUOTES_PENDING) return;
+      window._PV_QUOTES_PENDING = false;
+      try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); } catch(e) {}
+    }, 15000);
     let _priceTickCount = 0;
     // Backoff por inactividad (Fase 3.3): si el usuario no interactúa en >10min (aunque la
     // pestaña siga visible), duplicamos los intervalos de red (mitad de cotizaciones) hasta
