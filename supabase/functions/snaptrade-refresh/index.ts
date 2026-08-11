@@ -43,6 +43,24 @@ const CACHE_MS = 60 * 60 * 1000; // 60 minutes
 const MANUAL_SYNC_MIN_MS = 30 * 60 * 1000; // 1 sincronización facturada / 30 min / usuario
 const STALE_MS = 15 * 60 * 1000;           // datos con < 15 min no se pagan por refrescar
 
+// ── Identidad REAL del broker ────────────────────────────────────────────────────
+// `brokerage.slug` es el único identificador que SnapTrade garantiza por contrato:
+// "A short, unique identifier for the brokerage … will never change". `display_name`
+// (lo único que llegaba hasta ahora al cliente) es texto comercial: cambia, se localiza,
+// y colgar de él un indexOf('Interactive') rompe en silencio el día que lo toquen.
+//
+// El valor concreto del slug de IBKR NO está escrito en el fuente a propósito: se
+// configura como secreto (`supabase secrets set SNAPTRADE_IBKR_SLUG=…`) con el valor que
+// devuelve referenceData.listAllBrokerages(). Mientras no esté puesto, toda la lógica
+// específica de IBKR queda INERTE y la app se comporta igual que antes — que es el fallo
+// correcto: es mejor no tratar a IBKR de forma especial que tratar como IBKR al broker
+// equivocado por haber adivinado el slug.
+const IBKR_SLUG = (Deno.env.get("SNAPTRADE_IBKR_SLUG") ?? "").trim().toUpperCase();
+
+// Días sin una sola cuenta ni un solo sync tras los que una conexión se declara dormida
+// (ver el bloque `dormantConnections`, más abajo).
+const DORMANT_DAYS = Number(Deno.env.get("SNAPTRADE_DORMANT_DAYS") ?? "7");
+
 /** Best-effort extraction of the primary account id from a holdings payload. */
 function primaryAccountId(holdings: any): string | null {
   const arr = Array.isArray(holdings) ? holdings : holdings?.accounts ?? [];
@@ -291,6 +309,31 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── Suelo de reconstrucción cuando no hay primera transacción ───────────────────
+    // `inceptionDate` (arriba) sale de first_transaction_date. Hay conexiones —IBKR entre
+    // ellas— que son "Balance Only": entregan posiciones y efectivo pero NUNCA actividades,
+    // así que ese campo llega null en TODAS las cuentas y el cliente no llega a establecer
+    // `_BROKER_INCEPTION`. Sin ese tope, su reconstrucción Yahoo proyecta las participaciones
+    // de hoy hacia atrás sin límite: es exactamente el "+34 % en ALL" falso que el clamp se
+    // escribió para matar, reaparecido por la puerta de atrás para un usuario solo-IBKR.
+    //
+    // Va en un campo DISTINTO a propósito. `inceptionDate` significa "cuándo empezó tu cartera
+    // de verdad" y el cliente lo trata como dato duro; esto es una estimación prudente ("antes
+    // de esta fecha seguro que no había nada"). Meterlas en el mismo campo convertiría una
+    // estimación en un hecho, y el cliente pintaría un "desde el principio" que no lo es.
+    let inceptionFloor: string | null = null;
+    if (!inceptionDate) {
+      for (const c of conns) {
+        const d = typeof c?.created_date === "string" && c.created_date ? c.created_date : null;
+        if (d && (!inceptionFloor || d < inceptionFloor)) inceptionFloor = d;
+      }
+      // Sin fecha de creación (el broker no la reporta) queda el sync más viejo: es un suelo
+      // peor —posterior a la conexión real— pero sigue siendo mejor que ninguno.
+      if (!inceptionFloor && lastSync) inceptionFloor = lastSync;
+    }
+    const inceptionSource: "transactions" | "connection" | null =
+      inceptionDate ? "transactions" : (inceptionFloor ? "connection" : null);
+
     // ── ¿Terminó la sincronización INICIAL de todas las cuentas? ─────────────────────
     // Hoy `syncing` se deduce heurísticamente ("hay cuenta pero no hay datos → estará
     // sincronizando"). Para una cuenta real a $0 —recién abierta o liquidada— eso nunca deja
@@ -335,6 +378,13 @@ Deno.serve(async (req) => {
       return {
         id: c?.id ?? null,
         name: c?.brokerage?.display_name ?? c?.brokerage?.name ?? c?.name ?? null,
+        // Identidad estable (ver IBKR_SLUG arriba). `name` sigue siendo lo que se PINTA;
+        // `slug` es lo único con lo que el cliente decide comportamiento.
+        slug: c?.brokerage?.slug ?? null,
+        // Cuándo se estableció la conexión en SnapTrade. Es el reloj de las dos esperas
+        // que el cliente necesita medir: las 48 h de habilitación de IBKR y la ventana
+        // de `dormantConnections`.
+        createdDate: c?.created_date ?? null,
         accounts: mine.length,
         disabled: c?.disabled === true,
         disabledSince: c?.disabled_date ?? null,
@@ -353,6 +403,35 @@ Deno.serve(async (req) => {
         id: i.id,
         name: i.name,
         disabledSince: i.disabledSince,
+        accounts: i.accounts,
+      }));
+
+    // ── Conexiones que nunca llegaron a entregar nada ───────────────────────────────
+    // Una conexión IBKR cuyo dueño no completó el paso del engranaje en el portal de IBKR
+    // —o cuya cuenta aún no está fondeada— jamás habilita el acceso: se queda VIVA en
+    // SnapTrade, sin una sola cuenta y sin un solo sync. SnapTrade no la reporta como rota
+    // (no lo está), así que hoy no aparece por ninguna parte: al usuario le cuesta el enlace
+    // todos los meses, indefinidamente, a cambio de cero datos.
+    //
+    // Aquí sólo se DETECTA y se declara. No se desconecta sola a propósito: el usuario puede
+    // estar dentro de su ventana legítima (IBKR tarda hasta 48 h) o a punto de completar el
+    // proceso, y desconectarle le obligaría a rehacerlo entero — el peor resultado posible.
+    // La decisión es suya; nuestro trabajo es que la vea. Va aquí y no en snaptrade-cleanup
+    // porque cleanup es un cron que ACTÚA y cuya salida no lee nadie, mientras que esto es
+    // exactamente lo que pinta la tarjeta, derivado de `institutions` que ya está calculado.
+    const dormantConnections = institutions
+      .filter((i) => {
+        if (i.disabled) return false;      // eso ya lo cuenta staleConnections
+        if (!i.createdDate) return false;  // sin edad no se acusa a nadie
+        const age = Date.now() - new Date(i.createdDate).getTime();
+        if (!isFinite(age) || age < DORMANT_DAYS * 86400000) return false;
+        return i.accounts === 0 || !i.lastSync;
+      })
+      .map((i) => ({
+        id: i.id,
+        name: i.name,
+        slug: i.slug,
+        createdDate: i.createdDate,
         accounts: i.accounts,
       }));
 
@@ -539,11 +618,15 @@ Deno.serve(async (req) => {
           holdings: profile.snaptrade_holdings,
           accountId: profile.snaptrade_account_id ?? null,
           inceptionDate,
+          inceptionFloor,
+          inceptionSource,
           lastSync: lastSync ?? profile.snaptrade_last_refresh ?? null,
           stale: true,
           partial: true,
           staleConnections,
           institutions,
+          dormantConnections,
+          brokerSlugs: { ibkr: IBKR_SLUG || null },
           accountsWithoutSync,
           closedAccounts,
           fromCache: true,
@@ -610,9 +693,13 @@ Deno.serve(async (req) => {
         holdings: holdArr,
         accountId: profile.snaptrade_account_id ?? null,
         inceptionDate,
+        inceptionFloor,
+        inceptionSource,
         lastSync,
         staleConnections,
         institutions,
+        dormantConnections,
+        brokerSlugs: { ibkr: IBKR_SLUG || null },
         accountsWithoutSync,
         closedAccounts,
         syncQueued,

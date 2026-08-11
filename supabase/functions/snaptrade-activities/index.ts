@@ -36,7 +36,7 @@
 // Request  (POST): { userId?: string, force?: boolean, startDate?: string, endDate?: string }
 // Response (200):  { available, reason?, currencies, byMonth, transfers, unknownTypes,
 //                    signMismatches, undated, unusable, truncated, partial, accounts,
-//                    accountsMissing, updatedAt, fromCache }
+//                    accountsMissing, accountsNoTxSupport, updatedAt, fromCache }
 // Response (4xx/5xx): { available:false, reason:"error", error } — al contrario que
 //   snaptrade-history, aquí un fallo NO se disfraza de 200: la gráfica aguanta un hueco,
 //   pero una cifra de aportaciones sin garantías no se enseña como si la tuviera.
@@ -70,6 +70,17 @@ const INTERNAL_TYPES = new Set([
   "BUY", "SELL", "DIVIDEND", "REI", "STOCK_DIVIDEND", "INTEREST", "FEE", "TAX",
   "OPTIONEXPIRATION", "OPTIONASSIGNMENT", "OPTIONEXERCISE", "SPLIT", "ADJUSTMENT",
 ]);
+
+// ── Conexiones que NO entregan historial de transacciones ────────────────────────
+// Lista explícita, por slug (el único identificador estable de SnapTrade). Hoy sólo IBKR:
+// su integración es "Balance Only" —posiciones y efectivo, sin actividades—. No es un fallo
+// ni algo que podamos arreglar: es cómo funciona esa conexión.
+//
+// El slug real no se escribe aquí: se configura como secreto (SNAPTRADE_IBKR_SLUG). Sin él,
+// esta lista queda vacía y la función se comporta exactamente como antes.
+const NO_TX_SLUGS = new Set(
+  [(Deno.env.get("SNAPTRADE_IBKR_SLUG") ?? "").trim().toUpperCase()].filter(Boolean),
+);
 
 const PAGE = 1000;      // máximo que admite el endpoint
 const MAX_PAGES = 20;   // 20.000 movimientos por cuenta; más que eso se marca `truncated`
@@ -146,9 +157,10 @@ Deno.serve(async (req) => {
     // Sin filtrar las cerradas (ver cabecera). Si el listado falla se cae a la cuenta
     // guardada en el perfil, para no quedarnos sin nada por un 429.
     let accountIds: string[] = [];
+    let acctRows: any[] = [];
     try {
-      const accts = ((await ai.listUserAccounts(sid)).data as any[]) ?? [];
-      accountIds = accts.map((a: any) => a?.id ?? a?.account_id).filter((x: any): x is string => !!x);
+      acctRows = ((await ai.listUserAccounts(sid)).data as any[]) ?? [];
+      accountIds = acctRows.map((a: any) => a?.id ?? a?.account_id).filter((x: any): x is string => !!x);
     } catch (e) {
       console.warn("[snaptrade-activities] listUserAccounts falló:", String(e).slice(0, 200));
     }
@@ -157,6 +169,42 @@ Deno.serve(async (req) => {
     }
     if (accountIds.length === 0) {
       return jsonResponse(req, { available: false, reason: "no_account" });
+    }
+
+    // ── Cuentas cuya conexión no da transacciones (ver NO_TX_SLUGS) ────────────────
+    // Estas cuentas responden con ÉXITO y lista VACÍA, así que NO caen en
+    // `accountsMissing` —que sólo marca cuentas que no se pudieron LEER— y `partial` se
+    // queda en false. Con Schwab + IBKR eso significa: no salta ningún aviso, y el cliente
+    // pinta "Has aportado $X netos" donde X es sólo lo de Schwab, presentado contra un
+    // patrimonio total que SÍ incluye IBKR. Una cifra incorrecta sin una sola señal de
+    // que lo sea. Se declaran aparte para que el cliente pueda decir la salvedad.
+    //
+    // No se excluyen de la lectura: si algún día IBKR empezara a entregar actividades, sus
+    // movimientos entrarían solos y esto sólo sobraría en el aviso.
+    const accountsNoTxSupport: string[] = [];
+    if (NO_TX_SLUGS.size && acctRows.length) {
+      try {
+        const conns = ((await st.connections.listBrokerageAuthorizations(sid)).data as any[]) ?? [];
+        const noTxConnIds = new Set(
+          conns
+            .filter((c: any) => NO_TX_SLUGS.has(String(c?.brokerage?.slug ?? "").toUpperCase()))
+            .map((c: any) => c?.id)
+            .filter(Boolean),
+        );
+        if (noTxConnIds.size) {
+          for (const a of acctRows) {
+            const id = a?.id ?? a?.account_id;
+            if (id && noTxConnIds.has(a?.brokerage_authorization)) accountsNoTxSupport.push(id);
+          }
+        }
+      } catch (e) {
+        // Si no se puede saber, no se inventa: la cifra se enseña sin la salvedad, igual
+        // que antes de este cambio. Un aviso a medias es peor que el estado conocido.
+        console.warn(
+          "[snaptrade-activities] listBrokerageAuthorizations falló:",
+          String(e).slice(0, 200),
+        );
+      }
     }
 
     // ── Lectura paginada de UNA cuenta ────────────────────────────────────────
@@ -316,6 +364,7 @@ Deno.serve(async (req) => {
       partial,
       accounts: accountIds.length,
       accountsMissing,
+      accountsNoTxSupport,
     };
 
     // Una foto PARCIAL no se cachea: se sirve marcada como parcial, pero sellarla un día

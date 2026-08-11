@@ -18,6 +18,8 @@
 //                    accounts?, fromCache? }
 //   terminal: reintentar en esta sesión no puede cambiar el resultado → el cliente para.
 //   partial:  hay curva pero le falta alguna cuenta → la suma va por debajo de la real.
+//   partialBrokers: [{name,slug}] de quién son esas cuentas ausentes, para poder decir si
+//     el hueco es transitorio o una limitación permanente de esa conexión (IBKR).
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
 import {
@@ -120,6 +122,7 @@ Deno.serve(async (req) => {
         reason: cached.reason,
         terminal: !!cached.terminal,
         partial: !!cached.partial,
+        partialBrokers: cached.partialBrokers ?? [],
         accounts: cached.accounts ?? null,
         fromCache: true,
       });
@@ -136,6 +139,7 @@ Deno.serve(async (req) => {
     // todas y se cae a la guardada si el listado falla, para no quedarnos sin gráfica
     // por un 429.
     let accountIds: string[] = [];
+    let usableRows: any[] = [];
     try {
       const accts = ((await st.accountInformation.listUserAccounts(sid)).data as any[]) ?? [];
       // Cuentas cerradas/archivadas fuera: pedir su curva gasta una llamada a un endpoint
@@ -153,6 +157,7 @@ Deno.serve(async (req) => {
           `[snaptrade-history] ${accts.length - usable.length} cuenta(s) cerrada(s)/archivada(s) omitida(s)`,
         );
       }
+      usableRows = usable;
       accountIds = usable.map((a) => a?.id ?? a?.account_id).filter((x): x is string => !!x);
     } catch (e) {
       console.warn("[snaptrade-history] listUserAccounts falló:", String(e).slice(0, 200));
@@ -200,6 +205,43 @@ Deno.serve(async (req) => {
     // debajo del valor real de la cartera. Se avisa en vez de pintarla como completa.
     const partial = available && failed > 0;
 
+    // ── ¿De QUIÉN son las cuentas que faltan? ──────────────────────────────────────
+    // Con `partial` a secas el cliente dice "Falta al menos una de tus cuentas en esta
+    // curva", que invita a reintentar. Si la cuenta ausente es de una conexión que nunca
+    // va a entregar esa serie (IBKR: integración Balance Only), reintentar no puede
+    // cambiar nada — no es un fallo transitorio, es una limitación permanente de esa
+    // conexión. Nombrar al broker es la diferencia entre un usuario que espera algo que
+    // no va a llegar y uno que entiende lo que tiene.
+    //
+    // Se devuelve `slug` además del nombre: el cliente decide comportamiento por slug
+    // (estable por contrato) y pinta el nombre (texto comercial, puede cambiar).
+    // La llamada extra sólo se hace cuando ya sabemos que falta algo: en el camino bueno
+    // esta función no gasta ni una petición más de las que gastaba.
+    let partialBrokers: { name: string | null; slug: string | null }[] = [];
+    if (failed > 0 && usableRows.length) {
+      const missing = new Set(accountIds.filter((_, i) => settled[i] === null));
+      try {
+        const conns = ((await st.connections.listBrokerageAuthorizations(sid)).data as any[]) ?? [];
+        const byId = new Map(conns.map((c: any) => [c?.id, c]));
+        const seen = new Set<string>();
+        for (const a of usableRows) {
+          const id = a?.id ?? a?.account_id;
+          if (!id || !missing.has(id)) continue;
+          const c: any = byId.get(a?.brokerage_authorization);
+          const slug = c?.brokerage?.slug ?? null;
+          const name = c?.brokerage?.display_name ?? c?.brokerage?.name ?? null;
+          const key = String(slug ?? name ?? "");
+          if (!key || seen.has(key)) continue;
+          seen.add(key);
+          partialBrokers.push({ name, slug });
+        }
+      } catch (e) {
+        // Sin saber de quién es el hueco, se deja el aviso genérico de siempre. Nombrar
+        // al broker equivocado sería peor que no nombrar a ninguno.
+        console.warn("[snaptrade-history] listBrokerageAuthorizations falló:", String(e).slice(0, 200));
+      }
+    }
+
     // `terminal` = reintentar en esta sesión no puede cambiar la respuesta, así que el
     // cliente debe dejar de insistir. getAccountBalanceHistory es experimental y viene
     // DESHABILITADO por defecto: hay que pedirle a SnapTrade que lo active por cuenta.
@@ -211,10 +253,10 @@ Deno.serve(async (req) => {
     // `terminal` se guarda calculado, no se recalcula al leer la caché: `transient` sólo
     // se conoce en el momento de la llamada, y sin él la caché convertía un 429 de hace
     // horas en un "no insistas" permanente.
-    const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, accounts: accountIds.length, history };
+    const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, partialBrokers, accounts: accountIds.length, history };
     await admin.from("profiles").update({ snaptrade_history: payload }).eq("id", userId);
 
-    return jsonResponse(req, { history, available, reason, terminal, partial, accounts: accountIds.length });
+    return jsonResponse(req, { history, available, reason, terminal, partial, partialBrokers, accounts: accountIds.length });
   } catch (e: any) {
     // Even on unexpected failure, never break the chart — return placeholder state.
     const message = e?.message ?? String(e);

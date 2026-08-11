@@ -7,7 +7,8 @@
 // The SnapTrade userId IS the Supabase auth user.id (immutable UUID) — never the
 // email. userSecret is generated once by SnapTrade and stored server-side only.
 //
-// Request  (POST): { userId?: string }   // userId optional; taken from the JWT
+// Request  (POST): { userId?: string, mode?: 'add', connectionId?: string, broker?: 'ibkr' }
+//   userId opcional (se toma del JWT). `broker` es un ALIAS, no un slug: ver BROKER_ALIASES.
 // Response (200):  { redirectURI: string }
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
@@ -18,6 +19,23 @@ import {
   loadProfile,
   requireEntitlement,
 } from "../_shared/snaptrade.ts";
+
+// ── Entrada directa al flujo de un broker concreto ───────────────────────────────
+// `loginSnapTradeUser` acepta `broker` (el slug del brokerage): con él, el portal se salta
+// la pantalla de selección y entra directo al flujo de ese broker. Con IBKR importa más
+// que con nadie, porque ese flujo no es un OAuth sino pegar un Query ID y un Token que el
+// usuario tiene que haber generado antes en el portal web de IBKR.
+//
+// El cliente NO manda el slug: manda un ALIAS ('ibkr'). Dos razones:
+//   1. El slug real vive en un único sitio —el secreto SNAPTRADE_IBKR_SLUG—, así que
+//      corregirlo no toca código ni en el servidor ni en el cliente.
+//   2. Nada que venga del cliente llega a `loginSnapTradeUser` sin pasar por este mapa.
+//      Un slug basura rompe el portal y el error que devuelve SnapTrade no dice qué pasó:
+//      el usuario ve una pantalla muerta y nosotros no vemos nada.
+// Un alias desconocido es 400 aquí mismo, con nombre.
+const BROKER_ALIASES: Record<string, string> = {
+  ibkr: (Deno.env.get("SNAPTRADE_IBKR_SLUG") ?? "").trim().toUpperCase(),
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return preflight(req);
@@ -174,6 +192,23 @@ Deno.serve(async (req) => {
     // broker una y otra vez—. El id se valida contra SU propia lista y sólo vale si esa
     // conexión está de verdad deshabilitada: uno de fuera no abre nada.
     const askedId = typeof body?.connectionId === "string" ? body.connectionId : "";
+    // Alias de broker → slug (ver BROKER_ALIASES arriba). Sin `broker` en el cuerpo, todo
+    // sigue exactamente igual que antes: portal con su pantalla de selección.
+    const brokerAlias = typeof body?.broker === "string" ? body.broker.trim().toLowerCase() : "";
+    let brokerSlug: string | null = null;
+    if (brokerAlias) {
+      if (!Object.prototype.hasOwnProperty.call(BROKER_ALIASES, brokerAlias)) {
+        return jsonResponse(req, { error: `Broker no reconocido: ${brokerAlias}` }, 400);
+      }
+      brokerSlug = BROKER_ALIASES[brokerAlias] || null;
+      if (!brokerSlug) {
+        // El alias es válido pero su slug no está configurado. Es un fallo NUESTRO de
+        // despliegue, no del usuario, y se dice como tal: mandarlo al portal genérico sin
+        // avisar le dejaría buscando IBKR en una lista larguísima sin saber por qué.
+        console.error(`[snaptrade-connect] falta el secreto del slug para el alias '${brokerAlias}'`);
+        return jsonResponse(req, { error: "broker_not_configured" }, 503);
+      }
+    }
     const disabledConn =
       (askedId ? conns.find((c: any) => c?.id === askedId && c?.disabled === true) : null) ??
       conns.find((c: any) => c?.disabled === true && c?.id) ?? null;
@@ -210,7 +245,15 @@ Deno.serve(async (req) => {
         // standard connection otherwise. Forcing "read" makes SnapTrade's portal throw
         // "Unexpected Error" for brokers that don't offer a pure read-only connection.
         // Portiv still only READS data — it never places trades.
+        // IBKR no ofrece trading vía SnapTrade. NO se le manda "read" a secas: la doc del
+        // SDK dice que "trade-if-available" cae automáticamente a solo-lectura cuando el
+        // broker no soporta trading, que es justo este caso, y forzar "read" es lo que
+        // hacía reventar el portal para otros brokers (ver arriba). Si alguna vez se
+        // comprueba con una conexión IBKR real que esta combinación falla, el arreglo es
+        // enviar "read" SÓLO cuando `brokerSlug` sea el de IBKR — nunca cambiar el global.
         connectionType: "trade-if-available",
+        // Salta la pantalla de selección y entra directo al flujo de ese broker.
+        ...(brokerSlug ? { broker: brokerSlug } : {}),
         ...(redirect ? { customRedirect: redirect } : {}),
         // El portal entra directo al flujo de reconexión de ESA conexión y renueva su token.
         ...(withReconnect && reconnectId ? { reconnect: reconnectId } : {}),
