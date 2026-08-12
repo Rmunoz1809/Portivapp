@@ -10886,16 +10886,40 @@ function _newsLinkFor(n) {
 function _cleanNewsText(t){
   if (t == null) return '';
   return String(t)
-    .replace(/<\s*\/?\s*cite[^>]*>/gi, '')       // <cite index="1-1"> … </cite>
+    // <cite index="1-1"> … </cite> en sus tres formas: literal, HTML-escapada
+    // (&lt;cite&gt;, que es la que se VE cuando el texto pasa por pvEsc) y con comillas
+    // angulares unicode (‹cite›), tal como a veces las devuelve la herramienta de búsqueda.
+    .replace(/<\s*\/?\s*cite\b[^>]*>/gi, '')
+    .replace(/&lt;\s*\/?\s*cite\b[^&]*?&gt;/gi, '')
+    .replace(/[‹＜]\s*\/?\s*cite\b[^›＞]*[›＞]/gi, '')
+    .replace(/\bcite\s+index\s*=\s*"[^"]*"\s*\/?\s*>?/gi, '')  // restos sin envoltura
     .replace(/<\s*\/?\s*(antml|tool|function)[^>]*>/gi, '') // artefactos de tooling
+    .replace(/&lt;\s*\/?\s*(antml|tool|function)[^&]*?&gt;/gi, '')
     .replace(/```[a-zA-Z]*|```/g, '')            // fences ```json
     .replace(/\[\s*\d+(?:\s*[-,]\s*\d+)?\s*\]/g, '') // [1] [1-2] refs
     .replace(/￼/g, '')                       // object replacement char
+    .replace(/\s+([,.;:])/g, '$1')               // espacio suelto antes de puntuación
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 window._cleanNewsText = _cleanNewsText;
+
+// Limpieza EN PROFUNDIDAD de cualquier estructura (outlook semanal, seeds, narrativa IA):
+// recorre strings/arrays/objetos y devuelve una copia sin artefactos de la herramienta
+// de búsqueda. Se usa al generar (antes de subir a la nube) y al renderizar (por si la
+// copia cacheada ya venía sucia).
+function _cleanAIDeep(v){
+  if (typeof v === 'string') return _cleanNewsText(v);
+  if (Array.isArray(v)) return v.map(_cleanAIDeep);
+  if (v && typeof v === 'object'){
+    const out = {};
+    for (const k in v) if (Object.prototype.hasOwnProperty.call(v,k)) out[k] = _cleanAIDeep(v[k]);
+    return out;
+  }
+  return v;
+}
+window._cleanAIDeep = _cleanAIDeep;
 
 // Construye una descripción más extensa y detallada para una noticia a partir
 // de los datos disponibles: el resumen real de la fuente (si existe) más varias
@@ -23198,6 +23222,9 @@ function _renderOutlookEmpty() {
 function _renderWeeklyOutlook(data) {
   const wrap = document.getElementById('weekOutlookContent');
   if (!wrap) return;
+  // Limpia artefactos de IA (<cite index="1-20">, refs [1], fences) que pueda traer la copia
+  // cacheada en la nube: el render nunca debe mostrarlos.
+  try { if (typeof _cleanAIDeep === 'function') data = _cleanAIDeep(data); } catch(e){}
 
   // Resultados de la semana ANTES de contar eventos: un seed que solo traía macro vacía no puede
   // mandar la vista al estado "sin eventos" si hay empresas reportando.
@@ -23520,6 +23547,8 @@ function _renderNextWeekOutlook(){
   // en background y este mismo render se repite con los datos nuevos.
   try { _earnEnsureFresh(1); } catch(e){}
   try { if (_earnInjectSeed(seed, 1)) { try { localStorage.setItem('weekly_outlook_' + _weekKey(1), JSON.stringify(seed)); } catch(e){} } } catch(e){}
+  // Sin artefactos de IA (<cite index="…">, refs [1], fences) en el seed antes de pintar.
+  try { if (typeof _cleanAIDeep === 'function') seed = _cleanAIDeep(seed); } catch(e){}
   const lbl = document.getElementById('nextWeekLabel'); if (lbl) lbl.textContent = seed.week || '';
   const top = _weekVolLevel(seed);
   const vb = document.getElementById('nextWeekVolBadge');
@@ -23969,6 +23998,7 @@ ${newsCtx}
 Si los titulares de arriba no bastan para confirmar el contexto de mercado más reciente y vigente, puedes hacer UNA búsqueda web para verificarlo; no hagas más de una.
 
 VOZ: prosa natural en español, frases completas, sin jerga en inglés (di "postura dura/suave de la Fed" no "hawkish/dovish", "resultados" no "earnings"), sin flechas (->), sin markdown.
+PROHIBIDO cualquier marca de la herramienta de búsqueda: NO uses etiquetas <cite> ni cite index="...", NO uses corchetes de referencia [1] o [1-2], NO uses bloques de código. Solo texto limpio.
 
 MERCADO GENERAL, NO CARTERA: escribe para el mercado de EE.UU. en general. Puedes referenciar índices y ETF grandes (S&P 500, Nasdaq, Dow, SOXX). NUNCA menciones "el portafolio", "tus posiciones" ni porcentajes/pesos de una cartera. Solo nombra una empresa concreta si un titular o evento listado arriba es específicamente sobre ella; si no, habla por sector o por índice.
 
@@ -23989,7 +24019,11 @@ key_themes = exactamente 3 temas clave.`;
     try{ if(typeof _tokAdd === 'function') _tokAdd(j.usage, AI_MODELS.reasoning, 'outlook'); }catch(e){}
     const t = (j.text||'').trim(); const m = t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedOutlook sin JSON');
     const raw = JSON.parse(m[0]);
-    return { theme: raw.theme||'', market_context: raw.market_context||'', key_themes: Array.isArray(raw.key_themes)?raw.key_themes:[], sources: Array.isArray(j.sources)?j.sources:[] };
+    // LIMPIEZA antes de subir a la nube: sin <cite index="…">, refs [1] ni fences → la copia
+    // compartida que reciben todos los usuarios ya llega limpia.
+    const _c  = (typeof _cleanNewsText==='function') ? _cleanNewsText : (x=>String(x||''));
+    const _cd = (typeof _cleanAIDeep==='function')  ? _cleanAIDeep   : (x=>x);
+    return { theme: _c(raw.theme||''), market_context: _c(raw.market_context||''), key_themes: Array.isArray(raw.key_themes)?_cd(raw.key_themes):[], sources: Array.isArray(j.sources)?j.sources:[] };
   }
 
   // Lee la nube y aplica si está fresca. NO genera. Para que TODOS (incl. no autenticados)
@@ -24036,6 +24070,7 @@ key_themes = exactamente 3 temas clave.`;
         if(narr.key_themes && narr.key_themes.length >= 2) data.key_themes = narr.key_themes;
         if(narr.sources && narr.sources.length) data.sources = narr.sources;   // disponible si en el futuro se quiere pintar "fuente" en el outlook
       }
+      try{ if(typeof _cleanAIDeep === 'function') data = _cleanAIDeep(data); }catch(e){}
       await _cloudSet(wk, { obj: data, ts: Date.now(), ver: VER, lang: _lang(), etDay: _etDay() });
       _applyToLocal(off, data);
       _rerender(off);
@@ -27089,7 +27124,9 @@ const PORTIV_NEWS = {
     let seedTop = '', seedBottom = '';
     try {
       const _sk = 'weekly_outlook_' + (typeof _weekKey === 'function' ? _weekKey(0) : this.weekId(0));
-      const _seed = JSON.parse(localStorage.getItem(_sk) || 'null');
+      let _seed = JSON.parse(localStorage.getItem(_sk) || 'null');
+      // Resumen de "Esta Semana" sin artefactos de IA (<cite index="…">, refs [1], fences).
+      try { if (_seed && typeof _cleanAIDeep === 'function') _seed = _cleanAIDeep(_seed); } catch(e){}
       // Tema + contexto + temas clave: del seed si existe; si no (navegador nuevo / Netlify
       // sin estado acumulado), se generan DETERMINISTAS desde los eventos reales de la
       // semana → el resumen de "Esta Semana" SIEMPRE aparece (gratis, igual en local y deploy).
