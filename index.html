@@ -4777,20 +4777,9 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-cat .cimp.hi{background:var(--px-red-soft);color:var(--px-red)}
       .pvx .px-cat .cimp.md{background:var(--px-amber-soft);color:var(--px-amber)}
       .pvx .px-cat .cimp.lo{background:#eef0f3;color:var(--px-muted)}
-      /* ownership / insiders */
-      .pvx .px-own{display:flex;gap:24px;flex-wrap:wrap;align-items:center}
-      .pvx .px-own-legend{flex:1;min-width:200px}
-      .pvx .px-oleg{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13.5px}
-      .pvx .px-oleg .sw{width:12px;height:12px;border-radius:4px;flex:0 0 auto}
-      .pvx .px-oleg .on{color:var(--px-ink-soft)} .pvx .px-oleg .ov{margin-left:auto;font-family:'Poppins','Manrope',sans-serif;font-weight:700}
-      .pvx .px-insider{margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)}
-      .pvx .px-insider h4{font-family:'Poppins','Manrope',sans-serif;font-size:13px;margin:0 0 10px;color:var(--px-ink-soft)}
-      .pvx .px-itx{display:flex;align-items:center;padding:8px 0;font-size:13px;gap:12px}
-      .pvx .px-itx .idir{font-weight:800;font-size:10.5px;padding:2px 8px;border-radius:6px;flex:0 0 auto}
-      .pvx .px-itx .idir.buy{background:var(--px-green-soft);color:var(--px-green-text)}
-      .pvx .px-itx .idir.sell{background:var(--px-red-soft);color:var(--px-red)}
-      .pvx .px-itx .idir.neu{background:#eef0f3;color:var(--px-muted)}
-      .pvx .px-itx .iname{color:var(--px-ink)} .pvx .px-itx .iamt{margin-left:auto;color:var(--px-ink-soft);font-family:'Poppins','Manrope',sans-serif;font-weight:600}
+      /* Análisis técnico — el canvas es lo único que necesita reglas propias: alto fijo,
+         ancho fluido y bloqueo del gesto de scroll horizontal en el WebView de iOS. */
+      .pvx .px-tec-canvas{display:block;width:100%;height:214px;touch-action:pan-y}
       .pvx .px-disclaimer{font-size:11px;color:var(--px-muted);text-align:center;padding:6px 0 18px;line-height:1.6}
       @media(max-width:760px){
         .pvx .px-hgrid,.pvx .px-scen,.pvx .px-pr,.pvx .px-eqr-notes{grid-template-columns:1fr}
@@ -5936,6 +5925,14 @@ window._pvAwaitIAP = function(totalMs){
         <span class="sl-txt"><b>Soporte y contacto</b><i>Ayuda, preguntas frecuentes y cómo escribirnos.</i></span>
         <span class="sl-arrow" aria-hidden="true"></span>
       </button>
+      <!-- Consentimiento de IA de terceros (Guideline 5.1.2(i)). El permiso se pide en la
+           primera llamada de IA; esto es el interruptor para revocarlo o volver a darlo,
+           que la guideline exige que exista y sea accesible. El subtítulo lo escribe
+           renderSettings() con el estado real. -->
+      <button class="set-legal-item" id="setAiConsent" onclick="_pvAiConsentToggle()">
+        <span class="sl-txt"><b>Análisis con inteligencia artificial</b><i id="setAiConsentSub">Compartir datos de tu cartera con Anthropic (Claude).</i></span>
+        <span class="sl-arrow" aria-hidden="true"></span>
+      </button>
       <button class="set-legal-item" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
         <span class="sl-txt"><b>Planes y precios</b><i>Qué incluye Portiv Pro.</i></span>
         <span class="sl-arrow" aria-hidden="true"></span>
@@ -6428,6 +6425,20 @@ async function renderSettings(){
   try {
     const _pr = document.getElementById('setLegalPricing');
     if (_pr) _pr.style.display = (typeof window._pvIsNativeApp === 'function' && window._pvIsNativeApp()) ? 'none' : 'flex';
+  } catch(e){}
+  // Estado real del consentimiento de IA. Se pinta en cada render porque puede cambiar
+  // fuera de Ajustes (el modal de la primera llamada) y una etiqueta desfasada aquí haría
+  // creer al usuario que compartió datos que no compartió, o al revés.
+  try {
+    const _ac = document.getElementById('setAiConsentSub');
+    if (_ac && window._pvAiConsent) {
+      const _v = window._pvAiConsent.get();
+      _ac.textContent = _v === 'yes'
+        ? 'Permitido — compartes datos de tu cartera con Anthropic (Claude). Toca para revocarlo.'
+        : (_v === 'no'
+            ? 'Desactivado — no se comparte nada con la IA. Toca para permitirlo.'
+            : 'Se te pedirá permiso antes de compartir datos de tu cartera con Anthropic (Claude).');
+    }
   } catch(e){}
   const isDark = document.body.classList.contains('dark-theme');
   document.querySelectorAll('#setThemeToggle .set-theme-opt').forEach(b =>
@@ -6961,6 +6972,174 @@ const _AI_SB_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/anthr
 const _AI_SB_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
 function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protocol); } catch(e){ return false; } }
 
+// ── CONSENTIMIENTO DE IA DE TERCEROS (App Store Guideline 5.1.2(i)) ──────────────
+// La guideline exige divulgar CON QUIÉN se comparten datos personales —"including with
+// third-party AI"— y obtener permiso EXPLÍCITO ANTES de compartirlos. Portiv manda a
+// Anthropic (Claude) la composición real de la cartera: símbolos, peso, sector, beta,
+// retorno esperado y el plan de rebalanceo. Eso es dato financiero personal, así que la
+// primera llamada de IA no puede salir sin un sí del usuario.
+//
+// DÓNDE SE APLICA: no en cada feature (son 13 puntos de llamada y cualquiera nuevo se
+// olvidaría), sino en el único sitio por el que los datos SALEN del dispositivo — el
+// fetch a _AI_SB_URL dentro de _aiFetch y _aiFetchVision. Ahí el gate es imposible de
+// esquivar y no se paga con un modal en features que ni siquiera llegan a la red (las
+// no esenciales se cortan antes con el 503 sintético de "paid-skip").
+//
+// SI RECHAZA: el resto del app funciona entero. Seguimiento de cartera, métricas de
+// riesgo, asesor determinista, rebalanceo, gráficos y SnapTrade no usan IA. Las features
+// que sí la usan reciben un 403 sintético y caen a su fallback determinista, exactamente
+// igual que ya hacen con el 503 de política de gasto — no hay camino nuevo que romper.
+//
+// PERSISTENCIA: localStorage manda (es lo que bloquea la llamada, y funciona sin sesión),
+// con espejo en `profiles.ai_consent` para que no se vuelva a preguntar al cambiar de
+// dispositivo. Si esa columna todavía no existe en Supabase, el espejo falla en silencio
+// y el consentimiento local sigue siendo válido: el gate nunca depende de la red.
+const _PV_AI_CONSENT = {
+  _inflight: null,
+  _key(){ return 'pv_ai_consent_' + (window.__pvUserId || 'local'); },
+  // 'yes' | 'no' | null (nunca preguntado)
+  get(){ try { return localStorage.getItem(this._key()) || null; } catch(e){ return null; } },
+  set(v){
+    try { localStorage.setItem(this._key(), v); } catch(e){}
+    // Espejo en la nube. Best-effort a propósito: un fallo aquí NO invalida la decisión
+    // que el usuario acaba de tomar, solo hace que otro dispositivo vuelva a preguntar.
+    try {
+      const sb = window.sbClient, uid = window.__pvUserId;
+      if (sb && uid && uid !== 'local') {
+        sb.from('profiles').update({ ai_consent: v === 'yes' }).eq('id', uid)
+          .then(function(){}, function(){});
+      }
+    } catch(e){}
+  },
+  // Trae la decisión guardada en la nube al iniciar sesión en un dispositivo nuevo. Solo
+  // rellena el hueco: si ya hay valor local, ese manda (es el más reciente que tocó este
+  // teléfono). Un error —incluida la columna inexistente— se traga sin ruido.
+  async hydrate(){
+    try {
+      const sb = window.sbClient, uid = window.__pvUserId;
+      if (!sb || !uid || uid === 'local') return;
+      if (this.get()) return;
+      const { data, error } = await sb.from('profiles').select('ai_consent').eq('id', uid).maybeSingle();
+      if (error || !data || data.ai_consent == null) return;
+      try { localStorage.setItem(this._key(), data.ai_consent ? 'yes' : 'no'); } catch(e){}
+    } catch(e){}
+  },
+  // Punto de entrada del gate. Devuelve true si se puede llamar a la IA.
+  // Concurrencia: varias features pueden pedir IA a la vez (chat + pregen de noticias).
+  // Una sola promesa en vuelo → un solo modal, y todas esperan la misma respuesta.
+  async ensure(){
+    const v = this.get();
+    if (v === 'yes') return true;
+    if (v === 'no')  return false;
+    if (this._inflight) return this._inflight;
+    this._inflight = this._ask().then((ok) => { this._inflight = null; return ok; });
+    return this._inflight;
+  },
+  // Modal construido en JS y no en el markup: no hay que tocar ningún bloque de HTML
+  // existente y no pesa nada hasta la primera vez que se abre. Paleta neutra del app
+  // (navy + fondo claro); NADA de verde/rojo, que aquí no hay dato financiero.
+  _ask(){
+    return new Promise((resolve) => {
+      let dark = false;
+      try { dark = document.body.classList.contains('dark-theme'); } catch(e){}
+      const cBg    = dark ? '#0e1a2b' : '#F8F9FF';
+      const cCard  = dark ? '#13233a' : '#FFFFFF';
+      const cTxt   = dark ? '#E8EDF5' : '#04162c';
+      const cTxt2  = dark ? '#9BA9BC' : '#4A5A70';
+      const cLine  = dark ? '#24384f' : '#E3E8F0';
+
+      const wrap = document.createElement('div');
+      wrap.id = 'pvAiConsent';
+      wrap.setAttribute('role', 'dialog');
+      wrap.setAttribute('aria-modal', 'true');
+      wrap.setAttribute('aria-labelledby', 'pvAiConsentTitle');
+      // z-index por encima del paywall y del quiz (12000-13000): este modal bloquea una
+      // transmisión de datos, así que no puede quedar debajo de nada.
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:14000;display:flex;align-items:flex-end;justify-content:center;'
+        + 'background:rgba(4,22,44,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);'
+        + 'padding:0;font-family:var(--font,Manrope,system-ui,sans-serif)';
+
+      const card = document.createElement('div');
+      // padding-bottom con safe-area: en iPhone con home indicator los botones quedaban
+      // pegados al borde y el gesto de home se comía el tap.
+      card.style.cssText = 'width:100%;max-width:520px;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;'
+        + 'background:' + cBg + ';border-radius:22px 22px 0 0;'
+        + 'padding:26px 22px calc(22px + env(safe-area-inset-bottom,0px));'
+        + 'box-shadow:0 -8px 40px rgba(4,22,44,.28)';
+
+      card.innerHTML =
+        '<div style="font:800 19px/1.3 inherit;color:' + cTxt + ';margin-bottom:8px" id="pvAiConsentTitle">Análisis con inteligencia artificial</div>'
+      + '<div style="font:500 14px/1.65 inherit;color:' + cTxt2 + ';margin-bottom:16px">'
+      +   'Para generar los análisis, el chat y los resúmenes, Portiv envía datos de tu cartera a '
+      +   '<b style="color:' + cTxt + '">Anthropic (Claude)</b>, un proveedor de inteligencia artificial de terceros.'
+      + '</div>'
+      + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:12px">'
+      +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ SE ENVÍA</div>'
+      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Los símbolos de tus posiciones, su peso en la cartera, el sector, la beta, el retorno esperado y el plan de rebalanceo calculado. Si usas el importador por captura, también la imagen que subes.</div>'
+      + '</div>'
+      + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:16px">'
+      +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ NO SE ENVÍA</div>'
+      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Tu correo, tu contraseña, ni las credenciales o el número de cuenta de tu broker.</div>'
+      + '</div>'
+      + '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + ';margin-bottom:20px">'
+      +   'Puedes rechazarlo y seguir usando Portiv: el seguimiento de tu cartera, las métricas de riesgo, el rebalanceo y la sincronización con tu broker no usan inteligencia artificial. '
+      +   'Cambia esta decisión cuando quieras en Ajustes.'
+      + '</div>'
+      + '<div style="display:flex;flex-direction:column;gap:9px">'
+      +   '<button type="button" id="pvAiConsentYes" style="width:100%;height:50px;border:0;border-radius:14px;background:#04162c;color:#fff;font:700 15px inherit;cursor:pointer">Aceptar y continuar</button>'
+      +   '<button type="button" id="pvAiConsentNo" style="width:100%;height:50px;border:1px solid ' + cLine + ';border-radius:14px;background:transparent;color:' + cTxt2 + ';font:600 15px inherit;cursor:pointer">Ahora no</button>'
+      + '</div>';
+
+      wrap.appendChild(card);
+
+      const _self = this;
+      let _done = false;
+      function _close(v){
+        if (_done) return;   // doble tap / tap + tecla → una sola decisión
+        _done = true;
+        _self.set(v);
+        try { wrap.remove(); } catch(e){}
+        try { document.body.style.overflow = _prevOv; } catch(e){}
+        resolve(v === 'yes');
+      }
+      // El overlay NO se cierra tocando fuera: cerrar sin decidir dejaría el estado en
+      // "nunca preguntado" y el modal reaparecería en la siguiente llamada. Se decide.
+      card.querySelector('#pvAiConsentYes').addEventListener('click', function(){ _close('yes'); });
+      card.querySelector('#pvAiConsentNo').addEventListener('click', function(){ _close('no'); });
+
+      let _prevOv = '';
+      try { _prevOv = document.body.style.overflow; document.body.style.overflow = 'hidden'; } catch(e){}
+      try { document.body.appendChild(wrap); } catch(e){ _done = true; resolve(false); return; }
+      try { card.querySelector('#pvAiConsentYes').focus(); } catch(e){}
+    });
+  }
+};
+window._pvAiConsent = _PV_AI_CONSENT;
+// Interruptor de Ajustes. Revocar es inmediato y no pregunta nada (nadie necesita que le
+// insistan para dejar de compartir sus datos). Volver a permitir sí reabre el modal
+// completo: el usuario tiene que leer otra vez qué se envía antes de decir que sí, que es
+// justo lo que pide la 5.1.2(i) — el permiso es informado, no un toggle a ciegas.
+window._pvAiConsentToggle = async function(){
+  try {
+    const c = window._pvAiConsent;
+    if (!c) return;
+    if (c.get() === 'yes') {
+      c.set('no');
+      try { if (typeof showToast === 'function') showToast('Listo. Ya no se comparten datos de tu cartera con la IA.', 'var(--text3)'); } catch(e){}
+    } else {
+      await c._ask();
+    }
+    try { if (typeof renderSettings === 'function') renderSettings(); } catch(e){}
+  } catch(e){}
+};
+// Respuesta sintética para cuando no hay consentimiento. Se usa el MISMO patrón que el
+// 503 de "paid-skip": los callers ya saben tratar un Response no-ok cayendo a su ruta
+// determinista, así que no hace falta tocar ninguno de los 13 puntos de llamada.
+function _pvAiNoConsentRes(){
+  return new Response(JSON.stringify({ error: { message: 'Análisis con IA desactivado: no se otorgó permiso para compartir datos con el proveedor de IA.' }, error_code: 'ai_consent_required' }),
+    { status: 403, headers: { 'content-type': 'application/json' } });
+}
+
 // ── FORZAR FACTURACIÓN A TU API KEY (a pedido explícito) ─────────────────────────
 // Ignora el proxy local (suscripción GRATIS de Claude) y la política "solo chat+visión
 // pagan": TODAS las llamadas de IA (noticias, outlook, eventos, rebalanceo, por-qué-se-
@@ -7112,6 +7291,9 @@ async function _aiFetch(opts, essential) {
       // _pvAccessToken() encapsula el getSession() (que lee de localStorage) con una caché
       // de 60 s — la var `session` vive dentro del IIFE de auth y aquí no es accesible.
       // Si no hay sesión, cae a la anon key (comportamiento previo).
+      // GATE 5.1.2(i): último punto antes de que los datos salgan del dispositivo. Si el
+      // usuario no ha dado permiso para compartirlos con Anthropic, no se envía nada.
+      if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
       let _uTok = _AI_SB_ANON;
       try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
@@ -7141,6 +7323,10 @@ async function _aiFetchVision(opts) {
   let _sbErr;
   if (typeof _aiSbOn === 'function' && _aiSbOn()) {
     try {
+      // GATE 5.1.2(i): la captura del broker es un dato personal más (a menudo con el
+      // saldo y el número de cuenta a la vista), así que la visión pasa por el MISMO
+      // permiso que el texto. Ver _PV_AI_CONSENT.
+      if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
       let _uTok = _AI_SB_ANON;
       try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
@@ -19708,11 +19894,12 @@ function _buildQualAnalysis(ticker, info){
 //    • Consenso Buy/Hold/Sell .......................................... info.recoBreakdown
 //    • Retorno esperado + proyecciones 3m/6m/1a/3a ..................... _expReturn (MISMA fn del portafolio)
 //    • Próximos resultados (catalizador) ............................... EPS (Finnhub earnings calendar)
-//    • Actividad de insiders ........................................... SEC Form 4 vía Finnhub
+//    • Análisis técnico: velas + RSI/SMA/MACD/ATR/volumen .............. barras diarias de Alpaca (IEX)
 //  PENDIENTE DE FUENTE (hoy la sección/fila se OCULTA — nunca se inventa):
 //    • Barras de crecimiento ingresos/EPS trimestral por barra (se cubre con la tarjeta #r-eps existente)
 //    • Tabla de comparación con competidores (peers: falta métrica financiera por peer)
-//    • Dona de % ownership institucional / insiders / retail / short interest
+//    • Dona de % ownership institucional / retail / short interest
+//    • "Lectura general" del análisis técnico (llega de technical_signals; sin fila no se pinta)
 //    • Recompras, cobertura de intereses, efectivo vs deuda (totales), promedio histórico de múltiplos 5a
 //  ---------------------------------------------------------------------------------
 //  Degradación ESTRICTA: cada bloque devuelve null/[] si falta el dato → la sección no se renderiza.
@@ -20511,25 +20698,17 @@ function _renderQualAnalysis(a, el){
           : `<div style="margin-top:14px">${empty('Todavía no hay fecha confirmada del próximo reporte ni otros eventos publicados para esta empresa.')}</div>`}</div>`;
   }
 
-  // 13) QUIÉN es dueño / actividad de directivos (insiders) — datos reales SEC F4.
-  //     (El % institucional/insiders/short NO se expone por el proveedor → dona omitida.)
-  if (!(a.insiders && !a.insiders.empty)){
-    h += `<div class="px-card">${stitle('Actividad de directivos (insiders)')}
-      <div>${empty('La SEC no registra operaciones de directivos (Formulario 4) para esta empresa en los últimos 12 meses.')}</div></div>`;
-  } else {
-    const ins = a.insiders;
-    const toneCls = ins.tone==='pos'?'green':ins.tone==='neg'?'red':'amber';
-    h += `<div class="px-card">${stitle('Actividad de directivos (insiders)')}
-      <span class="px-pill ${toneCls}">${esc(ins.label)}</span>
-      <div style="font-size:13px;color:var(--px-ink-soft);line-height:1.6;margin:2px 0 4px">Últimos 12 meses en mercado abierto: <b style="color:var(--px-green-text)">compras ${money(ins.buyVal)}</b> · <b style="color:var(--px-red)">ventas ${money(ins.sellVal)}</b>${ins.discCount?` · ${ins.discCount} ${ins.discCount===1?'operación':'operaciones'}`:''}.</div>`;
-    if (ins.ops && ins.ops.length){
-      h += `<div class="px-insider"><h4>Movimientos recientes de insiders</h4>${ins.ops.map(o=>{const buy=o.code==='P';return `<div class="px-itx"><span class="idir ${buy?'buy':'sell'}">${buy?'COMPRA':'VENTA'}</span><span class="iname">${esc(o.name)}</span><span class="iamt">${buy?'+':'−'}${money(Math.abs(o.change)*(o.price||0))}${o.date?` · ${esc(o.date)}`:''}</span></div>`;}).join('')}</div>`;
-    }
-    h += `<div class="px-hint">Las ventas programadas suelen ser rutina (impuestos, diversificación). Las <b>compras</b> con dinero propio son la señal más valiosa: un insider apuesta a que la acción sube. Fuente: SEC Formulario 4 vía Finnhub.</div></div>`;
-  }
+  // 13) ANÁLISIS TÉCNICO — velas japonesas + indicadores. Sustituye al viejo apartado de
+  //     insiders (Formulario 4), retirado por decisión de producto. El slot se llena LAZY
+  //     igual que el de competidores: la tarjeta se pinta ya con su encabezado y el canvas
+  //     y los indicadores entran cuando llegan las barras de Alpaca. Si Alpaca no responde,
+  //     el slot se resuelve solo en un estado vacío y no rompe nada de lo de arriba.
+  h += `<div class="px-card">${stitle('Análisis técnico')}
+    <p class="px-intro">Qué dice el comportamiento del precio y el volumen en los últimos meses.</p>
+    <div id="pvx-tec-host" style="margin-top:14px"></div></div>`;
 
   // 14) Disclaimer. Se retiró en su día "a pedido", pero esta es la superficie de IA
-  //     más densa de la app (moat, veredicto de valoración, insiders, perspectiva de
+  //     más densa de la app (moat, veredicto de valoración, lectura técnica, perspectiva de
   //     resultados) y va sin descargo: es justo el caso que App Review marca en apps
   //     financieras. Vuelve, con el mismo texto que las otras ocho superficies.
   h += `<div class="px-disclaimer">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>`;
@@ -20550,6 +20729,13 @@ function _renderQualAnalysis(a, el){
         else _ph.innerHTML = _pvxPeersEmptyCard(a.ticker);   // sin comparables → tarjeta con aviso
       }
     }
+  } catch(e){}
+  // ③ Análisis técnico: mismo patrón LAZY. Pide las barras diarias a Alpaca una sola vez por
+  // ticker, calcula los indicadores en el cliente y pinta. La narrativa de Supabase viaja en
+  // paralelo y solo aparece si existe fila; su ausencia no retrasa ni bloquea el gráfico.
+  try {
+    const _th = el.querySelector('#pvx-tec-host');
+    if (_th) _pvtFillInto(_th, a.ticker);
   } catch(e){}
   // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
   // número, escrito una sola vez cuando ya es definitivo (arriba quedó en "Analizando…").
@@ -20944,63 +21130,520 @@ function _moatFactorBreakdown(info, moatObj, moatBullets){
   });
 }
 
-// ── Actividad de insiders (SEC Formulario 4 vía Finnhub) ──────────────────────────
-// Qué hacen los directivos: comprando / vendiendo / manteniendo. Datos reales, gratis
-// (endpoint free de Finnhub). Caché en memoria por sesión (6 h).
-const _insiderCache = {};
-async function _fetchInsiders(ticker){
-  ticker = (ticker||'').toUpperCase();
-  const c = _insiderCache[ticker];
-  if (c && (Date.now()-c.ts) < 6*3600*1000) return c.raw;
-  const path = `/stock/insider-transactions?symbol=${ticker}`;
-  let raw = null;
-  // 1) Vía normal (proxy Supabase/Netlify o directo).
-  try {
-    if (typeof fhFetch === 'function' && typeof _finnhubAvailable==='function' && _finnhubAvailable())
-      raw = await fhFetch(path, 12000);
-  } catch(e){ raw = null; }
-  // 2) El proxy compartido puede NO permitir este endpoint (403 "endpoint not allowed")
-  //    hasta que se redespliegue. Si falló y hay key local (tu Mac), vamos directo a Finnhub.
-  if ((!raw || raw.error || !Array.isArray(raw.data)) && FINNHUB_KEY) {
-    try {
-      const r = await fetch(`${FH_BASE}${path}&token=${FINNHUB_KEY}`);
-      if (r.ok) raw = await r.json();
-    } catch(e){}
+// ── ANÁLISIS TÉCNICO — velas japonesas + indicadores ──────────────────────────────
+// Ocupa el lugar del viejo apartado de insiders (Formulario 4), retirado por decisión de
+// producto. Todo el bloque se sostiene sobre las MISMAS barras de Alpaca (feed IEX, licencia
+// comercial) que ya alimentan la gráfica de precio: una sola petición diaria por ticker.
+//
+// Reparto de responsabilidades, a propósito:
+//   · gráfico e indicadores → matemática determinista en el cliente. No cuestan una llamada
+//     de IA ni dependen de que exista backend. Si Alpaca responde, la sección funciona.
+//   · "Lectura general"      → narrativa generada en la nube y guardada en technical_signals.
+//     Si no hay fila (o la tabla todavía no existe), el bloque simplemente no se pinta.
+//     Una pantalla sin narrativa sigue siendo una pantalla útil; una con narrativa inventada
+//     en el cliente, no.
+
+// Temporalidades del selector. `dias` es la ventana visible; `agg` cómo se agregan las velas
+// diarias para que nunca se dibuje una mancha: a 6M y 1A por semana, a 5A por mes. Comprimir
+// las diarias en vez de agregarlas es justo lo que produce el borrón ilegible en teléfono.
+const _PVT_PERIODOS = {
+  '3M': { lbl: '3M', dias: 92,   agg: 'd' },
+  '6M': { lbl: '6M', dias: 183,  agg: 'w' },
+  '1A': { lbl: '1A', dias: 365,  agg: 'w' },
+  '5A': { lbl: '5A', dias: 1826, agg: 'm' },
+};
+const _PVT_WARMUP = 300;          // días extra de calentamiento para que la SMA 200 tenga dato
+                                  // desde la PRIMERA vela visible, no desde la número 200.
+const _pvtCache = {};             // ticker → { bars, ts } — barras diarias crudas (5 años + warmup)
+const _PVT_TTL  = 6 * 3600 * 1000;
+
+// Barras diarias con OHLCV COMPLETO. _alpacaBars() se queda solo con los cierres, que basta
+// para una línea pero no para una vela, así que aquí se pide la misma serie y se conserva
+// todo. Una sola petición cubre las cuatro temporalidades: se traen 5 años y cada chip
+// recorta la ventana en memoria.
+async function _pvtFetchDiarias(ticker, timeoutMs = 12000){
+  const sym = (ticker || '').toUpperCase();
+  if (!sym) return null;
+  const c = _pvtCache[sym];
+  if (c && (Date.now() - c.ts) < _PVT_TTL) return c.bars;
+  if (typeof _alpacaFetch !== 'function') return null;
+
+  const D = 86400000;
+  const start = new Date(Date.now() - (_PVT_PERIODOS['5A'].dias + _PVT_WARMUP) * D)
+                  .toISOString().slice(0, 10);
+  const qs = `symbols=${encodeURIComponent(sym)}&timeframe=1Day&start=${start}`
+           + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
+  let d = null;
+  try { d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs); } catch(e){ return null; }
+  const raw = (d && d.bars && (d.bars[sym] || d.bars[sym.replace('.', '/')])) || [];
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+
+  const bars = [];
+  for (const b of raw){
+    const t = Date.parse(b.t);
+    if (!isFinite(t)) continue;
+    const o = +b.o, hi = +b.h, lo = +b.l, cl = +b.c, v = +b.v;
+    if (![o, hi, lo, cl].every(n => isFinite(n) && n > 0)) continue;
+    bars.push({ t, o, h: hi, l: lo, c: cl, v: isFinite(v) ? v : 0 });
   }
-  _insiderCache[ticker] = { raw, ts: Date.now() };
-  return raw;
+  if (bars.length < 2) return null;
+  _pvtCache[sym] = { bars, ts: Date.now() };
+  return bars;
 }
-// Resume las transacciones en un veredicto + tenedores + operaciones recientes.
-function _summarizeInsiders(raw){
-  const rows = (raw && Array.isArray(raw.data)) ? raw.data : [];
-  if (!rows.length) return { empty:true };
-  const cutoff = Date.now() - 365*24*3600*1000;   // ventana 12 meses
-  const parsed = rows.map(r => {
-    const t = Date.parse(r.transactionDate || r.filingDate || '') || 0;
-    return { name:(r.name||'').trim(), code:(r.transactionCode||'').toUpperCase(),
-             change:Number(r.change)||0, price:Number(r.transactionPrice)||0,
-             share:Number(r.share)||0, date:(r.transactionDate||r.filingDate||''), t };
-  }).filter(r => r.name);
-  if (!parsed.length) return { empty:true };
-  // Discrecionales en mercado abierto dentro de la ventana: P=compra, S=venta.
-  const disc = parsed.filter(r => r.t>=cutoff && (r.code==='P'||r.code==='S'));
-  let buyVal=0, sellVal=0, buySh=0, sellSh=0;
-  disc.forEach(r => {
-    const val = Math.abs(r.change) * (r.price||0);
-    if (r.code==='P'){ buyVal+=val; buySh+=Math.abs(r.change); }
-    else            { sellVal+=val; sellSh+=Math.abs(r.change); }
+
+// ── Matemática de indicadores ─────────────────────────────────────────────────────
+// Todo se calcula sobre la serie DIARIA completa, nunca sobre las velas agregadas: un RSI
+// sobre velas semanales es otro indicador con el mismo nombre, y la app promete el de 14 días.
+
+// Media simple. Devuelve un array paralelo con null donde todavía no hay n muestras.
+function _pvtSMA(vals, n){
+  const out = new Array(vals.length).fill(null);
+  let suma = 0;
+  for (let i = 0; i < vals.length; i++){
+    suma += vals[i];
+    if (i >= n) suma -= vals[i - n];
+    if (i >= n - 1) out[i] = suma / n;
+  }
+  return out;
+}
+
+// Media exponencial, sembrada con la simple de las primeras n muestras (convención estándar).
+function _pvtEMA(vals, n){
+  const out = new Array(vals.length).fill(null);
+  if (vals.length < n) return out;
+  const k = 2 / (n + 1);
+  let prev = 0;
+  for (let i = 0; i < n; i++) prev += vals[i];
+  prev /= n;
+  out[n - 1] = prev;
+  for (let i = n; i < vals.length; i++){ prev = vals[i] * k + prev * (1 - k); out[i] = prev; }
+  return out;
+}
+
+// RSI de Wilder (suavizado 1/n, no media simple de las ganancias).
+function _pvtRSI(closes, n = 14){
+  if (closes.length < n + 1) return null;
+  let g = 0, p = 0;
+  for (let i = 1; i <= n; i++){
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) g += d; else p -= d;
+  }
+  g /= n; p /= n;
+  for (let i = n + 1; i < closes.length; i++){
+    const d = closes[i] - closes[i - 1];
+    g = (g * (n - 1) + (d > 0 ?  d : 0)) / n;
+    p = (p * (n - 1) + (d < 0 ? -d : 0)) / n;
+  }
+  if (p === 0) return 100;
+  return 100 - 100 / (1 + g / p);
+}
+
+// MACD(12,26,9). Devuelve la lectura de hoy y hace cuántas sesiones lleva del mismo lado de
+// su línea de señal — que es el dato que de verdad usa la narrativa.
+function _pvtMACD(closes, r = 12, s = 26, sig = 9){
+  if (closes.length < s + sig) return null;
+  const e1 = _pvtEMA(closes, r), e2 = _pvtEMA(closes, s);
+  const linea = [];
+  for (let i = 0; i < closes.length; i++){
+    linea.push((e1[i] != null && e2[i] != null) ? e1[i] - e2[i] : null);
+  }
+  const densa = linea.filter(v => v != null);
+  const señal = _pvtEMA(densa, sig);
+  const off = linea.length - densa.length;
+  const hist = linea.map((v, i) => (v != null && señal[i - off] != null) ? v - señal[i - off] : null);
+  const últ = hist.length - 1;
+  if (hist[últ] == null) return null;
+  const arriba = hist[últ] >= 0;
+  let sesiones = 0;
+  for (let i = últ; i >= 0 && hist[i] != null && (hist[i] >= 0) === arriba; i--) sesiones++;
+  return { macd: linea[últ], señal: señal[últ - off], hist: hist[últ], arriba, sesiones };
+}
+
+// ATR de Wilder, devuelto como % del precio para que sea comparable entre tickers: un ATR de
+// $3 no dice nada si no sabes si la acción vale $20 o $600.
+function _pvtATR(bars, n = 14){
+  if (bars.length < n + 1) return null;
+  const tr = [];
+  for (let i = 1; i < bars.length; i++){
+    const b = bars[i], pc = bars[i - 1].c;
+    tr.push(Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc)));
+  }
+  let a = tr.slice(0, n).reduce((x, y) => x + y, 0) / n;
+  for (let i = n; i < tr.length; i++) a = (a * (n - 1) + tr[i]) / n;
+  const últ = bars[bars.length - 1].c;
+  return últ > 0 ? (a / últ) * 100 : null;
+}
+
+// Reúne los cinco indicadores del apartado a partir de la serie diaria.
+function _pvtIndicadores(bars){
+  const closes = bars.map(b => b.c);
+  const últ    = closes[closes.length - 1];
+  const sma50  = _pvtSMA(closes, 50);
+  const sma200 = _pvtSMA(closes, 200);
+  const s50    = sma50[sma50.length - 1];
+  const s200   = sma200[sma200.length - 1];
+
+  // Volumen relativo: última sesión contra el promedio de las 30 anteriores (sin incluirla,
+  // o el propio día inflaría su referencia).
+  let volRel = null;
+  if (bars.length >= 31){
+    const prev = bars.slice(-31, -1).reduce((x, b) => x + b.v, 0) / 30;
+    if (prev > 0) volRel = bars[bars.length - 1].v / prev;
+  }
+  return {
+    precio:  últ,
+    rsi:     _pvtRSI(closes, 14),
+    sma50:   s50, sma200: s200,
+    vs50:    (s50  > 0) ? ((últ / s50)  - 1) * 100 : null,
+    vs200:   (s200 > 0) ? ((últ / s200) - 1) * 100 : null,
+    macd:    _pvtMACD(closes),
+    atr:     _pvtATR(bars, 14),
+    volRel:  volRel,
+    series:  { sma50, sma200 },
+  };
+}
+
+// Agrega velas diarias a semanales o mensuales. Abre en la apertura de la primera sesión del
+// bucket, cierra en el cierre de la última, máximo y mínimo del bucket, volumen sumado.
+function _pvtAgregar(bars, modo){
+  if (modo === 'd') return bars.slice();
+  const clave = t => {
+    const d = new Date(t);
+    if (modo === 'm') return d.getUTCFullYear() * 100 + d.getUTCMonth();
+    // Semana ISO aproximada por el lunes que la abre — suficiente y estable para agrupar.
+    const lun = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    lun.setUTCDate(lun.getUTCDate() - ((lun.getUTCDay() + 6) % 7));
+    return lun.getTime();
+  };
+  const out = [];
+  let cur = null, k = null;
+  for (const b of bars){
+    const kb = clave(b.t);
+    if (kb !== k){
+      if (cur) out.push(cur);
+      cur = { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, i: b.i };
+      k = kb;
+    } else {
+      cur.h = Math.max(cur.h, b.h);
+      cur.l = Math.min(cur.l, b.l);
+      cur.c = b.c; cur.v += b.v; cur.i = b.i;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+// Recorta a la ventana visible y agrega. Devuelve además las dos SMA muestreadas en el ÚLTIMO
+// día de cada vela agregada, para que la línea siga siendo la media de 50 y 200 DÍAS aunque el
+// gráfico esté en semanal o mensual.
+function _pvtPrepararVista(bars, ind, periodo){
+  const cfg = _PVT_PERIODOS[periodo] || _PVT_PERIODOS['3M'];
+  const desde = Date.now() - cfg.dias * 86400000;
+  const idx = bars.map((b, i) => ({ ...b, i })).filter(b => b.t >= desde);
+  const vis = idx.length >= 2 ? idx : bars.map((b, i) => ({ ...b, i })).slice(-2);
+  const velas = _pvtAgregar(vis, cfg.agg);
+  return {
+    velas,
+    sma50:  velas.map(v => ind.series.sma50[v.i]),
+    sma200: velas.map(v => ind.series.sma200[v.i]),
+  };
+}
+
+// ── Dibujo del gráfico ────────────────────────────────────────────────────────────
+// Canvas 2D puro, sin librería ni adaptador de fechas: dos dependencias menos en un setup
+// sin bundler. Los colores NO se escriben aquí — se leen de las variables que ya define .pvx,
+// así que el gráfico sigue al tema de la app sin duplicar un solo hex.
+function _pvtDibujar(canvas, velas, sma50, sma200){
+  const W = canvas.offsetWidth | 0;
+  if (!W || !velas || velas.length < 2) return false;   // Trampa 2: contenedor todavía sin ancho
+
+  const H = 214, dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const cs  = getComputedStyle(canvas);
+  const tok = (n, f) => ((cs.getPropertyValue(n) || '').trim() || f);
+  const SUBE  = tok('--px-green-text', '#1f7a4d');   // mismos tokens que los valores financieros
+  const BAJA  = tok('--px-red',        '#c1443e');
+  const LINEA = tok('--px-line',       '#e9ebef');
+  const MUTED = tok('--px-muted',      '#7b8494');
+  const INK_SOFT = tok('--px-ink-soft','#3a4658');
+  const TRACK = tok('--px-track',      '#e6eaf0');
+
+  const EJE = 40, TOPE = 6, ALTO_P = 158, HUECO = 12, ALTO_V = 34;
+  const x0 = 0, ancho = W - EJE;
+  const pTop = TOPE, pBot = TOPE + ALTO_P;
+  const vTop = pBot + HUECO, vBot = vTop + ALTO_V;
+  if (ancho < 40) return false;
+
+  // Escala de precio: extremos de las mechas MÁS los valores de ambas medias, para que una SMA
+  // no se salga del cuadro. 6% de aire arriba y abajo.
+  let min = Infinity, max = -Infinity;
+  for (const v of velas){ if (v.l < min) min = v.l; if (v.h > max) max = v.h; }
+  for (const s of [sma50, sma200]) for (const v of s){
+    if (v == null) continue;
+    if (v < min) min = v; if (v > max) max = v;
+  }
+  if (!isFinite(min) || !isFinite(max)) return false;
+  if (max === min){ max = min * 1.01 || 1; min = min * 0.99; }
+  const aire = (max - min) * 0.06; min -= aire; max += aire;
+  const yP = p => pBot - ((p - min) / (max - min)) * ALTO_P;
+
+  let vmax = 0; for (const v of velas) if (v.v > vmax) vmax = v.v;
+  const yV = v => vmax > 0 ? vBot - (v / vmax) * ALTO_V : vBot;
+
+  const n = velas.length, paso = ancho / n;
+  const cuerpo = Math.max(1, Math.min(6, Math.floor(paso * 0.68)));
+  const cx = i => x0 + paso * i + paso / 2;
+
+  // Grilla horizontal + eje de precio a la derecha. Tres marcas: techo, medio, piso.
+  ctx.font = '10px Manrope, system-ui, sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const dec = max < 10 ? 2 : max < 1000 ? 1 : 0;
+  for (let i = 0; i <= 2; i++){
+    const p = max - (max - min) * (i / 2), y = Math.round(yP(p)) + 0.5;
+    ctx.strokeStyle = LINEA; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + ancho, y); ctx.stroke();
+    ctx.fillStyle = MUTED;
+    ctx.fillText(p.toFixed(dec), x0 + ancho + 6, y);
+  }
+
+  // Volumen primero, en gris neutro: colorearlo duplicaría la señal cromática de las velas.
+  ctx.fillStyle = TRACK;
+  for (let i = 0; i < n; i++){
+    const y = yV(velas[i].v), alto = Math.max(1, vBot - y);
+    ctx.fillRect(cx(i) - cuerpo / 2, vBot - alto, cuerpo, alto);
+  }
+
+  // Velas. Cada una codifica cierre contra apertura → es dato financiero y lleva el verde/rojo
+  // de la app. Mecha de máximo a mínimo, cuerpo de apertura a cierre con piso de 1.2px para que
+  // un doji no desaparezca.
+  for (let i = 0; i < n; i++){
+    const v = velas[i], sube = v.c >= v.o, col = sube ? SUBE : BAJA;
+    const x = Math.round(cx(i)) + 0.5;
+    ctx.strokeStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, yP(v.h)); ctx.lineTo(x, yP(v.l)); ctx.stroke();
+    const yA = yP(v.o), yC = yP(v.c);
+    const arriba = Math.min(yA, yC), alto = Math.max(1.2, Math.abs(yC - yA));
+    ctx.fillStyle = col;
+    ctx.fillRect(cx(i) - cuerpo / 2, arriba, cuerpo, alto);
+  }
+
+  // Medias: gris, nunca verde ni rojo — colorearlas competiría con las velas. La de 50 sólida y
+  // más oscura, la de 200 punteada y más clara. Se usan los dos grises de TEXTO de la app, no
+  // --px-line: ese es un color de borde y como línea de datos resulta ilegible sobre blanco.
+  const traza = (serie, color, guion) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.4;
+    ctx.setLineDash(guion ? [3, 3] : []);
+    ctx.beginPath();
+    let abierto = false;
+    for (let i = 0; i < n; i++){
+      const val = serie[i];
+      if (val == null){ abierto = false; continue; }
+      const x = cx(i), y = yP(val);
+      if (abierto) ctx.lineTo(x, y); else { ctx.moveTo(x, y); abierto = true; }
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  traza(sma50,  INK_SOFT, false);
+  traza(sma200, MUTED,    true);
+  return true;
+}
+
+// ── Pintado de la sección ─────────────────────────────────────────────────────────
+
+// Explicación en español de cada indicador. Describe qué mide y qué significa el valor que se
+// está mostrando; no dice qué hacer con él.
+function _pvtExplicar(k, ind){
+  const r = ind.rsi, m = ind.macd;
+  switch (k){
+    case 'rsi':
+      if (r == null) return 'Mide si la acción subió o bajó demasiado rápido en las últimas 14 sesiones.';
+      return r >= 70 ? 'Por encima de 70: el precio subió rápido y la compra viene concentrada en pocas sesiones.'
+           : r <= 30 ? 'Por debajo de 30: zona de sobreventa, donde la presión vendedora suele estar agotándose.'
+           : 'Entre 30 y 70: ni sobrecomprada ni sobrevendida en las últimas 14 sesiones.';
+    case 'sma200':
+      if (ind.vs200 == null) return 'La acción no tiene todavía 200 sesiones de historia para calcular esta media.';
+      return ind.vs200 >= 0
+        ? 'El precio está por encima de su promedio de 200 días, la referencia de tendencia de largo plazo.'
+        : 'El precio está por debajo de su promedio de 200 días, la referencia de tendencia de largo plazo.';
+    case 'macd':
+      if (!m) return 'Compara dos promedios del precio para ver si el impulso cambia de dirección.';
+      return m.arriba
+        ? `Lleva ${m.sesiones} ${m.sesiones === 1 ? 'sesión' : 'sesiones'} por encima de su línea de señal: el impulso reciente es al alza.`
+        : `Lleva ${m.sesiones} ${m.sesiones === 1 ? 'sesión' : 'sesiones'} por debajo de su línea de señal: el impulso reciente es a la baja.`;
+    case 'atr':
+      if (ind.atr == null) return 'Cuánto se mueve la acción en un día normal, medido sobre 14 sesiones.';
+      return ind.atr >= 4 ? 'Se mueve bastante más que una acción típica: los saltos diarios son grandes.'
+           : ind.atr >= 2 ? 'Movimiento diario dentro de lo normal para una acción de bolsa.'
+           : 'Se mueve poco de un día a otro comparado con el promedio del mercado.';
+    case 'vol':
+      if (ind.volRel == null) return 'Compara el volumen de la última sesión con su promedio de 30 días.';
+      return ind.volRel >= 1.5 ? 'Bastante más negociación que de costumbre: hubo participación real detrás del movimiento.'
+           : ind.volRel >= 0.8 ? 'Volumen parecido al de un día normal para esta acción.'
+           : 'Menos negociación que de costumbre: pocos participantes detrás del movimiento.';
+  }
+  return '';
+}
+
+// Fila de indicador: nombre y explicación a la izquierda, valor a la derecha. Solo el RSI
+// lleva barra, con las marcas de 30 y 70 que son las que le dan sentido al número.
+function _pvtFila(nombre, valor, expl, barra){
+  const pos = barra != null ? Math.max(0, Math.min(100, barra)) : null;
+  return `<div style="padding:13px 0;border-top:1px solid var(--px-line)">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <div style="flex:1 1 auto;min-width:0;font-size:13.5px;font-weight:600;color:var(--px-ink)">${pvEsc(nombre)}</div>
+      <div style="flex:0 0 auto;font-family:'Poppins','Manrope',sans-serif;font-size:15px;font-weight:800;color:var(--px-ink);font-variant-numeric:tabular-nums">${pvEsc(valor)}</div>
+    </div>
+    ${pos == null ? '' : `<div style="position:relative;height:5px;border-radius:3px;background:var(--px-track);margin:9px 0 3px">
+      <div style="position:absolute;left:0;top:0;bottom:0;width:${pos.toFixed(1)}%;border-radius:3px;background:var(--px-green-bar)"></div>
+      <div style="position:absolute;left:30%;top:-2px;bottom:-2px;width:1px;background:var(--px-line)"></div>
+      <div style="position:absolute;left:70%;top:-2px;bottom:-2px;width:1px;background:var(--px-line)"></div>
+    </div>`}
+    <div style="font-size:12.5px;color:var(--px-muted);line-height:1.55;margin-top:5px">${pvEsc(expl)}</div>
+  </div>`;
+}
+
+// Lee la narrativa de la nube. Un solo SELECT por PostgREST, sin Edge Function de por medio.
+// Cualquier fallo (sin sesión, tabla aún no creada, red) devuelve null y el bloque se oculta.
+async function _pvtNarrativa(ticker){
+  try {
+    const sb = window.sbClient;
+    if (!sb) return null;
+    const { data, error } = await sb
+      .from('technical_signals')
+      .select('narrative, generated_at')
+      .eq('ticker', (ticker || '').toUpperCase())
+      .order('as_of_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data || !data.narrative) return null;
+    return data;
+  } catch(e){ return null; }
+}
+
+const _pvtEstado = {};   // host → { ticker, bars, ind, periodo } para redibujar sin volver a la red
+
+// Punto de entrada del slot. Trae las barras, calcula, pinta, y engancha el redibujo.
+async function _pvtFillInto(host, ticker){
+  const tk = (ticker || '').toUpperCase();
+  host.dataset.tk = tk;
+  host.innerHTML = `<p class="px-empty">Cargando el comportamiento del precio…</p>`;
+
+  const [bars, narr] = await Promise.all([
+    _pvtFetchDiarias(tk).catch(() => null),
+    _pvtNarrativa(tk),
+  ]);
+  if (host.dataset.tk !== tk) return;                      // el usuario ya cambió de acción
+  if (!bars || bars.length < 30){
+    host.innerHTML = `<p class="px-empty">Aún no tenemos análisis técnico de este ticker.</p>`;
+    return;
+  }
+
+  const ind = _pvtIndicadores(bars);
+  _pvtEstado[tk] = { bars, ind, periodo: '3M', host };
+
+  const chips = Object.keys(_PVT_PERIODOS).map(k =>
+    `<button type="button" class="period-btn${k === '3M' ? ' active' : ''}" data-pvt="${k}">${_PVT_PERIODOS[k].lbl}</button>`).join('');
+
+  const n1 = (v, d = 1) => (v == null || !isFinite(v)) ? '—' : v.toFixed(d);
+  const pct = v => (v == null || !isFinite(v)) ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+
+  const lectura = narr ? _pvtBloqueLectura(narr) : '';
+
+  host.innerHTML = `
+    <canvas class="px-tec-canvas" id="pvt-cv-${pvEsc(tk)}"></canvas>
+    <div class="period-btns" id="pvt-chips" style="margin-top:10px;grid-template-columns:repeat(4,1fr) !important">${chips}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:11.5px;color:var(--px-muted)">
+      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:var(--px-ink-soft);display:block"></span>SMA 50</span>
+      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:0;border-top:2px dashed var(--px-muted);display:block"></span>SMA 200</span>
+      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;background:var(--px-track);display:block;border-radius:2px"></span>Volumen</span>
+    </div>
+    ${lectura}
+    <div style="margin-top:18px">
+      ${_pvtFila('RSI (14 días)', n1(ind.rsi), _pvtExplicar('rsi', ind), ind.rsi)}
+      ${_pvtFila('Media de 200 días', pct(ind.vs200), _pvtExplicar('sma200', ind), null)}
+      ${_pvtFila('MACD (12, 26, 9)', ind.macd ? n1(ind.macd.hist, 2) : '—', _pvtExplicar('macd', ind), null)}
+      ${_pvtFila('Volatilidad (ATR 14)', ind.atr == null ? '—' : `${n1(ind.atr)}%`, _pvtExplicar('atr', ind), null)}
+      ${_pvtFila('Volumen relativo (30 días)', ind.volRel == null ? '—' : `${n1(ind.volRel)}x`, _pvtExplicar('vol', ind), null)}
+    </div>`;
+
+  const cv = host.querySelector('canvas');
+  _pvtRedibujar(tk, cv);
+
+  host.querySelector('#pvt-chips').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-pvt]');
+    if (!b) return;
+    host.querySelectorAll('[data-pvt]').forEach(x => x.classList.toggle('active', x === b));
+    const st = _pvtEstado[tk];
+    if (st){ st.periodo = b.dataset.pvt; _pvtRedibujar(tk, cv); }
   });
-  let label, tone;
-  if (!disc.length)                            { label='Manteniendo';      tone='neu'; }
-  else if (buyVal >= sellVal*1.5 && buyVal>0)  { label='Comprando';        tone='pos'; }
-  else if (sellVal >= buyVal*1.5 && sellVal>0) { label='Vendiendo';        tone='neg'; }
-  else                                         { label='Actividad mixta';  tone='neu'; }
-  // Mayores tenedores internos: registro más reciente por persona, ordenado por tenencia.
-  const byName = {};
-  parsed.forEach(r => { const cur=byName[r.name]; if(!cur || r.t>cur.t) byName[r.name]=r; });
-  const holders = Object.values(byName).sort((a,b)=>b.share-a.share).slice(0,5);
-  const ops = disc.slice().sort((a,b)=>b.t-a.t).slice(0,6);   // operaciones recientes P/S
-  return { empty:false, label, tone, buyVal, sellVal, buySh, sellSh, discCount:disc.length, holders, ops };
+  _pvtEngancharResize(tk, cv);
+}
+
+// Bloque "Lectura general". Solo se pinta si la nube devolvió narrativa; si tiene más de 10
+// días se etiqueta con su fecha en vez de ocultarla — data vieja etiquetada es aceptable,
+// data vieja disfrazada de actual no.
+function _pvtBloqueLectura(narr){
+  let sello = '';
+  const t = Date.parse(narr.generated_at || '');
+  if (isFinite(t) && (Date.now() - t) > 10 * 86400000){
+    sello = ` <span style="font-weight:500;color:var(--px-muted)">· Lectura del ${
+      new Date(t).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })}</span>`;
+  }
+  return `<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)">
+    <h4 style="display:flex;align-items:center;gap:7px;font-family:'Poppins','Manrope',sans-serif;font-size:13px;margin:0 0 8px;color:var(--px-ink-soft)">
+      <span class="material-symbols-outlined" style="font-size:16px;color:var(--px-green-text)">auto_awesome</span>Lectura general${sello}</h4>
+    <p style="font-size:13.5px;color:var(--px-ink-soft);line-height:1.7;margin:0">${pvEsc(narr.narrative)}</p>
+  </div>`;
+}
+
+// Recalcula la vista para la temporalidad activa y repinta el canvas.
+//
+// Trampa 2: si el apartado se monta dentro de un contenedor todavía sin ancho —pestaña que
+// no está al frente, tarjeta fuera de pantalla— offsetWidth da 0 y no se dibuja nada. No
+// basta un solo requestAnimationFrame: el ancho puede tardar en existir tanto como tarde el
+// usuario en abrir la pestaña. Se reintenta en escalera, rápido al principio y espaciado
+// después, y la cadena se corta sola en cuanto un dibujo tiene éxito o el canvas sale del DOM.
+function _pvtRedibujar(tk, canvas, intento){
+  const st = _pvtEstado[tk];
+  if (!st || !canvas || !canvas.isConnected) return;
+  if (!intento) clearTimeout(canvas._pvtRetry);   // repintado nuevo → cancela la escalera vieja
+  const vista = _pvtPrepararVista(st.bars, st.ind, st.periodo);
+  if (_pvtDibujar(canvas, vista.velas, vista.sma50, vista.sma200)) return;
+  const n = intento || 0;
+  if (n < 40) canvas._pvtRetry = setTimeout(() => _pvtRedibujar(tk, canvas, n + 1), n < 5 ? 50 : 200);
+}
+
+// El canvas no es responsive solo: hay que redibujarlo. Se enganchan TRES señales a propósito,
+// porque ninguna cubre sola todos los casos:
+//   · ResizeObserver  — la buena: cambia el ancho del contenedor aunque la ventana no se mueva.
+//                       Pero su entrega depende del ciclo de render y se suprime en vistas que
+//                       no están pintando, así que no puede ser la única.
+//   · resize          — respaldo universal, funciona incluso donde RO no entrega.
+//   · orientationchange — el giro del teléfono: el reflow llega DESPUÉS del evento, de ahí la espera.
+function _pvtEngancharResize(tk, canvas){
+  let to = null;
+  const repintar = () => { clearTimeout(to); to = setTimeout(() => _pvtRedibujar(tk, canvas), 150); };
+  const girar    = () => setTimeout(() => _pvtRedibujar(tk, canvas), 250);
+  window.addEventListener('resize', repintar);
+  window.addEventListener('orientationchange', girar);
+  let ro = null;
+  try {
+    if (window.ResizeObserver){ ro = new ResizeObserver(repintar); ro.observe(canvas); }
+  } catch(e){ ro = null; }
+  // Al salir el canvas del DOM (cambio de acción o de pestaña) se sueltan los tres enganches:
+  // sin esto cada acción visitada dejaría un listener vivo repintando un canvas huérfano.
+  const vigía = setInterval(() => {
+    if (canvas.isConnected) return;
+    if (ro) ro.disconnect();
+    window.removeEventListener('resize', repintar);
+    window.removeEventListener('orientationchange', girar);
+    clearTimeout(to); clearTimeout(canvas._pvtRetry); clearInterval(vigía);
+  }, 4000);
 }
 
 // ── Caché del análisis ENSAMBLADO (objeto `a` listo para pintar) ─────────────────
@@ -21028,21 +21671,19 @@ function _qualSet(tk, a, eKey){
 }
 
 // Ensambla el objeto `a` COMPLETO: determinista (_buildQualAnalysis) + narrativa (bio/pros/
-// riesgos/valoración) + insiders + extras (escenarios/salud/proyecciones). Hace la red.
+// riesgos/valoración) + extras (escenarios/salud/proyecciones). Hace la red.
 // Devuelve null si no hay base (p.ej. la construcción falló). Sin efectos de UI.
 async function _assembleAnalysis(ticker, info){
   ticker = (ticker||'').toUpperCase();
-  let base=null, narr=null, insRaw=null, eqr=null;
+  let base=null, narr=null, eqr=null;
   try {
     base = _buildQualAnalysis(ticker, info);
     const facts = _stockFactsForPrompt(ticker, info);
-    const insP  = _fetchInsiders(ticker).catch(() => null);   // insiders en paralelo con la narrativa
-    // Reacción a resultados: en paralelo también. Se resuelve sola (local/nube) y solo
-    // llama a la IA si hay un reporte NUEVO que nadie ha analizado todavía.
+    // Reacción a resultados: en paralelo con la narrativa. Se resuelve sola (local/nube) y
+    // solo llama a la IA si hay un reporte NUEVO que nadie ha analizado todavía.
     const eqrP  = (typeof _getEarningsReaction === 'function')
       ? _getEarningsReaction(ticker, info).catch(() => null) : Promise.resolve(null);
     narr = await _getStockNarrative(ticker, info, facts);
-    insRaw = await insP;
     try { eqr = await eqrP; } catch(e){ eqr = null; }
   } catch(e){ base = base || null; narr = narr || null; }
   if (!base) return null;
@@ -21053,7 +21694,6 @@ async function _assembleAnalysis(ticker, info){
     riesgos: (narr && narr.riesgos && narr.riesgos.length) ? narr.riesgos : base.riesgos_fallback,
     valoracion_full: (base.valText||'') + ' ' + ((narr && narr.valoracion_text) ? narr.valoracion_text : _valVerdict(base.valLabel)),
     moatFactors: _moatFactorBreakdown(info, base.moat, (base.moat_bullets||[]).concat(bio||[])),
-    insiders: _summarizeInsiders(insRaw),
     earningsReaction: eqr || null,     // null → la sección no se pinta (sin placeholders)
   });
   try { Object.assign(a, await _pvxExtras(ticker, info)); } catch(e){}
@@ -29231,6 +29871,10 @@ if (document.readyState === 'loading') {
     if (window._pvKilled) return;   // cuenta eliminada → no cargar nada (se reinicia limpio)
     session = s;
     try { window.__pvUserId = (s.user && s.user.id) || 'local'; } catch(e){}
+    // Consentimiento de IA (5.1.2(i)): trae la decisión guardada en la nube para no
+    // volver a preguntar en un teléfono nuevo. Sin `await` — es un espejo de comodidad y
+    // el gate real vive en _aiFetch, que resuelve solo si le hace falta.
+    try { if (window._pvAiConsent) window._pvAiConsent.hydrate(); } catch(e){}
     // RevenueCat: vincular la compra al UUID de Supabase. Sin esto TODO cliente queda con
     // un $RCAnonymousID y el entitlement no se comparte entre iOS y web (quien paga en el
     // iPhone entra en portivapp.com y no es Pro). Este es el único punto por el que pasan
