@@ -31950,8 +31950,18 @@ document.addEventListener('DOMContentLoaded', function(){
 
   window.getInvestorProfile = function(){
     try {
-      const raw = localStorage.getItem(_key()) || localStorage.getItem('pv_profile_local');
-      return raw ? JSON.parse(raw) : null;
+      const raw = localStorage.getItem(_key());
+      if (raw) return JSON.parse(raw);
+      // `pv_profile_local` es un espejo del DISPOSITIVO, no de la cuenta: _renderResult lo
+      // escribe en CADA quiz terminado, también con sesión iniciada. Leerlo estando logueado
+      // hacía que una cuenta NUEVA heredara el perfil de quien hubiera usado antes el móvil:
+      // _pvMaybeShowQuiz lo daba por hecho, el quiz no se abría y la primera pantalla tras
+      // registrarse era el muro de suscripción. Con sesión real manda SOLO la clave del uid
+      // (que _appBundleRestore repone desde la nube para quien ya lo había contestado).
+      const uid = window.__pvUserId;
+      if (uid && uid !== 'local') return null;
+      const mirror = localStorage.getItem('pv_profile_local');
+      return mirror ? JSON.parse(mirror) : null;
     } catch(e){ return null; }
   };
 
