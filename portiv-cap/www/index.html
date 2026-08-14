@@ -3342,7 +3342,10 @@ window._ensureChartJs = (function(){
   /* ── Portiv IA: chat a pantalla completa ── */
   #tab-aianalyst { padding: 0 !important; }
   .ai-chat-page { height: calc(100dvh - 146px) !important; min-height: 0 !important; background: #F8F9FF !important; }
-  .ai-chat-inputarea { padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px)) !important; }
+  /* El home indicator ya lo cubre el propio bottom-nav (padding-bottom: var(--pv-safe-b)),
+     que va JUSTO debajo: sumarlo otra vez aquí dejaba ~48px de blanco muerto entre la barra
+     de escribir y el menú. Con 10px la caja de escribir queda pegada al menú. */
+  .ai-chat-inputarea { padding: 12px 14px 10px !important; }
   /* Transición profesional de entrada de pestañas (solo móvil; no afecta escritorio). */
   .page.pv-tab-in { animation: pvTabIn .30s cubic-bezier(.22,.61,.36,1) both; }
   @keyframes pvTabIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }
@@ -3368,6 +3371,10 @@ window._ensureChartJs = (function(){
   body.pv-kb-open .ai-chat-page { height: 100% !important; min-height: 0 !important; }
   body.pv-kb-open .bottom-tabs { display: none !important; }
   body.pv-kb-open .ai-chat-inputarea { padding-bottom: 10px !important; }
+  /* Las sugerencias sólo sirven con el chat en reposo. Si suben con el teclado roban ~130px
+     al hilo (el último mensaje quedaba cortado a la mitad) y parecen "saltar". Con el foco
+     dentro, lo único que queda sobre el teclado es la caja de escribir. */
+  body.pv-kb-open .ai-chat-chips { display: none !important; }
   /* Sin esto, llegar al final de los mensajes encadena el scroll al documento y la
      pantalla vuelve a irse hacia abajo pese al anclaje. */
   body.pv-kb-open .ai-chat-messages { overscroll-behavior: contain !important; }
@@ -4044,7 +4051,6 @@ window._pvAwaitIAP = function(totalMs){
         </button>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
-      <div class="pv-ai-foot" style="margin-top:8px;padding-top:8px;text-align:center;">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
     </div>
 
   </div>
@@ -4771,20 +4777,9 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-cat .cimp.hi{background:var(--px-red-soft);color:var(--px-red)}
       .pvx .px-cat .cimp.md{background:var(--px-amber-soft);color:var(--px-amber)}
       .pvx .px-cat .cimp.lo{background:#eef0f3;color:var(--px-muted)}
-      /* ownership / insiders */
-      .pvx .px-own{display:flex;gap:24px;flex-wrap:wrap;align-items:center}
-      .pvx .px-own-legend{flex:1;min-width:200px}
-      .pvx .px-oleg{display:flex;align-items:center;gap:10px;margin:8px 0;font-size:13.5px}
-      .pvx .px-oleg .sw{width:12px;height:12px;border-radius:4px;flex:0 0 auto}
-      .pvx .px-oleg .on{color:var(--px-ink-soft)} .pvx .px-oleg .ov{margin-left:auto;font-family:'Poppins','Manrope',sans-serif;font-weight:700}
-      .pvx .px-insider{margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)}
-      .pvx .px-insider h4{font-family:'Poppins','Manrope',sans-serif;font-size:13px;margin:0 0 10px;color:var(--px-ink-soft)}
-      .pvx .px-itx{display:flex;align-items:center;padding:8px 0;font-size:13px;gap:12px}
-      .pvx .px-itx .idir{font-weight:800;font-size:10.5px;padding:2px 8px;border-radius:6px;flex:0 0 auto}
-      .pvx .px-itx .idir.buy{background:var(--px-green-soft);color:var(--px-green-text)}
-      .pvx .px-itx .idir.sell{background:var(--px-red-soft);color:var(--px-red)}
-      .pvx .px-itx .idir.neu{background:#eef0f3;color:var(--px-muted)}
-      .pvx .px-itx .iname{color:var(--px-ink)} .pvx .px-itx .iamt{margin-left:auto;color:var(--px-ink-soft);font-family:'Poppins','Manrope',sans-serif;font-weight:600}
+      /* Análisis técnico — el canvas es lo único que necesita reglas propias: alto fijo,
+         ancho fluido y bloqueo del gesto de scroll horizontal en el WebView de iOS. */
+      .pvx .px-tec-canvas{display:block;width:100%;height:214px;touch-action:pan-y}
       .pvx .px-disclaimer{font-size:11px;color:var(--px-muted);text-align:center;padding:6px 0 18px;line-height:1.6}
       @media(max-width:760px){
         .pvx .px-hgrid,.pvx .px-scen,.pvx .px-pr,.pvx .px-eqr-notes{grid-template-columns:1fr}
@@ -5051,8 +5046,6 @@ window._pvAwaitIAP = function(totalMs){
      desplazó (--vv-top) y se retira el tab bar, que si no queda flotando sobre el teclado. */
   body.pv-kb-open .ai-chat-page { transform: translateY(var(--vv-top, 0px)); will-change: transform; }
   body.pv-kb-open .bottom-tabs, body.pv-kb-open .bottom-nav { display: none !important; }
-  /* Aviso legal del chat: discreto, en una línea de texto fina bajo el input. */
-  .ai-chat-inputarea .pv-ai-foot { font-size:9.5px; line-height:1.4; letter-spacing:.1px; opacity:.72; margin-top:6px !important; padding-top:6px !important; }
   .ai-chat-header { padding:18px 24px; background:#fff; border-bottom:1px solid #e8eaf0; display:flex; align-items:center; gap:14px; flex-shrink:0; }
   .ai-chat-header-avatar { width:40px; height:40px; border-radius:50%; background:var(--blue); display:flex; align-items:center; justify-content:center; color:#fff; font-size:15px; font-weight:700; flex-shrink:0; line-height:1; }
   .ai-chat-header-info { flex:1; min-width:0; display:flex; flex-direction:column; justify-content:center; }
@@ -5932,6 +5925,14 @@ window._pvAwaitIAP = function(totalMs){
         <span class="sl-txt"><b>Soporte y contacto</b><i>Ayuda, preguntas frecuentes y cómo escribirnos.</i></span>
         <span class="sl-arrow" aria-hidden="true"></span>
       </button>
+      <!-- Consentimiento de IA de terceros (Guideline 5.1.2(i)). El permiso se pide en la
+           primera llamada de IA; esto es el interruptor para revocarlo o volver a darlo,
+           que la guideline exige que exista y sea accesible. El subtítulo lo escribe
+           renderSettings() con el estado real. -->
+      <button class="set-legal-item" id="setAiConsent" onclick="_pvAiConsentToggle()">
+        <span class="sl-txt"><b>Análisis con inteligencia artificial</b><i id="setAiConsentSub">Compartir datos de tu cartera con Anthropic (Claude).</i></span>
+        <span class="sl-arrow" aria-hidden="true"></span>
+      </button>
       <button class="set-legal-item" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
         <span class="sl-txt"><b>Planes y precios</b><i>Qué incluye Portiv Pro.</i></span>
         <span class="sl-arrow" aria-hidden="true"></span>
@@ -6424,6 +6425,20 @@ async function renderSettings(){
   try {
     const _pr = document.getElementById('setLegalPricing');
     if (_pr) _pr.style.display = (typeof window._pvIsNativeApp === 'function' && window._pvIsNativeApp()) ? 'none' : 'flex';
+  } catch(e){}
+  // Estado real del consentimiento de IA. Se pinta en cada render porque puede cambiar
+  // fuera de Ajustes (el modal de la primera llamada) y una etiqueta desfasada aquí haría
+  // creer al usuario que compartió datos que no compartió, o al revés.
+  try {
+    const _ac = document.getElementById('setAiConsentSub');
+    if (_ac && window._pvAiConsent) {
+      const _v = window._pvAiConsent.get();
+      _ac.textContent = _v === 'yes'
+        ? 'Permitido — compartes datos de tu cartera con Anthropic (Claude). Toca para revocarlo.'
+        : (_v === 'no'
+            ? 'Desactivado — no se comparte nada con la IA. Toca para permitirlo.'
+            : 'Se te pedirá permiso antes de compartir datos de tu cartera con Anthropic (Claude).');
+    }
   } catch(e){}
   const isDark = document.body.classList.contains('dark-theme');
   document.querySelectorAll('#setThemeToggle .set-theme-opt').forEach(b =>
@@ -6957,6 +6972,174 @@ const _AI_SB_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/anthr
 const _AI_SB_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
 function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protocol); } catch(e){ return false; } }
 
+// ── CONSENTIMIENTO DE IA DE TERCEROS (App Store Guideline 5.1.2(i)) ──────────────
+// La guideline exige divulgar CON QUIÉN se comparten datos personales —"including with
+// third-party AI"— y obtener permiso EXPLÍCITO ANTES de compartirlos. Portiv manda a
+// Anthropic (Claude) la composición real de la cartera: símbolos, peso, sector, beta,
+// retorno esperado y el plan de rebalanceo. Eso es dato financiero personal, así que la
+// primera llamada de IA no puede salir sin un sí del usuario.
+//
+// DÓNDE SE APLICA: no en cada feature (son 13 puntos de llamada y cualquiera nuevo se
+// olvidaría), sino en el único sitio por el que los datos SALEN del dispositivo — el
+// fetch a _AI_SB_URL dentro de _aiFetch y _aiFetchVision. Ahí el gate es imposible de
+// esquivar y no se paga con un modal en features que ni siquiera llegan a la red (las
+// no esenciales se cortan antes con el 503 sintético de "paid-skip").
+//
+// SI RECHAZA: el resto del app funciona entero. Seguimiento de cartera, métricas de
+// riesgo, asesor determinista, rebalanceo, gráficos y SnapTrade no usan IA. Las features
+// que sí la usan reciben un 403 sintético y caen a su fallback determinista, exactamente
+// igual que ya hacen con el 503 de política de gasto — no hay camino nuevo que romper.
+//
+// PERSISTENCIA: localStorage manda (es lo que bloquea la llamada, y funciona sin sesión),
+// con espejo en `profiles.ai_consent` para que no se vuelva a preguntar al cambiar de
+// dispositivo. Si esa columna todavía no existe en Supabase, el espejo falla en silencio
+// y el consentimiento local sigue siendo válido: el gate nunca depende de la red.
+const _PV_AI_CONSENT = {
+  _inflight: null,
+  _key(){ return 'pv_ai_consent_' + (window.__pvUserId || 'local'); },
+  // 'yes' | 'no' | null (nunca preguntado)
+  get(){ try { return localStorage.getItem(this._key()) || null; } catch(e){ return null; } },
+  set(v){
+    try { localStorage.setItem(this._key(), v); } catch(e){}
+    // Espejo en la nube. Best-effort a propósito: un fallo aquí NO invalida la decisión
+    // que el usuario acaba de tomar, solo hace que otro dispositivo vuelva a preguntar.
+    try {
+      const sb = window.sbClient, uid = window.__pvUserId;
+      if (sb && uid && uid !== 'local') {
+        sb.from('profiles').update({ ai_consent: v === 'yes' }).eq('id', uid)
+          .then(function(){}, function(){});
+      }
+    } catch(e){}
+  },
+  // Trae la decisión guardada en la nube al iniciar sesión en un dispositivo nuevo. Solo
+  // rellena el hueco: si ya hay valor local, ese manda (es el más reciente que tocó este
+  // teléfono). Un error —incluida la columna inexistente— se traga sin ruido.
+  async hydrate(){
+    try {
+      const sb = window.sbClient, uid = window.__pvUserId;
+      if (!sb || !uid || uid === 'local') return;
+      if (this.get()) return;
+      const { data, error } = await sb.from('profiles').select('ai_consent').eq('id', uid).maybeSingle();
+      if (error || !data || data.ai_consent == null) return;
+      try { localStorage.setItem(this._key(), data.ai_consent ? 'yes' : 'no'); } catch(e){}
+    } catch(e){}
+  },
+  // Punto de entrada del gate. Devuelve true si se puede llamar a la IA.
+  // Concurrencia: varias features pueden pedir IA a la vez (chat + pregen de noticias).
+  // Una sola promesa en vuelo → un solo modal, y todas esperan la misma respuesta.
+  async ensure(){
+    const v = this.get();
+    if (v === 'yes') return true;
+    if (v === 'no')  return false;
+    if (this._inflight) return this._inflight;
+    this._inflight = this._ask().then((ok) => { this._inflight = null; return ok; });
+    return this._inflight;
+  },
+  // Modal construido en JS y no en el markup: no hay que tocar ningún bloque de HTML
+  // existente y no pesa nada hasta la primera vez que se abre. Paleta neutra del app
+  // (navy + fondo claro); NADA de verde/rojo, que aquí no hay dato financiero.
+  _ask(){
+    return new Promise((resolve) => {
+      let dark = false;
+      try { dark = document.body.classList.contains('dark-theme'); } catch(e){}
+      const cBg    = dark ? '#0e1a2b' : '#F8F9FF';
+      const cCard  = dark ? '#13233a' : '#FFFFFF';
+      const cTxt   = dark ? '#E8EDF5' : '#04162c';
+      const cTxt2  = dark ? '#9BA9BC' : '#4A5A70';
+      const cLine  = dark ? '#24384f' : '#E3E8F0';
+
+      const wrap = document.createElement('div');
+      wrap.id = 'pvAiConsent';
+      wrap.setAttribute('role', 'dialog');
+      wrap.setAttribute('aria-modal', 'true');
+      wrap.setAttribute('aria-labelledby', 'pvAiConsentTitle');
+      // z-index por encima del paywall y del quiz (12000-13000): este modal bloquea una
+      // transmisión de datos, así que no puede quedar debajo de nada.
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:14000;display:flex;align-items:flex-end;justify-content:center;'
+        + 'background:rgba(4,22,44,.55);-webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);'
+        + 'padding:0;font-family:var(--font,Manrope,system-ui,sans-serif)';
+
+      const card = document.createElement('div');
+      // padding-bottom con safe-area: en iPhone con home indicator los botones quedaban
+      // pegados al borde y el gesto de home se comía el tap.
+      card.style.cssText = 'width:100%;max-width:520px;max-height:88vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;'
+        + 'background:' + cBg + ';border-radius:22px 22px 0 0;'
+        + 'padding:26px 22px calc(22px + env(safe-area-inset-bottom,0px));'
+        + 'box-shadow:0 -8px 40px rgba(4,22,44,.28)';
+
+      card.innerHTML =
+        '<div style="font:800 19px/1.3 inherit;color:' + cTxt + ';margin-bottom:8px" id="pvAiConsentTitle">Análisis con inteligencia artificial</div>'
+      + '<div style="font:500 14px/1.65 inherit;color:' + cTxt2 + ';margin-bottom:16px">'
+      +   'Para generar los análisis, el chat y los resúmenes, Portiv envía datos de tu cartera a '
+      +   '<b style="color:' + cTxt + '">Anthropic (Claude)</b>, un proveedor de inteligencia artificial de terceros.'
+      + '</div>'
+      + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:12px">'
+      +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ SE ENVÍA</div>'
+      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Los símbolos de tus posiciones, su peso en la cartera, el sector, la beta, el retorno esperado y el plan de rebalanceo calculado. Si usas el importador por captura, también la imagen que subes.</div>'
+      + '</div>'
+      + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:16px">'
+      +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ NO SE ENVÍA</div>'
+      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Tu correo, tu contraseña, ni las credenciales o el número de cuenta de tu broker.</div>'
+      + '</div>'
+      + '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + ';margin-bottom:20px">'
+      +   'Puedes rechazarlo y seguir usando Portiv: el seguimiento de tu cartera, las métricas de riesgo, el rebalanceo y la sincronización con tu broker no usan inteligencia artificial. '
+      +   'Cambia esta decisión cuando quieras en Ajustes.'
+      + '</div>'
+      + '<div style="display:flex;flex-direction:column;gap:9px">'
+      +   '<button type="button" id="pvAiConsentYes" style="width:100%;height:50px;border:0;border-radius:14px;background:#04162c;color:#fff;font:700 15px inherit;cursor:pointer">Aceptar y continuar</button>'
+      +   '<button type="button" id="pvAiConsentNo" style="width:100%;height:50px;border:1px solid ' + cLine + ';border-radius:14px;background:transparent;color:' + cTxt2 + ';font:600 15px inherit;cursor:pointer">Ahora no</button>'
+      + '</div>';
+
+      wrap.appendChild(card);
+
+      const _self = this;
+      let _done = false;
+      function _close(v){
+        if (_done) return;   // doble tap / tap + tecla → una sola decisión
+        _done = true;
+        _self.set(v);
+        try { wrap.remove(); } catch(e){}
+        try { document.body.style.overflow = _prevOv; } catch(e){}
+        resolve(v === 'yes');
+      }
+      // El overlay NO se cierra tocando fuera: cerrar sin decidir dejaría el estado en
+      // "nunca preguntado" y el modal reaparecería en la siguiente llamada. Se decide.
+      card.querySelector('#pvAiConsentYes').addEventListener('click', function(){ _close('yes'); });
+      card.querySelector('#pvAiConsentNo').addEventListener('click', function(){ _close('no'); });
+
+      let _prevOv = '';
+      try { _prevOv = document.body.style.overflow; document.body.style.overflow = 'hidden'; } catch(e){}
+      try { document.body.appendChild(wrap); } catch(e){ _done = true; resolve(false); return; }
+      try { card.querySelector('#pvAiConsentYes').focus(); } catch(e){}
+    });
+  }
+};
+window._pvAiConsent = _PV_AI_CONSENT;
+// Interruptor de Ajustes. Revocar es inmediato y no pregunta nada (nadie necesita que le
+// insistan para dejar de compartir sus datos). Volver a permitir sí reabre el modal
+// completo: el usuario tiene que leer otra vez qué se envía antes de decir que sí, que es
+// justo lo que pide la 5.1.2(i) — el permiso es informado, no un toggle a ciegas.
+window._pvAiConsentToggle = async function(){
+  try {
+    const c = window._pvAiConsent;
+    if (!c) return;
+    if (c.get() === 'yes') {
+      c.set('no');
+      try { if (typeof showToast === 'function') showToast('Listo. Ya no se comparten datos de tu cartera con la IA.', 'var(--text3)'); } catch(e){}
+    } else {
+      await c._ask();
+    }
+    try { if (typeof renderSettings === 'function') renderSettings(); } catch(e){}
+  } catch(e){}
+};
+// Respuesta sintética para cuando no hay consentimiento. Se usa el MISMO patrón que el
+// 503 de "paid-skip": los callers ya saben tratar un Response no-ok cayendo a su ruta
+// determinista, así que no hace falta tocar ninguno de los 13 puntos de llamada.
+function _pvAiNoConsentRes(){
+  return new Response(JSON.stringify({ error: { message: 'Análisis con IA desactivado: no se otorgó permiso para compartir datos con el proveedor de IA.' }, error_code: 'ai_consent_required' }),
+    { status: 403, headers: { 'content-type': 'application/json' } });
+}
+
 // ── FORZAR FACTURACIÓN A TU API KEY (a pedido explícito) ─────────────────────────
 // Ignora el proxy local (suscripción GRATIS de Claude) y la política "solo chat+visión
 // pagan": TODAS las llamadas de IA (noticias, outlook, eventos, rebalanceo, por-qué-se-
@@ -7108,6 +7291,9 @@ async function _aiFetch(opts, essential) {
       // _pvAccessToken() encapsula el getSession() (que lee de localStorage) con una caché
       // de 60 s — la var `session` vive dentro del IIFE de auth y aquí no es accesible.
       // Si no hay sesión, cae a la anon key (comportamiento previo).
+      // GATE 5.1.2(i): último punto antes de que los datos salgan del dispositivo. Si el
+      // usuario no ha dado permiso para compartirlos con Anthropic, no se envía nada.
+      if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
       let _uTok = _AI_SB_ANON;
       try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
@@ -7137,6 +7323,10 @@ async function _aiFetchVision(opts) {
   let _sbErr;
   if (typeof _aiSbOn === 'function' && _aiSbOn()) {
     try {
+      // GATE 5.1.2(i): la captura del broker es un dato personal más (a menudo con el
+      // saldo y el número de cuenta a la vista), así que la visión pasa por el MISMO
+      // permiso que el texto. Ver _PV_AI_CONSENT.
+      if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
       let _uTok = _AI_SB_ANON;
       try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
       const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
@@ -10882,16 +11072,40 @@ function _newsLinkFor(n) {
 function _cleanNewsText(t){
   if (t == null) return '';
   return String(t)
-    .replace(/<\s*\/?\s*cite[^>]*>/gi, '')       // <cite index="1-1"> … </cite>
+    // <cite index="1-1"> … </cite> en sus tres formas: literal, HTML-escapada
+    // (&lt;cite&gt;, que es la que se VE cuando el texto pasa por pvEsc) y con comillas
+    // angulares unicode (‹cite›), tal como a veces las devuelve la herramienta de búsqueda.
+    .replace(/<\s*\/?\s*cite\b[^>]*>/gi, '')
+    .replace(/&lt;\s*\/?\s*cite\b[^&]*?&gt;/gi, '')
+    .replace(/[‹＜]\s*\/?\s*cite\b[^›＞]*[›＞]/gi, '')
+    .replace(/\bcite\s+index\s*=\s*"[^"]*"\s*\/?\s*>?/gi, '')  // restos sin envoltura
     .replace(/<\s*\/?\s*(antml|tool|function)[^>]*>/gi, '') // artefactos de tooling
+    .replace(/&lt;\s*\/?\s*(antml|tool|function)[^&]*?&gt;/gi, '')
     .replace(/```[a-zA-Z]*|```/g, '')            // fences ```json
     .replace(/\[\s*\d+(?:\s*[-,]\s*\d+)?\s*\]/g, '') // [1] [1-2] refs
     .replace(/￼/g, '')                       // object replacement char
+    .replace(/\s+([,.;:])/g, '$1')               // espacio suelto antes de puntuación
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 window._cleanNewsText = _cleanNewsText;
+
+// Limpieza EN PROFUNDIDAD de cualquier estructura (outlook semanal, seeds, narrativa IA):
+// recorre strings/arrays/objetos y devuelve una copia sin artefactos de la herramienta
+// de búsqueda. Se usa al generar (antes de subir a la nube) y al renderizar (por si la
+// copia cacheada ya venía sucia).
+function _cleanAIDeep(v){
+  if (typeof v === 'string') return _cleanNewsText(v);
+  if (Array.isArray(v)) return v.map(_cleanAIDeep);
+  if (v && typeof v === 'object'){
+    const out = {};
+    for (const k in v) if (Object.prototype.hasOwnProperty.call(v,k)) out[k] = _cleanAIDeep(v[k]);
+    return out;
+  }
+  return v;
+}
+window._cleanAIDeep = _cleanAIDeep;
 
 // Construye una descripción más extensa y detallada para una noticia a partir
 // de los datos disponibles: el resumen real de la fuente (si existe) más varias
@@ -13994,6 +14208,19 @@ const PORTIV_CHART = {
     if(!_inc){ try{ _inc=localStorage.getItem('pv_broker_inception')||null; }catch(e){} if(_inc) window._BROKER_INCEPTION=_inc; }
     if(_inc){
       if(!_fromWin || _fromWin < _inc){ _fromWin=_inc; fromISO=_inc; }
+    }
+    // ── CLAMP POR SUELO DE CONEXIÓN ── Hay conexiones que NUNCA entregan la 1ª transacción
+    //    (IBKR es "Balance Only": posiciones y efectivo, sin historial de movimientos). Para
+    //    ese usuario _BROKER_INCEPTION no se establece jamás y el clamp de arriba no llega a
+    //    aplicarse: ALL vuelve a reconstruir ~1 año con las shares de hoy, que es exactamente
+    //    el +34% falso que este bloque existe para matar, reaparecido por la puerta de atrás.
+    //    `_BROKER_INCEPTION_FLOOR` (fecha de creación de la conexión, la manda el servidor)
+    //    NO es tu inception: tu cartera puede ser mucho más antigua. Por eso sólo RECORTA la
+    //    reconstrucción y no se pinta como fecha de inicio en ningún sitio.
+    else {
+      var _flo=window._BROKER_INCEPTION_FLOOR;
+      if(!_flo){ try{ _flo=localStorage.getItem('pv_broker_inception_floor')||null; }catch(e){} if(_flo) window._BROKER_INCEPTION_FLOOR=_flo; }
+      if(_flo && (!_fromWin || _fromWin < _flo)){ _fromWin=_flo; fromISO=_flo; }
     }
     // ── CLAMP A LA FOTO ── Si la gráfica proviene de una foto/transcripción del broker
     //    (_CHART_IMPORTED), NUNCA se extiende la ventana más allá de lo que la foto realmente
@@ -19667,11 +19894,12 @@ function _buildQualAnalysis(ticker, info){
 //    • Consenso Buy/Hold/Sell .......................................... info.recoBreakdown
 //    • Retorno esperado + proyecciones 3m/6m/1a/3a ..................... _expReturn (MISMA fn del portafolio)
 //    • Próximos resultados (catalizador) ............................... EPS (Finnhub earnings calendar)
-//    • Actividad de insiders ........................................... SEC Form 4 vía Finnhub
+//    • Análisis técnico: velas + RSI/SMA/MACD/ATR/volumen .............. barras diarias de Alpaca (IEX)
 //  PENDIENTE DE FUENTE (hoy la sección/fila se OCULTA — nunca se inventa):
 //    • Barras de crecimiento ingresos/EPS trimestral por barra (se cubre con la tarjeta #r-eps existente)
 //    • Tabla de comparación con competidores (peers: falta métrica financiera por peer)
-//    • Dona de % ownership institucional / insiders / retail / short interest
+//    • Dona de % ownership institucional / retail / short interest
+//    • "Lectura general" del análisis técnico (llega de technical_signals; sin fila no se pinta)
 //    • Recompras, cobertura de intereses, efectivo vs deuda (totales), promedio histórico de múltiplos 5a
 //  ---------------------------------------------------------------------------------
 //  Degradación ESTRICTA: cada bloque devuelve null/[] si falta el dato → la sección no se renderiza.
@@ -20470,25 +20698,17 @@ function _renderQualAnalysis(a, el){
           : `<div style="margin-top:14px">${empty('Todavía no hay fecha confirmada del próximo reporte ni otros eventos publicados para esta empresa.')}</div>`}</div>`;
   }
 
-  // 13) QUIÉN es dueño / actividad de directivos (insiders) — datos reales SEC F4.
-  //     (El % institucional/insiders/short NO se expone por el proveedor → dona omitida.)
-  if (!(a.insiders && !a.insiders.empty)){
-    h += `<div class="px-card">${stitle('Actividad de directivos (insiders)')}
-      <div>${empty('La SEC no registra operaciones de directivos (Formulario 4) para esta empresa en los últimos 12 meses.')}</div></div>`;
-  } else {
-    const ins = a.insiders;
-    const toneCls = ins.tone==='pos'?'green':ins.tone==='neg'?'red':'amber';
-    h += `<div class="px-card">${stitle('Actividad de directivos (insiders)')}
-      <span class="px-pill ${toneCls}">${esc(ins.label)}</span>
-      <div style="font-size:13px;color:var(--px-ink-soft);line-height:1.6;margin:2px 0 4px">Últimos 12 meses en mercado abierto: <b style="color:var(--px-green-text)">compras ${money(ins.buyVal)}</b> · <b style="color:var(--px-red)">ventas ${money(ins.sellVal)}</b>${ins.discCount?` · ${ins.discCount} ${ins.discCount===1?'operación':'operaciones'}`:''}.</div>`;
-    if (ins.ops && ins.ops.length){
-      h += `<div class="px-insider"><h4>Movimientos recientes de insiders</h4>${ins.ops.map(o=>{const buy=o.code==='P';return `<div class="px-itx"><span class="idir ${buy?'buy':'sell'}">${buy?'COMPRA':'VENTA'}</span><span class="iname">${esc(o.name)}</span><span class="iamt">${buy?'+':'−'}${money(Math.abs(o.change)*(o.price||0))}${o.date?` · ${esc(o.date)}`:''}</span></div>`;}).join('')}</div>`;
-    }
-    h += `<div class="px-hint">Las ventas programadas suelen ser rutina (impuestos, diversificación). Las <b>compras</b> con dinero propio son la señal más valiosa: un insider apuesta a que la acción sube. Fuente: SEC Formulario 4 vía Finnhub.</div></div>`;
-  }
+  // 13) ANÁLISIS TÉCNICO — velas japonesas + indicadores. Sustituye al viejo apartado de
+  //     insiders (Formulario 4), retirado por decisión de producto. El slot se llena LAZY
+  //     igual que el de competidores: la tarjeta se pinta ya con su encabezado y el canvas
+  //     y los indicadores entran cuando llegan las barras de Alpaca. Si Alpaca no responde,
+  //     el slot se resuelve solo en un estado vacío y no rompe nada de lo de arriba.
+  h += `<div class="px-card">${stitle('Análisis técnico')}
+    <p class="px-intro">Qué dice el comportamiento del precio y el volumen en los últimos meses.</p>
+    <div id="pvx-tec-host" style="margin-top:14px"></div></div>`;
 
   // 14) Disclaimer. Se retiró en su día "a pedido", pero esta es la superficie de IA
-  //     más densa de la app (moat, veredicto de valoración, insiders, perspectiva de
+  //     más densa de la app (moat, veredicto de valoración, lectura técnica, perspectiva de
   //     resultados) y va sin descargo: es justo el caso que App Review marca en apps
   //     financieras. Vuelve, con el mismo texto que las otras ocho superficies.
   h += `<div class="px-disclaimer">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>`;
@@ -20509,6 +20729,13 @@ function _renderQualAnalysis(a, el){
         else _ph.innerHTML = _pvxPeersEmptyCard(a.ticker);   // sin comparables → tarjeta con aviso
       }
     }
+  } catch(e){}
+  // ③ Análisis técnico: mismo patrón LAZY. Pide las barras diarias a Alpaca una sola vez por
+  // ticker, calcula los indicadores en el cliente y pinta. La narrativa de Supabase viaja en
+  // paralelo y solo aparece si existe fila; su ausencia no retrasa ni bloquea el gráfico.
+  try {
+    const _th = el.querySelector('#pvx-tec-host');
+    if (_th) _pvtFillInto(_th, a.ticker);
   } catch(e){}
   // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
   // número, escrito una sola vez cuando ya es definitivo (arriba quedó en "Analizando…").
@@ -20903,63 +21130,520 @@ function _moatFactorBreakdown(info, moatObj, moatBullets){
   });
 }
 
-// ── Actividad de insiders (SEC Formulario 4 vía Finnhub) ──────────────────────────
-// Qué hacen los directivos: comprando / vendiendo / manteniendo. Datos reales, gratis
-// (endpoint free de Finnhub). Caché en memoria por sesión (6 h).
-const _insiderCache = {};
-async function _fetchInsiders(ticker){
-  ticker = (ticker||'').toUpperCase();
-  const c = _insiderCache[ticker];
-  if (c && (Date.now()-c.ts) < 6*3600*1000) return c.raw;
-  const path = `/stock/insider-transactions?symbol=${ticker}`;
-  let raw = null;
-  // 1) Vía normal (proxy Supabase/Netlify o directo).
-  try {
-    if (typeof fhFetch === 'function' && typeof _finnhubAvailable==='function' && _finnhubAvailable())
-      raw = await fhFetch(path, 12000);
-  } catch(e){ raw = null; }
-  // 2) El proxy compartido puede NO permitir este endpoint (403 "endpoint not allowed")
-  //    hasta que se redespliegue. Si falló y hay key local (tu Mac), vamos directo a Finnhub.
-  if ((!raw || raw.error || !Array.isArray(raw.data)) && FINNHUB_KEY) {
-    try {
-      const r = await fetch(`${FH_BASE}${path}&token=${FINNHUB_KEY}`);
-      if (r.ok) raw = await r.json();
-    } catch(e){}
+// ── ANÁLISIS TÉCNICO — velas japonesas + indicadores ──────────────────────────────
+// Ocupa el lugar del viejo apartado de insiders (Formulario 4), retirado por decisión de
+// producto. Todo el bloque se sostiene sobre las MISMAS barras de Alpaca (feed IEX, licencia
+// comercial) que ya alimentan la gráfica de precio: una sola petición diaria por ticker.
+//
+// Reparto de responsabilidades, a propósito:
+//   · gráfico e indicadores → matemática determinista en el cliente. No cuestan una llamada
+//     de IA ni dependen de que exista backend. Si Alpaca responde, la sección funciona.
+//   · "Lectura general"      → narrativa generada en la nube y guardada en technical_signals.
+//     Si no hay fila (o la tabla todavía no existe), el bloque simplemente no se pinta.
+//     Una pantalla sin narrativa sigue siendo una pantalla útil; una con narrativa inventada
+//     en el cliente, no.
+
+// Temporalidades del selector. `dias` es la ventana visible; `agg` cómo se agregan las velas
+// diarias para que nunca se dibuje una mancha: a 6M y 1A por semana, a 5A por mes. Comprimir
+// las diarias en vez de agregarlas es justo lo que produce el borrón ilegible en teléfono.
+const _PVT_PERIODOS = {
+  '3M': { lbl: '3M', dias: 92,   agg: 'd' },
+  '6M': { lbl: '6M', dias: 183,  agg: 'w' },
+  '1A': { lbl: '1A', dias: 365,  agg: 'w' },
+  '5A': { lbl: '5A', dias: 1826, agg: 'm' },
+};
+const _PVT_WARMUP = 300;          // días extra de calentamiento para que la SMA 200 tenga dato
+                                  // desde la PRIMERA vela visible, no desde la número 200.
+const _pvtCache = {};             // ticker → { bars, ts } — barras diarias crudas (5 años + warmup)
+const _PVT_TTL  = 6 * 3600 * 1000;
+
+// Barras diarias con OHLCV COMPLETO. _alpacaBars() se queda solo con los cierres, que basta
+// para una línea pero no para una vela, así que aquí se pide la misma serie y se conserva
+// todo. Una sola petición cubre las cuatro temporalidades: se traen 5 años y cada chip
+// recorta la ventana en memoria.
+async function _pvtFetchDiarias(ticker, timeoutMs = 12000){
+  const sym = (ticker || '').toUpperCase();
+  if (!sym) return null;
+  const c = _pvtCache[sym];
+  if (c && (Date.now() - c.ts) < _PVT_TTL) return c.bars;
+  if (typeof _alpacaFetch !== 'function') return null;
+
+  const D = 86400000;
+  const start = new Date(Date.now() - (_PVT_PERIODOS['5A'].dias + _PVT_WARMUP) * D)
+                  .toISOString().slice(0, 10);
+  const qs = `symbols=${encodeURIComponent(sym)}&timeframe=1Day&start=${start}`
+           + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
+  let d = null;
+  try { d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs); } catch(e){ return null; }
+  const raw = (d && d.bars && (d.bars[sym] || d.bars[sym.replace('.', '/')])) || [];
+  if (!Array.isArray(raw) || raw.length < 2) return null;
+
+  const bars = [];
+  for (const b of raw){
+    const t = Date.parse(b.t);
+    if (!isFinite(t)) continue;
+    const o = +b.o, hi = +b.h, lo = +b.l, cl = +b.c, v = +b.v;
+    if (![o, hi, lo, cl].every(n => isFinite(n) && n > 0)) continue;
+    bars.push({ t, o, h: hi, l: lo, c: cl, v: isFinite(v) ? v : 0 });
   }
-  _insiderCache[ticker] = { raw, ts: Date.now() };
-  return raw;
+  if (bars.length < 2) return null;
+  _pvtCache[sym] = { bars, ts: Date.now() };
+  return bars;
 }
-// Resume las transacciones en un veredicto + tenedores + operaciones recientes.
-function _summarizeInsiders(raw){
-  const rows = (raw && Array.isArray(raw.data)) ? raw.data : [];
-  if (!rows.length) return { empty:true };
-  const cutoff = Date.now() - 365*24*3600*1000;   // ventana 12 meses
-  const parsed = rows.map(r => {
-    const t = Date.parse(r.transactionDate || r.filingDate || '') || 0;
-    return { name:(r.name||'').trim(), code:(r.transactionCode||'').toUpperCase(),
-             change:Number(r.change)||0, price:Number(r.transactionPrice)||0,
-             share:Number(r.share)||0, date:(r.transactionDate||r.filingDate||''), t };
-  }).filter(r => r.name);
-  if (!parsed.length) return { empty:true };
-  // Discrecionales en mercado abierto dentro de la ventana: P=compra, S=venta.
-  const disc = parsed.filter(r => r.t>=cutoff && (r.code==='P'||r.code==='S'));
-  let buyVal=0, sellVal=0, buySh=0, sellSh=0;
-  disc.forEach(r => {
-    const val = Math.abs(r.change) * (r.price||0);
-    if (r.code==='P'){ buyVal+=val; buySh+=Math.abs(r.change); }
-    else            { sellVal+=val; sellSh+=Math.abs(r.change); }
+
+// ── Matemática de indicadores ─────────────────────────────────────────────────────
+// Todo se calcula sobre la serie DIARIA completa, nunca sobre las velas agregadas: un RSI
+// sobre velas semanales es otro indicador con el mismo nombre, y la app promete el de 14 días.
+
+// Media simple. Devuelve un array paralelo con null donde todavía no hay n muestras.
+function _pvtSMA(vals, n){
+  const out = new Array(vals.length).fill(null);
+  let suma = 0;
+  for (let i = 0; i < vals.length; i++){
+    suma += vals[i];
+    if (i >= n) suma -= vals[i - n];
+    if (i >= n - 1) out[i] = suma / n;
+  }
+  return out;
+}
+
+// Media exponencial, sembrada con la simple de las primeras n muestras (convención estándar).
+function _pvtEMA(vals, n){
+  const out = new Array(vals.length).fill(null);
+  if (vals.length < n) return out;
+  const k = 2 / (n + 1);
+  let prev = 0;
+  for (let i = 0; i < n; i++) prev += vals[i];
+  prev /= n;
+  out[n - 1] = prev;
+  for (let i = n; i < vals.length; i++){ prev = vals[i] * k + prev * (1 - k); out[i] = prev; }
+  return out;
+}
+
+// RSI de Wilder (suavizado 1/n, no media simple de las ganancias).
+function _pvtRSI(closes, n = 14){
+  if (closes.length < n + 1) return null;
+  let g = 0, p = 0;
+  for (let i = 1; i <= n; i++){
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) g += d; else p -= d;
+  }
+  g /= n; p /= n;
+  for (let i = n + 1; i < closes.length; i++){
+    const d = closes[i] - closes[i - 1];
+    g = (g * (n - 1) + (d > 0 ?  d : 0)) / n;
+    p = (p * (n - 1) + (d < 0 ? -d : 0)) / n;
+  }
+  if (p === 0) return 100;
+  return 100 - 100 / (1 + g / p);
+}
+
+// MACD(12,26,9). Devuelve la lectura de hoy y hace cuántas sesiones lleva del mismo lado de
+// su línea de señal — que es el dato que de verdad usa la narrativa.
+function _pvtMACD(closes, r = 12, s = 26, sig = 9){
+  if (closes.length < s + sig) return null;
+  const e1 = _pvtEMA(closes, r), e2 = _pvtEMA(closes, s);
+  const linea = [];
+  for (let i = 0; i < closes.length; i++){
+    linea.push((e1[i] != null && e2[i] != null) ? e1[i] - e2[i] : null);
+  }
+  const densa = linea.filter(v => v != null);
+  const señal = _pvtEMA(densa, sig);
+  const off = linea.length - densa.length;
+  const hist = linea.map((v, i) => (v != null && señal[i - off] != null) ? v - señal[i - off] : null);
+  const últ = hist.length - 1;
+  if (hist[últ] == null) return null;
+  const arriba = hist[últ] >= 0;
+  let sesiones = 0;
+  for (let i = últ; i >= 0 && hist[i] != null && (hist[i] >= 0) === arriba; i--) sesiones++;
+  return { macd: linea[últ], señal: señal[últ - off], hist: hist[últ], arriba, sesiones };
+}
+
+// ATR de Wilder, devuelto como % del precio para que sea comparable entre tickers: un ATR de
+// $3 no dice nada si no sabes si la acción vale $20 o $600.
+function _pvtATR(bars, n = 14){
+  if (bars.length < n + 1) return null;
+  const tr = [];
+  for (let i = 1; i < bars.length; i++){
+    const b = bars[i], pc = bars[i - 1].c;
+    tr.push(Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc)));
+  }
+  let a = tr.slice(0, n).reduce((x, y) => x + y, 0) / n;
+  for (let i = n; i < tr.length; i++) a = (a * (n - 1) + tr[i]) / n;
+  const últ = bars[bars.length - 1].c;
+  return últ > 0 ? (a / últ) * 100 : null;
+}
+
+// Reúne los cinco indicadores del apartado a partir de la serie diaria.
+function _pvtIndicadores(bars){
+  const closes = bars.map(b => b.c);
+  const últ    = closes[closes.length - 1];
+  const sma50  = _pvtSMA(closes, 50);
+  const sma200 = _pvtSMA(closes, 200);
+  const s50    = sma50[sma50.length - 1];
+  const s200   = sma200[sma200.length - 1];
+
+  // Volumen relativo: última sesión contra el promedio de las 30 anteriores (sin incluirla,
+  // o el propio día inflaría su referencia).
+  let volRel = null;
+  if (bars.length >= 31){
+    const prev = bars.slice(-31, -1).reduce((x, b) => x + b.v, 0) / 30;
+    if (prev > 0) volRel = bars[bars.length - 1].v / prev;
+  }
+  return {
+    precio:  últ,
+    rsi:     _pvtRSI(closes, 14),
+    sma50:   s50, sma200: s200,
+    vs50:    (s50  > 0) ? ((últ / s50)  - 1) * 100 : null,
+    vs200:   (s200 > 0) ? ((últ / s200) - 1) * 100 : null,
+    macd:    _pvtMACD(closes),
+    atr:     _pvtATR(bars, 14),
+    volRel:  volRel,
+    series:  { sma50, sma200 },
+  };
+}
+
+// Agrega velas diarias a semanales o mensuales. Abre en la apertura de la primera sesión del
+// bucket, cierra en el cierre de la última, máximo y mínimo del bucket, volumen sumado.
+function _pvtAgregar(bars, modo){
+  if (modo === 'd') return bars.slice();
+  const clave = t => {
+    const d = new Date(t);
+    if (modo === 'm') return d.getUTCFullYear() * 100 + d.getUTCMonth();
+    // Semana ISO aproximada por el lunes que la abre — suficiente y estable para agrupar.
+    const lun = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    lun.setUTCDate(lun.getUTCDate() - ((lun.getUTCDay() + 6) % 7));
+    return lun.getTime();
+  };
+  const out = [];
+  let cur = null, k = null;
+  for (const b of bars){
+    const kb = clave(b.t);
+    if (kb !== k){
+      if (cur) out.push(cur);
+      cur = { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, i: b.i };
+      k = kb;
+    } else {
+      cur.h = Math.max(cur.h, b.h);
+      cur.l = Math.min(cur.l, b.l);
+      cur.c = b.c; cur.v += b.v; cur.i = b.i;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+// Recorta a la ventana visible y agrega. Devuelve además las dos SMA muestreadas en el ÚLTIMO
+// día de cada vela agregada, para que la línea siga siendo la media de 50 y 200 DÍAS aunque el
+// gráfico esté en semanal o mensual.
+function _pvtPrepararVista(bars, ind, periodo){
+  const cfg = _PVT_PERIODOS[periodo] || _PVT_PERIODOS['3M'];
+  const desde = Date.now() - cfg.dias * 86400000;
+  const idx = bars.map((b, i) => ({ ...b, i })).filter(b => b.t >= desde);
+  const vis = idx.length >= 2 ? idx : bars.map((b, i) => ({ ...b, i })).slice(-2);
+  const velas = _pvtAgregar(vis, cfg.agg);
+  return {
+    velas,
+    sma50:  velas.map(v => ind.series.sma50[v.i]),
+    sma200: velas.map(v => ind.series.sma200[v.i]),
+  };
+}
+
+// ── Dibujo del gráfico ────────────────────────────────────────────────────────────
+// Canvas 2D puro, sin librería ni adaptador de fechas: dos dependencias menos en un setup
+// sin bundler. Los colores NO se escriben aquí — se leen de las variables que ya define .pvx,
+// así que el gráfico sigue al tema de la app sin duplicar un solo hex.
+function _pvtDibujar(canvas, velas, sma50, sma200){
+  const W = canvas.offsetWidth | 0;
+  if (!W || !velas || velas.length < 2) return false;   // Trampa 2: contenedor todavía sin ancho
+
+  const H = 214, dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return false;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+
+  const cs  = getComputedStyle(canvas);
+  const tok = (n, f) => ((cs.getPropertyValue(n) || '').trim() || f);
+  const SUBE  = tok('--px-green-text', '#1f7a4d');   // mismos tokens que los valores financieros
+  const BAJA  = tok('--px-red',        '#c1443e');
+  const LINEA = tok('--px-line',       '#e9ebef');
+  const MUTED = tok('--px-muted',      '#7b8494');
+  const INK_SOFT = tok('--px-ink-soft','#3a4658');
+  const TRACK = tok('--px-track',      '#e6eaf0');
+
+  const EJE = 40, TOPE = 6, ALTO_P = 158, HUECO = 12, ALTO_V = 34;
+  const x0 = 0, ancho = W - EJE;
+  const pTop = TOPE, pBot = TOPE + ALTO_P;
+  const vTop = pBot + HUECO, vBot = vTop + ALTO_V;
+  if (ancho < 40) return false;
+
+  // Escala de precio: extremos de las mechas MÁS los valores de ambas medias, para que una SMA
+  // no se salga del cuadro. 6% de aire arriba y abajo.
+  let min = Infinity, max = -Infinity;
+  for (const v of velas){ if (v.l < min) min = v.l; if (v.h > max) max = v.h; }
+  for (const s of [sma50, sma200]) for (const v of s){
+    if (v == null) continue;
+    if (v < min) min = v; if (v > max) max = v;
+  }
+  if (!isFinite(min) || !isFinite(max)) return false;
+  if (max === min){ max = min * 1.01 || 1; min = min * 0.99; }
+  const aire = (max - min) * 0.06; min -= aire; max += aire;
+  const yP = p => pBot - ((p - min) / (max - min)) * ALTO_P;
+
+  let vmax = 0; for (const v of velas) if (v.v > vmax) vmax = v.v;
+  const yV = v => vmax > 0 ? vBot - (v / vmax) * ALTO_V : vBot;
+
+  const n = velas.length, paso = ancho / n;
+  const cuerpo = Math.max(1, Math.min(6, Math.floor(paso * 0.68)));
+  const cx = i => x0 + paso * i + paso / 2;
+
+  // Grilla horizontal + eje de precio a la derecha. Tres marcas: techo, medio, piso.
+  ctx.font = '10px Manrope, system-ui, sans-serif';
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const dec = max < 10 ? 2 : max < 1000 ? 1 : 0;
+  for (let i = 0; i <= 2; i++){
+    const p = max - (max - min) * (i / 2), y = Math.round(yP(p)) + 0.5;
+    ctx.strokeStyle = LINEA; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + ancho, y); ctx.stroke();
+    ctx.fillStyle = MUTED;
+    ctx.fillText(p.toFixed(dec), x0 + ancho + 6, y);
+  }
+
+  // Volumen primero, en gris neutro: colorearlo duplicaría la señal cromática de las velas.
+  ctx.fillStyle = TRACK;
+  for (let i = 0; i < n; i++){
+    const y = yV(velas[i].v), alto = Math.max(1, vBot - y);
+    ctx.fillRect(cx(i) - cuerpo / 2, vBot - alto, cuerpo, alto);
+  }
+
+  // Velas. Cada una codifica cierre contra apertura → es dato financiero y lleva el verde/rojo
+  // de la app. Mecha de máximo a mínimo, cuerpo de apertura a cierre con piso de 1.2px para que
+  // un doji no desaparezca.
+  for (let i = 0; i < n; i++){
+    const v = velas[i], sube = v.c >= v.o, col = sube ? SUBE : BAJA;
+    const x = Math.round(cx(i)) + 0.5;
+    ctx.strokeStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, yP(v.h)); ctx.lineTo(x, yP(v.l)); ctx.stroke();
+    const yA = yP(v.o), yC = yP(v.c);
+    const arriba = Math.min(yA, yC), alto = Math.max(1.2, Math.abs(yC - yA));
+    ctx.fillStyle = col;
+    ctx.fillRect(cx(i) - cuerpo / 2, arriba, cuerpo, alto);
+  }
+
+  // Medias: gris, nunca verde ni rojo — colorearlas competiría con las velas. La de 50 sólida y
+  // más oscura, la de 200 punteada y más clara. Se usan los dos grises de TEXTO de la app, no
+  // --px-line: ese es un color de borde y como línea de datos resulta ilegible sobre blanco.
+  const traza = (serie, color, guion) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 1.4;
+    ctx.setLineDash(guion ? [3, 3] : []);
+    ctx.beginPath();
+    let abierto = false;
+    for (let i = 0; i < n; i++){
+      const val = serie[i];
+      if (val == null){ abierto = false; continue; }
+      const x = cx(i), y = yP(val);
+      if (abierto) ctx.lineTo(x, y); else { ctx.moveTo(x, y); abierto = true; }
+    }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  traza(sma50,  INK_SOFT, false);
+  traza(sma200, MUTED,    true);
+  return true;
+}
+
+// ── Pintado de la sección ─────────────────────────────────────────────────────────
+
+// Explicación en español de cada indicador. Describe qué mide y qué significa el valor que se
+// está mostrando; no dice qué hacer con él.
+function _pvtExplicar(k, ind){
+  const r = ind.rsi, m = ind.macd;
+  switch (k){
+    case 'rsi':
+      if (r == null) return 'Mide si la acción subió o bajó demasiado rápido en las últimas 14 sesiones.';
+      return r >= 70 ? 'Por encima de 70: el precio subió rápido y la compra viene concentrada en pocas sesiones.'
+           : r <= 30 ? 'Por debajo de 30: zona de sobreventa, donde la presión vendedora suele estar agotándose.'
+           : 'Entre 30 y 70: ni sobrecomprada ni sobrevendida en las últimas 14 sesiones.';
+    case 'sma200':
+      if (ind.vs200 == null) return 'La acción no tiene todavía 200 sesiones de historia para calcular esta media.';
+      return ind.vs200 >= 0
+        ? 'El precio está por encima de su promedio de 200 días, la referencia de tendencia de largo plazo.'
+        : 'El precio está por debajo de su promedio de 200 días, la referencia de tendencia de largo plazo.';
+    case 'macd':
+      if (!m) return 'Compara dos promedios del precio para ver si el impulso cambia de dirección.';
+      return m.arriba
+        ? `Lleva ${m.sesiones} ${m.sesiones === 1 ? 'sesión' : 'sesiones'} por encima de su línea de señal: el impulso reciente es al alza.`
+        : `Lleva ${m.sesiones} ${m.sesiones === 1 ? 'sesión' : 'sesiones'} por debajo de su línea de señal: el impulso reciente es a la baja.`;
+    case 'atr':
+      if (ind.atr == null) return 'Cuánto se mueve la acción en un día normal, medido sobre 14 sesiones.';
+      return ind.atr >= 4 ? 'Se mueve bastante más que una acción típica: los saltos diarios son grandes.'
+           : ind.atr >= 2 ? 'Movimiento diario dentro de lo normal para una acción de bolsa.'
+           : 'Se mueve poco de un día a otro comparado con el promedio del mercado.';
+    case 'vol':
+      if (ind.volRel == null) return 'Compara el volumen de la última sesión con su promedio de 30 días.';
+      return ind.volRel >= 1.5 ? 'Bastante más negociación que de costumbre: hubo participación real detrás del movimiento.'
+           : ind.volRel >= 0.8 ? 'Volumen parecido al de un día normal para esta acción.'
+           : 'Menos negociación que de costumbre: pocos participantes detrás del movimiento.';
+  }
+  return '';
+}
+
+// Fila de indicador: nombre y explicación a la izquierda, valor a la derecha. Solo el RSI
+// lleva barra, con las marcas de 30 y 70 que son las que le dan sentido al número.
+function _pvtFila(nombre, valor, expl, barra){
+  const pos = barra != null ? Math.max(0, Math.min(100, barra)) : null;
+  return `<div style="padding:13px 0;border-top:1px solid var(--px-line)">
+    <div style="display:flex;align-items:baseline;gap:12px">
+      <div style="flex:1 1 auto;min-width:0;font-size:13.5px;font-weight:600;color:var(--px-ink)">${pvEsc(nombre)}</div>
+      <div style="flex:0 0 auto;font-family:'Poppins','Manrope',sans-serif;font-size:15px;font-weight:800;color:var(--px-ink);font-variant-numeric:tabular-nums">${pvEsc(valor)}</div>
+    </div>
+    ${pos == null ? '' : `<div style="position:relative;height:5px;border-radius:3px;background:var(--px-track);margin:9px 0 3px">
+      <div style="position:absolute;left:0;top:0;bottom:0;width:${pos.toFixed(1)}%;border-radius:3px;background:var(--px-green-bar)"></div>
+      <div style="position:absolute;left:30%;top:-2px;bottom:-2px;width:1px;background:var(--px-line)"></div>
+      <div style="position:absolute;left:70%;top:-2px;bottom:-2px;width:1px;background:var(--px-line)"></div>
+    </div>`}
+    <div style="font-size:12.5px;color:var(--px-muted);line-height:1.55;margin-top:5px">${pvEsc(expl)}</div>
+  </div>`;
+}
+
+// Lee la narrativa de la nube. Un solo SELECT por PostgREST, sin Edge Function de por medio.
+// Cualquier fallo (sin sesión, tabla aún no creada, red) devuelve null y el bloque se oculta.
+async function _pvtNarrativa(ticker){
+  try {
+    const sb = window.sbClient;
+    if (!sb) return null;
+    const { data, error } = await sb
+      .from('technical_signals')
+      .select('narrative, generated_at')
+      .eq('ticker', (ticker || '').toUpperCase())
+      .order('as_of_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error || !data || !data.narrative) return null;
+    return data;
+  } catch(e){ return null; }
+}
+
+const _pvtEstado = {};   // host → { ticker, bars, ind, periodo } para redibujar sin volver a la red
+
+// Punto de entrada del slot. Trae las barras, calcula, pinta, y engancha el redibujo.
+async function _pvtFillInto(host, ticker){
+  const tk = (ticker || '').toUpperCase();
+  host.dataset.tk = tk;
+  host.innerHTML = `<p class="px-empty">Cargando el comportamiento del precio…</p>`;
+
+  const [bars, narr] = await Promise.all([
+    _pvtFetchDiarias(tk).catch(() => null),
+    _pvtNarrativa(tk),
+  ]);
+  if (host.dataset.tk !== tk) return;                      // el usuario ya cambió de acción
+  if (!bars || bars.length < 30){
+    host.innerHTML = `<p class="px-empty">Aún no tenemos análisis técnico de este ticker.</p>`;
+    return;
+  }
+
+  const ind = _pvtIndicadores(bars);
+  _pvtEstado[tk] = { bars, ind, periodo: '3M', host };
+
+  const chips = Object.keys(_PVT_PERIODOS).map(k =>
+    `<button type="button" class="period-btn${k === '3M' ? ' active' : ''}" data-pvt="${k}">${_PVT_PERIODOS[k].lbl}</button>`).join('');
+
+  const n1 = (v, d = 1) => (v == null || !isFinite(v)) ? '—' : v.toFixed(d);
+  const pct = v => (v == null || !isFinite(v)) ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+
+  const lectura = narr ? _pvtBloqueLectura(narr) : '';
+
+  host.innerHTML = `
+    <canvas class="px-tec-canvas" id="pvt-cv-${pvEsc(tk)}"></canvas>
+    <div class="period-btns" id="pvt-chips" style="margin-top:10px;grid-template-columns:repeat(4,1fr) !important">${chips}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:11.5px;color:var(--px-muted)">
+      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:var(--px-ink-soft);display:block"></span>SMA 50</span>
+      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:0;border-top:2px dashed var(--px-muted);display:block"></span>SMA 200</span>
+      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;background:var(--px-track);display:block;border-radius:2px"></span>Volumen</span>
+    </div>
+    ${lectura}
+    <div style="margin-top:18px">
+      ${_pvtFila('RSI (14 días)', n1(ind.rsi), _pvtExplicar('rsi', ind), ind.rsi)}
+      ${_pvtFila('Media de 200 días', pct(ind.vs200), _pvtExplicar('sma200', ind), null)}
+      ${_pvtFila('MACD (12, 26, 9)', ind.macd ? n1(ind.macd.hist, 2) : '—', _pvtExplicar('macd', ind), null)}
+      ${_pvtFila('Volatilidad (ATR 14)', ind.atr == null ? '—' : `${n1(ind.atr)}%`, _pvtExplicar('atr', ind), null)}
+      ${_pvtFila('Volumen relativo (30 días)', ind.volRel == null ? '—' : `${n1(ind.volRel)}x`, _pvtExplicar('vol', ind), null)}
+    </div>`;
+
+  const cv = host.querySelector('canvas');
+  _pvtRedibujar(tk, cv);
+
+  host.querySelector('#pvt-chips').addEventListener('click', ev => {
+    const b = ev.target.closest('[data-pvt]');
+    if (!b) return;
+    host.querySelectorAll('[data-pvt]').forEach(x => x.classList.toggle('active', x === b));
+    const st = _pvtEstado[tk];
+    if (st){ st.periodo = b.dataset.pvt; _pvtRedibujar(tk, cv); }
   });
-  let label, tone;
-  if (!disc.length)                            { label='Manteniendo';      tone='neu'; }
-  else if (buyVal >= sellVal*1.5 && buyVal>0)  { label='Comprando';        tone='pos'; }
-  else if (sellVal >= buyVal*1.5 && sellVal>0) { label='Vendiendo';        tone='neg'; }
-  else                                         { label='Actividad mixta';  tone='neu'; }
-  // Mayores tenedores internos: registro más reciente por persona, ordenado por tenencia.
-  const byName = {};
-  parsed.forEach(r => { const cur=byName[r.name]; if(!cur || r.t>cur.t) byName[r.name]=r; });
-  const holders = Object.values(byName).sort((a,b)=>b.share-a.share).slice(0,5);
-  const ops = disc.slice().sort((a,b)=>b.t-a.t).slice(0,6);   // operaciones recientes P/S
-  return { empty:false, label, tone, buyVal, sellVal, buySh, sellSh, discCount:disc.length, holders, ops };
+  _pvtEngancharResize(tk, cv);
+}
+
+// Bloque "Lectura general". Solo se pinta si la nube devolvió narrativa; si tiene más de 10
+// días se etiqueta con su fecha en vez de ocultarla — data vieja etiquetada es aceptable,
+// data vieja disfrazada de actual no.
+function _pvtBloqueLectura(narr){
+  let sello = '';
+  const t = Date.parse(narr.generated_at || '');
+  if (isFinite(t) && (Date.now() - t) > 10 * 86400000){
+    sello = ` <span style="font-weight:500;color:var(--px-muted)">· Lectura del ${
+      new Date(t).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })}</span>`;
+  }
+  return `<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)">
+    <h4 style="display:flex;align-items:center;gap:7px;font-family:'Poppins','Manrope',sans-serif;font-size:13px;margin:0 0 8px;color:var(--px-ink-soft)">
+      <span class="material-symbols-outlined" style="font-size:16px;color:var(--px-green-text)">auto_awesome</span>Lectura general${sello}</h4>
+    <p style="font-size:13.5px;color:var(--px-ink-soft);line-height:1.7;margin:0">${pvEsc(narr.narrative)}</p>
+  </div>`;
+}
+
+// Recalcula la vista para la temporalidad activa y repinta el canvas.
+//
+// Trampa 2: si el apartado se monta dentro de un contenedor todavía sin ancho —pestaña que
+// no está al frente, tarjeta fuera de pantalla— offsetWidth da 0 y no se dibuja nada. No
+// basta un solo requestAnimationFrame: el ancho puede tardar en existir tanto como tarde el
+// usuario en abrir la pestaña. Se reintenta en escalera, rápido al principio y espaciado
+// después, y la cadena se corta sola en cuanto un dibujo tiene éxito o el canvas sale del DOM.
+function _pvtRedibujar(tk, canvas, intento){
+  const st = _pvtEstado[tk];
+  if (!st || !canvas || !canvas.isConnected) return;
+  if (!intento) clearTimeout(canvas._pvtRetry);   // repintado nuevo → cancela la escalera vieja
+  const vista = _pvtPrepararVista(st.bars, st.ind, st.periodo);
+  if (_pvtDibujar(canvas, vista.velas, vista.sma50, vista.sma200)) return;
+  const n = intento || 0;
+  if (n < 40) canvas._pvtRetry = setTimeout(() => _pvtRedibujar(tk, canvas, n + 1), n < 5 ? 50 : 200);
+}
+
+// El canvas no es responsive solo: hay que redibujarlo. Se enganchan TRES señales a propósito,
+// porque ninguna cubre sola todos los casos:
+//   · ResizeObserver  — la buena: cambia el ancho del contenedor aunque la ventana no se mueva.
+//                       Pero su entrega depende del ciclo de render y se suprime en vistas que
+//                       no están pintando, así que no puede ser la única.
+//   · resize          — respaldo universal, funciona incluso donde RO no entrega.
+//   · orientationchange — el giro del teléfono: el reflow llega DESPUÉS del evento, de ahí la espera.
+function _pvtEngancharResize(tk, canvas){
+  let to = null;
+  const repintar = () => { clearTimeout(to); to = setTimeout(() => _pvtRedibujar(tk, canvas), 150); };
+  const girar    = () => setTimeout(() => _pvtRedibujar(tk, canvas), 250);
+  window.addEventListener('resize', repintar);
+  window.addEventListener('orientationchange', girar);
+  let ro = null;
+  try {
+    if (window.ResizeObserver){ ro = new ResizeObserver(repintar); ro.observe(canvas); }
+  } catch(e){ ro = null; }
+  // Al salir el canvas del DOM (cambio de acción o de pestaña) se sueltan los tres enganches:
+  // sin esto cada acción visitada dejaría un listener vivo repintando un canvas huérfano.
+  const vigía = setInterval(() => {
+    if (canvas.isConnected) return;
+    if (ro) ro.disconnect();
+    window.removeEventListener('resize', repintar);
+    window.removeEventListener('orientationchange', girar);
+    clearTimeout(to); clearTimeout(canvas._pvtRetry); clearInterval(vigía);
+  }, 4000);
 }
 
 // ── Caché del análisis ENSAMBLADO (objeto `a` listo para pintar) ─────────────────
@@ -20987,21 +21671,19 @@ function _qualSet(tk, a, eKey){
 }
 
 // Ensambla el objeto `a` COMPLETO: determinista (_buildQualAnalysis) + narrativa (bio/pros/
-// riesgos/valoración) + insiders + extras (escenarios/salud/proyecciones). Hace la red.
+// riesgos/valoración) + extras (escenarios/salud/proyecciones). Hace la red.
 // Devuelve null si no hay base (p.ej. la construcción falló). Sin efectos de UI.
 async function _assembleAnalysis(ticker, info){
   ticker = (ticker||'').toUpperCase();
-  let base=null, narr=null, insRaw=null, eqr=null;
+  let base=null, narr=null, eqr=null;
   try {
     base = _buildQualAnalysis(ticker, info);
     const facts = _stockFactsForPrompt(ticker, info);
-    const insP  = _fetchInsiders(ticker).catch(() => null);   // insiders en paralelo con la narrativa
-    // Reacción a resultados: en paralelo también. Se resuelve sola (local/nube) y solo
-    // llama a la IA si hay un reporte NUEVO que nadie ha analizado todavía.
+    // Reacción a resultados: en paralelo con la narrativa. Se resuelve sola (local/nube) y
+    // solo llama a la IA si hay un reporte NUEVO que nadie ha analizado todavía.
     const eqrP  = (typeof _getEarningsReaction === 'function')
       ? _getEarningsReaction(ticker, info).catch(() => null) : Promise.resolve(null);
     narr = await _getStockNarrative(ticker, info, facts);
-    insRaw = await insP;
     try { eqr = await eqrP; } catch(e){ eqr = null; }
   } catch(e){ base = base || null; narr = narr || null; }
   if (!base) return null;
@@ -21012,7 +21694,6 @@ async function _assembleAnalysis(ticker, info){
     riesgos: (narr && narr.riesgos && narr.riesgos.length) ? narr.riesgos : base.riesgos_fallback,
     valoracion_full: (base.valText||'') + ' ' + ((narr && narr.valoracion_text) ? narr.valoracion_text : _valVerdict(base.valLabel)),
     moatFactors: _moatFactorBreakdown(info, base.moat, (base.moat_bullets||[]).concat(bio||[])),
-    insiders: _summarizeInsiders(insRaw),
     earningsReaction: eqr || null,     // null → la sección no se pinta (sin placeholders)
   });
   try { Object.assign(a, await _pvxExtras(ticker, info)); } catch(e){}
@@ -23181,6 +23862,9 @@ function _renderOutlookEmpty() {
 function _renderWeeklyOutlook(data) {
   const wrap = document.getElementById('weekOutlookContent');
   if (!wrap) return;
+  // Limpia artefactos de IA (<cite index="1-20">, refs [1], fences) que pueda traer la copia
+  // cacheada en la nube: el render nunca debe mostrarlos.
+  try { if (typeof _cleanAIDeep === 'function') data = _cleanAIDeep(data); } catch(e){}
 
   // Resultados de la semana ANTES de contar eventos: un seed que solo traía macro vacía no puede
   // mandar la vista al estado "sin eventos" si hay empresas reportando.
@@ -23503,6 +24187,8 @@ function _renderNextWeekOutlook(){
   // en background y este mismo render se repite con los datos nuevos.
   try { _earnEnsureFresh(1); } catch(e){}
   try { if (_earnInjectSeed(seed, 1)) { try { localStorage.setItem('weekly_outlook_' + _weekKey(1), JSON.stringify(seed)); } catch(e){} } } catch(e){}
+  // Sin artefactos de IA (<cite index="…">, refs [1], fences) en el seed antes de pintar.
+  try { if (typeof _cleanAIDeep === 'function') seed = _cleanAIDeep(seed); } catch(e){}
   const lbl = document.getElementById('nextWeekLabel'); if (lbl) lbl.textContent = seed.week || '';
   const top = _weekVolLevel(seed);
   const vb = document.getElementById('nextWeekVolBadge');
@@ -23952,6 +24638,7 @@ ${newsCtx}
 Si los titulares de arriba no bastan para confirmar el contexto de mercado más reciente y vigente, puedes hacer UNA búsqueda web para verificarlo; no hagas más de una.
 
 VOZ: prosa natural en español, frases completas, sin jerga en inglés (di "postura dura/suave de la Fed" no "hawkish/dovish", "resultados" no "earnings"), sin flechas (->), sin markdown.
+PROHIBIDO cualquier marca de la herramienta de búsqueda: NO uses etiquetas <cite> ni cite index="...", NO uses corchetes de referencia [1] o [1-2], NO uses bloques de código. Solo texto limpio.
 
 MERCADO GENERAL, NO CARTERA: escribe para el mercado de EE.UU. en general. Puedes referenciar índices y ETF grandes (S&P 500, Nasdaq, Dow, SOXX). NUNCA menciones "el portafolio", "tus posiciones" ni porcentajes/pesos de una cartera. Solo nombra una empresa concreta si un titular o evento listado arriba es específicamente sobre ella; si no, habla por sector o por índice.
 
@@ -23972,7 +24659,11 @@ key_themes = exactamente 3 temas clave.`;
     try{ if(typeof _tokAdd === 'function') _tokAdd(j.usage, AI_MODELS.reasoning, 'outlook'); }catch(e){}
     const t = (j.text||'').trim(); const m = t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedOutlook sin JSON');
     const raw = JSON.parse(m[0]);
-    return { theme: raw.theme||'', market_context: raw.market_context||'', key_themes: Array.isArray(raw.key_themes)?raw.key_themes:[], sources: Array.isArray(j.sources)?j.sources:[] };
+    // LIMPIEZA antes de subir a la nube: sin <cite index="…">, refs [1] ni fences → la copia
+    // compartida que reciben todos los usuarios ya llega limpia.
+    const _c  = (typeof _cleanNewsText==='function') ? _cleanNewsText : (x=>String(x||''));
+    const _cd = (typeof _cleanAIDeep==='function')  ? _cleanAIDeep   : (x=>x);
+    return { theme: _c(raw.theme||''), market_context: _c(raw.market_context||''), key_themes: Array.isArray(raw.key_themes)?_cd(raw.key_themes):[], sources: Array.isArray(j.sources)?j.sources:[] };
   }
 
   // Lee la nube y aplica si está fresca. NO genera. Para que TODOS (incl. no autenticados)
@@ -24019,6 +24710,7 @@ key_themes = exactamente 3 temas clave.`;
         if(narr.key_themes && narr.key_themes.length >= 2) data.key_themes = narr.key_themes;
         if(narr.sources && narr.sources.length) data.sources = narr.sources;   // disponible si en el futuro se quiere pintar "fuente" en el outlook
       }
+      try{ if(typeof _cleanAIDeep === 'function') data = _cleanAIDeep(data); }catch(e){}
       await _cloudSet(wk, { obj: data, ts: Date.now(), ver: VER, lang: _lang(), etDay: _etDay() });
       _applyToLocal(off, data);
       _rerender(off);
@@ -27072,7 +27764,9 @@ const PORTIV_NEWS = {
     let seedTop = '', seedBottom = '';
     try {
       const _sk = 'weekly_outlook_' + (typeof _weekKey === 'function' ? _weekKey(0) : this.weekId(0));
-      const _seed = JSON.parse(localStorage.getItem(_sk) || 'null');
+      let _seed = JSON.parse(localStorage.getItem(_sk) || 'null');
+      // Resumen de "Esta Semana" sin artefactos de IA (<cite index="…">, refs [1], fences).
+      try { if (_seed && typeof _cleanAIDeep === 'function') _seed = _cleanAIDeep(_seed); } catch(e){}
       // Tema + contexto + temas clave: del seed si existe; si no (navegador nuevo / Netlify
       // sin estado acumulado), se generan DETERMINISTAS desde los eventos reales de la
       // semana → el resumen de "Esta Semana" SIEMPRE aparece (gratis, igual en local y deploy).
@@ -29177,6 +29871,10 @@ if (document.readyState === 'loading') {
     if (window._pvKilled) return;   // cuenta eliminada → no cargar nada (se reinicia limpio)
     session = s;
     try { window.__pvUserId = (s.user && s.user.id) || 'local'; } catch(e){}
+    // Consentimiento de IA (5.1.2(i)): trae la decisión guardada en la nube para no
+    // volver a preguntar en un teléfono nuevo. Sin `await` — es un espejo de comodidad y
+    // el gate real vive en _aiFetch, que resuelve solo si le hace falta.
+    try { if (window._pvAiConsent) window._pvAiConsent.hydrate(); } catch(e){}
     // RevenueCat: vincular la compra al UUID de Supabase. Sin esto TODO cliente queda con
     // un $RCAnonymousID y el entitlement no se comparte entre iOS y web (quien paga en el
     // iPhone entra en portivapp.com y no es Pro). Este es el único punto por el que pasan
@@ -30410,6 +31108,10 @@ document.addEventListener('DOMContentLoaded', function(){
     try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
     try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+    // Este cierre acaba de quitar el .open de #pqOverlay: el muro que se difirió durante
+    // el quiz tiene que evaluarse ahora. Camino "no pagué" → debe terminar en el muro.
+    // _pvAbortCheckout llama aquí, así que NO se duplica la llamada allí.
+    try { if (typeof window._pvResumeSubGate === 'function') window._pvResumeSubGate(); } catch(e){}
   };
   // Cierre del checkout SIN pago completado. Se separa de _pvClosePaywall porque aquí sí
   // hay que explicar por qué no pasó nada: sin mensaje, cerrar Paddle y volver al perfil
@@ -30832,7 +31534,34 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Bloqueo duro ─────────────────────────────────────────────────────────
   // z-index 12500: por encima del quiz y del paywall (12000), pero por DEBAJO del
   // toast (13000) — si algo falla al reintentar el pago, el mensaje tiene que verse.
+
+  // El quiz de perfil (#pqOverlay, z-index 12000) va POR DEBAJO de este muro (12500).
+  // Si el gate resuelve mientras el quiz está abierto, el muro lo tapa y el usuario
+  // nuevo ve el paywall sin haber contestado una sola pregunta. Se difiere: los
+  // argumentos se guardan y se replican en cuanto el quiz se cierra.
+  var _pendingBlock = null;
+  function _quizOpen(){
+    try {
+      var q = document.getElementById('pqOverlay');
+      return !!(q && q.classList.contains('open'));
+    } catch(e){ return false; }
+  }
+  // Se llama desde las salidas del quiz. No repinta el muro guardado a ciegas:
+  // vuelve a preguntar al servidor, porque entre el diferido y ahora el usuario
+  // pudo haber pagado.
+  window._pvResumeSubGate = function(){
+    if (_quizOpen()) return;                 // sigue abierto → nada que hacer
+    if (window._pvGateBusy) return;          // pago en confirmación → manda _pvAwaitEntitlement
+    var had = _pendingBlock;
+    _pendingBlock = null;
+    if (!had) return;
+    try { window._pvSubGate(); } catch(e){}
+  };
+
   function _block(title, body, ctaLabel, onCta){
+    // Diferido: sale ANTES de tocar el DOM y ANTES de overflow:'hidden', para no
+    // dejar el body bloqueado sin muro visible.
+    if (_quizOpen()) { _pendingBlock = [title, body, ctaLabel, onCta || null]; return; }
     var o = document.getElementById('pvSubBlock');
     if (!o) {
       o = document.createElement('div');
@@ -30878,6 +31607,7 @@ document.addEventListener('DOMContentLoaded', function(){
     document.body.style.overflow = 'hidden';
   }
   function _unblock(){
+    _pendingBlock = null;   // el veredicto cambió: el muro diferido ya no aplica
     var o = document.getElementById('pvSubBlock');
     if (o) o.style.display = 'none';
     document.body.style.overflow = '';
@@ -31061,6 +31791,11 @@ document.addEventListener('DOMContentLoaded', function(){
   // Tras pagar, el webhook de Paddle tarda en escribir la fila. Se sondea con techo en
   // vez de asumir que ya está: sin esto, snapConnect() sale 403 justo después del pago.
   window._pvAwaitEntitlement = async function(){
+    // Entre el pago y la fila del webhook no hay entitlement todavía. Sin este flag,
+    // _pvResumeSubGate podría pintar el muro sobre alguien que ACABA de pagar.
+    // Se limpia en TODAS las salidas (éxito y agotamiento del bucle); ninguna ruta de
+    // aquí abajo puede rechazar, así que no queda encendido para siempre.
+    window._pvGateBusy = true;
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Confirmando tu suscripción…'); } catch(e){}
 
     // Primero se PREGUNTA en vez de esperar. entitlement-sync consulta a RevenueCat
@@ -31078,13 +31813,17 @@ document.addEventListener('DOMContentLoaded', function(){
 
     var t0 = 0;
     while (t0 < 20) {
-      var st = await window._pvSubStatus();
-      if (st && st.active) { _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
+      // try/catch alrededor de la lectura: es la única llamada de este bucle que puede
+      // rechazar, y una excepción dejaría _pvGateBusy encendido de forma permanente.
+      var st = null;
+      try { st = await window._pvSubStatus(); } catch(e){}
+      if (st && st.active) { window._pvGateBusy = false; _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
       await new Promise(function(r){ setTimeout(r, 1000); });
       t0++;
     }
     // 20 s sin entitlement: el cobro pudo salir bien y el webhook ir con retraso, así que
     // NO se afirma que el pago falló. Se deja el camino abierto en vez de un callejón.
+    window._pvGateBusy = false;
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(false); } catch(e){}
     try { showToast('Pago recibido. Estamos confirmando tu suscripción, puede tardar un minuto.', 'var(--text2)'); } catch(e){}
     setTimeout(function(){ try { window._pvSubGate(); } catch(e){} }, 15000);
@@ -31211,8 +31950,18 @@ document.addEventListener('DOMContentLoaded', function(){
 
   window.getInvestorProfile = function(){
     try {
-      const raw = localStorage.getItem(_key()) || localStorage.getItem('pv_profile_local');
-      return raw ? JSON.parse(raw) : null;
+      const raw = localStorage.getItem(_key());
+      if (raw) return JSON.parse(raw);
+      // `pv_profile_local` es un espejo del DISPOSITIVO, no de la cuenta: _renderResult lo
+      // escribe en CADA quiz terminado, también con sesión iniciada. Leerlo estando logueado
+      // hacía que una cuenta NUEVA heredara el perfil de quien hubiera usado antes el móvil:
+      // _pvMaybeShowQuiz lo daba por hecho, el quiz no se abría y la primera pantalla tras
+      // registrarse era el muro de suscripción. Con sesión real manda SOLO la clave del uid
+      // (que _appBundleRestore repone desde la nube para quien ya lo había contestado).
+      const uid = window.__pvUserId;
+      if (uid && uid !== 'local') return null;
+      const mirror = localStorage.getItem('pv_profile_local');
+      return mirror ? JSON.parse(mirror) : null;
     } catch(e){ return null; }
   };
 
@@ -31398,7 +32147,12 @@ document.addEventListener('DOMContentLoaded', function(){
 
   // Aviso de conexión con Interactive Brokers. Contenido embebido: sin red, sin navegador in-app.
   // z-index 12500 > 12000 de .pq-overlay/paywall; con un valor menor el modal queda detrás de la tarjeta.
-  window._pvShowIbkrNote = function(){
+  // opts (todo opcional, y sin opts se comporta EXACTAMENTE como antes):
+  //   action / actionLabel → pie con botón de acción. Sólo lo usa quien abre el modal como
+  //     paso previo a conectar; desde el quiz el modal es informativo y no lleva pie.
+  //   focus:'steps'        → abre directamente en la lista de pasos (el del engranaje es el
+  //     que se salta la gente, y es el que deja la conexión colgada para siempre).
+  window._pvShowIbkrNote = function(opts){
     var ov = document.getElementById('pvIbkrNoteOv');
     if (!ov) {
       var S_SEC  = 'font-size:11.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--st-on-surface,#0b1c30);margin:18px 0 8px';
@@ -31425,7 +32179,7 @@ document.addEventListener('DOMContentLoaded', function(){
               <li style="${S_LI}">Se necesita acceso al portal web de IBKR desde un navegador. El proceso no puede completarse desde la app de IBKR.</li>
             </ul>
 
-            <div style="${S_SEC}">Pasos</div>
+            <div style="${S_SEC}" id="pvIbkrNoteSteps">Pasos</div>
             <ol style="${S_LIST}">
               <li style="${S_LI}">Iniciar sesión en el portal web de Interactive Brokers.</li>
               <li style="${S_LI}">Abrir el menú Performance &amp; Reports.</li>
@@ -31447,6 +32201,9 @@ document.addEventListener('DOMContentLoaded', function(){
 
             <p style="margin:18px 0 0;padding-top:14px;border-top:1px solid var(--st-outline-var,#c4c6cd);font-size:12.5px">Si prefieres una conexión inmediata, el resto de brokers compatibles se conectan en pocos toques. Mientras tanto, puedes registrar tus posiciones manualmente en Portiv.</p>
           </div>
+          <div id="pvIbkrNoteFoot" style="display:none;flex-shrink:0;padding:0 20px 20px">
+            <button type="button" id="pvIbkrNoteGo" style="display:block;width:100%;background:#04162c;color:#fff;border:0;border-radius:10px;padding:13px 16px;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer">Continuar y conectar</button>
+          </div>
         </div>`;
       document.body.appendChild(ov);
       var _hide = function(){ ov.style.display = 'none'; };
@@ -31454,8 +32211,28 @@ document.addEventListener('DOMContentLoaded', function(){
       var _x = ov.querySelector('#pvIbkrNoteX');
       if (_x) _x.onclick = _hide;
     }
+    // El pie se reconfigura en CADA apertura: el mismo modal se abre desde el quiz (sin
+    // acción) y desde el botón de conectar IBKR (con ella), y un handler heredado de la
+    // apertura anterior mandaría al portal a quien sólo venía a leer.
+    try {
+      var _foot = ov.querySelector('#pvIbkrNoteFoot');
+      var _go   = ov.querySelector('#pvIbkrNoteGo');
+      var _act  = (opts && typeof opts.action === 'function') ? opts.action : null;
+      if (_foot) _foot.style.display = _act ? 'block' : 'none';
+      if (_go) {
+        _go.textContent = (opts && opts.actionLabel) || 'Continuar y conectar';
+        _go.onclick = _act ? function(){ ov.style.display = 'none'; _act(); } : null;
+      }
+    } catch(e){}
     ov.style.display = 'flex';
-    try { ov.querySelector('#pvIbkrNoteBody').scrollTop = 0; } catch(e){}
+    try {
+      var _body = ov.querySelector('#pvIbkrNoteBody');
+      _body.scrollTop = 0;
+      if (opts && opts.focus === 'steps') {
+        var _st = ov.querySelector('#pvIbkrNoteSteps');
+        if (_st) _body.scrollTop = Math.max(0, _st.offsetTop - 12);
+      }
+    } catch(e){}
   };
 
   function _openQuiz(){
@@ -31463,7 +32240,12 @@ document.addEventListener('DOMContentLoaded', function(){
     const ov = document.getElementById('pqOverlay');
     ov.classList.add('open'); _renderStep();
   }
-  function _closeQuiz(){ document.getElementById('pqOverlay').classList.remove('open'); }
+  function _closeQuiz(){
+    document.getElementById('pqOverlay').classList.remove('open');
+    // El muro de suscripción se difiere mientras el quiz está abierto: al cerrarlo hay
+    // que volver a evaluar, o alguien sin suscripción se queda dentro de la app.
+    try { if (typeof window._pvResumeSubGate === 'function') window._pvResumeSubGate(); } catch(e){}
+  }
   window.openProfileQuiz = _openQuiz;
 
   // Mostrar el quiz automáticamente si el usuario aún no tiene perfil.
@@ -31593,7 +32375,11 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Connect: open the SnapTrade portal ──
   // `mode`: '' (por defecto: reconecta la conexión caída, o avisa de que ya hay una sana)
   //         'add' (el usuario pidió enlazar OTRO broker → alta nueva siempre).
-  function snapConnect(mode, connectionId){
+  // `broker`: alias opcional ('ibkr') para entrar DIRECTO al flujo de ese broker, sin la
+  //         pantalla de selección del portal. El slug real lo resuelve el servidor contra su
+  //         allowlist: aquí no se escribe ningún slug. Los tres llamadores de siempre siguen
+  //         funcionando sin tocarlos (el parámetro es el tercero y opcional).
+  function snapConnect(mode, connectionId, broker){
     _setBusy(true);
     // Aviso a pantalla completa ANTES de pedir el portal. Va aquí y no en cada llamador
     // porque la espera existe en los tres caminos (tras el pago, fallback sin paywall y
@@ -31606,7 +32392,7 @@ document.addEventListener('DOMContentLoaded', function(){
     // connectionId: cuál de los brokers caídos quiere arreglar. El servidor lo valida contra
     // SUS conexiones y sólo lo acepta si esa está deshabilitada de verdad; si no llega, se
     // queda con el comportamiento de siempre (la primera caída).
-    return stCall('snaptrade-connect', { redirect: _redir, mode: (mode||''), connectionId: (connectionId||'') }).then(function(j){
+    return stCall('snaptrade-connect', { redirect: _redir, mode: (mode||''), connectionId: (connectionId||''), broker: (broker||'') }).then(function(j){
       // Ya hay un broker enlazado y sano. Abrir el portal sólo llevaría a duplicar la
       // conexión (el broker la rechaza y la pantalla vuelve igual: "no conecta"). Lo que
       // el usuario quiere en ese punto es ver sus datos al día → sincronización forzada.
@@ -31625,11 +32411,23 @@ document.addEventListener('DOMContentLoaded', function(){
       // El toast NO sirve aquí: vive en z-index 999 (9500 en móvil) y el quiz de perfil va en
       // 12000, así que el error quedaba tapado y el fallo se veía como "la pantalla se quedó
       // parada tras pagar". El error se pinta ahora sobre el propio overlay, con reintento.
+      // El reintento tiene que repetir la MISMA petición: pasar `snapConnect` pelado hacía
+      // que el botón "Reintentar" perdiera el modo y el broker, y quien venía del botón de
+      // IBKR acababa en la pantalla de selección genérica sin saber por qué.
+      var _retry = function(){ return snapConnect(mode, connectionId, broker); };
       var _m = (e && e.message) || 'No se pudo iniciar la conexión.';
+      // Fallo NUESTRO de configuración (falta el secreto con el slug del broker). Reintentar
+      // no lo arregla, y mandar al usuario al portal genérico sin decírselo lo dejaría
+      // buscando su broker en una lista larguísima.
+      if (/broker_not_configured|Broker no reconocido/i.test(String(_m))) {
+        try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
+        toast('Esa conexión no está disponible ahora mismo. Usa "Conectar mi broker" y elige tu broker en la lista.');
+        return;
+      }
       // Sin red no hay nada que diagnosticar: ni de SnapTrade, ni de la
       // suscripción. Se dice lo que pasa y se deja el reintento, que aquí sí sirve.
       if (e && e.offline) {
-        try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
+        try{ if(window._pvConnectingError){ window._pvConnectingError(_m, _retry); return; } }catch(_){}
         try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
         toast(_m); return;
       }
@@ -31647,7 +32445,7 @@ document.addEventListener('DOMContentLoaded', function(){
       if (/entitlement_check_unavailable/i.test(String(_m))) {
         _m = 'No pudimos comprobar tu suscripción en este momento. Vuelve a intentarlo en unos segundos.';
       }
-      try{ if(window._pvConnectingError){ window._pvConnectingError(_m, snapConnect); return; } }catch(_){}
+      try{ if(window._pvConnectingError){ window._pvConnectingError(_m, _retry); return; } }catch(_){}
       try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
       toast(_m);
     });
@@ -31974,6 +32772,26 @@ document.addEventListener('DOMContentLoaded', function(){
         // mismos dos nombres de adorno, con lo que alguien conectado a Fidelity leía
         // "Charles Schwab · Interactive Brokers" en su propia tarjeta de conexión.
         window._SNAP_INSTITUTIONS = (j.institutions && j.institutions.length) ? j.institutions : null;
+        // Slug real de IBKR, tal y como lo reporta SnapTrade. Viaja desde el servidor a
+        // propósito: es el ÚNICO sitio donde vive ese valor, y así corregirlo no toca ni una
+        // línea de cliente. Sin él, _snapIsIbkr() devuelve false para todo y la app se
+        // comporta igual que antes de este trabajo — que es el fallo correcto.
+        window._SNAP_IBKR_SLUG = (j.brokerSlugs && j.brokerSlugs.ibkr) || null;
+        // Conexiones vivas que llevan días sin entregar una sola cuenta ni un solo sync.
+        window._SNAP_DORMANT = (j.dormantConnections && j.dormantConnections.length) ? j.dormantConnections : null;
+      }catch(e){}
+      // Suelo de reconstrucción cuando el broker NO da primera transacción (IBKR: conexión
+      // Balance Only, sin actividades). Va a una variable DISTINTA de _BROKER_INCEPTION a
+      // propósito: aquélla significa "cuándo empezó tu cartera" y se pinta como dato duro;
+      // ésta es sólo un tope inferior para que la reconstrucción Yahoo no invente meses
+      // anteriores a la conexión. Nunca se enseña como fecha de inicio.
+      try{
+        window._SNAP_INCEPTION_SOURCE = j.inceptionSource || null;
+        if(j.inceptionFloor){
+          var _flo=String(j.inceptionFloor).slice(0,10);
+          window._BROKER_INCEPTION_FLOOR=_flo;
+          try{ localStorage.setItem('pv_broker_inception_floor', _flo); }catch(e){}
+        }
       }catch(e){}
       // Inception real del broker (1ª transacción) → la reconstrucción Yahoo NO se proyecta
       // antes de que tuvieras la cuenta. Elimina el flash de "+34% / eje de 1 año" al entrar.
@@ -32160,9 +32978,14 @@ document.addEventListener('DOMContentLoaded', function(){
         // F7 — La curva ya suma TODAS las cuentas. Si alguna no respondió, la serie va por
         // debajo del valor real y hay que decirlo: si no, el usuario compara la gráfica con
         // el total de la tarjeta, no cuadran, y no hay explicación por ninguna parte.
-        _perfNote(j.partial
-          ? 'Falta al menos una de tus cuentas en esta curva: los valores históricos pueden salir por debajo de tu total actual.'
-          : '');
+        // Cuando la cuenta que falta es de una conexión que NUNCA va a entregar esa serie
+        // (IBKR: integración Balance Only), el texto genérico invita a reintentar algo que
+        // no va a cambiar nunca. Se nombra al broker y se dice que es una limitación suya.
+        var _pb = []; try{ _pb = (j.partialBrokers||[]).filter(_snapIsIbkr); }catch(e){}
+        _perfNote(!j.partial ? ''
+          : _pb.length
+            ? 'Esta curva no incluye tu cuenta de Interactive Brokers: esa conexión no entrega el histórico de valor. No es un fallo temporal, es una limitación de la conexión con IBKR.'
+            : 'Falta al menos una de tus cuentas en esta curva: los valores históricos pueden salir por debajo de tu total actual.');
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
       } else if(j && (j.terminal || j.reason==='not_connected')){
         // F12 — Reintentar no puede cambiar nada. getAccountBalanceHistory es EXPERIMENTAL y
@@ -32316,7 +33139,11 @@ document.addEventListener('DOMContentLoaded', function(){
         window._SNAP_FLOW_GAPS = {
           transfers: tr, unknown: uk,
           truncated: !!j.truncated, partial: !!j.partial,
-          unusable: j.unusable||0, undated: j.undated||0
+          unusable: j.unusable||0, undated: j.undated||0,
+          // Cuentas cuya conexión NO entrega transacciones (IBKR: Balance Only). No caen en
+          // `partial` —se leen sin error, sólo que vacías—, así que sin esto la cifra de
+          // aportaciones salía sólo con lo de los otros brokers y sin un solo aviso.
+          noTx: (j.accountsNoTxSupport && j.accountsNoTxSupport.length) || 0
         };
         // signMismatches NO se le enseña al usuario: es una señal de integridad —un broker
         // etiquetando el signo al revés—, no algo que él pueda accionar. A la consola, que
@@ -32340,6 +33167,78 @@ document.addEventListener('DOMContentLoaded', function(){
   // enseñaban el nombre de dos que no son el suyo en su propia tarjeta de conexión.
   // maintenance / degraded los reporta SnapTrade sobre el broker: explican unos datos
   // congelados mucho mejor que cualquier cosa que podamos deducir nosotros.
+  // ── Interactive Brokers: identidad por SLUG, nunca por nombre ────────────────────
+  // `name` es el display_name: texto comercial que puede cambiar o localizarse, así que un
+  // indexOf('Interactive') se rompe en silencio el día que SnapTrade lo toque. `slug` es el
+  // identificador que SnapTrade garantiza estable por contrato ("will never change"). El
+  // valor concreto llega del servidor (window._SNAP_IBKR_SLUG): aquí no hay ningún slug
+  // escrito. Si el servidor no lo tiene configurado, esto es false para todo y la app se
+  // comporta exactamente igual que antes — nunca trata como IBKR a otro broker.
+  function _snapIsIbkr(inst){
+    try{
+      var s = window._SNAP_IBKR_SLUG;
+      if(!s || !inst || !inst.slug) return false;
+      return String(inst.slug).toUpperCase() === String(s).toUpperCase();
+    }catch(e){ return false; }
+  }
+  function _snapIbkrConn(){
+    try{ return (window._SNAP_INSTITUTIONS||[]).filter(_snapIsIbkr)[0] || null; }catch(e){ return null; }
+  }
+  function _snapHasIbkr(){ return !!_snapIbkrConn(); }
+  window._snapHasIbkr = _snapHasIbkr;
+  // ¿Es ésta la ÚNICA conexión del usuario? Importa porque snapDisconnect() cierra TODAS:
+  // no existe una baja por conexión. Ofrecer "Desconectar" junto a un broker dormido
+  // teniendo otro sano se llevaría por delante el que sí funciona.
+  function _snapSoloConn(){
+    try{ var ins = window._SNAP_INSTITUTIONS; return !ins || ins.length <= 1; }catch(e){ return false; }
+  }
+
+  // Conexiones vivas que llevan días sin entregar una sola cuenta ni un solo sync (las
+  // declara el servidor en `dormantConnections`). No se desconectan solas a propósito: el
+  // usuario puede estar dentro de su ventana legítima o a punto de terminar el proceso, y
+  // desconectarle le obligaría a rehacerlo entero. Pero tampoco pueden seguir invisibles:
+  // cada mes que sigan enlazadas cuestan dinero y no entregan un solo dato.
+  function _snapDormantBlock(){
+    var ds = window._SNAP_DORMANT; if(!ds || !ds.length) return '';
+    try{
+      return ds.map(function(c){
+        var nom = _escHtml(String((c && c.name) || 'un broker'));
+        var esIbkr = _snapIsIbkr(c);
+        return '<div class="snap-note" style="border-left:3px solid #c98a00;padding-left:10px;margin-top:12px;display:block">'
+             + '⚠ Tu conexión con <b>'+nom+'</b> sigue activa pero no ha entregado ninguna cuenta desde que la enlazaste'
+             + (esIbkr ? '. Suele faltar activar el servicio SnapTrade en el portal web de IBKR: el icono de engranaje, dentro de Third-Party Reports.' : '.')
+             + ' Mientras siga enlazada mantiene su coste, lleguen datos o no.'
+             + '</div>'
+             + '<div class="snap-row" style="margin-top:8px">'
+             + (esIbkr ? '<button class="snap-btn secondary" onclick="window._pvShowIbkrNote({focus:\'steps\'})">Ver los pasos en IBKR</button>' : '')
+             // Ver _snapSoloConn: la baja es de todas las conexiones o de ninguna.
+             + (_snapSoloConn() ? '<button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar</button>' : '')
+             + '</div>';
+      }).join('');
+    }catch(e){ return ''; }
+  }
+
+  // Enlace a la guía de IBKR. Misma fuente que el del quiz (#pqIbkrNote): un solo texto y un
+  // solo modal. Hasta ahora la guía SÓLO era alcanzable desde el resultado del quiz, así que
+  // quien conecta desde Ajustes, quien pulsa "Añadir otro broker" o quien llega por el
+  // paywall no la veía nunca — y es el broker que más falta le hace.
+  function _snapIbkrLink(txt){
+    return '<button type="button" onclick="window._pvShowIbkrNote()" style="display:block;width:100%;margin-top:10px;'
+         + 'background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;'
+         + 'color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">'
+         + (txt || '¿Usas Interactive Brokers? Consulta el proceso de conexión') + '</button>';
+  }
+  // Botón "Conectar Interactive Brokers": la guía PRIMERO, conectar después. Quien llega al
+  // portal de IBKR sin haber generado antes su Query ID y su Token no puede completar nada,
+  // y esa es exactamente la pantalla en la que hoy se pierde la gente.
+  // `mode:'add'` a propósito: sin él, con un broker sano ya enlazado el servidor responde
+  // `alreadyConnected` y el usuario NUNCA llega al portal por mucho que pulse.
+  window._pvIbkrConnect = function(){
+    try{
+      window._pvShowIbkrNote({ action: function(){ snapConnect('add', '', 'ibkr'); } });
+    }catch(e){ try{ snapConnect('add', '', 'ibkr'); }catch(_){} }
+  };
+
   function _snapInstChips(){
     var ins = window._SNAP_INSTITUTIONS;
     if(!ins || !ins.length) return '';
@@ -32439,6 +33338,12 @@ document.addEventListener('DOMContentLoaded', function(){
       }
       var ns = window._SNAP_NO_SYNC;
       if(ns) out.push('<b>'+ns+'</b> cuenta'+(ns>1?'s':'')+' sin marca de última sincronización: no sabemos de cuándo son esos datos.');
+      // Sin primera transacción (conexión Balance Only) no hay inception real: la curva sólo
+      // puede arrancar donde arranca la CONEXIÓN, que casi nunca es donde arrancó la cartera.
+      // Presentar ese tramo como "desde el principio" convertiría una estimación en un hecho.
+      if(window._SNAP_INCEPTION_SOURCE === 'connection'){
+        out.push('Tu broker no informa de tus movimientos anteriores: el rendimiento se calcula desde que conectaste la cuenta, no desde que empezaste a invertir. El periodo <b>Todo</b> no es el histórico real de tu cartera.');
+      }
       // ── Lo que se quedó FUERA de "has aportado" (F4) ────────────────────────────────
       // Sólo si la cifra de aportaciones se está enseñando: avisar de lo que falta en un
       // número que el usuario no ve por ninguna parte es ruido, no transparencia.
@@ -32452,6 +33357,11 @@ document.addEventListener('DOMContentLoaded', function(){
           out.push('<b>'+gp.unknown.length+'</b> tipo'+(gp.unknown.length>1?'s':'')+' de movimiento que no reconocemos ('
                  +_escHtml(gp.unknown.slice(0,3).join(', '))+(gp.unknown.length>3?'…':'')
                  +'): no los sumamos ni los restamos de lo aportado.');
+        }
+        // La cifra de arriba NO se suprime: quitarla le robaría al usuario un dato correcto
+        // de sus otros brokers. Lo que faltaba era la salvedad, no el número.
+        if(gp.noTx){
+          out.push('Tu cuenta de <b>Interactive Brokers</b> no entra en lo aportado: esa conexión entrega posiciones y efectivo, pero no el historial de movimientos. La cifra de arriba es sólo la de tus otros brokers.');
         }
         if(gp.partial)   out.push('Falta al menos una cuenta en el cálculo de lo aportado: la cifra real es mayor.');
         if(gp.truncated) out.push('Tu historial de movimientos es tan largo que no lo hemos leído entero: lo aportado sale por debajo de lo real.');
@@ -32500,12 +33410,17 @@ document.addEventListener('DOMContentLoaded', function(){
         + _snapInstChips()
         + _snapFlowLine()
         + _snapNotes()
+        + _snapDormantBlock()
         +'<div class="snap-row"><button class="snap-btn" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Sincronizar ahora</button></div>'
         +'<div class="snap-row" style="margin-top:8px">'
         +'<button class="snap-btn secondary" data-snap-connect data-snap-mode="add" data-snap-label="Añadir otro broker">Añadir otro broker</button>'
         // FIX 16 — Hasta ahora la ÚNICA vía a snaptrade-disconnect era eliminar la cuenta entera:
         // quien se iba sin borrarla seguía costando ~$1/mes de conexión activa.
         +'<button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar broker</button></div>'
+        // La guía también aquí: "Añadir otro broker" es la puerta por la que se enlaza IBKR
+        // teniendo ya otro broker sano, y hasta ahora ese camino no pasaba por ningún sitio
+        // que explicara el Query ID ni el Token.
+        + _snapIbkrLink()
         +'<div class="snap-note">🔒 Tu broker sincroniza solo una vez al día. Si acabas de operar, pulsa “Sincronizar ahora”.</div>';
     }
     // F11 — Salida del estado 'unknown'. Sin esto, agotados los reintentos del arranque (sin red,
@@ -32528,6 +33443,54 @@ document.addEventListener('DOMContentLoaded', function(){
         +'<div class="snap-status"><span class="snap-spin" style="border-color:rgba(4,22,44,.25);border-top-color:#04162c"></span>Un momento…</div>';
     }
     if(state==='syncing'){
+      // ── IBKR: la espera es OTRA, y decir la de siempre es mentir ────────────────────
+      // Con IBKR el primer enlace puede tardar HASTA 48 HORAS, y la causa no tiene nada que
+      // ver con el horario de mercado: es que IBKR todavía no ha habilitado el acceso del
+      // Third-Party Service. Prometer "unos minutos" y rendirse a los 14 deja al usuario
+      // pensando que algo falló y repitiendo un proceso que hizo bien.
+      var _ib = _snapIbkrConn();
+      if(_ib){
+        var _hrs = null;
+        try{ var _t = Date.parse(_ib.createdDate || ''); if(isFinite(_t)) _hrs = (Date.now() - _t) / 3600000; }catch(e){}
+        var _sinDatos = (_ib.accounts === 0) || !_ib.lastSync;
+        // ── Pasadas las 48 h sin un solo dato ──
+        // NUNCA se pinta 'broken' aquí: la conexión NO está rota —SnapTrade la reporta
+        // sana— y decirle "reconecta tu broker" lo manda a repetir entero un proceso que ya
+        // hizo bien. Lo que casi siempre falta es el paso del engranaje en el portal de
+        // IBKR, o que la cuenta aún no esté fondeada. Y si no es ninguna de las dos, lo
+        // honesto es ofrecerle soltar un enlace que le cuesta dinero cada mes por nada.
+        if(_hrs !== null && _hrs > 48 && _sinDatos){
+          return '<h3>Interactive Brokers aún no ha habilitado el acceso</h3>'
+            +'<p class="snap-sub">Han pasado más de 48 horas desde que enlazaste Interactive Brokers y todavía no nos llega ninguna posición. Cuando pasa esto suele faltar activar el servicio SnapTrade en el portal web de IBKR —el icono de engranaje, dentro de Third-Party Reports—, o que la cuenta aún no esté fondeada. <b>Tu conexión no está rota</b>: no hace falta volver a enlazarla.</p>'
+            +'<div class="snap-status"><span class="snap-dot"></span>Sin datos desde Interactive Brokers</div>'
+            + _snapNotes()
+            +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn" onclick="window._pvShowIbkrNote({focus:\'steps\'})">Ver los pasos en IBKR</button></div>'
+            +'<div class="snap-row" style="margin-top:8px">'
+            +'<button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Comprobar ahora</button>'
+            // snapDisconnect() cierra TODAS las conexiones del usuario: hoy no existe una
+            // baja por conexión. Con otro broker sano enlazado, ese botón se llevaría por
+            // delante el que sí funciona, así que sólo se ofrece cuando IBKR es la única.
+            + (_snapSoloConn() ? '<button class="snap-btn secondary" onclick="snapDisconnect()">Desconectar</button>' : '')
+            +'</div>'
+            +'<div class="snap-note">Mientras la conexión siga enlazada mantiene su coste, lleguen datos o no.</div>';
+        }
+        // ── Dentro de la ventana normal de IBKR ──
+        // El apagado del poll rápido a los ~14 min NO es una anomalía con IBKR: es lo
+        // esperable. Presentarlo como "está tardando más de lo normal" asusta sin motivo.
+        return '<h3>Esperando a Interactive Brokers</h3>'
+          +'<p class="snap-sub">Interactive Brokers puede tardar <b>hasta 48 horas</b> en habilitar el acceso la primera vez. Es un plazo de IBKR, no de Portiv, y no hay nada que puedas hacer para acelerarlo. En cuanto lo habilite, tus posiciones aparecen aquí solas.</p>'
+          +'<div class="snap-status"><span class="snap-dot"></span>'
+          + (window._SNAP_SYNC_STALLED
+              ? 'Lo comprobamos cada 20 minutos y al abrir la app'
+              : 'Importando posiciones desde tu broker…')
+          +'</div>'
+          // F1.4 — con dos brokers, uno puede estar esperando a IBKR y el otro caído. La
+          // copia de IBKR no puede tapar el estado del otro.
+          + _snapNotes()
+          +'<div class="snap-row" style="margin-top:12px"><button class="snap-btn secondary" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Comprobar ahora</button></div>'
+          + _snapIbkrLink('Ver el proceso de conexión de Interactive Brokers')
+          +'<div class="snap-note">Recuerda: por esta vía IBKR entrega posiciones y efectivo, no el historial de transacciones.</div>';
+      }
       // F10 — Tras ~14 min el poll rápido se apaga. Decir "se actualiza sola" a partir de
       // ahí es mentira: sólo queda el refresco de fondo cada 20 min. Se dice tal cual.
       if(window._SNAP_SYNC_STALLED){
@@ -32591,13 +33554,21 @@ document.addEventListener('DOMContentLoaded', function(){
     return '<h3>Conecta tu broker</h3><p class="snap-sub">Enlaza tu cuenta y Portiv importa tus posiciones, valor y rendimiento automáticamente. Sin fotos ni CSVs. Solo lectura.</p>'
       + brokers
       +'<button class="snap-btn" data-snap-connect data-snap-label="Conectar mi broker">Conectar mi broker</button>'
+      // IBKR aparte y secundario: su flujo no es un OAuth como el del resto, sino pegar un
+      // Query ID y un Token que hay que generar antes en el portal web de IBKR. Meterlo en
+      // el botón genérico es lo que hoy manda al usuario a una pantalla que no puede
+      // completar. El botón abre la guía primero (ver _pvIbkrConnect).
+      +'<div class="snap-row" style="margin-top:8px"><button class="snap-btn secondary" onclick="window._pvIbkrConnect()">Conectar Interactive Brokers</button></div>'
+      + _snapIbkrLink()
       +'<div class="snap-note">🔒 Conexión de solo lectura vía SnapTrade. Nunca vemos tus credenciales.</div>';
   }
   function _bindConnectButtons(){ Array.prototype.forEach.call(document.querySelectorAll('[data-snap-connect]'),function(btn){
       if(btn._snapBound) return; btn._snapBound=true; btn.dataset.snapLabel=btn.dataset.snapLabel||btn.textContent;
       // F5 — data-snap-conn viaja con el botón: sin él, "Reconectar Fidelity" y "Reconectar
       // Schwab" hacían exactamente lo mismo (abrir la primera conexión caída de la lista).
-      btn.addEventListener('click', function(ev){ ev.preventDefault(); snapConnect(btn.dataset.snapMode||'', btn.dataset.snapConn||''); }); }); }
+      // data-snap-broker: alias del broker al que entrar directo ('ibkr'). Sin él, todo
+      // sigue igual que siempre (portal con su pantalla de selección).
+      btn.addEventListener('click', function(ev){ ev.preventDefault(); snapConnect(btn.dataset.snapMode||'', btn.dataset.snapConn||'', btn.dataset.snapBroker||''); }); }); }
   window._snapBindConnect = _bindConnectButtons;
 
   // ── Inject portfolio-tab banner + perf tools once ──
@@ -32827,18 +33798,22 @@ document.addEventListener('DOMContentLoaded', function(){
     if(m) m.scrollTop = m.scrollHeight;
   }
   function sync(){
+    // Primero devolver el documento a 0 y DESPUÉS leer el viewport: al revés, --vv-top se
+    // quedaba con el desplazamiento viejo y el transform empujaba el chat hacia abajo justo
+    // lo que pin() ya había corregido (compensación doble).
+    if(locked) pin();
     if(vv){
       root.style.setProperty('--vvh', vv.height + 'px');
-      root.style.setProperty('--vv-top', (vv.offsetTop || 0) + 'px');
+      // Con el documento anclado en 0 no hay nada que compensar mientras el teclado esté
+      // abierto; fuera del chat se mantiene el valor real.
+      root.style.setProperty('--vv-top', locked ? '0px' : ((vv.offsetTop || 0) + 'px'));
     }
-    if(locked) pin();
   }
   function setLocked(on){
     if(locked === on){ if(on) sync(); return; }
     locked = on;
     body.classList.toggle('pv-kb-open', on);
     sync();
-    if(on) toBottom();
   }
 
   document.addEventListener('focusin', function(e){
@@ -32847,7 +33822,9 @@ document.addEventListener('DOMContentLoaded', function(){
     // El teclado se anima ~300 ms y iOS reajusta el scroll durante toda la animación:
     // se repite el anclaje hasta que asienta.
     [0, 60, 150, 300, 500].forEach(function(ms){ setTimeout(function(){ pin(); sync(); }, ms); });
-    setTimeout(toBottom, 320);
+    // iOS reajusta el visual viewport de forma asíncrona: un doble rAF captura el valor ya
+    // asentado sin esperar al primer setTimeout.
+    requestAnimationFrame(function(){ requestAnimationFrame(sync); });
   });
   // Al cerrar el teclado iOS no siempre emite un resize final → se limpia al perder el foco.
   document.addEventListener('focusout', function(e){
