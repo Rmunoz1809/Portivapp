@@ -31108,6 +31108,10 @@ document.addEventListener('DOMContentLoaded', function(){
     try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
     try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+    // Este cierre acaba de quitar el .open de #pqOverlay: el muro que se difirió durante
+    // el quiz tiene que evaluarse ahora. Camino "no pagué" → debe terminar en el muro.
+    // _pvAbortCheckout llama aquí, así que NO se duplica la llamada allí.
+    try { if (typeof window._pvResumeSubGate === 'function') window._pvResumeSubGate(); } catch(e){}
   };
   // Cierre del checkout SIN pago completado. Se separa de _pvClosePaywall porque aquí sí
   // hay que explicar por qué no pasó nada: sin mensaje, cerrar Paddle y volver al perfil
@@ -31530,7 +31534,34 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Bloqueo duro ─────────────────────────────────────────────────────────
   // z-index 12500: por encima del quiz y del paywall (12000), pero por DEBAJO del
   // toast (13000) — si algo falla al reintentar el pago, el mensaje tiene que verse.
+
+  // El quiz de perfil (#pqOverlay, z-index 12000) va POR DEBAJO de este muro (12500).
+  // Si el gate resuelve mientras el quiz está abierto, el muro lo tapa y el usuario
+  // nuevo ve el paywall sin haber contestado una sola pregunta. Se difiere: los
+  // argumentos se guardan y se replican en cuanto el quiz se cierra.
+  var _pendingBlock = null;
+  function _quizOpen(){
+    try {
+      var q = document.getElementById('pqOverlay');
+      return !!(q && q.classList.contains('open'));
+    } catch(e){ return false; }
+  }
+  // Se llama desde las salidas del quiz. No repinta el muro guardado a ciegas:
+  // vuelve a preguntar al servidor, porque entre el diferido y ahora el usuario
+  // pudo haber pagado.
+  window._pvResumeSubGate = function(){
+    if (_quizOpen()) return;                 // sigue abierto → nada que hacer
+    if (window._pvGateBusy) return;          // pago en confirmación → manda _pvAwaitEntitlement
+    var had = _pendingBlock;
+    _pendingBlock = null;
+    if (!had) return;
+    try { window._pvSubGate(); } catch(e){}
+  };
+
   function _block(title, body, ctaLabel, onCta){
+    // Diferido: sale ANTES de tocar el DOM y ANTES de overflow:'hidden', para no
+    // dejar el body bloqueado sin muro visible.
+    if (_quizOpen()) { _pendingBlock = [title, body, ctaLabel, onCta || null]; return; }
     var o = document.getElementById('pvSubBlock');
     if (!o) {
       o = document.createElement('div');
@@ -31576,6 +31607,7 @@ document.addEventListener('DOMContentLoaded', function(){
     document.body.style.overflow = 'hidden';
   }
   function _unblock(){
+    _pendingBlock = null;   // el veredicto cambió: el muro diferido ya no aplica
     var o = document.getElementById('pvSubBlock');
     if (o) o.style.display = 'none';
     document.body.style.overflow = '';
@@ -31759,6 +31791,11 @@ document.addEventListener('DOMContentLoaded', function(){
   // Tras pagar, el webhook de Paddle tarda en escribir la fila. Se sondea con techo en
   // vez de asumir que ya está: sin esto, snapConnect() sale 403 justo después del pago.
   window._pvAwaitEntitlement = async function(){
+    // Entre el pago y la fila del webhook no hay entitlement todavía. Sin este flag,
+    // _pvResumeSubGate podría pintar el muro sobre alguien que ACABA de pagar.
+    // Se limpia en TODAS las salidas (éxito y agotamiento del bucle); ninguna ruta de
+    // aquí abajo puede rechazar, así que no queda encendido para siempre.
+    window._pvGateBusy = true;
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Confirmando tu suscripción…'); } catch(e){}
 
     // Primero se PREGUNTA en vez de esperar. entitlement-sync consulta a RevenueCat
@@ -31776,13 +31813,17 @@ document.addEventListener('DOMContentLoaded', function(){
 
     var t0 = 0;
     while (t0 < 20) {
-      var st = await window._pvSubStatus();
-      if (st && st.active) { _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
+      // try/catch alrededor de la lectura: es la única llamada de este bucle que puede
+      // rechazar, y una excepción dejaría _pvGateBusy encendido de forma permanente.
+      var st = null;
+      try { st = await window._pvSubStatus(); } catch(e){}
+      if (st && st.active) { window._pvGateBusy = false; _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
       await new Promise(function(r){ setTimeout(r, 1000); });
       t0++;
     }
     // 20 s sin entitlement: el cobro pudo salir bien y el webhook ir con retraso, así que
     // NO se afirma que el pago falló. Se deja el camino abierto en vez de un callejón.
+    window._pvGateBusy = false;
     try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(false); } catch(e){}
     try { showToast('Pago recibido. Estamos confirmando tu suscripción, puede tardar un minuto.', 'var(--text2)'); } catch(e){}
     setTimeout(function(){ try { window._pvSubGate(); } catch(e){} }, 15000);
@@ -32189,7 +32230,12 @@ document.addEventListener('DOMContentLoaded', function(){
     const ov = document.getElementById('pqOverlay');
     ov.classList.add('open'); _renderStep();
   }
-  function _closeQuiz(){ document.getElementById('pqOverlay').classList.remove('open'); }
+  function _closeQuiz(){
+    document.getElementById('pqOverlay').classList.remove('open');
+    // El muro de suscripción se difiere mientras el quiz está abierto: al cerrarlo hay
+    // que volver a evaluar, o alguien sin suscripción se queda dentro de la app.
+    try { if (typeof window._pvResumeSubGate === 'function') window._pvResumeSubGate(); } catch(e){}
+  }
   window.openProfileQuiz = _openQuiz;
 
   // Mostrar el quiz automáticamente si el usuario aún no tiene perfil.
