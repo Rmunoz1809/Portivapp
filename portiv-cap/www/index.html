@@ -14466,7 +14466,7 @@ const PORTIV_CHART = {
     const ctx=document.getElementById('perfChart')?.getContext('2d');
     perfChart.data.labels=ds.labels;
     perfChart.data.datasets[0].data=ds.values;
-    perfChart.data.datasets[0].borderColor=col;
+    perfChart.data.datasets[0].borderColor=_perfStroke(isPos);
     if(ctx)perfChart.data.datasets[0].backgroundColor=typeof _perfFill==='function'?_perfFill(ctx,isPos):col+'33';
     try{ if(typeof _applyChartYBounds==='function') _applyChartYBounds(); }catch(e){}
     perfChart.update('periodChange');
@@ -15698,13 +15698,57 @@ function _perfFill(_ctx, isPos) {
     const chart = context.chart || context;
     const area  = chart && chart.chartArea;
     const c     = chart && chart.ctx;
-    if (!area || !c) return isPos ? 'rgba(30,142,90,0.14)' : 'rgba(186,26,26,0.13)';
+    if (!area || !c) return isPos ? 'rgba(14,159,110,0.20)' : 'rgba(186,26,26,0.13)';
     const g = c.createLinearGradient(0, area.top, 0, area.bottom);
-    if (isPos) { g.addColorStop(0, 'rgba(30,142,90,0.24)'); g.addColorStop(0.55, 'rgba(30,142,90,0.10)'); g.addColorStop(1, 'rgba(30,142,90,0)'); }
+    if (isPos) { g.addColorStop(0, 'rgba(14,159,110,0.36)'); g.addColorStop(0.55, 'rgba(14,159,110,0.14)'); g.addColorStop(1, 'rgba(14,159,110,0)'); }
     else       { g.addColorStop(0, 'rgba(186,26,26,0.24)'); g.addColorStop(0.55, 'rgba(186,26,26,0.09)'); g.addColorStop(1, 'rgba(186,26,26,0)'); }
     return g;
   };
 }
+
+// ── Trazo con degradado (opción C aprobada) ──────────────────────────────────
+// La línea va de un verde claro arriba a uno profundo abajo, así la subida se
+// lee sola. Devuelve una FUNCIÓN scriptable, igual que _perfFill: Chart.js la
+// evalúa en cada draw con el chartArea real, de modo que el degradado siempre
+// cubre el alto que se está pintando (y no se descuadra al rotar ni en Retina).
+function _perfStroke(isPos) {
+  return (context) => {
+    const chart = context && (context.chart || context);
+    const area  = chart && chart.chartArea;
+    const c     = chart && chart.ctx;
+    if (!area || !c) return isPos ? '#0A805A' : '#B22725';   // color plano de respaldo
+    const g = c.createLinearGradient(0, area.top, 0, area.bottom);
+    if (isPos) { g.addColorStop(0, '#0E9F6E'); g.addColorStop(1, '#05613F'); }
+    else       { g.addColorStop(0, '#D63A36'); g.addColorStop(1, '#8E1414'); }
+    return g;
+  };
+}
+
+// borderColor puede ser un color plano o la función de degradado de arriba.
+// Todo lo que lo lea para pintar a mano (la cruz de hover, el punto final)
+// pasa por aquí, que resuelve la función a un CanvasGradient utilizable.
+function _perfColorOf(chart) {
+  let col = chart && chart.data && chart.data.datasets[0] && chart.data.datasets[0].borderColor;
+  if (typeof col === 'function') { try { col = col({ chart }); } catch (e) { col = '#0A805A'; } }
+  return col || '#0A805A';
+}
+
+// Punto del último dato: anillo blanco + relleno del color de la línea. Marca
+// dónde está el valor de hoy sin añadir texto ni cambiar la escala.
+var portivEndDot = {
+  id: 'portivEndDot',
+  afterDatasetsDraw(chart) {
+    const m = chart.getDatasetMeta(0);
+    if (!m || !m.data || !m.data.length) return;
+    const p = m.data[m.data.length - 1];
+    if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+    const c = chart.ctx;
+    c.save();
+    c.beginPath(); c.arc(p.x, p.y, 6.5, 0, Math.PI * 2); c.fillStyle = '#fff'; c.fill();
+    c.beginPath(); c.arc(p.x, p.y, 4,   0, Math.PI * 2); c.fillStyle = _perfColorOf(chart); c.fill();
+    c.restore();
+  }
+};
 
 // Degradado para el chart de Análisis (Precio Histórico) — mismo lenguaje visual.
 function _researchFill(_ctx, isPos) {
@@ -15734,7 +15778,7 @@ const portivCrosshair = {
     const el = act[0].element;
     if (!el) return;
     const { top, bottom } = chart.chartArea;
-    const color = chart.data.datasets[0]?.borderColor || '#1E8E5A';
+    const color = _perfColorOf(chart);
     const c = chart.ctx;
     c.save();
     // Guía vertical
@@ -15849,13 +15893,13 @@ function initPerfChart() {
   if (perfChart) { try { perfChart.destroy(); } catch(e){} perfChart = null; }
   perfChart = new Chart(ctx, {
     type: 'line',
-    plugins: [portivCrosshair],
+    plugins: [portivCrosshair, portivEndDot],
     data: {
       labels: d.labels,
       datasets: [{
         data: d.values,
-        borderColor: col0,
-        borderWidth: 3.2,
+        borderColor: _perfStroke(isPos0),
+        borderWidth: 3.6,
         backgroundColor: _perfFill(ctx, isPos0),
         fill: 'origin',
         tension: 0.3,                      // trazo curvo Portiv, idéntico en todos los períodos
@@ -15868,11 +15912,11 @@ function initPerfChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: _PERF_MOB() ? { top: 6, bottom: 2, left: 0, right: 0 } : 0 },
+      layout: { padding: _PERF_MOB() ? { top: 6, bottom: 2, left: 0, right: 9 } : 0 },
       // Mantiene la gráfica limpia en celular al redimensionar/rotar: oculta ejes y cuadrícula.
       onResize: (chart, size) => { try { const m = _PERF_MOB(); const s = chart.options.scales;
         s.x.ticks.display = !m; s.y.display = !m; s.y.ticks.display = !m; s.y.grid.display = !m;
-        chart.options.layout = { padding: m ? { top: 6, bottom: 2, left: 0, right: 0 } : 0 };
+        chart.options.layout = { padding: m ? { top: 6, bottom: 2, left: 0, right: 9 } : 0 };
       } catch(e){} },
       // Sin puntos estáticos sobre la línea en ningún período (incl. 1D "hoy").
       // El dot de hover sigue activo vía pointHoverRadius del dataset.
@@ -16453,7 +16497,7 @@ function setPeriodData(period, ds, updMode) {
   const ctx   = document.getElementById('perfChart')?.getContext('2d');
   perfChart.data.labels = ds.labels;
   perfChart.data.datasets[0].data = ds.values;
-  perfChart.data.datasets[0].borderColor = col;
+  perfChart.data.datasets[0].borderColor = _perfStroke(isPos);
   if (ctx && typeof _perfFill === 'function') perfChart.data.datasets[0].backgroundColor = _perfFill(ctx, isPos);
   // TRAZO ÚNICO PARA TODOS LOS PERÍODOS. Antes, toda serie de más de 30 puntos caía en
   // polilínea recta de 1.5px: 1M salía redondeado y 3M/6M dentados, dos gráficas distintas
@@ -34752,9 +34796,9 @@ body:not(.dark-theme) #txLogSection .card {
     height: 185px !important;
     min-height: 0 !important;
     background-image:
-      linear-gradient(#EFF2F6, #EFF2F6),
-      linear-gradient(#EFF2F6, #EFF2F6),
-      linear-gradient(#EFF2F6, #EFF2F6);
+      linear-gradient(#F4F7FA, #F4F7FA),
+      linear-gradient(#F4F7FA, #F4F7FA),
+      linear-gradient(#F4F7FA, #F4F7FA);
     background-repeat: no-repeat;
     background-size: 100% 1px, 100% 1px, 100% 1px;
     background-position: 0 24.3%, 0 51.4%, 0 78.4%;
