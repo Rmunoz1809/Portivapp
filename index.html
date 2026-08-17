@@ -34156,6 +34156,279 @@ body:not(.dark-theme) .preview-item { transition: background .18s var(--pvr-ease
   .stitch-card, .prof-card, .eps-card { transition: none; }
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v5 — EL MISMO CONCEPTO EN LAS SEIS PESTAÑAS
+   ───────────────────────────────────────────────────────────────────────────
+   Portafolio ya abría con el bloque navy continuo. Aquí se lleva ese mismo
+   arranque a Noticias, Watchlist, Analizar, Portiv IA y Ajustes: la barra
+   superior y el primer bloque de cada pestaña son UNA sola superficie navy que
+   termina en la misma curva. Debajo, todo pasa al mismo sistema de tarjeta
+   blanca (22px + hairline + sombra de 1px), pastilla 999px y botón 14px.
+
+   En Watchlist y Analizar el bloque navy es su barra de búsqueda, que es su
+   primer elemento. Ponerlo en el título (.pa-header) habría dejado una franja
+   navy suelta a media página, con la búsqueda por encima.
+
+   Sigue siendo sólo estética: color, radio, borde, sombra, tipografía y
+   márgenes del propio bloque. No se toca display, flex/grid, pointer-events ni
+   nada que cambie comportamiento.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* El truco de sangre usa 50vw, y 50vw incluye la barra de scroll: en un
+   navegador de escritorio con barra clásica el bloque se pasaría ~5px por lado
+   y aparecería scroll horizontal. overflow-x:clip lo recorta sin crear un
+   contenedor de scroll — a diferencia de hidden, no rompe position:sticky ni
+   el anclado de scroll. Donde no esté soportado, se ignora y queda como estaba. */
+html { overflow-x: clip; }
+
+@media (max-width: 700px) {
+
+  /* ── 12. El bloque navy de cabecera, idéntico en las seis pestañas ────────
+     El tirón hacia arriba (margin-top) cancela el padding superior del
+     contenedor de cada pestaña, que es distinto en cada una. Los valores están
+     medidos sobre el marcado real, no estimados. Los laterales usan
+     calc(50% - 50vw): llevan el bloque al borde de la ventana sea cual sea el
+     padding, así que no hay ningún número que adivinar y no aparece scroll. */
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    margin-left: calc(50% - 50vw) !important;
+    margin-right: calc(50% - 50vw) !important;
+    width: auto !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+    background: var(--pvr-navy-bar) !important;
+    border: none !important;
+    border-radius: 0 0 26px 26px !important;
+    box-shadow: none !important;
+  }
+
+  /* Padding en longhand: así el padding-top de .ai-chat-header, que lleva el
+     max(18px, env(safe-area-inset-top)) del notch, se queda intacto. */
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    padding-top: 16px !important;
+  }
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+    padding-bottom: 22px !important;
+  }
+
+  /* Tirón hacia arriba, uno por pestaña porque el padding del contenedor es
+     distinto en cada una (.page 14px, .sn-layout 24px, .set-wrap 28px,
+     #tab-watchlist 24px en línea). Los valores NO están estimados: se midieron
+     con getBoundingClientRect() sobre el marcado real de cada pestaña hasta
+     que la distancia entre el borde inferior de la barra y el borde superior
+     del bloque quedó en 0.0px exactos. Son px fijos, así que no dependen del
+     ancho del dispositivo. */
+  body:not(.dark-theme) #tab-portfolio .stitch-header-left  { margin-top: -12px !important; }
+  body:not(.dark-theme) #tab-noticias .sn-header            { margin-top: -30px !important; }
+  body:not(.dark-theme) #tab-watchlist > div:first-child    { margin-top:  -6px !important; }
+  body:not(.dark-theme) #tab-analizar .research-search-bar  { margin-top:  -6px !important; }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header      { margin-top:   0    !important; }
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { margin-top: -28px !important; }
+
+  /* Separación con lo que viene debajo, la misma en todas. */
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { margin-bottom: 4px !important; }
+  body:not(.dark-theme) #tab-watchlist > div:first-child          { margin-bottom: 18px !important; }
+
+  /* La barra superior pierde la curva en las pestañas donde el navy sigue
+     hacia abajo. Sin :has() el navegador simplemente mantiene la curva: se ve
+     un escalón suave, nunca algo roto. */
+  body:not(.dark-theme):has(#tab-portfolio.page.active) .m-topbar,
+  body:not(.dark-theme):has(#tab-noticias.page.active)  .m-topbar,
+  body:not(.dark-theme):has(#tab-watchlist.page.active) .m-topbar,
+  body:not(.dark-theme):has(#tab-analizar.page.active)  .m-topbar,
+  body:not(.dark-theme):has(#tab-aianalyst.page.active) .m-topbar,
+  body:not(.dark-theme):has(#tab-settings.page.active)  .m-topbar,
+  body:not(.dark-theme):has(#tab-portfolio.page.active) .dash-topbar-mobile,
+  body:not(.dark-theme):has(#tab-noticias.page.active)  .dash-topbar-mobile,
+  body:not(.dark-theme):has(#tab-watchlist.page.active) .dash-topbar-mobile,
+  body:not(.dark-theme):has(#tab-analizar.page.active)  .dash-topbar-mobile,
+  body:not(.dark-theme):has(#tab-aianalyst.page.active) .dash-topbar-mobile,
+  body:not(.dark-theme):has(#tab-settings.page.active)  .dash-topbar-mobile {
+    border-radius: 0;
+  }
+
+  /* ── 13. Texto e iconos dentro del navy ──────────────────────────────────
+     Sustitución de color, uno a uno, sin tocar tamaños ni pesos. */
+  body:not(.dark-theme) #tab-noticias .sn-header .sn-title,
+  body:not(.dark-theme) #tab-settings .set-page-title,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-name { color: #fff !important; }
+
+  body:not(.dark-theme) #tab-noticias .sn-header .sn-date,
+  body:not(.dark-theme) #tab-settings .set-page-sub,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-sub { color: rgba(255,255,255,.66) !important; }
+
+  /* Portiv IA: avatar y "En línea" sobre navy, como en el preview. */
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-avatar {
+    background: rgba(255,255,255,.16) !important;
+    color: #fff !important;
+    border-radius: 16px !important;
+  }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-badge {
+    background: rgba(255,255,255,.12) !important;
+    color: #fff !important;
+    border-color: transparent !important;
+    border-radius: 999px !important;
+  }
+
+  /* Campo de búsqueda blanco sobre el navy — Watchlist y Analizar igual. */
+  body:not(.dark-theme) #tab-watchlist > div:first-child #wlInput,
+  body:not(.dark-theme) #tab-analizar .research-search-bar .research-input {
+    background: #fff !important;
+    border-color: transparent !important;
+    border-radius: 999px !important;
+    box-shadow: 0 1px 2px rgba(11,28,48,.14) !important;
+  }
+  /* El botón de la barra de búsqueda se invierte: blanco con texto navy, que
+     sobre navy es lo legible. El marcado lo pinta en línea y lo repinta al
+     pasar el ratón, de ahí los !important. */
+  body:not(.dark-theme) #tab-watchlist > div:first-child button {
+    background: #fff !important;
+    color: var(--pvr-navy) !important;
+    border-radius: 999px !important;
+  }
+  body:not(.dark-theme) #tab-analizar .research-search-bar .research-btn {
+    background: #fff !important;
+    color: var(--pvr-navy) !important;
+    border-radius: 999px !important;
+    box-shadow: 0 1px 2px rgba(11,28,48,.14) !important;
+  }
+  body:not(.dark-theme) #tab-analizar .research-search-bar .research-btn svg { stroke: var(--pvr-navy) !important; }
+
+  /* La barra superior de Portiv IA deja de hacer de separador: ya es navy. */
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header { border-bottom: none !important; }
+}
+
+/* ── 14. Tarjetas que faltaban por entrar en el sistema ─────────────────────
+   Mismo radio, hairline y sombra de 1px que el resto. */
+body:not(.dark-theme) .sn-featured,
+body:not(.dark-theme) #tab-analizar .ra-rating-pro,
+body:not(.dark-theme) #tab-analizar .pa-asset-card,
+body:not(.dark-theme) #tab-analizar .ra-header,
+body:not(.dark-theme) #txLogSection .card {
+  border-radius: var(--pvr-r-card);
+  border: 1px solid var(--pvr-line);
+  box-shadow: var(--pvr-shadow);
+}
+body:not(.dark-theme) .sn-featured,
+body:not(.dark-theme) #tab-analizar .pa-asset-card,
+body:not(.dark-theme) #txLogSection .card { background: #fff; }
+
+/* La cabecera de resultados de Analizar se trata como tarjeta, no como banda
+   navy: aparece a media pestaña, después de la búsqueda. */
+body:not(.dark-theme) #tab-analizar .ra-header {
+  background: #fff;
+  padding: 18px 20px;
+}
+
+/* .pda-card queda en el mismo radio que el resto (traía 18px). */
+body:not(.dark-theme) .pda-card { border-radius: var(--pvr-r-card); }
+
+/* ── 15. Pastillas y etiquetas: 999px en toda la app ──────────────────────── */
+.sn-badge-trending, .sn-badge-sector, .sn-feat-ticker,
+.ai-chat-chip,
+#tab-analizar .ra-ticker {
+  border-radius: 999px !important;
+}
+body:not(.dark-theme) .ai-chat-chip {
+  background: #fff;
+  border-color: var(--pvr-line);
+  color: #3b4a5c;
+  box-shadow: var(--pvr-shadow);
+}
+body:not(.dark-theme) .sn-badge-sector { background: #f1f4f8; color: #5a6b80; }
+
+/* ── 16. Botones que faltaban ─────────────────────────────────────────────── */
+.sn-read-btn, .set-btn-primary, .research-btn,
+.stitch-viewall-btn, .set-btn-logout {
+  border-radius: var(--pvr-r-btn) !important;
+  transition: background .18s var(--pvr-ease), box-shadow .18s var(--pvr-ease),
+              opacity .18s var(--pvr-ease), transform .12s var(--pvr-ease);
+}
+.sn-read-btn:active, .set-btn-primary:active,
+.stitch-viewall-btn:active, .set-btn-logout:active { transform: scale(.97); }
+/* Fuera el halo del botón de búsqueda: la app lo trae con sombra de color. */
+body:not(.dark-theme) .research-btn { box-shadow: var(--pvr-shadow) !important; }
+
+/* Burbuja del chat con la esquina viva, como en el preview. */
+body:not(.dark-theme) .ai-msg-bot .ai-msg-bubble,
+body:not(.dark-theme) .ai-typing-bubble {
+  border-radius: 22px 22px 22px 8px;
+  border: 1px solid var(--pvr-line);
+  box-shadow: var(--pvr-shadow);
+}
+body:not(.dark-theme) .ai-msg-user .ai-msg-bubble { border-radius: 22px 22px 8px 22px; }
+body:not(.dark-theme) .ai-chat-inputbar {
+  border-radius: 999px;
+  background: #fff;
+  border-color: var(--pvr-line);
+  box-shadow: var(--pvr-shadow);
+}
+body:not(.dark-theme) .ai-chat-inputarea { border-top-color: var(--pvr-line); }
+
+/* ── 17. Títulos de sección: mismo peso y tracking en toda la app ─────────── */
+.pa-label, .pa-h1, .set-page-title, .sn-title, .sn-feat-title, .pda-h2 {
+  letter-spacing: -.02em;
+}
+
+/* ── 18. iPad: mismo concepto, ajustado a su rejilla ──────────────────────── */
+@media (min-width: 701px) and (max-width: 1200px) {
+  body:not(.dark-theme) .sn-header,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header {
+    background: var(--pvr-navy-bar) !important;
+    border: none !important;
+    border-radius: 0 0 30px 30px !important;
+    margin-left: calc(50% - 50vw) !important;
+    margin-right: calc(50% - 50vw) !important;
+    width: auto !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+    padding-left: 40px !important;
+    padding-right: 40px !important;
+    padding-bottom: 26px !important;
+  }
+  body:not(.dark-theme) .sn-header,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { padding-top: 20px !important; }
+  body:not(.dark-theme) #tab-noticias .sn-header                  { margin-top: -24px !important; }
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { margin-top: -28px !important; }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header            { margin-top: 0 !important; }
+
+  body:not(.dark-theme) #tab-noticias .sn-title,
+  body:not(.dark-theme) #tab-settings .set-page-title,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-name { color: #fff !important; }
+  body:not(.dark-theme) #tab-noticias .sn-date,
+  body:not(.dark-theme) #tab-settings .set-page-sub,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-sub { color: rgba(255,255,255,.66) !important; }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-avatar {
+    background: rgba(255,255,255,.16) !important; color: #fff !important; border-radius: 18px !important;
+  }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-badge {
+    background: rgba(255,255,255,.12) !important; color: #fff !important;
+    border-color: transparent !important; border-radius: 999px !important;
+  }
+}
+
+/* ── 19. Reducción de movimiento: también lo nuevo ────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sn-read-btn, .set-btn-primary, .research-btn,
+  .stitch-viewall-btn, .set-btn-logout, .ai-chat-chip { transition: none; }
+}
 </style>
 </body>
 </html>
