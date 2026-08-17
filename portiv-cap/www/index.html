@@ -33883,5 +33883,250 @@ document.addEventListener('DOMContentLoaded', function(){
   try{ sync(); }catch(_){}
 })();
 </script>
+<style id="pv-redesign-2026">
+/* ═══════════════════════════════════════════════════════════════════════════
+   CAPA DE REDISEÑO — 2026-08
+   ───────────────────────────────────────────────────────────────────────────
+   Sólo estética. Esta hoja va la última del documento y NO toca marcado ni JS:
+   no cambia display, position, overflow, flex/grid, anchos, altos ni
+   pointer-events, así que no puede alterar ningún comportamiento. Únicamente
+   color, radio, borde, sombra, tipografía, transición y animación.
+
+   Reglas de color van dentro de body:not(.dark-theme) para no pisar el tema
+   oscuro, que ya tiene sus 200 reglas propias.
+
+   Sistema:
+     · Superficie plana, jerarquía por hairline + sombra de 1px (no halos).
+     · Radio unificado: tarjetas 20px, botones 14px, pastillas 999px.
+     · Acento navy #04162C (el mismo --st-primary de la app).
+     · Movimiento discreto: entrada escalonada al cambiar de pestaña,
+       respuesta táctil en controles, indicador animado en la barra inferior.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --pvr-line:      #e6eaf0;
+  --pvr-line-soft: #eef1f6;
+  --pvr-shadow:    0 1px 2px rgba(20,30,45,.06);
+  --pvr-shadow-hi: 0 4px 16px -6px rgba(11,28,48,.14), 0 1px 2px rgba(20,30,45,.06);
+  --pvr-navy:      #04162c;
+  --pvr-r-card:    20px;
+  --pvr-r-btn:     14px;
+  --pvr-ease:      cubic-bezier(.22,1,.36,1);
+}
+
+/* ── 1. Superficie general ────────────────────────────────────────────────── */
+body:not(.dark-theme) {
+  background: #f4f6f9;
+}
+
+/* ── 2. Tarjetas: mismo radio, hairline y sombra de 1px en toda la app ────── */
+body:not(.dark-theme) .stitch-card,
+body:not(.dark-theme) .prof-card,
+body:not(.dark-theme) .pda-card,
+body:not(.dark-theme) #tab-analizar .ra-card,
+body:not(.dark-theme) .eps-card,
+body:not(.dark-theme) .pvx .px-card,
+body:not(.dark-theme) .holdings-card,
+body:not(.dark-theme) .summary-box,
+body:not(.dark-theme) .pa-scen-grid,
+body:not(.dark-theme) .ra-mcard,
+body:not(.dark-theme) .swc-list,
+body:not(.dark-theme) .wo-report {
+  border-radius: var(--pvr-r-card);
+  border: 1px solid var(--pvr-line);
+  box-shadow: var(--pvr-shadow);
+  transition: box-shadow .22s var(--pvr-ease), border-color .22s var(--pvr-ease);
+}
+body:not(.dark-theme) .stitch-card,
+body:not(.dark-theme) .prof-card,
+body:not(.dark-theme) #tab-analizar .ra-card,
+body:not(.dark-theme) .eps-card,
+body:not(.dark-theme) .holdings-card {
+  background: #fff;
+}
+body:not(.dark-theme) .pda-card {
+  background: #fbfcfe;
+}
+
+/* Realce al pasar el cursor — sólo ratón, nunca en táctil, y sólo sombra:
+   no se usa transform para no crear un contexto de apilamiento nuevo. */
+@media (hover: hover) and (pointer: fine) {
+  body:not(.dark-theme) .stitch-card:hover,
+  body:not(.dark-theme) .prof-card:hover,
+  body:not(.dark-theme) #tab-analizar .ra-card:hover,
+  body:not(.dark-theme) .eps-card:hover {
+    box-shadow: var(--pvr-shadow-hi);
+    border-color: #dde3ec;
+  }
+}
+
+/* Títulos de tarjeta: peso 600 y tracking neutro (nada de 800 comprimido). */
+.stitch-card-title,
+.prof-card-title,
+.pda-h2,
+.ra-card-title,
+.sn-section-title,
+.px-sec-title {
+  font-weight: 600;
+  letter-spacing: -.2px;
+}
+
+/* ── 3. Barra superior: hairline en vez de borde duro ─────────────────────── */
+body:not(.dark-theme) .m-topbar,
+body:not(.dark-theme) .dash-topbar-mobile {
+  background: #fff;
+  border-bottom: 1px solid var(--pvr-line-soft);
+}
+body:not(.dark-theme) .m-tb-name,
+body:not(.dark-theme) .dash-topbar-mobile .dh-title {
+  font-weight: 600;
+  letter-spacing: -.2px;
+  color: var(--pvr-navy);
+}
+.m-tb-btn {
+  border-radius: 12px;
+  transition: background .18s var(--pvr-ease), transform .14s var(--pvr-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  body:not(.dark-theme) .m-tb-btn:hover { background: #f1f4f8; }
+}
+.m-tb-btn:active { transform: scale(.92); }
+
+/* ── 4. Barra inferior: indicador animado + reacción del icono ────────────── */
+body:not(.dark-theme) .bottom-tabs {
+  border-top: 1px solid var(--pvr-line) !important;
+  box-shadow: 0 -1px 2px rgba(20,30,45,.05) !important;
+}
+.bottom-tab {
+  position: relative;
+  transition: color .2s var(--pvr-ease);
+}
+.bottom-tab svg {
+  transition: transform .26s var(--pvr-ease), stroke-width .2s var(--pvr-ease);
+}
+.bottom-tab.active svg { transform: translateY(-1px) scale(1.06); }
+.bottom-tab:active svg  { transform: scale(.9); }
+/* Punto indicador: pseudo-elemento, no añade nodos ni ocupa flujo. */
+.bottom-tab::after {
+  content: "";
+  position: absolute;
+  top: 4px; left: 50%;
+  width: 4px; height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0;
+  transform: scale(.4);
+  transition: opacity .24s var(--pvr-ease), transform .24s var(--pvr-ease);
+  pointer-events: none;
+}
+.bottom-tab.active::after { opacity: 1; transform: scale(1); }
+body:not(.dark-theme) .bottom-tab.active { color: var(--pvr-navy); }
+
+/* ── 5. Pastillas de periodo y filtros ────────────────────────────────────── */
+body:not(.dark-theme) .period-btn,
+body:not(.dark-theme) .ppill,
+body:not(.dark-theme) .qbtn {
+  border-radius: 999px;
+  border: 1px solid var(--pvr-line);
+  background: #fff;
+  color: #5a6b80;
+  font-weight: 600;
+  transition: background .18s var(--pvr-ease), color .18s var(--pvr-ease),
+              border-color .18s var(--pvr-ease), transform .12s var(--pvr-ease);
+}
+body:not(.dark-theme) .period-btn.active,
+body:not(.dark-theme) .ppill.active,
+body:not(.dark-theme) .qbtn.active {
+  background: var(--pvr-navy);
+  border-color: var(--pvr-navy);
+  color: #fff;
+}
+@media (hover: hover) and (pointer: fine) {
+  body:not(.dark-theme) .period-btn:hover:not(.active),
+  body:not(.dark-theme) .ppill:hover:not(.active),
+  body:not(.dark-theme) .qbtn:hover:not(.active) {
+    background: #f1f4f8;
+    border-color: #d7dde6;
+    color: var(--pvr-navy);
+  }
+}
+.period-btn:active, .ppill:active, .qbtn:active { transform: scale(.95); }
+
+/* ── 6. Chips y etiquetas: mismo radio y peso en toda la app ──────────────── */
+.swc-tag, .snap-chip, .nm-chip, .pq-chip, .rap-pill, .px-pill, .px-eqr-chip {
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+body:not(.dark-theme) .swc-tag,
+body:not(.dark-theme) .snap-chip {
+  background: #f1f4f8;
+  color: #5a6b80;
+}
+
+/* ── 7. Botones: radio único y respuesta al pulsar ────────────────────────── */
+.pe-apply-btn, .pe-add-btn, .pe-del-btn,
+#tab-analizar .ra-btn,
+.as-quick-btn, .as-confirm, .as-cancel, .as-max-btn,
+.sb-cash-btn, .set-btn-logout, .pv-btn, .pv-ai-btn,
+.pv-profile-cta-btn, .wl2-footer-link {
+  border-radius: var(--pvr-r-btn);
+  transition: background .18s var(--pvr-ease), border-color .18s var(--pvr-ease),
+              box-shadow .18s var(--pvr-ease), opacity .18s var(--pvr-ease),
+              transform .12s var(--pvr-ease);
+}
+.pe-apply-btn:active, .pe-add-btn:active,
+#tab-analizar .ra-btn:active,
+.as-quick-btn:active, .as-confirm:active, .as-cancel:active,
+.sb-cash-btn:active, .pv-btn:active, .pv-ai-btn:active,
+.pv-profile-cta-btn:active { transform: scale(.97); }
+
+#authOverlay .pv-btn { border-radius: var(--pvr-r-btn); }
+
+/* ── 8. Filas de lista: realce suave al pasar/pulsar ──────────────────────── */
+body:not(.dark-theme) .swc-item,
+body:not(.dark-theme) .acct-item,
+body:not(.dark-theme) .set-legal-item,
+body:not(.dark-theme) .preview-item {
+  transition: background .18s var(--pvr-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  body:not(.dark-theme) .swc-item:hover,
+  body:not(.dark-theme) .set-legal-item:hover { background: #f7f9fc; }
+}
+
+/* ── 9. Movimiento: entrada escalonada al abrir una pestaña ───────────────────
+   Se anima sólo a los hijos DIRECTOS del contenedor de pestaña. Esos nodos son
+   fijos (ningún tab-* se re-renderiza por innerHTML), así que el contenido que
+   se refresca por datos vive más adentro y nunca vuelve a animarse: no hay
+   parpadeo con las actualizaciones de precio.
+   animation-fill-mode: both con opacidad final 1 → si por lo que sea la
+   animación no llega a ejecutarse, el elemento se ve igualmente. */
+@keyframes pvrRise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page.active.visible > * {
+  animation: pvrRise .42s var(--pvr-ease) both;
+}
+.page.active.visible > *:nth-child(1) { animation-delay: .02s; }
+.page.active.visible > *:nth-child(2) { animation-delay: .06s; }
+.page.active.visible > *:nth-child(3) { animation-delay: .10s; }
+.page.active.visible > *:nth-child(4) { animation-delay: .14s; }
+.page.active.visible > *:nth-child(5) { animation-delay: .18s; }
+.page.active.visible > *:nth-child(n+6) { animation-delay: .20s; }
+
+/* ── 10. Accesibilidad: si el sistema pide menos movimiento, se apaga todo ── */
+@media (prefers-reduced-motion: reduce) {
+  .page.active.visible > * { animation: none; }
+  .bottom-tab svg,
+  .bottom-tab::after,
+  .period-btn, .ppill, .qbtn,
+  .m-tb-btn,
+  .stitch-card, .prof-card, .eps-card { transition: none; }
+}
+
+</style>
 </body>
 </html>
