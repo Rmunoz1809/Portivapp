@@ -438,12 +438,12 @@ window._ensureChartJs = (function(){
   /* ── PAGES ── */
   .page {
     display: none; padding: 22px 28px;
-    opacity: 0; transform: translateY(12px);
+    opacity: 0; transform: translateY(0);
   }
   .page.active { display: block; }
-  .page.visible { animation: pageIn 0.65s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+  .page.visible { animation: pageIn 0.22s cubic-bezier(.33, 1, .68, 1) forwards; }
   @keyframes pageIn {
-    from { opacity: 0; transform: translateY(22px); }
+    from { opacity: 0; transform: translateY(0); }
     to   { opacity: 1; transform: translateY(0); }
   }
 
@@ -3348,9 +3348,9 @@ window._ensureChartJs = (function(){
      que va JUSTO debajo: sumarlo otra vez aquí dejaba ~48px de blanco muerto entre la barra
      de escribir y el menú. Con 10px la caja de escribir queda pegada al menú. */
   .ai-chat-inputarea { padding: 12px 14px 10px !important; }
-  /* Transición profesional de entrada de pestañas (solo móvil; no afecta escritorio). */
-  .page.pv-tab-in { animation: pvTabIn .30s cubic-bezier(.22,.61,.36,1) both; }
-  @keyframes pvTabIn { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }
+  /* Transición de entrada de pestañas: asienta desde arriba (solo móvil). */
+  .page.pv-tab-in { animation: pvTabIn .26s cubic-bezier(.33,1,.68,1) both; }
+  @keyframes pvTabIn { from { opacity:0; transform: translateY(-8px); } to { opacity:1; transform: translateY(0); } }
   /* En el chat: ocultar la topbar de marca y que el perfil de la IA quede hasta arriba,
      ocupando toda la pantalla (solo resta el bottom-nav). */
   body.chat-active .m-topbar { display: none !important; }
@@ -13828,8 +13828,8 @@ function showTab(name) {
     try {
       pg.classList.remove('pv-tab-in');
       if (pg.animate && PV_isMobile() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        pg.animate([{opacity:0, transform:'translateY(14px)'},{opacity:1, transform:'none'}],
-                   {duration:340, easing:'cubic-bezier(.22,.61,.36,1)'});
+        pg.animate([{opacity:0},{opacity:1}],
+                   {duration:200, easing:'cubic-bezier(.33,1,.68,1)'});
       }
     } catch(e){}
     try { if (typeof bindPeriodBtns==='function') bindPeriodBtns(); } catch(e){}
@@ -15750,6 +15750,30 @@ var portivEndDot = {
   }
 };
 
+// ── Blindaje Retina ──────────────────────────────────────────────────────────
+// iOS puede descartar el búfer de un <canvas> (presión de memoria, volver de
+// segundo plano, restaurar desde bfcache). Al recuperarlo el bitmap conserva su
+// tamaño en píxeles de dispositivo, pero el CONTEXTO vuelve a la matriz
+// identidad — y Chart.js sólo aplica setTransform cuando CAMBIA el tamaño. Con
+// devicePixelRatio 3 el siguiente repintado salía a un tercio, encogido arriba a
+// la izquierda y con el resto de la tarjeta en blanco. Aquí se comprueba la
+// escala real antes de cada dibujo y se restituye si se perdió. Medido: sin esto
+// el dibujo ocupa 33.1% x 32.6% del bitmap; con esto, 99.4% x 98.2%.
+var portivRetinaGuard = {
+  id: 'portivRetinaGuard',
+  beforeDraw(chart) {
+    try {
+      const c = chart.ctx;
+      if (!c || !c.getTransform) return;
+      const r = chart.currentDevicePixelRatio || window.devicePixelRatio || 1;
+      const t = c.getTransform();
+      if (Math.abs(t.a - r) > 0.01 || Math.abs(t.d - r) > 0.01) {
+        c.setTransform(r, 0, 0, r, 0, 0);
+      }
+    } catch (e) {}
+  }
+};
+
 // Degradado para el chart de Análisis (Precio Histórico) — mismo lenguaje visual.
 function _researchFill(_ctx, isPos) {
   return (context) => {
@@ -15893,7 +15917,7 @@ function initPerfChart() {
   if (perfChart) { try { perfChart.destroy(); } catch(e){} perfChart = null; }
   perfChart = new Chart(ctx, {
     type: 'line',
-    plugins: [portivCrosshair, portivEndDot],
+    plugins: [portivRetinaGuard, portivCrosshair, portivEndDot],
     data: {
       labels: d.labels,
       datasets: [{
@@ -16031,6 +16055,15 @@ function initPerfChart() {
   }
   window.addEventListener('resize', _pvOnViewportChange, { passive: true });
   window.addEventListener('orientationchange', _pvOnViewportChange, { passive: true });
+  // El búfer del canvas se pierde al volver de segundo plano o de bfcache; el frame roto
+  // se queda en pantalla hasta que algo repinta. Al recuperar visibilidad se fuerza un
+  // repintado: portivRetinaGuard restituye la escala en ese mismo dibujo.
+  function _pvRepaintCharts(){
+    try { if (perfChart && perfChart.canvas && perfChart.canvas.offsetParent !== null) perfChart.render(); } catch(e){}
+    try { if (researchChartInst && researchChartInst.canvas && researchChartInst.canvas.offsetParent !== null) researchChartInst.render(); } catch(e){}
+  }
+  window.addEventListener('pageshow', _pvRepaintCharts, { passive: true });
+  document.addEventListener('visibilitychange', function(){ if (!document.hidden) _pvRepaintCharts(); }, { passive: true });
 })();
 
 // ─── ZOOM CINEMÁTICO ENTRE PERÍODOS ─────────────────────────────────────────────
@@ -22462,7 +22495,7 @@ function _drawResearchChart(chartData, isPos) {
 
   researchChartInst = new Chart(ctx, {
     type:'line',
-    plugins:[portivCrosshair, portivEndDot],
+    plugins:[portivRetinaGuard, portivCrosshair, portivEndDot],
     data:{ labels:pts.map(p=>p.x), datasets:[{
       data:pts.map(p=>p.y), borderColor:col, borderWidth:3.6,
       backgroundColor:_researchFill(ctx, isPos), fill:'origin', tension:0.25,
@@ -34174,23 +34207,23 @@ body:not(.dark-theme) .preview-item { transition: background .18s var(--pvr-ease
   body:not(.dark-theme) .set-legal-item:hover { background: #f7f9fc; }
 }
 
-/* ── 10. Movimiento: entrada escalonada al abrir una pestaña ──────────────────
+/* ── 10. Movimiento: entrada escalonada al abrir una pestaña, DE ARRIBA ABAJO ─
    Sólo hijos DIRECTOS del contenedor de pestaña. Esos nodos son fijos (ningún
    tab-* se re-renderiza por innerHTML), así que el contenido que se refresca
    por datos vive más adentro y nunca vuelve a animarse: sin parpadeos con las
    actualizaciones de precio. fill-mode both con opacidad final 1 → si la
    animación no llegara a ejecutarse, el elemento se ve igualmente. */
 @keyframes pvrRise {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(-9px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.page.active.visible > * { animation: pvrRise .42s var(--pvr-ease) both; }
-.page.active.visible > *:nth-child(1) { animation-delay: .02s; }
-.page.active.visible > *:nth-child(2) { animation-delay: .06s; }
-.page.active.visible > *:nth-child(3) { animation-delay: .10s; }
-.page.active.visible > *:nth-child(4) { animation-delay: .14s; }
-.page.active.visible > *:nth-child(5) { animation-delay: .18s; }
-.page.active.visible > *:nth-child(n+6) { animation-delay: .20s; }
+.page.active.visible > * { animation: pvrRise .34s cubic-bezier(.33,1,.68,1) both; }
+.page.active.visible > *:nth-child(1) { animation-delay: 0s; }
+.page.active.visible > *:nth-child(2) { animation-delay: .04s; }
+.page.active.visible > *:nth-child(3) { animation-delay: .08s; }
+.page.active.visible > *:nth-child(4) { animation-delay: .12s; }
+.page.active.visible > *:nth-child(5) { animation-delay: .16s; }
+.page.active.visible > *:nth-child(n+6) { animation-delay: .18s; }
 
 /* ── 11. Si el sistema pide menos movimiento, se apaga todo ───────────────── */
 @media (prefers-reduced-motion: reduce) {
