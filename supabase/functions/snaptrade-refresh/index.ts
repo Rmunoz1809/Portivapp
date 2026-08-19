@@ -133,15 +133,31 @@ Deno.serve(async (req) => {
       ? new Date(profile.snaptrade_last_refresh).getTime()
       : 0;
     const fresh = last && Date.now() - last < CACHE_MS;
+    // ── La bandera `broken` NUNCA se sirve desde caché ────────────────────────────
+    // `snaptrade_connection_broken` sólo la levantaba el webhook CONNECTION_BROKEN y sólo la
+    // bajaba una lectura con datos vivos. Pero este atajo devolvía la bandera SIN preguntarle
+    // a SnapTrade, y el webhook no invalidaba la caché: una caída transitoria que SnapTrade ya
+    // había reparado por su cuenta dejaba al usuario mirando "Reconecta tu broker" hasta 60
+    // minutos, con un botón que no arregla nada porque no hay nada roto. Y al no llevar
+    // `institutions`, el cartel ni siquiera podía decir QUÉ broker. Marcado como roto → se cae
+    // al camino vivo, que cuesta UNA llamada (listBrokerageAuthorizations) y resuelve el estado
+    // real: o lo confirma (allDisabled, que sale ahí mismo) o lo desmiente y baja la bandera.
+    const brokenFlagged = !!profile.snaptrade_connection_broken;
     // `force` = el usuario pulsó el botón. Servirle la caché entonces era exactamente el
     // bug del que se quejaba: pulsar "Actualizar" no movía una sola cifra durante una hora
     // aunque su broker ya tuviera la operación.
-    if (!force && fresh && profile.snaptrade_holdings != null) {
+    if (!force && fresh && !brokenFlagged && profile.snaptrade_holdings != null) {
       return jsonResponse(req, {
         connected: true,
         broken: !!profile.snaptrade_connection_broken,
         holdings: profile.snaptrade_holdings,
         accountId: profile.snaptrade_account_id,
+        // El slug no cuesta una llamada: sale de la variable de entorno. Sin él, cada
+        // respuesta de caché —que son la mayoría, la caché dura 60 min— apagaba en el
+        // cliente todo lo específico de IBKR hasta la siguiente lectura viva. Las
+        // `institutions` sí exigirían una llamada a SnapTrade, así que NO se recalculan
+        // aquí: el cliente conserva las últimas que recibió (ver snapRefresh).
+        brokerSlugs: { ibkr: IBKR_SLUG || null },
         fromCache: true,
       });
     }
@@ -185,6 +201,27 @@ Deno.serve(async (req) => {
       // Se sirven las ÚLTIMAS posiciones conocidas (mejor que una pantalla vacía) pero
       // marcadas como rotas y viejas, para que la UI pida reconectar en vez de dejar que
       // el usuario tome decisiones con una foto de hace días creyéndola de hoy.
+      //
+      // `institutions` / `staleConnections` viajan TAMBIÉN por aquí. Este return está antes
+      // del bloque que los calcula (necesita `accts`, que aún no se ha leído), así que hasta
+      // ahora el caso más importante —el usuario con la conexión REALMENTE caída— era el único
+      // que llegaba al cliente sin ellos: la tarjeta decía "Tu broker cortó la conexión" sin
+      // nombrar cuál, y su único botón iba sin `connectionId`, de modo que con dos brokers
+      // caídos siempre se reconectaba el primero de la lista y el segundo no tenía arreglo.
+      // Aquí no hay cuentas que contar (todas las conexiones están muertas), así que se
+      // construye la versión mínima que la tarjeta necesita: id, nombre y desde cuándo.
+      const downInstitutions = conns.map((c: any) => ({
+        id: c?.id ?? null,
+        name: c?.brokerage?.display_name ?? c?.brokerage?.name ?? c?.name ?? null,
+        slug: c?.brokerage?.slug ?? null,
+        createdDate: c?.created_date ?? null,
+        accounts: 0,
+        disabled: true,
+        disabledSince: c?.disabled_date ?? null,
+        lastSync: null,
+        maintenance: c?.brokerage?.maintenance_mode === true,
+        degraded: c?.brokerage?.is_degraded === true,
+      }));
       await admin
         .from("profiles")
         .update({ snaptrade_connection_broken: true })
@@ -198,6 +235,11 @@ Deno.serve(async (req) => {
         holdings: profile.snaptrade_holdings ?? null,
         accountId: profile.snaptrade_account_id ?? null,
         lastSync: profile.snaptrade_last_refresh ?? null,
+        institutions: downInstitutions,
+        staleConnections: downInstitutions.map((i) => ({
+          id: i.id, name: i.name, disabledSince: i.disabledSince, accounts: i.accounts,
+        })),
+        brokerSlugs: { ibkr: IBKR_SLUG || null },
         fromCache: true,
       });
     }
@@ -729,15 +771,36 @@ Deno.serve(async (req) => {
       .eq("id", userId);
     if (error) return jsonResponse(req, { error: error.message }, 500);
 
+    // ⚠ Este es el camino BUENO —el que recorre todo el mundo cuyo broker responde— y era
+    // el ÚNICO camino vivo al que le faltaban cuatro campos que sus dos hermanos degradados
+    // (foto parcial e initial-sync) sí mandaban. El efecto era que TODO lo específico de
+    // IBKR sólo existía mientras algo iba mal:
+    //   · brokerSlugs        → sin él _snapIsIbkr() da false para todo: ni la guía de IBKR,
+    //                          ni la nota de la curva ("esa conexión no entrega histórico"),
+    //                          ni el aviso del engranaje. Muertos en cuanto llegan datos.
+    //   · dormantConnections → una conexión IBKR que nunca entregó una cuenta sólo se veía
+    //                          si NINGÚN broker traía datos. Con IBKR dormido + otro broker
+    //                          sano —el caso que de verdad ocurre— el enlace seguía cobrando
+    //                          cada mes sin que el usuario llegara a enterarse nunca.
+    //   · inceptionFloor /   → IBKR (Balance Only) no da primera transacción, así que
+    //     inceptionSource      `inceptionDate` es null y sin el suelo la reconstrucción Yahoo
+    //                          vuelve a inventar meses anteriores a la conexión: el "+34 % a
+    //                          1 año" que este archivo dice haber matado, entrando por aquí.
+    // Cualquier campo nuevo que se añada a los otros dos returns tiene que añadirse también
+    // aquí: los tres describen el mismo estado, sólo cambia cuánto dato lo acompaña.
     return jsonResponse(req, {
       connected: true,
       broken: false,
       holdings,
       accountId,
       inceptionDate,
+      inceptionFloor,
+      inceptionSource,
       lastSync,
       staleConnections,
       institutions,
+      dormantConnections,
+      brokerSlugs: { ibkr: IBKR_SLUG || null },
       accountsWithoutSync,
       closedAccounts,
       syncQueued,

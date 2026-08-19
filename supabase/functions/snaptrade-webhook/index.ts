@@ -189,7 +189,13 @@ Deno.serve(async (req) => {
       };
       break;
     case "CONNECTION_BROKEN":
-      patch = { snaptrade_connection_broken: true };
+      // Se invalida la caché ADEMÁS de marcar la rotura. Sin el BUST, la siguiente lectura
+      // salía por el atajo de caché y devolvía la bandera sin preguntarle a SnapTrade: una
+      // rotura transitoria que el propio SnapTrade repara en minutos dejaba al usuario con
+      // el cartel de "Reconecta tu broker" hasta una hora, y pulsando un botón que no tenía
+      // nada que arreglar. Con el BUST, la primera lectura posterior comprueba el estado
+      // REAL (listBrokerageAuthorizations) y o lo confirma o baja la bandera sola.
+      patch = { snaptrade_connection_broken: true, ...BUST };
       break;
     case "CONNECTION_DELETED":
       patch = { snaptrade_connection_id: null, snaptrade_connection_broken: false };

@@ -253,7 +253,12 @@ Deno.serve(async (req) => {
         // enviar "read" SÓLO cuando `brokerSlug` sea el de IBKR — nunca cambiar el global.
         connectionType: "trade-if-available",
         // Salta la pantalla de selección y entra directo al flujo de ese broker.
-        ...(brokerSlug ? { broker: brokerSlug } : {}),
+        // `broker` NO se manda junto a `reconnect`: reconectar ya sabe de qué conexión —y por
+        // tanto de qué broker— se trata, y mandar los dos es una petición contradictoria que
+        // SnapTrade rechaza con 400 (comprobado). Hoy no coinciden nunca desde el cliente (el
+        // botón de IBKR va en modo 'add', que ni siquiera lista conexiones), pero el 400
+        // sería mudo y el usuario sólo vería que "no conecta": se descarta aquí.
+        ...(brokerSlug && !(withReconnect && reconnectId) ? { broker: brokerSlug } : {}),
         ...(redirect ? { customRedirect: redirect } : {}),
         // El portal entra directo al flujo de reconexión de ESA conexión y renueva su token.
         ...(withReconnect && reconnectId ? { reconnect: reconnectId } : {}),
@@ -264,7 +269,20 @@ Deno.serve(async (req) => {
     let redirectURI: string | null = null;
     try { redirectURI = await doLogin(); }
     catch (e) {
-      if (_isAuthish(e)) { await healOrphan(); redirectURI = await doLogin(); }
+      if (_isAuthish(e)) {
+        await healOrphan();
+        // healOrphan() BORRA el usuario en SnapTrade y crea uno nuevo: con el viejo se fueron
+        // TODAS sus autorizaciones, así que `reconnectId` apunta a una conexión que ya no
+        // existe. Reintentar el login con ese `reconnect` era pedirle a SnapTrade que reparase
+        // algo inexistente → error. Y este brazo, a diferencia del de abajo, no tenía plan B:
+        // el usuario recibía el mismo fallo en CADA pulsación de "Reconectar", sin ninguna
+        // salida dentro de la app. Tras recrear el usuario el único flujo válido es el alta.
+        await admin
+          .from("profiles")
+          .update({ snaptrade_connection_id: null, snaptrade_connection_broken: false })
+          .eq("id", userId);
+        redirectURI = await doLogin(false);
+      }
       else if (reconnectId) {
         // La conexión a reconectar puede haber desaparecido en SnapTrade (el usuario la
         // borró desde el broker, o se depuró). Reintentar como alta normal es mejor que

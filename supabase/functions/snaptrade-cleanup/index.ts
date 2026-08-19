@@ -19,7 +19,14 @@
 //     Sin ninguna de las tres NO se desconecta: se sella `connected_at` y se
 //     decide en el ciclo siguiente. Cortar a ciegas es peor que pagar una hora.
 //
-//   • Lote acotado (SNAPTRADE_CLEANUP_BATCH, 25 por defecto) para no chocar
+//   • v3 — LA GRACIA YA NO CRUZA LA FRONTERA DE FACTURACIÓN. La ventana de gracia
+//     decidía sola cuándo cortar, sin mirar el reloj que de verdad cuesta dinero: el
+//     ciclo de SnapTrade. Una suscripción que terminaba el último día del mes se
+//     cortaba 36 h después, ya dentro del mes siguiente, y ese mes se facturaba
+//     ENTERO por alguien que no iba a abrir la app. Ahora el plazo es el menor de
+//     (ancla + gracia) y (frontera − colchón). Ver el bloque FRONTERA DE FACTURACIÓN.
+//
+//   • Lote acotado (SNAPTRADE_CLEANUP_BATCH, 50 por defecto) para no chocar
 //     con el límite de tiempo de la Edge Function; lo que sobra se recoge a la
 //     hora siguiente y se reporta como `pending`.
 //
@@ -59,12 +66,75 @@ const GRACE_HOURS = Number(Deno.env.get("SNAPTRADE_GRACE_HOURS") ?? "36");
 // fila", que en Paddle/RevenueCat puede tardar minutos y, si falla el webhook,
 // horas. Sin esto, un pagador legítimo se quedaría sin broker.
 const ORPHAN_GRACE_HOURS = Number(Deno.env.get("SNAPTRADE_ORPHAN_GRACE_HOURS") ?? "48");
-const BATCH_DEFAULT = Number(Deno.env.get("SNAPTRADE_CLEANUP_BATCH") ?? "25");
+const BATCH_DEFAULT = Number(Deno.env.get("SNAPTRADE_CLEANUP_BATCH") ?? "50");
 
 const json = (obj: unknown, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
 const HOUR_MS = 60 * 60 * 1000;
+
+// ── FRONTERA DE FACTURACIÓN ───────────────────────────────────────────────────
+// La gracia y la factura de SnapTrade son dos relojes distintos, y hasta ahora sólo se
+// miraba el primero. SnapTrade cobra ~1 USD por usuario CONECTADO y por mes: lo que
+// decide el cargo no es cuántas horas lleve caducada la suscripción, es si el enlace
+// seguía vivo al cruzar la frontera del ciclo. Con 36 h de gracia, una suscripción que
+// termina la tarde del último día del mes se cortaba ya entrado el mes siguiente — y ese
+// mes se paga ENTERO por un usuario que no va a abrir la aplicación ni una vez.
+//
+// Regla nueva: la gracia nunca cruza la frontera. El plazo real es el MENOR de
+//   (a) ancla + gracia            ← lo de siempre, para el caso normal
+//   (b) próxima frontera − colchón ← el corte que evita el cargo del mes siguiente
+//
+// Se consideran DOS fronteras y se toma la más próxima, porque el ciclo exacto de
+// facturación lo fija SnapTrade y no queremos que la corrección dependa de acertarlo:
+//   · inicio del mes natural (UTC)  → modelo de mes de calendario
+//   · aniversario mensual del enlace → modelo por fecha de alta de la conexión
+// Cortar antes de la más temprana es correcto bajo cualquiera de los dos.
+//
+// El colchón cubre el hueco entre ejecuciones del cron (horario, minuto :07): con 3 h,
+// las pasadas de las 21:07, 22:07 y 23:07 UTC ven el plazo ya vencido y cortan. Bajarlo
+// de ~1,5 h haría que la última pasada del mes llegase tarde.
+const BILLING_SAFETY_HOURS = Number(Deno.env.get("SNAPTRADE_BILLING_SAFETY_HOURS") ?? "3");
+// Dentro de esta ventana previa a la frontera se ensancha el lote: el barrido rota por
+// `snaptrade_cleanup_last_attempt_at`, así que con más enlazados que `batch` alguien podría
+// no llegar a evaluarse en las últimas horas del mes — justo las que deciden el cargo.
+const BOUNDARY_WIDEN_HOURS = Number(Deno.env.get("SNAPTRADE_BOUNDARY_WIDEN_HOURS") ?? "18");
+
+/** Inicio del mes siguiente en UTC. */
+function nextMonthStart(from: Date): number {
+  return Date.UTC(from.getUTCFullYear(), from.getUTCMonth() + 1, 1, 0, 0, 0, 0);
+}
+
+/** Próximo aniversario MENSUAL del enlace posterior a `from` (30 ene → 28/29 feb, etc.). */
+function nextMonthlyAnniversary(connectedAt: Date, from: Date): number {
+  const day = connectedAt.getUTCDate();
+  const h = connectedAt.getUTCHours(), mi = connectedAt.getUTCMinutes(), s = connectedAt.getUTCSeconds();
+  for (let i = 0; i <= 2; i++) {
+    const y = from.getUTCFullYear();
+    const m = from.getUTCMonth() + i;
+    // Día 31 en un mes de 30 → se ancla al último día de ese mes (Date.UTC desbordaría al
+    // mes siguiente y adelantaría la frontera un mes entero).
+    const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    const t = Date.UTC(y, m, Math.min(day, lastDay), h, mi, s, 0);
+    if (t > from.getTime()) return t;
+  }
+  return nextMonthStart(from); // inalcanzable en la práctica; nunca devolver NaN
+}
+
+/** Momento LÍMITE para cortar sin que se devengue el cargo del ciclo siguiente. */
+function billingCutoff(now: Date, connectedAt: string | null): { at: number; kind: string } {
+  const cands: Array<{ at: number; kind: string }> = [
+    { at: nextMonthStart(now), kind: "month_start" },
+  ];
+  if (connectedAt) {
+    const c = new Date(connectedAt);
+    if (isFinite(c.getTime())) {
+      cands.push({ at: nextMonthlyAnniversary(c, now), kind: "link_anniversary" });
+    }
+  }
+  const first = cands.reduce((a, b) => (b.at < a.at ? b : a));
+  return { at: first.at - BILLING_SAFETY_HOURS * HOUR_MS, kind: first.kind };
+}
 
 /** Reintento por fallo transitorio: el ciclo siguiente re-conduce esta fila.
  *  (El cron es de un solo hilo → leer-modificar-escribir aquí no compite.) */
@@ -115,8 +185,16 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); } catch { /* body opcional */ }
   const dryRun = body?.dry_run === true;
-  const batch = Math.max(1, Math.min(200, Number(body?.batch ?? BATCH_DEFAULT) || BATCH_DEFAULT));
+  const askedBatch = Math.max(1, Math.min(200, Number(body?.batch ?? BATCH_DEFAULT) || BATCH_DEFAULT));
   const onlyUser = typeof body?.user_id === "string" ? body.user_id : null;
+  // Cerca de la frontera de facturación se ensancha el lote al máximo. El barrido rota por
+  // `snaptrade_cleanup_last_attempt_at`, así que con más enlazados que `batch` alguien podría
+  // quedarse sin evaluar precisamente en las horas que deciden si se paga el mes siguiente.
+  // Fuera de esa ventana no cambia nada: el lote sigue acotado para no agotar el tiempo de
+  // la función.
+  const nearBoundary =
+    nextMonthStart(new Date()) - Date.now() <= BOUNDARY_WIDEN_HOURS * HOUR_MS;
+  const batch = nearBoundary ? Math.max(askedBatch, 200) : askedBatch;
 
   const admin = adminClient();
   const startedAt = Date.now();
@@ -211,13 +289,28 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const ageMs = Date.now() - new Date(anchor).getTime();
-      if (!(ageMs >= graceHours * HOUR_MS)) {
+      // Plazo por gracia (lo de siempre) y plazo por frontera de facturación (ver arriba).
+      // Manda el que venza ANTES.
+      const anchorMs = new Date(anchor).getTime();
+      const graceEndsAt = anchorMs + graceHours * HOUR_MS;
+      // El corte por facturación NO se aplica al ancla huérfana (`connected_at`): ahí es donde
+      // más fácil es equivocarse —enlace recién hecho cuyo webhook de la tienda aún no ha
+      // escrito la fila— y adelantarle el corte le costaría a un usuario que SÍ paga rehacer
+      // el portal de su broker entero. Además su frontera queda a un mes vista, así que las
+      // 48 h de gracia vencen mucho antes: excluirlo no deja pasar ningún cargo.
+      const cut = anchorKind === "connected_at"
+        ? null
+        : billingCutoff(new Date(), p.snaptrade_connected_at ?? null);
+      const dueAt = cut ? Math.min(graceEndsAt, cut.at) : graceEndsAt;
+      const byBilling = !!cut && cut.at < graceEndsAt;
+
+      if (Date.now() < dueAt) {
         toStamp.push(uid);
         skipped++;
         results.push({
           id: uid, skipped: "within_grace", anchor_kind: anchorKind,
-          hours_left: Math.round((graceHours * HOUR_MS - ageMs) / HOUR_MS * 10) / 10,
+          due_reason: byBilling ? `billing_${cut!.kind}` : "grace",
+          hours_left: Math.round((dueAt - Date.now()) / HOUR_MS * 10) / 10,
         });
         continue;
       }
@@ -225,9 +318,13 @@ Deno.serve(async (req) => {
       const reason = sub
         ? `subscription_inactive_${sub.store ?? "unknown"}:${sub.status ?? "unknown"}`
         : "trial_expired_no_payment";
+      // Se anota si el corte lo adelantó la frontera: es la diferencia entre "venció la
+      // gracia" y "se cortó para no pagar el mes siguiente", y sin distinguirlas la bitácora
+      // no permite comprobar que el ahorro está ocurriendo de verdad.
+      const cutBy = byBilling && Date.now() < graceEndsAt ? `billing_${cut!.kind}` : "grace";
 
       if (dryRun) {
-        results.push({ id: uid, would_disconnect: true, anchor_kind: anchorKind, reason });
+        results.push({ id: uid, would_disconnect: true, anchor_kind: anchorKind, cut_by: cutBy, reason });
         continue;
       }
 
@@ -248,7 +345,7 @@ Deno.serve(async (req) => {
         if (r.ok && j?.ok && j?.disconnected) {
           disconnected++;
           await stampAttempt(admin, uid, { snaptrade_cleanup_retry_count: 0 });
-          results.push({ id: uid, disconnected: true, anchor_kind: anchorKind, reason });
+          results.push({ id: uid, disconnected: true, anchor_kind: anchorKind, cut_by: cutBy, reason });
         } else if (j?.retry || !r.ok) {
           failed++;
           await bumpRetry(admin, uid); // fallo aguas arriba → se reintenta el ciclo siguiente
@@ -283,6 +380,9 @@ Deno.serve(async (req) => {
       dry_run: dryRun,
       grace_hours: GRACE_HOURS,
       orphan_grace_hours: ORPHAN_GRACE_HOURS,
+      billing_safety_hours: BILLING_SAFETY_HOURS,
+      near_billing_boundary: nearBoundary,
+      batch,
       took_ms: Date.now() - startedAt,
       results,
     };
