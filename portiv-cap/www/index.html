@@ -6223,7 +6223,7 @@ let _trRescan = false;   // se pidió traducir mientras corría un lote → re-e
 // uno → una página grande tardaba minutos).
 async function _trTranslateChunk(texts){
   const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
-    model: 'claude-haiku-4-5', max_tokens: 4000,
+    model: 'gemini-3.1-flash-lite', max_tokens: 4000,
     system: 'You are a professional financial UI translator. Translate each numbered line from Spanish to natural, concise English suited for a finance app. Keep tickers, company names, numbers, currency symbols and % unchanged. Reply with ONLY the same numbered list, one translation per line, exact same count and order, no extra commentary.',
     prompt: texts.map((t, idx) => `${idx+1}. ${t}`).join('\n')
   }) }, true);   // essential:true → corre también en el sitio desplegado, como el chat.
@@ -6971,7 +6971,15 @@ const _PV_NATIVE = !!(window.Capacitor && window.Capacitor.isNativePlatform && w
 // Netlify → daba 405). Edge Function de Supabase con la key guardada como secreto
 // ANTHROPIC_API_KEY (Edge Functions → Secrets). Mismo host/anon que finnhub-proxy.
 const _AI_SB_URL  = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/anthropic-proxy';
+// Gemelo del anterior para todo lo que migró a Gemini (key server-side GEMINI_API_KEY).
+// Mismo contrato de request/respuesta que anthropic-proxy: gemini-proxy traduce a la API
+// de Gemini y normaliza de vuelta, así que el cliente no cambia de parsing. El análisis
+// por acción (AI_MODELS.narrative) NO pasa por aquí — sigue en anthropic-proxy.
+const _GEMINI_SB_URL = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/gemini-proxy';
 const _AI_SB_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
+// Elige el proxy por el id del modelo pedido. Si no se puede determinar, cae al proxy
+// de Anthropic (comportamiento previo) en vez de romper.
+function _aiProviderUrl(model){ return /^gemini-/.test(String(model || '')) ? _GEMINI_SB_URL : _AI_SB_URL; }
 function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protocol); } catch(e){ return false; } }
 
 // ── CONSENTIMIENTO DE IA DE TERCEROS (App Store Guideline 5.1.2(i)) ──────────────
@@ -7199,24 +7207,35 @@ const _ANTHROPIC_MODEL_MAP = {
 // vision     → análisis de imágenes (OCR de portafolio)
 // Cambia aquí una vez y se propaga a todas las features. Right-sizing: Sonnet donde
 // importa el criterio; Haiku donde solo se extrae/formatea (salida corta y estructurada).
+//
+// ── SPLIT DE PROVEEDOR (Anthropic → Gemini) ────────────────────────────────────
+// TODO menos `narrative` migró a Gemini. El ruteo NO se decide aquí sino en
+// _aiProviderUrl(model): cualquier id que empiece por 'gemini-' sale por gemini-proxy,
+// el resto por anthropic-proxy. Por eso basta con cambiar el id del modelo en esta
+// tabla para mover una feature de proveedor — no hay una segunda lista que mantener.
+// `narrative` se queda en Anthropic A PROPÓSITO: es el análisis por acción, se cachea
+// en la nube (shared_analysis) y su calidad de criterio es la que justifica el costo.
 const AI_MODELS = {
-  reasoning:  'claude-haiku-4-5',
-  structured: 'claude-haiku-4-5',
-  // Visión = Sonnet 4.6: Haiku cometía errores de lectura en tablas densas (tickers/precios).
-  // Sonnet extrae con más precisión. Fallback automático a Haiku en _visionCall si Sonnet
-  // falla o se pasa de tiempo (502). Así: calidad de Sonnet por defecto, Haiku como red de seguridad.
-  vision:     'claude-sonnet-4-6',
+  reasoning:  'gemini-3.1-flash-lite',
+  structured: 'gemini-3.1-flash-lite',
+  // Visión = el Flash grande, NO el -lite: Haiku ya cometía errores de lectura en tablas
+  // densas (tickers/precios) y por eso la visión nunca corrió en el modelo chico. Se
+  // conserva esa decisión al migrar: calidad primero, porque el fallback solo salta ante
+  // un ERROR (502/timeout), no ante una lectura MALA — un OCR equivocado se guardaría
+  // como bueno. Fallback automático a gemini-3.1-flash-lite en _visionCall.
+  vision:     'gemini-3.7-flash',
   // Narrativa del análisis por acción (intro "qué es / cómo gana", pros, riesgos, valoración).
   // Sonnet 5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
   // (qbio:v1:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
   narrative:  'claude-sonnet-5',
-  // Chat (AI Analyst) = Haiku, por costo: es la única vía de pago on-demand y Sonnet 5
-  // salía ~3× más caro por mensaje. La tendencia de Haiku a pedir aclaración en vez de
-  // comprometerse con una lectura se contiene por prompt (REGLA #1 + frases prohibidas +
-  // few-shot) y por contexto (_chatMarketCtx le da fecha, movimiento del día y titulares,
-  // que era el motivo real por el que preguntaba). Único punto de cambio: si el chat
-  // vuelve a "entrevistar", subir esta clave a 'claude-sonnet-5' y nada más.
-  chat:       'claude-haiku-4-5',
+  // Chat (AI Analyst) = el modelo chico, por costo: es la única vía de pago on-demand y el
+  // modelo grande salía ~3× más caro por mensaje. La tendencia del modelo chico a pedir
+  // aclaración en vez de comprometerse con una lectura se contiene por prompt (REGLA #1 +
+  // frases prohibidas + few-shot) y por contexto (_chatMarketCtx le da fecha, movimiento
+  // del día y titulares, que era el motivo real por el que preguntaba). Único punto de
+  // cambio: si el chat vuelve a "entrevistar", subir esta clave a 'gemini-3.7-flash' (o a
+  // 'claude-sonnet-5' para devolverlo a Anthropic) y nada más — el ruteo lo sigue solo.
+  chat:       'gemini-3.1-flash-lite',
 };
 
 // ── Pre-calentamiento de briefs "Cómo afecta al mercado" ─────────────────────────
@@ -7267,9 +7286,15 @@ async function _aiFetch(opts, essential) {
   // Fuerza que TODA respuesta de IA de texto (noticias, análisis, briefs, chat…) salga
   // en el idioma elegido, sin importar el idioma escrito en el prompt. La visión (OCR)
   // usa _aiFetchVision, NO pasa por aquí, así que su JSON numérico no se altera.
+  // Proxy de destino según el modelo pedido. El modelo NO llega como parámetro: viaja
+  // serializado dentro de opts.body, así que se resuelve en el MISMO JSON.parse que ya
+  // hace el override de idioma (no se parsea dos veces). Si el body no es JSON válido o
+  // no trae `model`, se queda en _AI_SB_URL — el comportamiento de siempre.
+  let _url = _AI_SB_URL;
   try {
     if (opts && opts.body) {
       const _b = JSON.parse(opts.body);
+      _url = _aiProviderUrl(_b.model);
       const _dir = (typeof getLang === 'function' && getLang() === 'en')
         ? '\n\nOUTPUT LANGUAGE (MANDATORY): Write ALL output in ENGLISH, regardless of the language used in the instructions above. Any earlier instruction to answer in Spanish is overridden — respond only in English. JSON keys stay unchanged; only the text VALUES are in English.'
         : '\n\nIDIOMA DE SALIDA (OBLIGATORIO): escribe TODA la salida en ESPAÑOL, sin importar el idioma de las instrucciones anteriores. Las claves del JSON no cambian; solo los VALORES de texto van en español.';
@@ -7298,7 +7323,7 @@ async function _aiFetch(opts, essential) {
       if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
       let _uTok = _AI_SB_ANON;
       try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
-      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
+      const r = await fetch(_url, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
       if (r.ok) return r;
       _sbErr = r;
       // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
@@ -7322,6 +7347,11 @@ async function _aiFetchVision(opts) {
   // PRODUCCIÓN: proxy Supabase (key server-side) ANTES que Netlify. En GitHub Pages / host
   // estático la Netlify Function no existe → daba 405 ("Error al importar: Error 405"). El
   // analizador de fotos debe pasar por el MISMO proxy que el resto de la IA (_aiFetch).
+  // Mismo ruteo por proveedor que _aiFetch: el modelo viaja dentro de opts.body, no como
+  // parámetro. Aquí NO hay override de idioma (el JSON del OCR no se toca), así que este
+  // es el único parseo. Body inválido o sin `model` → _AI_SB_URL, como antes.
+  let _url = _AI_SB_URL;
+  try { if (opts && opts.body) _url = _aiProviderUrl(JSON.parse(opts.body).model); } catch(e){}
   let _sbErr;
   if (typeof _aiSbOn === 'function' && _aiSbOn()) {
     try {
@@ -7331,7 +7361,7 @@ async function _aiFetchVision(opts) {
       if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
       let _uTok = _AI_SB_ANON;
       try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
-      const r = await fetch(_AI_SB_URL, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
+      const r = await fetch(_url, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
       if (r.ok) return r;
       _sbErr = r;
       // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
@@ -7354,9 +7384,12 @@ async function _aiFetchVision(opts) {
 // Así: local = mejor calidad gratis · Netlify = costo mínimo. La calidad de haiku es
 // suficiente para estos análisis estructurados.
 function _aiQualityModel(preferred){
-  // Forzado a Haiku en TODOS los entornos (local y Netlify). Única excepción de Sonnet:
-  // el analizador de fotos (AI_MODELS.vision / _visionCall). No cambiar a Sonnet aquí.
-  return 'claude-haiku-4-5';
+  // Forzado al modelo chico en TODOS los entornos (local y Netlify). Única excepción del
+  // modelo grande: el analizador de fotos (AI_MODELS.vision / _visionCall). No subirlo aquí.
+  // OJO: este helper decide el modelo REAL que se manda (ver PV_AI.render → body.model),
+  // mientras que el _tokAdd de PV_AI cobra con PV_AI.MODEL. Si cambias uno, cambia el otro
+  // o el badge de gasto atribuirá el costo a un modelo que no se usó.
+  return 'gemini-3.1-flash-lite';
 }
 window._aiQualityModel = _aiQualityModel;
 
@@ -8608,7 +8641,7 @@ const PV_AI = {
   // El análisis de perfil es estructurado (secciones fijas, datos ya calculados que se le
   // pasan en el contexto), no razonamiento abierto → Haiku da calidad de sobra. Solo se
   // genera cuando el portafolio CAMBIA (gate por portfolioHash); ver/actualizar precio = $0.
-  MODEL: 'claude-haiku-4-5',
+  MODEL: 'gemini-3.1-flash-lite',
   // Versión de la LÓGICA del análisis. Al cambiarla se invalida cualquier análisis
   // cacheado y se regenera 1 vez con el prompt nuevo (evita servir un análisis viejo
   // que contradiga al asesor determinista). Súbela cuando cambie el prompt/bandas.
@@ -11531,11 +11564,11 @@ Identifica el CATALIZADOR REAL del día: resultados trimestrales, noticias de la
 
 ${jsonSpec}`;
     try{
-      const body={ model:'claude-haiku-4-5', max_tokens:600, system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.', prompt:PROMPT };
+      const body={ model:'gemini-3.1-flash-lite', max_tokens:600, system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.', prompt:PROMPT };
       if(!localCtx){ body.allowed_tools=['WebSearch','WebFetch']; body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:1}]; }   // solo busca si NO hay contexto local (1 vez)
       const res=await _aiFetch({ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
       if(!res.ok) throw new Error('ai');
-      const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','intel'); }catch(e){}
+      const j=await res.json(); try{ _tokAdd(j.usage,'gemini-3.1-flash-lite','intel'); }catch(e){}
       const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/);
       if(!m) throw new Error('json');
       const data=JSON.parse(m[0]);
@@ -11614,11 +11647,11 @@ ${tickers.map(t=>`  "${t}": {"contexto": "2-3 oraciones: qué pasó hoy con ${t}
 
 Responde en español.`;
     try{
-      const body={ model:'claude-haiku-4-5', max_tokens:Math.min(2048, 300+movers.length*300), system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.', prompt:PROMPT };
+      const body={ model:'gemini-3.1-flash-lite', max_tokens:Math.min(2048, 300+movers.length*300), system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.', prompt:PROMPT };
       if(needWeb){ body.allowed_tools=['WebSearch','WebFetch']; body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:2}]; }   // batch multi-ticker: máx 2 búsquedas
       const res=await _aiFetch({ method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify(body) });
       if(!res.ok) throw new Error('ai');
-      const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','intel'); }catch(e){}
+      const j=await res.json(); try{ _tokAdd(j.usage,'gemini-3.1-flash-lite','intel'); }catch(e){}
       const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/);
       if(!m) throw new Error('json');
       const data=JSON.parse(m[0]);
@@ -11743,7 +11776,7 @@ async function _generateNewsSummary(n) {
       // buscar en internet → mismo resultado, ~10× más barato (sin tarifa de búsqueda
       // ni inflado de input). Si la noticia llega "pelada", se busca contexto (1 sola vez).
       body: JSON.stringify(Object.assign({
-        model: 'claude-haiku-4-5',
+        model: 'gemini-3.1-flash-lite',
         max_tokens: 700,                 // autor + publicación + 3 puntos cortos en JSON
         system: 'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.',
         prompt: PROMPT
@@ -11754,7 +11787,7 @@ async function _generateNewsSummary(n) {
       throw new Error((errBody.error && errBody.error.message) || 'Error ' + res.status);
     }
     const j = await res.json();
-    try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'news'); }catch(e){}
+    try{ _tokAdd(j.usage, 'gemini-3.1-flash-lite', 'news'); }catch(e){}
     const t = (j.text || '').trim();
     if (!t) throw new Error((j.error && j.error.message) || 'Respuesta vacía del modelo');
     const m = t.match(/\{[\s\S]*\}/);
@@ -11808,7 +11841,7 @@ async function _prefetchNewsAi(n) {
       // buscar en internet → mismo resultado, ~10× más barato (sin tarifa de búsqueda
       // ni inflado de input). Si la noticia llega "pelada", se busca contexto.
       body: JSON.stringify(Object.assign({
-        model: 'claude-haiku-4-5',
+        model: 'gemini-3.1-flash-lite',
         max_tokens: 700,                 // autor + publicación + 3 puntos cortos en JSON
         system: 'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código.',
         prompt: PROMPT
@@ -11816,7 +11849,7 @@ async function _prefetchNewsAi(n) {
     });
     if (!res.ok) return;
     const j = await res.json();
-    try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'news'); }catch(e){}
+    try{ _tokAdd(j.usage, 'gemini-3.1-flash-lite', 'news'); }catch(e){}
     const t = (j.text || '').trim();
     const m = t.match(/\{[\s\S]*\}/);
     if (!m) return;
@@ -12192,7 +12225,7 @@ Responde ÚNICAMENTE con JSON válido, sin texto adicional:
 }
 
 REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase de máx ~20 palabras. "contexto" máx 2 frases. Directo, claro y con contexto real, pero SIN relleno, sin listas dentro de un punto, sin "="/flechas. Responde en español.${(ev.description||ev.summary) ? '' : '\n\nEFICIENCIA: máximo UNA (1) búsqueda web, nunca más.'}`;
-  const _body = { model:'claude-haiku-4-5', max_tokens:550, system:'Eres un analista financiero conciso. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código. Vas al grano: frases cortas, sin relleno.', prompt:PROMPT };
+  const _body = { model:'gemini-3.1-flash-lite', max_tokens:550, system:'Eres un analista financiero conciso. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código. Vas al grano: frases cortas, sin relleno.', prompt:PROMPT };
   if (!(ev.description||ev.summary)) { _body.allowed_tools = ['WebSearch','WebFetch']; _body.tools = [{ type:'web_search_20250305', name:'web_search', max_uses:1 }]; }
 
   // Texto que NO es análisis, sino un error/límite del proveedor (suscripción rate-limited, etc.).
@@ -12203,7 +12236,7 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
   const _tryGetText = async () => {
     const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
-    try{ _tokAdd(j.usage, 'claude-haiku-4-5', 'intel'); }catch(e){}
+    try{ _tokAdd(j.usage, 'gemini-3.1-flash-lite', 'intel'); }catch(e){}
     if (!r.ok) return '';
     return (j.text || '').trim();
   };
@@ -12843,7 +12876,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     // genera 1× cada 6h para TODO el mundo y los demás la LEEN de la nube. Sin este flag el
     // _aiFetch devolvía un 503 paid-skip y la IA de noticias "se desconectaba" en file:///pago.
     const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model:'claude-haiku-4-5', max_tokens:3200,
+      body: JSON.stringify({ model:'gemini-3.1-flash-lite', max_tokens:3200,
         system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
         prompt: PROMPT, allowed_tools:['WebSearch','WebFetch'],
         // COSTO: 1 búsqueda amplia ("top US market news today") basta para 8 titulares; el
@@ -12851,7 +12884,7 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
         // la inyección de resultados (~10-30K tok/búsqueda), el grueso del gasto de entrada.
         tools:[{ type:'web_search_20250305', name:'web_search', max_uses:1 }] }) }, true);
     if(!res.ok) throw new Error('SharedNews gen '+res.status);
-    const j=await res.json(); try{ _tokAdd(j.usage,'claude-haiku-4-5','news'); }catch(e){}
+    const j=await res.json(); try{ _tokAdd(j.usage,'gemini-3.1-flash-lite','news'); }catch(e){}
     const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedNews sin JSON');
     const raw=JSON.parse(m[0]);
     // Fin de semana: la ventana del prompt son 48h, así que se tolera un día más.
@@ -25872,13 +25905,13 @@ function _ocrFirstReadTrustworthy(data){
 let _aiFiles = []; // [{base64, mediaType, name}]
 const _ocrCache = new Map(); // base64_key → parsed JSON result (TTL: session)
 
-// Llama a la API de Anthropic con soporte de imágenes (visión).
-// - Visión: proxy server-side (anthropic-proxy), key como secreto
+// Llama a la API de IA con soporte de imágenes (visión).
+// - Visión: proxy server-side (gemini-proxy), key como secreto
 // - Producción: Netlify Function (la key vive en el servidor; el visitante no la ve)
 async function _visionCall(messages, model = AI_MODELS.vision, max_tokens = 8000) {
   // temperature:0 → determinista, anti-alucinación: el modelo NO "redondea" ni "corrige"
-  // números/tickers. Intento 1: Sonnet 4.6. Si falla (502 timeout, error, red) reintenta
-  // UNA vez con Haiku 4.5 (más rápido → cabe en el tope de la función).
+  // números/tickers. Intento 1: gemini-3.7-flash. Si falla (502 timeout, error, red)
+  // reintenta UNA vez con gemini-3.1-flash-lite (más rápido → cabe en el tope de la función).
   const _attempt = async (mdl) => {
     const res = await _aiFetchVision({
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -25897,7 +25930,7 @@ async function _visionCall(messages, model = AI_MODELS.vision, max_tokens = 8000
   try {
     return await _attempt(model);
   } catch (e) {
-    const _fb = 'claude-haiku-4-5';
+    const _fb = 'gemini-3.1-flash-lite';
     if (model !== _fb) {
       console.warn('Visión: ' + model + ' falló (' + (e._status || e.message) + ') → reintento con ' + _fb);
       return await _attempt(_fb);
@@ -26150,6 +26183,15 @@ const _PRICING = {
   'claude-sonnet-5':   { in: 3.00, out: 15.00 },
   'claude-haiku-4-5':  { in: 1.00, out:  5.00 },
   'claude-opus-4-8':   { in: 5.00, out: 25.00 },
+  // Gemini (todo menos AI_MODELS.narrative). Precios de ai.google.dev/gemini-api/docs/pricing
+  // verificados el 2026-08-17, tier de pago, USD por millón de tokens.
+  // OBLIGATORIO: cada literal de modelo Gemini que exista en este archivo necesita su
+  // entrada AQUÍ. Si falta, _tokAdd cae a _PRICE_DEFAULT — que es el precio de Haiku, un
+  // modelo de Anthropic — y el badge de gasto miente en silencio, sin ningún error visible.
+  'gemini-3.1-flash-lite': { in: 0.25, out:  1.50 },
+  // gemini-3.7-flash tiene precio promocional HASTA EL 2026-12-31. A partir del 2027-01-01
+  // sube a { in: 1.50, out: 7.50 } — actualizar esta línea en esa fecha o el badge subestimará.
+  'gemini-3.7-flash':      { in: 0.75, out:  3.75 },
 };
 const _PRICE_DEFAULT = _PRICING['claude-haiku-4-5'];
 // El límite semanal SOLO aplica al chatbot (gating del chat). Los demás buckets son
