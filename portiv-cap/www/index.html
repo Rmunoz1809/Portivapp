@@ -7250,7 +7250,11 @@ const AI_MODELS = {
 // web_search) y la pregen de "por qué se movió" siguen además bajo _CONSERVE_CLAUDE_QUOTA:
 // ahí el gasto no está acotado y la guarda de cuota manda.
 const PREWARM_MODE = 'feed';
-const PREWARM_FEED_MAX = 5;   // tope duro de noticias pre-generadas por sesión
+// 5 → 3. Cada brief pre-generado es una llamada REAL al proxy de pago (essential:true) que
+// además consume la cuota de IA del propio usuario, para una noticia que quizá nunca abra.
+// Con 3 se conserva el efecto útil (las primeras del feed, que son las que se abren) y se
+// recorta un 40 % del gasto especulativo por sesión.
+const PREWARM_FEED_MAX = 3;   // tope duro de noticias pre-generadas por sesión
 
 window._aiKeyAvailable = function(){ return false; };   // key en cliente eliminada; IA solo via proxy server-side
 
@@ -7279,6 +7283,38 @@ async function _pvAccessToken(){
 }
 // Invalidación explícita — la llama onAuthStateChange en SIGNED_OUT y TOKEN_REFRESHED.
 window._pvTokCacheClear = function(){ _tokCache = { tok: null, exp: 0 }; };
+
+// ── POST al proxy de IA con el token del USUARIO (y un reintento tras refrescar) ─────
+// Los proxies de IA ya no aceptan la anon key: es pública (va en el bundle) y con ella
+// cualquiera podía gastar nuestras keys de Gemini/Anthropic sin techo. Ahora exigen un
+// JWT de usuario autenticado, así que el cliente tiene que mandarlo SIEMPRE.
+//
+// El reintento existe por el caso real que ese cambio vuelve visible: un token que vence
+// justo entre dos llamadas. Antes eso caía a la anon key y "funcionaba"; ahora sería un
+// 401 en la cara del usuario. Con un refreshSession() y un solo reintento, el vencimiento
+// es invisible como lo era antes — pero sin dejar la puerta abierta.
+// Sin sesión (pantalla de login con el idioma en inglés, por ejemplo) el observador de
+// traducción puede pedir decenas de lotes seguidos. Sin esta ventana, cada uno dispararía
+// un refreshSession() contra Supabase que ya sabemos que va a fallar.
+let _aiNoAuthUntil = 0;
+async function _aiPost(url, body){
+  if (Date.now() < _aiNoAuthUntil) return new Response(JSON.stringify({ error:{ message:'Inicia sesión para usar las funciones de IA.' }, error_code:'auth_required' }), { status:401, headers:{'content-type':'application/json'} });
+  const _mk = async () => {
+    const _t = await _pvAccessToken();
+    if (!_t) return null;
+    return fetch(url, { method:'POST', headers:{ 'content-type':'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _t }, body: body });
+  };
+  const _refresh = async () => {
+    try { window._pvTokCacheClear && window._pvTokCacheClear(); } catch(e){}
+    try { const _sb = window.sbClient; if (_sb && _sb.auth && _sb.auth.refreshSession) await _sb.auth.refreshSession(); } catch(e){}
+  };
+  let r = await _mk();
+  // Sin sesión (o sesión caducada sin refrescar aún) → un intento de refresco antes de rendirse.
+  if (!r) { await _refresh(); r = await _mk(); }
+  if (!r) { _aiNoAuthUntil = Date.now() + 15000; return new Response(JSON.stringify({ error:{ message:'Inicia sesión para usar las funciones de IA.' }, error_code:'auth_required' }), { status:401, headers:{'content-type':'application/json'} }); }
+  if (r.status === 401) { await _refresh(); const r2 = await _mk(); if (r2) return r2; }
+  return r;
+}
 
 // Enruta la IA de texto al proxy server-side de Supabase (anthropic-proxy).
 async function _aiFetch(opts, essential) {
@@ -7321,9 +7357,7 @@ async function _aiFetch(opts, essential) {
       // GATE 5.1.2(i): último punto antes de que los datos salgan del dispositivo. Si el
       // usuario no ha dado permiso para compartirlos con Anthropic, no se envía nada.
       if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
-      let _uTok = _AI_SB_ANON;
-      try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
-      const r = await fetch(_url, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
+      const r = await _aiPost(_url, opts && opts.body);
       if (r.ok) return r;
       _sbErr = r;
       // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
@@ -7359,9 +7393,7 @@ async function _aiFetchVision(opts) {
       // saldo y el número de cuenta a la vista), así que la visión pasa por el MISMO
       // permiso que el texto. Ver _PV_AI_CONSENT.
       if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
-      let _uTok = _AI_SB_ANON;
-      try { const _t = await _pvAccessToken(); if (_t) _uTok = _t; } catch(e){}
-      const r = await fetch(_url, { method: 'POST', headers: { 'content-type': 'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _uTok }, body: opts && opts.body });
+      const r = await _aiPost(_url, opts && opts.body);
       if (r.ok) return r;
       _sbErr = r;
       // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
@@ -12516,6 +12548,37 @@ function _prefetchOutlookEvent(evKey, outlookKey){
 }
 window._prefetchOutlookEvent = _prefetchOutlookEvent;
 
+// ── INTENCIÓN REAL, NO ROCE (ahorro de generaciones de IA) ────────────────────────
+// `ontouchstart` disparaba la generación IA en cuanto el dedo TOCABA la tarjeta — incluido
+// el toque con el que se empieza a DESLIZAR la lista —, y `onmouseenter` lo hacía con cada
+// tarjeta por la que pasaba el cursor al bajar. Recorrer un feed de 20 noticias en el móvil
+// encolaba hasta 20 briefs que nadie pidió: gasto real de IA y de la cuota del usuario, en
+// segundo plano y sin nada en pantalla que lo justificara.
+//
+// Ahora hay que PERMANECER sobre la tarjeta ~450 ms y, en táctil, no haber empezado a
+// desplazar. Un TOQUE normal (touchstart→touchend rápido) tampoco pre-genera: ese toque abre
+// la noticia y el brief se genera bajo demanda de todas formas, así que precalentarlo sería
+// pagar la misma llamada dos veces.
+var _pfTimer = null;
+function _prefetchIntentCancel(){ if(_pfTimer){ clearTimeout(_pfTimer); _pfTimer = null; } }
+function _prefetchIntentStart(evKey, outlookKey){
+  _prefetchIntentCancel();
+  _pfTimer = setTimeout(function(){
+    _pfTimer = null;
+    try{ if(document.hidden) return; }catch(e){}   // app en segundo plano → no gastar
+    try{ _prefetchOutlookEvent(evKey, outlookKey); }catch(e){}
+  }, 450);
+}
+window._prefetchIntentStart  = _prefetchIntentStart;
+window._prefetchIntentCancel = _prefetchIntentCancel;
+// Cualquier desplazamiento (rueda o dedo) cancela la intención pendiente: si la lista se
+// está moviendo, el usuario no está mirando esa tarjeta.
+try{
+  window.addEventListener('touchmove', _prefetchIntentCancel, { passive:true });
+  window.addEventListener('scroll',    _prefetchIntentCancel, { passive:true, capture:true });
+  window.addEventListener('wheel',     _prefetchIntentCancel, { passive:true });
+}catch(e){}
+
 // FIX: dispara el prewarm cuando el navegador está ocioso (requestIdleCallback con fallback),
 // idempotente vía _prewarmRunning. Se llama tras renderizar el feed/lista y tras refrescar
 // noticias, para que los datos macro de media mañana (8:30/10:00 ET) se recalienten solos.
@@ -12532,6 +12595,9 @@ async function _prewarmFeedNews(){
   // _CONSERVE_CLAUDE_QUOTA (esa guarda protege la pre-generación en bulk sin tope). La
   // facturación forzada sí lo sigue bloqueando.
   if (PREWARM_MODE !== 'feed') return;
+  // App en segundo plano (pestaña oculta / iOS minimizado): pre-generar ahí es gasto puro —
+  // no hay nadie mirando el feed y, cuando vuelva, _kickPrewarmIdle se dispara de nuevo.
+  try{ if (document.hidden) return; }catch(e){}
   if (typeof _FORCE_API_KEY_BILLING !== 'undefined' && _FORCE_API_KEY_BILLING) return;   // facturación forzada a API key → no pre-generar en bulk, solo on-demand
   if (typeof _fetchEventBrief !== 'function' || typeof _newsAsEvent !== 'function') return;
   const pools = [];
@@ -24056,7 +24122,7 @@ function _renderWeeklyOutlook(data) {
         const tickers = (e.tickers_affected||[]).map(t => `<span class="swc-tag ${HOLDINGS.some(h=>h.ticker===t)?'swc-tag-held':''}">${pvEsc(t)}</span>`).join('');
         // Catalizador PROGRAMADO: nunca chip de resultado (bueno/malo) en la card.
         const _resChip = '';
-        daysHtml += `<div class="swc-item" data-evkey="${evKey}" data-outlookkey="${outlookKey}" onclick="_openOutlookEvent('${evKey}','${outlookKey}')" onmouseenter="_prefetchOutlookEvent('${evKey}','${outlookKey}')" ontouchstart="_prefetchOutlookEvent('${evKey}','${outlookKey}')"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(e.title||'')}</div><div class="swc-item-ctx">${pvEsc((e.description||'').slice(0,140))}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span><span class="swc-tag">${pvEsc(e.time||'TBD')}</span>${tickers}</div>${_resChip}</div></div>`;
+        daysHtml += `<div class="swc-item" data-evkey="${evKey}" data-outlookkey="${outlookKey}" onclick="_openOutlookEvent('${evKey}','${outlookKey}')" onmouseenter="_prefetchIntentStart('${evKey}','${outlookKey}')" onmouseleave="_prefetchIntentCancel()" ontouchstart="_prefetchIntentStart('${evKey}','${outlookKey}')" ontouchend="_prefetchIntentCancel()" ontouchcancel="_prefetchIntentCancel()"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(e.title||'')}</div><div class="swc-item-ctx">${pvEsc((e.description||'').slice(0,140))}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span><span class="swc-tag">${pvEsc(e.time||'TBD')}</span>${tickers}</div>${_resChip}</div></div>`;
       });
       daysHtml += '</div></div>';
     });
@@ -24355,7 +24421,7 @@ function _renderNextWeekOutlook(){
         const tk = (ev.tickers_affected||[]).slice(0,5);
         const ctx = ev.description || '';
         const _evKey = _nwKey + '_' + _dIdx + '_' + _ei;
-        html += `<div class="swc-item" onclick="_openOutlookEvent('${_evKey}','${_nwKey}')" onmouseenter="_prefetchOutlookEvent('${_evKey}','${_nwKey}')" ontouchstart="_prefetchOutlookEvent('${_evKey}','${_nwKey}')"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(ev.title||'')}</div><div class="swc-item-ctx">${pvEsc(ctx.slice(0,140))}${ctx.length>140?'…':''}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span>${ev.time && ev.time!=='TBD' ? `<span class="swc-tag">${pvEsc(ev.time)}</span>` : ''}${tk.map(t=>`<span class="swc-tag">${pvEsc(t)}</span>`).join('')}</div></div></div>`;
+        html += `<div class="swc-item" onclick="_openOutlookEvent('${_evKey}','${_nwKey}')" onmouseenter="_prefetchIntentStart('${_evKey}','${_nwKey}')" onmouseleave="_prefetchIntentCancel()" ontouchstart="_prefetchIntentStart('${_evKey}','${_nwKey}')" ontouchend="_prefetchIntentCancel()" ontouchcancel="_prefetchIntentCancel()"><div class="swc-item-body"><div class="swc-item-title">${pvEsc(ev.title||'')}</div><div class="swc-item-ctx">${pvEsc(ctx.slice(0,140))}${ctx.length>140?'…':''}</div><div class="swc-item-tags"><span class="swc-tag swc-tag-type" style="background:${ct.bg};color:${ct.col}">${ct.lbl}</span>${ev.time && ev.time!=='TBD' ? `<span class="swc-tag">${pvEsc(ev.time)}</span>` : ''}${tk.map(t=>`<span class="swc-tag">${pvEsc(t)}</span>`).join('')}</div></div></div>`;
         _shownAny = true;
       });
     }
@@ -28480,7 +28546,9 @@ function aiPortImportData(data){
     const avgCost = _aiNum(p.avg_cost);
 
     // Derivar precio desde market_value si no se ve directamente.
-    if ((price == null || price === 0) && mv != null && shares && shares > 0) price = +(mv / shares).toFixed(4);
+    // `shares !== 0` y no `> 0`: en una posición CORTA las acciones son negativas y mv/shares
+    // sigue dando el precio correcto (negativo/negativo). Con `> 0` la fila se quedaba sin precio.
+    if ((price == null || price === 0) && mv != null && shares) price = +(mv / shares).toFixed(4);
 
     // Derivar ACCIONES (shares) desde market_value/precio cuando la columna de cantidad no se
     // leyó (causa real de "0 activos": el filtro de Aplicar exige qty>0 y la fila se descartaba).
@@ -28501,7 +28569,9 @@ function aiPortImportData(data){
     // VALIDACIÓN CRUZADA: price × shares ≈ market_value (±1.5%). Si falla, recalcula desde MV.
     if (price != null && shares != null && mv != null) {
       const derived = price * shares;
-      const err = Math.abs(derived - mv) / mv;
+      // Math.abs en el DENOMINADOR: con un corto (mv negativo) el error salía negativo, nunca
+      // superaba el umbral y el precio mal leído no se corregía jamás.
+      const err = mv !== 0 ? Math.abs(derived - mv) / Math.abs(mv) : 0;
       if (err > 0.015) {
         price = +(mv / shares).toFixed(4);
         console.warn(`[AI Import] ${p.ticker}: price corrected from ${_aiNum(p.current_price ?? p.price)} to ${price} (MV/shares)`);
@@ -32610,9 +32680,29 @@ document.addEventListener('DOMContentLoaded', function(){
   // FIX 5 — Clasificación de activo. SnapTrade entrega el tipo en `type.code` con códigos CORTOS
   // (cs, ad, et, mf, oef, cef, crypto, bnd…). El /etf|fund/ anterior no matcheaba ninguno, así que
   // TODO caía en 'stock' — incluidos SPY, VOO y los fondos mutuos de Schwab.
-  function _snapAssetType(so){
+  // Cripto que NO colisiona con ningún ticker de acción listado en EE. UU. Se usa SOLO cuando
+  // el símbolo llegó como cadena pelada (sin objeto de tipo), que es justo el caso de cripto.
+  // Deliberadamente NO incluye SOL ni LINK: son tickers reales de NYSE/NASDAQ y clasificarlos
+  // mal es peor que dejarlos en 'stock'.
+  var _SNAP_CRYPTO = {BTC:1,XBT:1,ETH:1,DOGE:1,XRP:1,SHIB:1,USDT:1,USDC:1,AVAX:1,MATIC:1,LTC:1,BCH:1,XLM:1,ALGO:1,ATOM:1,FIL:1,AAVE:1,SUSHI:1,GRT:1,MKR:1,COMP:1,YFI:1,BAT:1,CRV:1,SAND:1,MANA:1,APE:1,NEAR:1,TRX:1,ETC:1};
+  function _snapAssetType(so, p){
     var t='';
     try{ t = String((so && so.type && (so.type.code || so.type.description || so.type)) || (so && so.type_description) || '').toLowerCase().trim(); }catch(e){}
+    // El símbolo llega a veces como CADENA pelada — lo habitual en cripto y en algunos fondos
+    // monetarios. Ahí `so` no trae `type` y TODO caía en 'stock': la cripto se contaba como
+    // acción en la gráfica de asignación por tipo de activo y en el análisis de la cartera.
+    // Antes de rendirse se mira el tipo que el BROKER pone en la propia posición.
+    if(!t && p){
+      try{
+        var pt = p.type || p.asset_type || p.security_type || p.instrument_type || p.symbol_type;
+        if(pt && typeof pt==='object') pt = pt.code || pt.description || '';
+        t = String(pt||'').toLowerCase().trim();
+      }catch(e){}
+    }
+    // Banderas explícitas de cripto que algunos brokers sí mandan.
+    if(!t && p){ try{ if(p.is_crypto===true || p.crypto===true || (p.currency && p.currency.is_crypto===true)) t='crypto'; }catch(e){} }
+    // Último recurso, solo con símbolo pelado: lista corta y sin ambigüedad.
+    if(!t && so && so._bare){ try{ if(_SNAP_CRYPTO[String(so.symbol||'').toUpperCase()]) t='crypto'; }catch(e){} }
     if(!t) return 'stock';
     if(t==='et' || /\betf\b|exchange[ -]?traded/.test(t)) return 'etf';
     if(t==='mf' || t==='oef' || t==='cef' || /mutual fund|\bfund\b/.test(t)) return 'fund';
@@ -32633,7 +32723,7 @@ document.addEventListener('DOMContentLoaded', function(){
   // así no hay ticker, la posición se cuenta como descartada y se avisa.
   function _snapSymbolObj(p){
     var s = (p && (p.symbol != null ? p.symbol : p.universal_symbol));
-    if (typeof s === 'string') return { symbol: s };
+    if (typeof s === 'string') return { symbol: s, _bare: true };
     if (s && typeof s === 'object'){
       var inner = (s.symbol != null ? s.symbol : s.universal_symbol);
       if (typeof inner === 'string'){
@@ -32723,7 +32813,7 @@ document.addEventListener('DOMContentLoaded', function(){
         var avg    = (avgRaw==null || avgRaw==='') ? null : (_n(avgRaw) || null);
         _bucket(ccy).mv += (mv||0);
         positions.push({ ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-                         market_value:mv, day_change_pct:0, type: _snapAssetType(so), currency: ccy });
+                         market_value:mv, day_change_pct:0, type: _snapAssetType(so, p), currency: ccy });
       });
       var opts = acc.option_positions || acc.optionPositions || [];
       if(Array.isArray(opts)) opts.forEach(function(o){
@@ -32948,6 +33038,14 @@ document.addEventListener('DOMContentLoaded', function(){
       // Bloque 4: conexión de broker REAL confirmada → borra la semilla personal del dueño ANTES
       // de aplicar los datos del broker (idempotente; no re-borra en refrescos posteriores).
       try{
+        // _handedOff: aiPortApply() es async. El `finally` síncrono de abajo se ejecuta en su
+        // PRIMER await, así que apagaba _BROKER_EMPTY_OK a mitad de la aplicación y la segunda
+        // mitad (el guard `startBal == null`) creía que la cartera vacía era un error del
+        // usuario: toast rojo "Agrega una posición o un valor total para empezar" y `return`
+        // en pleno sync silencioso, dejando sin aplicar la liquidación real del broker. Es el
+        // MISMO fallo que ya se había corregido para _BROKER_APPLYING, que aquí faltaba.
+        // Cuando la promesa se lleva los flags, los limpia su propio .finally.
+        var _handedOff = false;
         var data = snapMapHoldings(j.holdings);
         // FIX 11 — Con la conexión ESTABLECIDA (connected, sin syncing y sin broken) un payload sin
         // posiciones ni efectivo es un dato real: cartera liquidada. Mientras syncing/broken, un
@@ -32986,6 +33084,7 @@ document.addEventListener('DOMContentLoaded', function(){
           // El flag ahora se limpia cuando la promesa REALMENTE termina.
           if(typeof aiPortApply==='function'){
             try{ window._BROKER_APPLYING=true; }catch(e){}
+            _handedOff = true;
             var _apRes; try{ _apRes=aiPortApply(); }
             catch(e){ try{ window._BROKER_APPLYING=false; window._BROKER_EMPTY_OK=false; }catch(_){} throw e; }
             return Promise.resolve(_apRes)
@@ -33010,7 +33109,7 @@ document.addEventListener('DOMContentLoaded', function(){
         // broker). Sólo aquí: en el camino feliz lo baja el .finally de la promesa.
         try{ window._BROKER_APPLYING=false; }catch(_){}
       }
-      finally { try{ window._BROKER_EMPTY_OK=false; }catch(_e){} }
+      finally { try{ if(!_handedOff) window._BROKER_EMPTY_OK=false; }catch(_e){} }
       return j;
     }).then(function(j){
       if(j && j.connected && j.syncing) _render('syncing');

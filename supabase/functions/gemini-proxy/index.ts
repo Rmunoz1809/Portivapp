@@ -38,6 +38,28 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+// ── GATE DE IDENTIDAD ────────────────────────────────────────────────────────
+// `verify_jwt: true` de la plataforma solo comprueba que el JWT esté FIRMADO por este
+// proyecto. La ANON KEY lo está — y viaja en el bundle público de portivapp.com, a la
+// vista de cualquiera que abra "ver código fuente". Resultado: esta función era un proxy
+// ABIERTO a Gemini pagado con nuestra key, sin techo de gasto y sin forma de saber quién
+// lo usaba. El cliente ya manda el access token del usuario cuando hay sesión
+// (_pvAccessToken en _aiFetch/_aiFetchVision); lo único que faltaba era EXIGIRLO.
+//
+// No hace falta llamar a auth.getUser(): la plataforma ya validó la FIRMA antes de
+// entrar aquí, así que leer el claim `role` del payload es suficiente y no cuesta un
+// round trip por petición. Un token falsificado nunca llega a este punto.
+function roleOfJwt(tok: string): string {
+  try {
+    const p = tok.split(".")[1];
+    if (!p) return "";
+    const b = atob(p.replace(/-/g, "+").replace(/_/g, "/"));
+    return String((JSON.parse(b) || {}).role || "");
+  } catch {
+    return "";
+  }
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -147,6 +169,21 @@ function errMsgOf(j: any, status: number): string {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: { message: "Method Not Allowed" } }, 405);
+
+  // El gate va ANTES de mirar el body o la key: nada de trabajo para quien no debería estar.
+  {
+    const _auth = req.headers.get("authorization") || "";
+    const _tok = _auth.replace(/^Bearer\s+/i, "").trim();
+    const _role = roleOfJwt(_tok);
+    // service_role queda permitido para un futuro uso server-side; la ANON key, no: es la
+    // que va en el bundle público y la que abría la puerta.
+    if (_role !== "authenticated" && _role !== "service_role") {
+      return json({
+        error: { message: "Inicia sesión para usar las funciones de IA." },
+        error_code: "auth_required",
+      }, 401);
+    }
+  }
 
   if (!GEMINI_KEY) {
     return json({ error: { message: "GEMINI_API_KEY no está configurada en Supabase (Edge Functions → Secrets)." } }, 500);
