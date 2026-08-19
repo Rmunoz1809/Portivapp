@@ -15873,19 +15873,7 @@ var portivRetinaGuard = {
   }
 };
 
-// Degradado para el chart de Análisis (Precio Histórico) — mismo lenguaje visual.
-function _researchFill(_ctx, isPos) {
-  return (context) => {
-    const chart = context.chart || context;
-    const area  = chart && chart.chartArea;
-    const c     = chart && chart.ctx;
-    if (!area || !c) return isPos ? 'rgba(14,159,110,0.20)' : 'rgba(186,26,26,0.11)';
-    const g = c.createLinearGradient(0, area.top, 0, area.bottom);
-    if (isPos) { g.addColorStop(0, 'rgba(14,159,110,0.36)'); g.addColorStop(0.55, 'rgba(14,159,110,0.14)'); g.addColorStop(1, 'rgba(14,159,110,0)'); }
-    else       { g.addColorStop(0, 'rgba(186,26,26,0.20)'); g.addColorStop(1, 'rgba(186,26,26,0)'); }
-    return g;
-  };
-}
+// El chart de Análisis usa _perfFill()/_perfStroke(): mismo relleno y trazo que el portafolio.
 
 // ── Crosshair estilo TradingView/Apple Stocks ──────────────────────────────
 // Plugin por-chart (NO global, para no afectar el donut): dibuja una guía
@@ -22583,7 +22571,7 @@ function _drawResearchChart(chartData, isPos) {
   // —que es lo que se veía como un corte/parpadeo. Si el morph no procede (primer dibujo,
   // pestaña oculta, "reduce motion", serie de <2 puntos) cae al camino de siempre.
   if (researchChartInst && researchChartInst.canvas === canvas) {
-    if (_pvChartMorph(researchChartInst, _lbls, _vals, col, _researchFill(ctx, isPos))) return;
+    if (_pvChartMorph(researchChartInst, _lbls, _vals, col, _perfFill(ctx, isPos))) return;
   }
 
   // Siempre destruir y recrear para evitar bugs de estado
@@ -22597,39 +22585,78 @@ function _drawResearchChart(chartData, isPos) {
     plugins:[portivRetinaGuard, portivCrosshair, portivEndDot],
     data:{ labels:pts.map(p=>p.x), datasets:[{
       data:pts.map(p=>p.y), borderColor:col, borderWidth:3.6,
-      backgroundColor:_researchFill(ctx, isPos), fill:'origin', tension:0.25,
+      backgroundColor:_perfFill(ctx, isPos), fill:'origin', tension:0.3,
       cubicInterpolationMode:'monotone',
       pointRadius:0, pointHoverRadius:0,
     }] },
     options:{
       responsive:true, maintainAspectRatio:false,
-      layout:{padding:{right:6}},
-      animation:{duration:250,easing:'easeOutQuart'},
-      transitions:{active:{animation:{duration:80,easing:'linear'}}},
-      hover:{animationDuration:400,mode:'index',intersect:false},
+      // MISMO encuadre que la gráfica del portafolio: en móvil/tablet (≤899px) la gráfica va
+      // limpia (sin ejes ni cuadrícula) y con el mismo padding, así el trazo ocupa todo el alto.
+      layout:{ padding: _PERF_MOB() ? { top: 6, bottom: 2, left: 0, right: 9 } : { right: 6 } },
+      onResize: (chart, size) => { try { const m = _PERF_MOB(); const sc = chart.options.scales;
+        sc.x.ticks.display = !m; sc.y.display = !m; sc.y.ticks.display = !m; sc.y.grid.display = !m;
+        chart.options.layout = { padding: m ? { top: 6, bottom: 2, left: 0, right: 9 } : { right: 6 } };
+      } catch(e){} },
+      elements: { point: { radius: 0, hitRadius: 8 } },
+      animation:{duration:700,easing:'easeInOutCubic'},
+      transitions:{
+        active:{animation:{duration:0}},
+        periodChange:{animation:{duration:380,easing:'easeOutQuad'}},
+      },
+      hover:{mode:'index',intersect:false},
       interaction:{mode:'index',intersect:false,axis:'x'},
       plugins:{
         legend:{display:false},
         tooltip:{
-          animation:{duration:80,easing:'linear'},
-          backgroundColor:'#0B1220', borderColor:'#0B1220', borderWidth:0,
-          titleColor:'#9DA8BD', bodyColor:'#FFFFFF', padding:10, cornerRadius:8, displayColors:false,
-          callbacks:{title:i=>esDate(i[0]?.label||''),label:c=>` $${c.raw?.toFixed(2)}`}
+          animation:false,
+          backgroundColor:'#3A4250',
+          borderColor:'rgba(255,255,255,0.12)',
+          borderWidth:1,
+          titleColor:'#FFFFFF',
+          bodyColor:'#FFFFFF',
+          titleFont:{ family:"'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif", size:13, weight:'600' },
+          cornerRadius:8,
+          displayColors:false,
+          padding:{ top:8, bottom:8, left:12, right:12 },
+          callbacks:{
+            title:i=>{ const _raw = i[0]?.label || ''; const _day = _raw.replace(/\s+\d{1,2}:\d{2}$/, ''); const _v = i[0]?.raw; return `${esDate(_day)}: $${(typeof _v==='number'?_v:0).toFixed(2)}`; },
+            label:()=>'',
+          }
         }
       },
       scales:{
         x:{grid:{display:false},border:{display:false},ticks:{
-          color:'#8A92A3',font:{size:10},maxTicksLimit:8,
+          display: !_PERF_MOB(),
+          color:'#8A92A3',font:{size:11},maxTicksLimit:7,
           callback: function(value, index, ticks) {
             const lbl = this.getLabelForValue(value);
             return /\d{2}:\d{2}/.test(lbl) ? '' : lbl;
           }
         }},
-        y:{position:'right',grid:{color:document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6'},border:{display:false},
-           ticks:{color:'#8A92A3',font:{size:10},callback:v=>v>=1000?`$${(v/1000).toFixed(1)}K`:`$${v.toFixed(0)}`}}
+        y:{position:'right',
+           display: !_PERF_MOB(),
+           grid:{display: !_PERF_MOB(), color:document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6', drawBorder:false},
+           border:{display:false, dash:[3,3]},
+           ticks:{display: !_PERF_MOB(), color:'#8A92A3',font:{size:11},callback:v=>v>=1000?`$${(v/1000).toFixed(1)}K`:`$${v.toFixed(0)}`}}
       }
     }
   });
+  // Igual que la gráfica del portafolio: en táctil Chart.js deja el tooltip activo tras el
+  // touchend y la guía vertical quedaba "colgada". Se limpia al soltar o al salir el cursor.
+  try {
+    var _rcv = researchChartInst.canvas;
+    var _rClear = function(){
+      try {
+        if (researchChartInst.tooltip) researchChartInst.tooltip.setActiveElements([], {x:0,y:0});
+        researchChartInst.setActiveElements([]);
+        researchChartInst.update('none');
+      } catch(e){}
+    };
+    ['touchend','touchcancel','pointerup','pointercancel','pointerleave','mouseleave'].forEach(function(ev){
+      _rcv.addEventListener(ev, _rClear, {passive:true});
+    });
+  } catch(e){}
 }
 
 const _periodLabel = {'1d':'1D','5d':'1W','1mo':'1M','3mo':'3M','6mo':'6M','1y':'1A','ytd':'YTD','5y':'5A'};
