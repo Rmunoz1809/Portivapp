@@ -438,14 +438,9 @@ window._ensureChartJs = (function(){
   /* ── PAGES ── */
   .page {
     display: none; padding: 22px 28px;
-    opacity: 0; transform: translateY(0);
+    opacity: 1; transform: translateY(0);
   }
   .page.active { display: block; }
-  .page.visible { animation: pageIn 0.22s cubic-bezier(.33, 1, .68, 1) forwards; }
-  @keyframes pageIn {
-    from { opacity: 0; transform: translateY(0); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
 
   /* ── SUMMARY STRIP ── */
   .sstrip { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
@@ -1183,11 +1178,17 @@ window._ensureChartJs = (function(){
     padding: 0;
     max-width: none;
   }
+  /* La pestaña entrante ya NO se desvanece. Antes nacía con opacity:0 y subía a 1
+     en 200 ms: durante esa transición el bloque navy de cabecera era translúcido y
+     por debajo asomaba el fondo claro de la página, así que en cada cambio de
+     pestaña aparecía una franja blanca entre la barra superior y el contenido, y
+     el navy parecía entrar desde abajo. Ahora la pestaña se pinta opaca desde el
+     primer fotograma —el navy nunca desaparece, sólo cambia de alto y de texto— y
+     el movimiento de entrada lo pone pvrRise en los bloques de dentro, hacia abajo. */
   .page.active {
     display: block;
-    opacity: 0;
-    transform: translateY(-6px);
-    transition: opacity .20s cubic-bezier(0.22, 1, 0.36, 1), transform .28s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity: 1;
+    transform: translateY(0);
   }
   .page.active.visible {
     animation: none;
@@ -13924,11 +13925,25 @@ function showTab(name) {
     // Transición de entrada robusta (Web Animations API). En iOS el retrigger por clase
     // se cancelaba al añadir .visible (`.page.active.visible{animation:none}`) → se veía
     // instantánea. animate() no depende de la propiedad CSS `animation`: siempre corre.
+    //
+    // Ya NO se anima la opacidad de la pestaña. Ese fundido dejaba el bloque navy de
+    // cabecera translúcido durante 200 ms y por debajo asomaba el fondo claro: en cada
+    // cambio de pestaña salía una franja blanca entre la barra superior y el contenido,
+    // y el navy parecía subir desde abajo. Ahora el navy no se toca —se queda fijo y
+    // sólo cambia de alto y de texto— y el movimiento se lo llevan los bloques que van
+    // DEBAJO de él, entrando escalonados desde arriba.
     try {
       pg.classList.remove('pv-tab-in');
       if (pg.animate && PV_isMobile() && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        pg.animate([{opacity:0},{opacity:1}],
-                   {duration:200, easing:'cubic-bezier(.33,1,.68,1)'});
+        // El primer hijo es la cabecera navy (o el envoltorio que la contiene): se salta.
+        var _kids = Array.prototype.slice.call(pg.children, 1);
+        for (var _i = 0; _i < _kids.length; _i++) {
+          try {
+            _kids[_i].animate([{transform:'translateY(-9px)'},{transform:'translateY(0)'}],
+                              {duration:280, delay: Math.min(_i, 4) * 40,
+                               easing:'cubic-bezier(.33,1,.68,1)', fill:'backwards'});
+          } catch(e){}
+        }
       }
     } catch(e){}
     try { if (typeof bindPeriodBtns==='function') bindPeriodBtns(); } catch(e){}
@@ -34467,13 +34482,28 @@ body:not(.dark-theme) .preview-item { transition: background .18s var(--pvr-ease
    Sólo hijos DIRECTOS del contenedor de pestaña. Esos nodos son fijos (ningún
    tab-* se re-renderiza por innerHTML), así que el contenido que se refresca
    por datos vive más adentro y nunca vuelve a animarse: sin parpadeos con las
-   actualizaciones de precio. fill-mode both con opacidad final 1 → si la
-   animación no llegara a ejecutarse, el elemento se ve igualmente. */
+   actualizaciones de precio. fill-mode both con transform final 0 → si la
+   animación no llegara a ejecutarse, el elemento se ve igualmente.
+
+   El bloque navy de cabecera NO puede desvanecerse. Al cambiar de pestaña, la
+   pestaña saliente se oculta y la entrante arranca su animación: durante esos
+   ~340 ms el bloque navy estaba a opacidad 0 y por debajo asomaba el fondo claro
+   de la página, así que entre la barra superior y el contenido aparecía una
+   franja en blanco y el navy "subía" desde abajo para taparla.
+
+   La entrada ya no toca la opacidad: sólo desplaza. Cada bloque se pinta opaco
+   desde el primer fotograma, así que el navy nunca deja de estar ahí — al pasar
+   de pestaña sólo cambia de alto y de texto, que es justo lo que se busca. */
 @keyframes pvrRise {
-  from { opacity: 0; transform: translateY(-9px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from { transform: translateY(-9px); }
+  to   { transform: translateY(0); }
 }
 .page.active.visible > * { animation: pvrRise .34s cubic-bezier(.33,1,.68,1) both; }
+
+/* El primer bloque de la pestaña es el navy de cabecera (o el envoltorio que lo
+   contiene): se queda completamente quieto. Sin este descuelgue el borde inferior
+   redondeado del navy daría un salto de 9px en cada cambio de pestaña. */
+.page.active.visible > *:nth-child(1) { animation: none !important; }
 .page.active.visible > *:nth-child(1) { animation-delay: 0s; }
 .page.active.visible > *:nth-child(2) { animation-delay: .04s; }
 .page.active.visible > *:nth-child(3) { animation-delay: .08s; }
