@@ -15823,6 +15823,12 @@ function _perfStroke(isPos) {
   };
 }
 
+// Grosor del trazo, ÚNICO para las dos gráficas (portafolio y Análisis). El valor cede un
+// pelo en series muy densas para que la curva no se empaste consigo misma. Antes la gráfica
+// del portafolio nacía con 3.6 y el primer setPeriodData la bajaba a 2 → se veía cambiar de
+// diseño al abrir; y la de Análisis se quedaba en 3.6, más gruesa que la del portafolio.
+function _pvLineWidth(n){ return (n > 260) ? 1.8 : 2; }
+
 // borderColor puede ser un color plano o la función de degradado de arriba.
 // Todo lo que lo lea para pintar a mano (la cruz de hover, el punto final)
 // pasa por aquí, que resuelve la función a un CanvasGradient utilizable.
@@ -16033,7 +16039,7 @@ function initPerfChart() {
       datasets: [{
         data: d.values,
         borderColor: _perfStroke(isPos0),
-        borderWidth: 3.6,
+        borderWidth: _pvLineWidth((d && d.values ? d.values.length : 0)),
         backgroundColor: _perfFill(ctx, isPos0),
         fill: 'origin',
         tension: 0.3,                      // trazo curvo Portiv, idéntico en todos los períodos
@@ -16652,7 +16658,7 @@ function setPeriodData(period, ds, updMode) {
   const _n = ds.values.length;
   perfChart.data.datasets[0].tension = 0.3;
   perfChart.data.datasets[0].cubicInterpolationMode = 'monotone';
-  perfChart.data.datasets[0].borderWidth = _n > 260 ? 1.8 : 2;
+  perfChart.data.datasets[0].borderWidth = _pvLineWidth(_n);
   // Para 1D: hover enganche cada punto horario (modo index).
   // Para otros períodos: modo dayIndex (salta etiquetas HH:MM intradía sintéticas).
   try {
@@ -22595,6 +22601,7 @@ function _drawResearchChart(chartData, isPos) {
   // —que es lo que se veía como un corte/parpadeo. Si el morph no procede (primer dibujo,
   // pestaña oculta, "reduce motion", serie de <2 puntos) cae al camino de siempre.
   if (researchChartInst && researchChartInst.canvas === canvas) {
+    try { researchChartInst.data.datasets[0].borderWidth = _pvLineWidth(_vals.length); } catch(e){}
     if (_pvChartMorph(researchChartInst, _lbls, _vals, col, _perfFill(ctx, isPos))) return;
   }
 
@@ -22608,7 +22615,7 @@ function _drawResearchChart(chartData, isPos) {
     type:'line',
     plugins:[portivRetinaGuard, portivGradientBind, portivCrosshair, portivEndDot],
     data:{ labels:pts.map(p=>p.x), datasets:[{
-      data:pts.map(p=>p.y), borderColor:col, borderWidth:3.6,
+      data:pts.map(p=>p.y), borderColor:col, borderWidth:_pvLineWidth(pts.length),
       backgroundColor:_perfFill(ctx, isPos), fill:'origin', tension:0.3,
       cubicInterpolationMode:'monotone',
       pointRadius:0, pointHoverRadius:0,
