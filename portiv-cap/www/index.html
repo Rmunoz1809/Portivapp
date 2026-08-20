@@ -1184,7 +1184,8 @@ window._ensureChartJs = (function(){
      pestaña aparecía una franja blanca entre la barra superior y el contenido, y
      el navy parecía entrar desde abajo. Ahora la pestaña se pinta opaca desde el
      primer fotograma —el navy nunca desaparece, sólo cambia de alto y de texto— y
-     el movimiento de entrada lo pone pvrRise en los bloques de dentro, hacia abajo. */
+     el movimiento de entrada lo pone MOTION v7 (_pvTabEnter) en los bloques de
+     dentro, hacia abajo. */
   .page.active {
     display: block;
     opacity: 1;
@@ -3350,8 +3351,6 @@ window._ensureChartJs = (function(){
      de escribir y el menú. Con 10px la caja de escribir queda pegada al menú. */
   .ai-chat-inputarea { padding: 12px 14px 10px !important; }
   /* Transición de entrada de pestañas: asienta desde arriba (solo móvil). */
-  .page.pv-tab-in { animation: pvTabIn .26s cubic-bezier(.33,1,.68,1) both; }
-  @keyframes pvTabIn { from { opacity:0; transform: translateY(-8px); } to { opacity:1; transform: translateY(0); } }
   /* En el chat: ocultar la topbar de marca y que el perfil de la IA quede hasta arriba,
      ocupando toda la pantalla (solo resta el bottom-nav). */
   body.chat-active .m-topbar { display: none !important; }
@@ -13894,6 +13893,143 @@ function portfolioTickerHash(){
 }
 if (typeof window !== 'undefined') window.portfolioTickerHash = portfolioTickerHash;
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MOTION v7 — UN SOLO SISTEMA DE ENTRADA DE PESTAÑA
+   ───────────────────────────────────────────────────────────────────────────
+   Antes convivían DOS transiciones para lo mismo y se pisaban:
+
+     a) la regla CSS `.page.active.visible > *` (pvrRise, 340 ms), y
+     b) un recorrido en JS con la Web Animations API (820 ms).
+
+   Las dos animaban los mismos nodos a distinta velocidad y con distinta curva
+   —WAAPI gana en la cascada, así que la regla CSS era trabajo tirado— y, peor,
+   la regla CSS sólo acertaba en las pestañas cuyos bloques cuelgan
+   DIRECTAMENTE de .page. Noticias (.sn-layout), Portiv IA (.ai-chat-page) y
+   Ajustes (.set-wrap) envuelven todo en un único hijo, que era justo el que
+   quedaba exento por ser :nth-child(1) → en esas tres no se animaba nada.
+   Analizar, además, tiene dos <style> sueltos entre sus hijos: consumían turno
+   de escalonado sin pintar nada, así que el retardo salía irregular.
+
+   Ahora manda sólo el JS, que sí conoce la estructura real de cada pestaña.
+
+   INVARIANTE QUE NO SE TOCA: el bloque navy de cabecera nunca cambia de
+   opacidad. Si se funde, por debajo asoma el fondo claro de la página y
+   aparece la franja blanca entre la barra superior y el contenido — el bug que
+   costó cinco intentos cerrar. El navy se queda fijo, opaco, y sólo cambia de
+   alto y de texto; el movimiento lo llevan los bloques de DEBAJO (que entran
+   desde arriba, tapando: un translate negativo nunca deja hueco) y el
+   contenido de DENTRO del navy, que va sobre fondo navy opaco.            */
+var PV_MOTION = {
+  dur: 600,      // duración de cada bloque
+  step: 80,      // desfase entre bloques consecutivos
+  maxStep: 4,    // a partir del 5.º bloque ya no se acumula retardo: la cola
+                 // de una pestaña larga no puede tardar segundos en aparecer
+  dist: 12,      // recorrido vertical de los bloques de contenido
+  distHead: 9,   // recorrido del contenido dentro del navy
+  ease: 'cubic-bezier(.33,1,.68,1)',
+  // En pantalla ancha (iPad y escritorio) caben tres o cuatro bloques a la vez,
+  // así que el mismo escalonado que en el móvil se lee como una página que
+  // tarda en cargar: se ve medio lienzo vacío mientras la cola entra. Mismo
+  // gesto, más apretado.
+  wide: { dur: 460, step: 55, maxStep: 3 }
+};
+
+function _pvReducedMotion(){
+  try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  catch(e){ return false; }
+}
+
+/* ¿Este nodo pinta algo? Los <style>/<script> sueltos y lo que está oculto no
+   deben gastar turno en el escalonado. */
+function _pvIsPainted(el){
+  if (!el || el.nodeType !== 1) return false;
+  var t = el.tagName;
+  if (t === 'STYLE' || t === 'SCRIPT' || t === 'LINK' || t === 'TEMPLATE') return false;
+  try { return el.getClientRects().length > 0; } catch(e){ return true; }
+}
+
+/* Una entrada. `fill:backwards` deja el estado inicial aplicado durante el
+   retardo (sin él, el bloque se ve un fotograma en su sitio y luego salta) y
+   NO deja nada pegado al terminar: si algo fallara, el elemento se queda como
+   lo pinta el CSS. Se cancela la entrada anterior del mismo nodo para que
+   cambiar de pestaña a toda prisa no acumule animaciones superpuestas. */
+function _pvSlideIn(el, delay, dist, fade, dur){
+  try {
+    if (el._pvAnim) { try { el._pvAnim.cancel(); } catch(e){} }
+    var from = { transform: 'translateY(-' + dist + 'px)' };
+    var to   = { transform: 'translateY(0)' };
+    if (fade !== false) { from.opacity = 0; to.opacity = 1; }
+    el._pvAnim = el.animate([from, to],
+      { duration: dur || PV_MOTION.dur, delay: delay,
+        easing: PV_MOTION.ease, fill: 'backwards' }
+    );
+  } catch(e){}
+}
+
+function _pvTabEnter(pg){
+  if (!pg || !pg.animate || _pvReducedMotion()) return;
+  var M = PV_MOTION;
+  if (window.innerWidth >= 900) {
+    M = { dur: M.wide.dur, step: M.wide.step, maxStep: M.wide.maxStep,
+          dist: M.dist, distHead: M.distHead, ease: M.ease };
+  }
+
+  /* Ancla navy de cada pestaña. Watchlist y Ajustes no tienen clase propia
+     para su cabecera: se cae al primer bloque que pinte (en Ajustes, dentro de
+     .set-wrap, que es un envoltorio y no la cabecera). */
+  var navy = pg.querySelector('.sn-header, .research-search-bar, .ai-chat-header, .stitch-header-left');
+  if (!navy) {
+    var c0 = pg.firstElementChild;
+    while (c0 && !_pvIsPainted(c0)) c0 = c0.nextElementSibling;
+    navy = (c0 && c0.classList && c0.classList.contains('set-wrap')) ? c0.firstElementChild : c0;
+  }
+  if (!navy) return;
+
+  /* Bloques a animar: desde el navy hacia la raíz de la pestaña y, en cada
+     nivel, todo lo que va DESPUÉS de él. Ese recorrido da exactamente el orden
+     visual de arriba abajo, así que el escalonado sale solo y funciona igual
+     tenga la pestaña sus bloques sueltos o envueltos. */
+  var targets = [];
+  for (var n = navy; n && n !== pg; n = n.parentElement) {
+    for (var sib = n.nextElementSibling; sib; sib = sib.nextElementSibling) {
+      if (_pvIsPainted(sib)) targets.push(sib);
+    }
+  }
+
+  /* Se ordena por posición REAL en pantalla, no por orden en el DOM. En Ajustes
+     los bloques no salen en el orden en que están escritos —la tarjeta de
+     conexión de bróker se pinta la primera y en el marcado va la octava—, así
+     que escalonar por orden de documento repartía los retardos a saltos: el
+     primer bloque bajo la cabecera era de los últimos en entrar y, durante ese
+     cuarto de segundo, entre el navy y el primer contenido no había más que
+     fondo vacío. Ordenar por `top` da el escalonado que se ve: de arriba abajo,
+     sea cual sea el orden del marcado. */
+  targets.sort(function(a, b){
+    var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return (ra.top - rb.top) || (ra.left - rb.left);
+  });
+
+  targets.forEach(function(el, i){
+    /* El PRIMER bloque —el de más arriba— no se funde, sólo se desplaza. Es el
+       único que monta sobre la curva del navy mientras entra: si además fuera
+       translúcido, durante esos milisegundos se vería el navy a través de la
+       tarjeta y la cabecera aparecería con una banda gris cruzándola. Y es
+       también el que rellena el hueco justo debajo de la cabecera, así que
+       tiene que estar opaco desde el primer fotograma. Los de abajo entran
+       sobre el fondo de la página, donde el fundido no puede teñir nada. */
+    _pvSlideIn(el, Math.min(i, M.maxStep) * M.step, M.dist, i > 0, M.dur);
+  });
+  /* El navy no se mueve ni se funde: entra su contenido (título, fecha,
+     buscador), que va sobre fondo navy opaco y por tanto puede fundirse sin
+     dejar ver nada por debajo. */
+  var kids = navy.children;
+  for (var j = 0; j < kids.length; j++) {
+    if (_pvIsPainted(kids[j])) _pvSlideIn(kids[j], 0, M.distHead, true, M.dur);
+  }
+}
+if (typeof window !== 'undefined') { window._pvTabEnter = _pvTabEnter; window._pvReducedMotion = _pvReducedMotion; }
+
 function showTab(name) {
   document.body.classList.toggle('chat-active', name==='aianalyst');
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',['portfolio','noticias','watchlist','analizar','aianalyst','settings'][i]===name));
@@ -13920,57 +14056,10 @@ function showTab(name) {
     pg.classList.add('active');
     // La pestaña nueva SIEMPRE abre desde arriba (no hereda el scroll anterior).
     try { window.scrollTo(0,0); pg.scrollTop = 0; var _sc = pg.querySelector('.stitch-layout, .ai-chat-body, .nm-overlay'); if(_sc) _sc.scrollTop = 0; } catch(e){}
-    // Reproduce la animación de entrada (retrigger) y re-liga la delegación de chips
-    // (el portafolio puede reemplazar #periodBtns al re-renderizar).
-    // Transición de entrada robusta (Web Animations API). En iOS el retrigger por clase
-    // se cancelaba al añadir .visible (`.page.active.visible{animation:none}`) → se veía
-    // instantánea. animate() no depende de la propiedad CSS `animation`: siempre corre.
-    //
-    // Ya NO se anima la opacidad de la pestaña. Ese fundido dejaba el bloque navy de
-    // cabecera translúcido durante 200 ms y por debajo asomaba el fondo claro: en cada
-    // cambio de pestaña salía una franja blanca entre la barra superior y el contenido,
-    // y el navy parecía subir desde abajo. Ahora el navy no se toca —se queda fijo y
-    // sólo cambia de alto y de texto— y el movimiento se lo llevan los bloques que van
-    // DEBAJO de él, entrando escalonados desde arriba.
-    try {
-      pg.classList.remove('pv-tab-in');
-      // El iPad no entra por PV_isMobile(): ese ayudante mira ≤899px y el layout de
-      // iPad va por la clase pv-ipad (UA), a 1024 o 1366 de ancho. Sin sumarlo aquí, la
-      // tableta se quedaba con el cambio de pestaña instantáneo mientras el móvil lo
-      // animaba. En escritorio se mantiene fuera: allí sigue habiendo sidebar.
-      var _pvAnimTabs = PV_isMobile() || document.documentElement.classList.contains('pv-ipad');
-      if (pg.animate && _pvAnimTabs && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        // El único elemento que NO puede desvanecerse es el bloque navy de cabecera:
-        // si baja de opacidad se ve el fondo claro por debajo y vuelve la franja blanca.
-        // Todo lo demás sí entra: se recorre desde el navy hacia arriba y, en cada nivel,
-        // se anima lo que va DESPUÉS de él (el contenido de la pestaña), escalonado.
-        var _navy = pg.querySelector('.sn-header, .research-search-bar, .ai-chat-header, .stitch-header-left');
-        if (!_navy) {
-          var _c0 = pg.children[0];
-          // Ajustes envuelve su cabecera en .set-wrap; Watchlist la tiene suelta.
-          _navy = (_c0 && _c0.classList && _c0.classList.contains('set-wrap')) ? _c0.children[0] : _c0;
-        }
-        function _pvIn(el, delay, dist) {
-          try {
-            el.animate([{opacity:0, transform:'translateY(-'+dist+'px)'},
-                        {opacity:1, transform:'translateY(0)'}],
-                       {duration:820, delay:delay, easing:'cubic-bezier(.33,1,.68,1)', fill:'backwards'});
-          } catch(e){}
-        }
-        var _step = 0;
-        for (var _n = _navy; _n && _n !== pg; _n = _n.parentElement) {
-          for (var _sib = _n.nextElementSibling; _sib; _sib = _sib.nextElementSibling) {
-            _pvIn(_sib, Math.min(_step++, 4) * 130, 14);
-          }
-        }
-        // El navy se queda quieto y opaco; lo que entra es su contenido (título, fecha,
-        // buscador), así que el cambio de pestaña tampoco se ve congelado ahí arriba.
-        if (_navy) {
-          var _hk = _navy.children;
-          for (var _j = 0; _j < _hk.length; _j++) _pvIn(_hk[_j], 0, 10);
-        }
-      }
-    } catch(e){}
+    // Entrada de la pestaña — la implementación y el porqué, en MOTION v7 (arriba).
+    // Va aquí, con .active ya puesto y el scroll en 0, para que las medidas de
+    // _pvIsPainted() sean las definitivas.
+    try { _pvTabEnter(pg); } catch(e){}
     try { if (typeof bindPeriodBtns==='function') bindPeriodBtns(); } catch(e){}
     try { if (typeof _pvSyncActivePeriod==='function') requestAnimationFrame(_pvSyncActivePeriod); } catch(e){}
     requestAnimationFrame(() => pg.classList.add('visible'));
@@ -34519,26 +34608,25 @@ body:not(.dark-theme) .preview-item { transition: background .18s var(--pvr-ease
    La entrada ya no toca la opacidad: sólo desplaza. Cada bloque se pinta opaco
    desde el primer fotograma, así que el navy nunca deja de estar ahí — al pasar
    de pestaña sólo cambia de alto y de texto, que es justo lo que se busca. */
-@keyframes pvrRise {
-  from { transform: translateY(-9px); }
-  to   { transform: translateY(0); }
-}
-.page.active.visible > * { animation: pvrRise .34s cubic-bezier(.33,1,.68,1) both; }
+/* La entrada escalonada la ejecuta MOTION v7 en JS (_pvTabEnter), no el CSS.
+   Aquí vivía un segundo sistema —@keyframes pvrRise sobre
+   `.page.active.visible > *` con retardos por :nth-child— que animaba los
+   mismos nodos a otra velocidad y otra curva. Se quitó por dos razones:
 
-/* El primer bloque de la pestaña es el navy de cabecera (o el envoltorio que lo
-   contiene): se queda completamente quieto. Sin este descuelgue el borde inferior
-   redondeado del navy daría un salto de 9px en cada cambio de pestaña. */
-.page.active.visible > *:nth-child(1) { animation: none !important; }
-.page.active.visible > *:nth-child(1) { animation-delay: 0s; }
-.page.active.visible > *:nth-child(2) { animation-delay: .04s; }
-.page.active.visible > *:nth-child(3) { animation-delay: .08s; }
-.page.active.visible > *:nth-child(4) { animation-delay: .12s; }
-.page.active.visible > *:nth-child(5) { animation-delay: .16s; }
-.page.active.visible > *:nth-child(n+6) { animation-delay: .18s; }
+     1. Se pisaban. WAAPI gana en la cascada de animación, así que estas reglas
+        eran trabajo de composición tirado en cada cambio de pestaña.
+     2. Sólo acertaban en las pestañas con los bloques sueltos bajo .page. En
+        Noticias, Portiv IA y Ajustes todo cuelga de un único hijo, que era
+        justo el exento por :nth-child(1) → esas tres no se animaban.
+
+   El invariante sigue intacto y ahora lo garantiza el JS: el bloque navy de
+   cabecera no se mueve ni cambia de opacidad, así que no puede volver a
+   asomar la franja blanca por debajo. */
 
 /* ── 11. Si el sistema pide menos movimiento, se apaga todo ───────────────── */
 @media (prefers-reduced-motion: reduce) {
-  .page.active.visible > * { animation: none; }
+  /* La entrada de pestaña ya no se lanza siquiera: _pvTabEnter() consulta la
+     misma media query y sale antes de crear ninguna animación. */
   .bottom-tab svg, .bottom-tab::after,
   .period-btn, .ppill, .qbtn,
   .m-tb-btn, .nav-icon-btn,
@@ -35400,6 +35488,151 @@ body:not(.dark-theme) .stitch-viewall-btn {
   }
   body:not(.dark-theme) .bottom-tab { color: #96A2B2 !important; font-weight: 600 !important; }
   body:not(.dark-theme) .bottom-tab.active { color: var(--pvr-navy) !important; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   v7 — MOTION: LO QUE SE ABRE, SE CIERRA Y SE PULSA
+   ───────────────────────────────────────────────────────────────────────────
+   La entrada de pestaña la lleva el JS (_pvTabEnter). Este bloque cubre el
+   resto de la superficie táctil de la app, que hasta ahora aparecía y
+   desaparecía de golpe: diálogos, lector de noticias, filas de lista y foco de
+   teclado.
+
+   Tres reglas que se respetan en todo el bloque:
+     · Sólo se anima `opacity` y `transform` — las dos propiedades que el
+       compositor resuelve sin re-maquetar. Nada de animar alto, margen o
+       posición: en una lista larga eso es un tirón garantizado en el iPhone.
+     · Nada entra desde fuera dejando hueco. Los recorridos son de 6–10 px y
+       siempre hacia su sitio, nunca desde el borde de la pantalla.
+     · Todo se apaga entero si el sistema pide menos movimiento (final del
+       bloque).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --pv-ease:     cubic-bezier(.33, 1, .68, 1);   /* la misma curva de la app */
+  --pv-ease-out: cubic-bezier(.22, 1, .36, 1);   /* salida corta, sin rebote */
+  --pv-t-fast: .14s;
+  --pv-t:      .22s;
+  --pv-t-slow: .32s;
+}
+
+/* ── 1. Diálogo de confirmación: también al CERRAR ─────────────────────────
+   `.modal` tenía un @keyframes de entrada y nada de salida: al cerrar, el velo
+   se fundía en 150 ms mientras la tarjeta desaparecía de golpe en el primer
+   fotograma. Con transición en lugar de keyframe, el mismo par de propiedades
+   sirve para las dos direcciones y no hace falta tocar el JS: sigue mandando
+   la clase .open que ya pone y quita openModal()/closeModal(). */
+.modal-overlay { transition: opacity var(--pv-t) var(--pv-ease); }
+.modal-overlay .modal {
+  animation: none;
+  opacity: 0;
+  transform: translateY(8px) scale(.985);
+  transition: opacity var(--pv-t) var(--pv-ease-out),
+              transform var(--pv-t) var(--pv-ease-out);
+}
+.modal-overlay.open .modal { opacity: 1; transform: none; }
+
+/* ── 2. Lector de noticias a pantalla completa ─────────────────────────────
+   El velo ya se fundía; el artículo llegaba con él, plano. Ahora el cuerpo
+   sube 10 px con un pelo de retardo sobre el fondo, que es lo que hace que se
+   lea como "se abre" y no como "aparece". El fondo (#f8f9fc) es opaco desde el
+   primer fotograma, así que detrás nunca se ve la pestaña que queda debajo. */
+.nm-overlay { transition: opacity var(--pv-t-slow) var(--pv-ease); }
+.nm-overlay .nm-layout {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity var(--pv-t-slow) var(--pv-ease-out) .04s,
+              transform var(--pv-t-slow) var(--pv-ease-out) .04s;
+}
+.nm-overlay.open .nm-layout { opacity: 1; transform: none; }
+/* La barra de cierre no se mueve: es el punto de anclaje del lector y lo único
+   que el dedo busca al abrirlo. */
+.nm-overlay .nm-topbar { opacity: 1; transform: none; }
+
+/* ── 3. Respuesta al pulsar en las superficies táctiles ────────────────────
+   Sólo donde no hay ratón: en escritorio ya está el realce por :hover, y en
+   táctil el :hover se queda pegado tras el toque. El realce es de fondo, no de
+   transform: mover una fila dentro de una lista con scroll deja ver el borde
+   de la fila de al lado. */
+@media (hover: none) {
+  .news-item, .today-news-item, .wl-row, .sn-card,
+  .swc-item, .acct-item, .set-legal-item, .preview-item, .sdrop-item,
+  .holdings-card tbody tr.pos-row {
+    transition: background var(--pv-t-fast) var(--pv-ease);
+  }
+  body:not(.dark-theme) .news-item:active,
+  body:not(.dark-theme) .today-news-item:active,
+  body:not(.dark-theme) .wl-row:active,
+  body:not(.dark-theme) .swc-item:active,
+  body:not(.dark-theme) .acct-item:active,
+  body:not(.dark-theme) .set-legal-item:active,
+  body:not(.dark-theme) .preview-item:active,
+  body:not(.dark-theme) .sdrop-item:active,
+  body:not(.dark-theme) .holdings-card tbody tr.pos-row:active { background: #eef2f8; }
+}
+/* Las tarjetas que son botón entero ceden un punto al pulsarlas. `scale` sobre
+   la tarjeta, no sobre su contenido: así el texto no se re-rasteriza. */
+.stitch-card[onclick], .prof-card[onclick], .eps-card[onclick], .sn-card[onclick] {
+  transition: box-shadow .22s var(--pv-ease), border-color .22s var(--pv-ease),
+              transform var(--pv-t-fast) var(--pv-ease);
+}
+.stitch-card[onclick]:active, .prof-card[onclick]:active,
+.eps-card[onclick]:active, .sn-card[onclick]:active { transform: scale(.994); }
+
+/* ── 3.b Diálogos de Añadir posición / Efectivo ────────────────────────────
+   `.as-overlay` alterna display:none ↔ flex, así que una `transition` nunca
+   llega a correr: no hay fotograma inicial que interpolar. Se resuelve con
+   `animation`, que sí se reproduce entera cada vez que el elemento vuelve a
+   pintarse. Es el único par de diálogos de la app que aparecía de golpe. */
+@keyframes pvOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pvSheetIn {
+  from { opacity: 0; transform: translateY(12px) scale(.985); }
+  to   { opacity: 1; transform: none; }
+}
+.as-overlay.open { animation: pvOverlayIn .2s var(--pv-ease) both; }
+.as-overlay.open .as-card { animation: pvSheetIn .3s var(--pv-ease-out) both; }
+
+/* ── 4. Foco de teclado visible ────────────────────────────────────────────
+   :focus-visible sólo aparece cuando se navega con teclado (el toque y el clic
+   no lo activan), así que no ensucia el uso normal y hace la app recorrible
+   con Tab — requisito de accesibilidad de la revisión de tienda. `outline` no
+   ocupa espacio: no puede descolocar nada. */
+:focus-visible {
+  outline: 2px solid var(--pvr-navy, #0B1E36);
+  outline-offset: 2px;
+}
+body.dark-theme :focus-visible { outline-color: #7FB2FF; }
+
+/* ── 5. Menús y desplegables ───────────────────────────────────────────────
+   Bajan 6 px desde su disparador en lugar de aparecer. */
+#acctMenu .acct-item { transition: background var(--pv-t-fast) var(--pv-ease); }
+.sdrop { transform-origin: top center; }
+
+/* ── 6. Sidebar de escritorio: el punto del enlace activo ──────────────────
+   El punto ya cambia de color; ahora también crece al activarse, que es la
+   señal que se ve de reojo sin leer la etiqueta. */
+.nav-link::before {
+  transition: background var(--pv-t) var(--pv-ease),
+              transform var(--pv-t) var(--pv-ease);
+}
+.nav-link.is-active::before { transform: scale(1.35); }
+
+/* ── 7. Menos movimiento: se apaga todo lo de este bloque ──────────────────
+   Los elementos quedan en su estado final (visibles y en su sitio), nunca en
+   el inicial: apagar la animación no puede esconder contenido. */
+@media (prefers-reduced-motion: reduce) {
+  .modal-overlay, .modal-overlay .modal,
+  .nm-overlay, .nm-overlay .nm-layout,
+  .as-overlay.open, .as-overlay.open .as-card,
+  .nav-link::before,
+  .stitch-card[onclick], .prof-card[onclick],
+  .eps-card[onclick], .sn-card[onclick] { transition: none !important; }
+  .as-overlay.open, .as-overlay.open .as-card { animation: none !important; }
+  .modal-overlay .modal { opacity: 1; transform: none; }
+  .nm-overlay .nm-layout { opacity: 1; transform: none; }
+  .nav-link.is-active::before { transform: none; }
+  .stitch-card[onclick]:active, .prof-card[onclick]:active,
+  .eps-card[onclick]:active, .sn-card[onclick]:active { transform: none; }
 }
 </style>
 </body>
