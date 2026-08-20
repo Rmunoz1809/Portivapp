@@ -15858,6 +15858,29 @@ var portivEndDot = {
 // la izquierda y con el resto de la tarjeta en blanco. Aquí se comprueba la
 // escala real antes de cada dibujo y se restituye si se perdió. Medido: sin esto
 // el dibujo ocupa 33.1% x 32.6% del bitmap; con esto, 99.4% x 98.2%.
+// ── Degradados en el PRIMER frame ────────────────────────────────────────────
+// borderColor/backgroundColor son funciones scriptables que necesitan el chartArea real.
+// En el primer update Chart.js las evalúa ANTES de maquetar: sin área devuelven el color
+// PLANO de respaldo, así que la gráfica nacía apagada (línea sólida, relleno liso) y solo
+// se veía el degradado tras el siguiente repintado —la llegada de precios o un cambio de
+// período—. Eso es el "cambio de diseño" que se notaba al abrir. Aquí, en cuanto el área
+// existe, se fuerza UN update extra en el frame siguiente: el primer dibujo que ve el
+// usuario ya lleva el degradado, y no vuelve a dispararse (flag por chart).
+var portivGradientBind = {
+  id: 'portivGradientBind',
+  afterLayout(chart) {
+    try {
+      if (chart._pvGradBound) return;
+      const a = chart.chartArea;
+      if (!a || !(a.bottom > a.top)) return;
+      chart._pvGradBound = true;
+      // setTimeout y no requestAnimationFrame: con la pestaña en segundo plano el rAF queda
+      // congelado y la gráfica se quedaría con el color plano hasta volver a primer plano.
+      setTimeout(() => { try { if (chart.ctx) chart.update('none'); } catch(e){} }, 0);
+    } catch(e){}
+  }
+};
+
 var portivRetinaGuard = {
   id: 'portivRetinaGuard',
   beforeDraw(chart) {
@@ -16004,7 +16027,7 @@ function initPerfChart() {
   if (perfChart) { try { perfChart.destroy(); } catch(e){} perfChart = null; }
   perfChart = new Chart(ctx, {
     type: 'line',
-    plugins: [portivRetinaGuard, portivCrosshair, portivEndDot],
+    plugins: [portivRetinaGuard, portivGradientBind, portivCrosshair, portivEndDot],
     data: {
       labels: d.labels,
       datasets: [{
@@ -22582,7 +22605,7 @@ function _drawResearchChart(chartData, isPos) {
 
   researchChartInst = new Chart(ctx, {
     type:'line',
-    plugins:[portivRetinaGuard, portivCrosshair, portivEndDot],
+    plugins:[portivRetinaGuard, portivGradientBind, portivCrosshair, portivEndDot],
     data:{ labels:pts.map(p=>p.x), datasets:[{
       data:pts.map(p=>p.y), borderColor:col, borderWidth:3.6,
       backgroundColor:_perfFill(ctx, isPos), fill:'origin', tension:0.3,
@@ -22638,7 +22661,7 @@ function _drawResearchChart(chartData, isPos) {
            display: !_PERF_MOB(),
            grid:{display: !_PERF_MOB(), color:document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6', drawBorder:false},
            border:{display:false, dash:[3,3]},
-           ticks:{display: !_PERF_MOB(), color:'#8A92A3',font:{size:11},callback:v=>v>=1000?`$${(v/1000).toFixed(1)}K`:`$${v.toFixed(0)}`}}
+           ticks:{display: !_PERF_MOB(), color:'#8A92A3',font:{size:11},maxTicksLimit:5,callback:v=>v>=1000?`$${(v/1000).toFixed(1)}K`:`$${v.toFixed(0)}`}}
       }
     }
   });
