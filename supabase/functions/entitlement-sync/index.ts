@@ -57,6 +57,26 @@ Deno.serve(async (req) => {
   const uid = u?.user?.id;
   if (uErr || !uid) return jsonResponse(req, { error: "unauthorized" }, 401);
 
+  // Cuentas de DEMO/REVIEW: no se reconcilian nunca. El acceso se concede a mano en
+  // `subscriptions` (store='promotional'); en RevenueCat no existe ninguna compra, así
+  // que esta función devolvía 'never' y apagaba la fila en el primer arranque — la
+  // concesión manual no sobrevivía al primer login. No hay nada que reconciliar en una
+  // cuenta sin compra. Mismo criterio que DEMO_EMAILS en index.html y que el bypass de
+  // has_active_entitlement().
+  const DEMO_EMAILS = ["review@portivapp01.com"];
+  const _em = (u?.user?.email ?? "").toLowerCase();
+  if (_em && DEMO_EMAILS.includes(_em)) {
+    log("demo account, skipping sync", uid, _em);
+    return jsonResponse(req, {
+      ok: true,
+      skipped: "demo_account",
+      entitlement_active: true,
+      status: "active",
+      expires_at: null,
+      will_renew: false,
+    });
+  }
+
   if (!RC_KEY) {
     log("FATAL: RC_SECRET_API_KEY no configurado");
     return jsonResponse(req, { error: "server_misconfigured" }, 500);

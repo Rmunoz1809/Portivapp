@@ -2740,6 +2740,44 @@ window._ensureChartJs = (function(){
   .pv-ai-stale { font-size: 12px; color: #b45309; background: rgba(180,83,9,0.08); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-weight: 600; }
   .pv-ai-error { font-size: 13px; color: #BA1A1A; background: rgba(186,26,26,0.07); border: 1px solid rgba(186,26,26,0.2); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; line-height: 1.5; }
   .pv-ai-loading { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--st-on-surf-var); padding: 18px 4px; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; }
+
+  /* ── CANDADO DE PORTIV PRO ──────────────────────────────────────────────────
+     Se envuelve la feature de pago en .pv-lock y el contenido real (o su maqueta)
+     se pinta difuminado DEBAJO del candado: el usuario ve que hay algo y qué forma
+     tiene, pero no puede leerlo. Es CSS puro sobre lo que ya se iba a pintar — no
+     hay screenshot ni placeholder que mantener.
+     Se activa SOLO con html.pv-free, así que al comprar los candados desaparecen
+     sin recargar (lo hace _pvApplyProClass al cambiar el veredicto). */
+  .pv-lock { position: relative; }
+  html.pv-pro .pv-lock-ov { display: none; }
+  html.pv-free .pv-lock > :not(.pv-lock-ov) {
+    filter: blur(7px) saturate(.55);
+    opacity: .62;
+    pointer-events: none;
+    user-select: none;
+  }
+  .pv-lock-ov {
+    position: absolute; inset: 0; z-index: 3;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px; padding: 20px; text-align: center;
+    cursor: pointer; border-radius: inherit;
+    background: linear-gradient(180deg, rgba(248,249,255,.35), rgba(248,249,255,.82));
+  }
+  .pv-lock-ico { width: 44px; height: 44px; border-radius: 50%; background: var(--green-bg); display: flex; align-items: center; justify-content: center; }
+  .pv-lock-txt { font-size: 13px; font-weight: 700; color: var(--text); max-width: 260px; line-height: 1.4; }
+  .pv-lock-sub { font-size: 11.5px; color: var(--text3); }
+  .pv-lock-btn { margin-top: 2px; height: 38px; padding: 0 18px; border: none; border-radius: 10px; background: var(--green-btn); color: #fff; font: 800 13px system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; cursor: pointer; }
+  body.dark-theme .pv-lock-ov { background: linear-gradient(180deg, rgba(15,29,53,.35), rgba(15,29,53,.86)); }
+  body.dark-theme .pv-lock-txt { color: #fff; }
+
+  /* Barras de la maqueta bloqueada (_pvAdvisorSkeleton). Sin animación de shimmer:
+     esto NO está cargando, está bloqueado — un shimmer prometería que llega solo. */
+  .pv-sk-h { height: 11px; width: 132px; border-radius: 4px; margin: 14px 0 9px; background: var(--st-secondary, #006c49); opacity: .55; }
+  .pv-sk-p { margin-bottom: 4px; }
+  .pv-sk-bar { height: 9px; border-radius: 4px; margin-bottom: 7px; background: var(--text3); opacity: .40; }
+  body.dark-theme .pv-sk-bar { background: #fff; opacity: .28; }
+  body.dark-theme .pv-sk-h { opacity: .60; }
   .pv-ai-spin { width: 16px; height: 16px; border: 2px solid var(--st-surface-highest); border-top-color: var(--st-secondary); border-radius: 50%; animation: pv-ai-spin .7s linear infinite; flex-shrink: 0; }
   @keyframes pv-ai-spin { to { transform: rotate(360deg); } }
 
@@ -4044,6 +4082,10 @@ window._pvAwaitIAP = function(totalMs){
         <button class="ai-chat-chip" onclick="aiChatQuick('¿Hay noticias importantes de mi portafolio?')">Noticias de mi portafolio</button>
         <button class="ai-chat-chip" onclick="aiChatQuick('¿Por qué se movió el mercado hoy?')">¿Por qué se movió el mercado hoy?</button>
       </div>
+      <!-- Candado de Portiv Pro sobre el COMPOSITOR (no sobre el historial): el saludo
+           y las respuestas previas se siguen leyendo nítidas, así el usuario ve qué es
+           la feature antes de decidir. El overlay se pinta solo con html.pv-free. -->
+      <div class="pv-lock">
       <div class="ai-chat-inputbar">
         <textarea id="aiChatInput" rows="1" placeholder="Escribe tu pregunta…"
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"
@@ -4051,6 +4093,13 @@ window._pvAwaitIAP = function(totalMs){
         <button id="aiChatSendBtn" class="ai-chat-send" onclick="aiChatSend()" aria-label="Enviar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2 .4 6.4Z" fill="currentColor"/></svg>
         </button>
+      </div>
+        <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
+          <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+          <div class="pv-lock-txt">Pregúntale lo que quieras a <b>Portiv IA</b></div>
+          <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+          <button class="pv-lock-btn" type="button">Ver planes</button>
+        </div>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
     </div>
@@ -7150,6 +7199,69 @@ function _pvAiNoConsentRes(){
     { status: 403, headers: { 'content-type': 'application/json' } });
 }
 
+// ── GATE DE ENTITLEMENT PARA LA IA DE PAGO ───────────────────────────────────
+// Cubre SOLO las features cuyo costo es POR USUARIO: el "Análisis del asesor"
+// (PV_AI) y el chat (AI Analyst). NO cubre las cloud-shared (noticias, outlook,
+// earnings, narrativa por acción): esas se generan 1× para todo el mundo y se
+// leen de shared_analysis, así que su costo por usuario es ~0.
+//
+// POR QUÉ NO VA DENTRO DE _aiFetch (que sería el patrón de _PV_AI_CONSENT):
+// hay 8 callsites con essential:true y SEIS quedan fuera de scope a propósito
+// —traducción de UI a inglés, brief de earnings, noticias, narrativa por acción,
+// reacción a resultados y outlook semanal—. Un gate en _aiFetch los bloquearía
+// todos, incluida la traducción, que dejaría la app en inglés a medio traducir.
+//
+// FAIL-OPEN, mismo criterio que _pvSubGate aquí y que requireEntitlement en el
+// servidor: si no se puede leer el estado (red caída, RLS, build sin gate), NO
+// se bloquea. Una caída nuestra no puede dejar fuera a quien sí pagó.
+async function _pvAiEntitled(){
+  try {
+    if (typeof window._pvSubStatus !== 'function') return true;
+    const s = await window._pvSubStatus();   // ya resuelve owner y cuenta demo por dentro
+    if (!s) return true;                     // null = no se pudo leer → fail-open
+    return !!s.active;
+  } catch(e){ return true; }
+}
+
+// Overlay del candado. Se extrae a una función porque se usa en tres sitios
+// (análisis del asesor, chat, conexión de broker) y el SVG no debe duplicarse.
+// Candado en SVG y no en Material Symbols: la ligadura del icon-font no siempre
+// ha cargado cuando se pinta esto y se veía la palabra "LOCK" en crudo — mismo
+// criterio y mismo path que el candado de _block.
+// El onclick va en el CONTENEDOR, así que el botón hereda el clic: un solo handler.
+function _pvLockOverlay(txt){
+  return '<div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">'
+    + '<div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" '
+    + 'stroke="var(--green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>'
+    + '<div class="pv-lock-txt">' + txt + '</div>'
+    + '<div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>'
+    + '<button class="pv-lock-btn" type="button">Ver planes</button></div>';
+}
+
+// Maqueta del "Análisis del asesor" para el estado bloqueado. Hace falta porque
+// aquí, a diferencia del chat y del broker, NO hay contenido real que difuminar:
+// el punto del gate es justamente que la IA nunca se generó. Sin maqueta el
+// candado flotaría sobre el vacío y la tarjeta colapsaría de altura.
+//
+// La CABECERA es real (título y perfil ya calculados, coste cero). El CUERPO son
+// BARRAS, no prosa inventada: con blur(7px) un párrafo falso todavía se lee a
+// medias y sería consejo financiero fabricado saliendo de la app. Las barras
+// reproducen la forma —dos secciones con encabezado y 3-4 renglones— sin afirmar
+// nada. Misma estructura que el análisis real: .pv-ai-head + .pv-ai-body.
+function _pvAdvisorSkeleton(p){
+  const bar  = w  => '<div class="pv-sk-bar" style="width:' + w + '%"></div>';
+  const para = ws => '<div class="pv-sk-p">' + ws.map(bar).join('') + '</div>';
+  return '<div class="pv-ai-head">'
+    + '<div class="pv-ai-title" style="font-weight:800;font-size:13px;color:var(--text);margin-bottom:2px">Análisis del asesor</div>'
+    + (p ? '<div class="pv-ai-profile">Perfil: <b>' + p.label + '</b> · Capacidad ' + p.capLabel + ' · Disposición ' + p.dispLabel + '</div>' : '')
+    + '</div>'
+    + '<div class="pv-ai-body">'
+    +   '<div class="pv-sk-h"></div>' + para([100, 96, 88, 62])
+    +   '<div class="pv-sk-h"></div>' + para([100, 92, 71])
+    + '</div>';
+}
+
 // ── FORZAR FACTURACIÓN A TU API KEY (a pedido explícito) ─────────────────────────
 // Ignora el proxy local (suscripción GRATIS de Claude) y la política "solo chat+visión
 // pagan": TODAS las llamadas de IA (noticias, outlook, eventos, rebalanceo, por-qué-se-
@@ -7342,6 +7454,16 @@ async function _aiFetch(opts, essential) {
   // Las demás features (noticias, outlook, "por qué se movió", rebalanceo, resultado de
   // eventos, análisis de perfil) son NO esenciales: devuelven un 503 sintético para que el
   // caller caiga a su fallback determinista (contexto compuesto, sin costo).
+  //
+  // ACTUALIZACIÓN — el "análisis de perfil" (PV_AI / Portiv Intelligence) SÍ pasa
+  // essential:true desde hace tiempo, contradiciendo la lista de arriba. La
+  // contradicción NO se corrigió flipeando el flag: essential:false devuelve el 503
+  // de aquí abajo de forma INCONDICIONAL, sin mirar la suscripción, así que habría
+  // roto el análisis también para quien SÍ paga.
+  // El control correcto es el ENTITLEMENT, no el flag: ver _pvAiEntitled(), que se
+  // consulta en el punto de entrada de PV_AI.generate y de aiChatSend, antes de que
+  // salga cualquier paquete. `essential` sigue significando "esta feature PUEDE usar
+  // el proxy de pago"; _pvAiEntitled decide "este usuario puede".
   if (!essential && !_FORCE_API_KEY_BILLING) {
     return new Response(JSON.stringify({ error: { message: 'paid-skip: feature no esencial en path de pago (usa fallback determinista)' } }), { status: 503, headers: { 'content-type': 'application/json' } });
   }
@@ -8801,6 +8923,15 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
     if (!p){ this.render(); return; }   // sin perfil → CTA al test
     // Usa la SUSCRIPCIÓN personal de Claude (CLI local), no la API de pago → no requiere API key.
 
+    // GATE DE ENTITLEMENT: sin suscripción activa NO se dispara la llamada de pago.
+    // Se comprueba AQUÍ, en el punto de entrada, y no dentro de _aiFetch: así no sale
+    // ni un paquete de red. El "Diagnóstico rápido" (_pvAdvisorBlock) es determinista
+    // y se sigue viendo completo — lo único que se bloquea es este análisis con IA.
+    // _locked lo lee render() para pintar la maqueta con candado, y corta de paso la
+    // auto-generación (si no, render() volvería a llamar aquí en bucle).
+    this._locked = false;
+    if (!(await _pvAiEntitled())) { this._locked = true; this._busy = false; this.render(); return; }
+
     this._busy = true;
     if (host) host.innerHTML = `<div class="pv-ai-loading"><span class="pv-ai-spin"></span>Analizando tu perfil y portafolio…</div>`;
     try {
@@ -8857,6 +8988,16 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
         <div class="pv-ai-cta-txt">Completa tu test de perfil para recibir un análisis con IA<span>La IA comparará tu cartera real con tu perfil de riesgo.</span></div>
         <button class="pv-ai-btn" onclick="openProfileQuiz()">Hacer el test →</button>
       </div>`;
+      return;
+    }
+    // Bloqueado por entitlement (lo marca generate() ANTES de llamar a la API):
+    // maqueta difuminada + candado. Va antes del bloque de auto-generación de más
+    // abajo para que no se vuelva a disparar generate() en cada render.
+    if (this._locked){
+      host.innerHTML = '<div class="pv-lock">'
+        + _pvAdvisorSkeleton(p)
+        + _pvLockOverlay('Tu <b>Análisis del asesor</b> con IA está listo')
+        + '</div>';
       return;
     }
     if (errMsg){
@@ -10948,6 +11089,72 @@ function updateCashBalance(delta) {
   CASH = Math.max(0, (typeof CASH === 'number' ? CASH : 0) + delta);
   updateCash();
 }
+
+// ─── Onboarding gratuito (salida del muro de suscripción) ────────────────────
+// Lo dispara el botón "Agregar mi portafolio manualmente" de _block. Lleva al
+// editor manual que YA existe (pestaña de ajustes, tabla #aiPosRows) — el mismo
+// destino al que apuntan los tres botones del estado vacío del portafolio — y
+// abre una fila para que el usuario no aterrice en una tabla en blanco.
+// Después pide el efectivo: sin ese dato el Valor Total y el Diagnóstico rápido
+// salen incompletos, y es justo lo que el usuario gratuito viene a ver.
+window._pvManualOnboard = function(){
+  try { showTab('settings'); } catch(e){}
+  // Diferido: showTab pinta la pestaña de forma asíncrona, así que la fila y el
+  // scroll tienen que esperar a que #aiPosRows exista y esté visible.
+  setTimeout(function(){
+    try {
+      var tb = document.getElementById('aiPosRows');
+      if (tb && !tb.querySelectorAll('tr').length && typeof aiPortAddRow === 'function') aiPortAddRow();
+      if (tb) tb.scrollIntoView({ behavior:'smooth', block:'center' });
+    } catch(e){}
+    try { window._pvAskCash(); } catch(e){}
+  }, 350);
+};
+
+// Paso "¿cuánto dinero tienes?". Escribe en CASH, el MISMO estado que edita a mano
+// #cashDisplay y que suma al Valor Total (Σ(qty × precio) + cash) — no se crea un
+// estado nuevo. Se muestra UNA sola vez: si no, reaparecería en cada arranque de
+// quien decidió quedarse en el plan gratuito.
+window._pvAskCash = function(){
+  try { if (localStorage.getItem('pv_manual_onboard_v1')) return; } catch(e){}
+  if (document.getElementById('pvAskCash')) return;
+  var o = document.createElement('div');
+  o.id = 'pvAskCash';
+  o.style.cssText = 'position:fixed;inset:0;z-index:12400;display:flex;'
+    + 'align-items:center;justify-content:center;padding:24px;'
+    + 'background:rgba(8,17,31,.86);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);';
+  o.innerHTML = '<div style="max-width:400px;width:100%;background:#fff;border-radius:20px;'
+    + 'padding:28px 26px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.35);">'
+    + '<h2 style="margin:0 0 9px;font-size:20px;font-weight:800;color:#0f1d35;">¿Cuánto efectivo tienes disponible?</h2>'
+    + '<p style="margin:0 0 18px;font-size:14.5px;line-height:1.5;color:#5b6c85;">Lo sumamos a tu Valor Total. Puedes cambiarlo después desde tu portafolio.</p>'
+    + '<input id="pvAskCashInput" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0.00" '
+    + 'style="width:100%;height:50px;box-sizing:border-box;border:1.5px solid #d7dee8;border-radius:13px;'
+    + 'padding:0 14px;font-size:17px;font-weight:700;color:#0f1d35;text-align:center;outline:none;">'
+    + '<button id="pvAskCashOk" style="width:100%;height:50px;margin-top:14px;border:none;border-radius:13px;'
+    + 'background:#12d18e;color:#04231a;font-size:15.5px;font-weight:800;cursor:pointer;">Guardar</button>'
+    + '<button id="pvAskCashSkip" style="width:100%;height:44px;margin-top:6px;border:none;'
+    + 'background:none;color:#8a97a8;font-size:13.5px;font-weight:600;cursor:pointer;">Omitir</button>'
+    + '</div>';
+  document.body.appendChild(o);
+  function close(){
+    try { localStorage.setItem('pv_manual_onboard_v1', '1'); } catch(e){}
+    try { o.remove(); } catch(e){}
+  }
+  o.querySelector('#pvAskCashSkip').onclick = close;   // omitir NO escribe nada
+  o.querySelector('#pvAskCashOk').onclick = function(){
+    var v = parseFloat((document.getElementById('pvAskCashInput').value || '').replace(/[^0-9.]/g, ''));
+    if (!isNaN(v) && v >= 0) {
+      // Mismo camino que la edición manual de #cashDisplay: CASH → updateCash →
+      // savePortfolio (empuja a la nube) → renderAll.
+      CASH = v;
+      try { updateCash(); } catch(e){}
+      try { savePortfolio(); } catch(e){}
+      try { renderAll(); } catch(e){}
+    }
+    close();
+  };
+  try { document.getElementById('pvAskCashInput').focus(); } catch(e){}
+};
 
 /**
  * removeEmptyPosition(ticker)
@@ -26951,6 +27158,12 @@ async function aiChatSend(){
   const input = document.getElementById('aiChatInput');
   const text = (input.value||'').trim();
   if(!text) return;
+  // GATE DE ENTITLEMENT: el chat es la feature más cara POR USUARIO (no hay caché
+  // global que la amortice, cada pregunta es una llamada nueva). Va aquí, antes de
+  // _chatBusy y del botón deshabilitado, para no dejar la UI trabada.
+  // Doble capa a propósito: el candado sobre el compositor es visual y se puede
+  // evadir desde la consola; esto no.
+  if(!(await _pvAiEntitled())){ try{ window._pvShowPaywall(); }catch(e){} return; }
   const key = _ensureApiKey();
   if(!key){ _aiChatAddMsg('bot','Falta tu Anthropic API key.'); return; }
 
@@ -31702,6 +31915,28 @@ document.addEventListener('DOMContentLoaded', function(){
   var STATUS_WARN  = { past_due:1, canceled:1 };
 
   var _last = null;      // último estado conocido (evita repintar en cada recheck)
+
+  // Lectura SÍNCRONA del último veredicto del servidor. La necesita _pvShowPaywall,
+  // que se llama desde onclick y no puede esperar a una promesa.
+  window._pvSubActive = function(){ return !!(_last && _last.active); };
+
+  // Espejo del veredicto en el DOM. Existe para que el CANDADO sea declarativo: una
+  // sola clase en <html> difumina TODAS las features de pago vía CSS, sin tocar ni
+  // una función de render. Al comprar, _pvAwaitEntitlement la cambia y los candados
+  // desaparecen solos, sin recargar.
+  // window._pvIsPro queda como la respuesta canónica y síncrona a "¿es premium?".
+  function _pvApplyProClass(){
+    try {
+      var pro = !!(window._pvSubActive && window._pvSubActive());
+      window._pvIsPro = pro;
+      document.documentElement.classList.toggle('pv-pro',  pro);
+      document.documentElement.classList.toggle('pv-free', !pro);
+    } catch(e){}
+  }
+  window._pvApplyProClass = _pvApplyProClass;
+  // Estado inicial ANTES del primer veredicto: _last es null → pv-free. El defecto es
+  // el BLOQUEADO a propósito, para que no se filtre contenido de pago mientras carga.
+  _pvApplyProClass();
   var _busy = false;
 
   /* ── Internet caído ≠ suscripción caída ──────────────────────────────────
@@ -32016,6 +32251,9 @@ document.addEventListener('DOMContentLoaded', function(){
         + '<p id="pvSubBlockBody" style="margin:0 0 22px;font-size:14.5px;line-height:1.5;color:#5b6c85;"></p>'
         + '<button id="pvSubBlockCta" style="width:100%;height:50px;border:none;border-radius:13px;'
         + 'background:#12d18e;color:#04231a;font-size:15.5px;font-weight:800;cursor:pointer;"></button>'
+        + '<button id="pvSubBlockManual" style="width:100%;height:46px;margin-top:9px;'
+        + 'border:1.5px solid #12d18e;border-radius:13px;background:#fff;color:#0b7a55;'
+        + 'font-size:14.5px;font-weight:700;cursor:pointer;">Agregar mi portafolio manualmente</button>'
         + '<button id="pvSubBlockOut" style="width:100%;height:44px;margin-top:9px;border:none;'
         + 'background:none;color:#8a97a8;font-size:13.5px;font-weight:600;cursor:pointer;">Cerrar sesión</button>'
         + '</div>';
@@ -32025,6 +32263,19 @@ document.addEventListener('DOMContentLoaded', function(){
       o.querySelector('#pvSubBlockOut').onclick = function(){
         try { if (typeof window._authSignout === 'function') { window._authSignout(); return; } } catch(e){}
         try { window.sbClient.auth.signOut().then(function(){ return window._pvIapLogout(); }).then(function(){ location.reload(); }); } catch(e){ location.reload(); }
+      };
+      // Salida del muro SIN pagar. Antes, quien no compraba quedaba encerrado y la
+      // app no podía enseñar lo que vale gratis (posiciones + Diagnóstico rápido).
+      // Las features de pago siguen protegidas por el candado (.pv-lock) y por
+      // _pvAiEntitled, no por este muro — cerrarlo no desbloquea nada de IA.
+      //
+      // Por qué un botón y no un temporizador: en iOS nativo _pvShowPaywall presenta
+      // la hoja PREHECHA de RevenueCat, a la que no se le puede inyectar nada desde
+      // aquí. Este muro sí es nuestro y es el que queda tras cancelar esa hoja, así
+      // que la salida funciona igual en web y en nativo.
+      o.querySelector('#pvSubBlockManual').onclick = function(){
+        _unblock();
+        try { window._pvManualOnboard(); } catch(e){}
       };
       // El handler se resuelve EN CADA CLIC y no al crear el overlay: el muro se
       // reutiliza, y el de "sin conexión" tiene que reintentar la comprobación,
@@ -32101,7 +32352,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var mg = document.getElementById('acctManageSub');
     if (!el && !mg) return;
     var st = _last;
-    if (!st) { try { st = await window._pvSubStatus(); } catch(e){ st = null; } if (st) _last = st; }
+    if (!st) { try { st = await window._pvSubStatus(); } catch(e){ st = null; } if (st) { _last = st; _pvApplyProClass(); } }
     var _nat = !!(window._pvIsNativeApp && window._pvIsNativeApp());
     var active = !!(st && st.active);
     if (el) el.textContent = active
@@ -32157,6 +32408,7 @@ document.addEventListener('DOMContentLoaded', function(){
     // Contestó el servidor: la red está viva, se retira la sospecha.
     _netFail = 0;
     _last = st;
+    _pvApplyProClass();   // veredicto nuevo → candados dentro de la app al día
     // Veredicto DEFINITIVO (vino del servidor): es el que se recuerda para poder
     // decidir la próxima vez que no haya red.
     try { _cacheSet(await _localUid(), st); } catch(e){}
@@ -32252,7 +32504,10 @@ document.addEventListener('DOMContentLoaded', function(){
       // rechazar, y una excepción dejaría _pvGateBusy encendido de forma permanente.
       var st = null;
       try { st = await window._pvSubStatus(); } catch(e){}
-      if (st && st.active) { window._pvGateBusy = false; _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
+      // _last y la clase del DOM se actualizan ANTES de snapConnect(): su gate de
+      // cliente lee window._pvIsPro y sin esto rebotaría al paywall a alguien que
+      // acaba de pagar. También quita los candados de la app sin recargar.
+      if (st && st.active) { _last = st; _pvApplyProClass(); window._pvGateBusy = false; _bannerHide(); _unblock(); try { window.snapConnect(); } catch(e){} return true; }
       await new Promise(function(r){ setTimeout(r, 1000); });
       t0++;
     }
@@ -32815,6 +33070,15 @@ document.addEventListener('DOMContentLoaded', function(){
   //         allowlist: aquí no se escribe ningún slug. Los tres llamadores de siempre siguen
   //         funcionando sin tocarlos (el parámetro es el tercero y opcional).
   function snapConnect(mode, connectionId, broker){
+    // GATE DE ENTITLEMENT (cliente). Sin suscripción, snaptrade-connect responde 403
+    // subscription_required y el usuario vería un error genérico en vez del camino
+    // para arreglarlo. Se lee el ÚLTIMO veredicto del servidor de forma SÍNCRONA
+    // (window._pvIsPro, espejo de _pvSubActive) porque esta función no es async y la
+    // llaman cinco sitios distintos.
+    // Comparación estricta con false = FAIL-OPEN: si todavía no hay veredicto
+    // (_pvIsPro undefined) NO se bloquea. Y tras pagar, _pvAwaitEntitlement llama a
+    // _pvApplyProClass ANTES de snapConnect(), así que ahí ya vale true.
+    if (window._pvIsPro === false) { try{ window._pvShowPaywall(); }catch(e){} return; }
     _setBusy(true);
     // Aviso a pantalla completa ANTES de pedir el portal. Va aquí y no en cada llamador
     // porque la espera existe en los tres caminos (tras el pago, fallback sin paywall y
@@ -33568,7 +33832,17 @@ document.addEventListener('DOMContentLoaded', function(){
     _setSyncBanner(state==='syncing');
     // Settings card
     var card = document.getElementById('snapConnectCard');
-    if(card) card.innerHTML = _cardHTML(state, _lastMeta);
+    if(card){
+      var _cardH = _cardHTML(state, _lastMeta);
+      // Candado de Portiv Pro sobre la tarjeta de conexión. La Edge Function ya
+      // responde 403 subscription_required sin entitlement; esto solo hace VISIBLE
+      // el candado en vez de dejar que el usuario toque "Conectar" y reciba un
+      // error. Solo en los estados donde la acción ofrecida es conectar/reconectar:
+      // si ya está conectado no hay nada que vender.
+      card.innerHTML = (state === 'disconnected' || state === 'broken')
+        ? '<div class="pv-lock">' + _cardH + _pvLockOverlay('Conecta tu broker y sincroniza tu portafolio solo') + '</div>'
+        : _cardH;
+    }
     // Portfolio banner
     var bnr = document.getElementById('snapBanner');
     if(bnr){
