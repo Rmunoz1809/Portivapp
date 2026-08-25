@@ -2807,6 +2807,20 @@ window._ensureChartJs = (function(){
   /* La tabla bloqueada no debe poder scrollearse ni seleccionarse por detrás. */
   html.pv-free .pv-lock > .rbl-card { max-height: 420px; overflow: hidden; }
 
+  /* Variante PILA (análisis de acción): el candado envuelve una columna larga de
+     tarjetas. Sin tope de altura el overlay mediría miles de píxeles y su mensaje
+     quedaría centrado a media pantalla de scroll. Se recorta la pila a la altura
+     de un par de tarjetas: se ve QUÉ hay debajo sin poder leerlo. */
+  .pv-lock-stack { position: relative; }
+  html.pv-free .pv-lock-stack > .pv-lock-body { max-height: 440px; overflow: hidden; }
+  html.pv-free .pv-lock-stack > .pv-lock-ov { gap: 12px; }
+  html.pv-free .pv-lock-stack .pv-lock-ico { width: 54px; height: 54px; }
+  html.pv-free .pv-lock-stack .pv-lock-txt { font-size: 15px; max-width: 300px; }
+  html.pv-free .pv-lock-stack .pv-lock-sub { font-size: 12.5px; }
+  html.pv-free .pv-lock-stack .pv-lock-btn { height: 44px; padding: 0 24px; font-size: 14px; border-radius: 12px; }
+  /* Con Pro el envoltorio tiene que ser invisible: ni recorte, ni tope, ni caja. */
+  html.pv-pro .pv-lock-stack > .pv-lock-body { max-height: none; overflow: visible; }
+
   .pv-lock-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .pv-lock-page > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
   html.pv-free .pv-lock-page > :not(.pv-lock-ov) { filter: blur(9px) saturate(.5); opacity: .55; }
@@ -4959,8 +4973,17 @@ window._pvAwaitIAP = function(totalMs){
     <!-- Expert Analysis -->
     <div style="margin-bottom:16px" id="r-analysis-card">
       <div id="r-company-desc" class="rax-sec" style="font-size:13px;line-height:1.7;color:var(--st-on-surf-var);display:none"></div>
-      <div class="r-analysis" id="r-analysis"></div>
+      <!-- La NOTA de la empresa vive en su propio host, FUERA del candado: es lo
+           único del análisis que ve el plan gratuito, y es lo que le enseña qué
+           hay detrás. Lo llena _renderQualAnalysis. -->
+      <div id="r-rating-host" class="pvx"></div>
     </div>
+
+    <!-- Todo lo que va POR DEBAJO de la nota (foso, ventajas, finanzas, valoración,
+         proyecciones, técnico, composición del ETF y resultados) es Portiv Pro. -->
+    <div class="pv-lock pv-lock-stack">
+      <div class="pv-lock-body">
+      <div class="r-analysis" id="r-analysis"></div>
 
     <!-- Proyecciones de analistas: tarjeta eliminada (estaba duplicada con la px-card
          "Proyecciones de precio" del render principal, mismos datos). -->
@@ -5002,6 +5025,14 @@ window._pvAwaitIAP = function(totalMs){
       .eps-sec-head{ display:flex; justify-content:flex-end; margin-bottom:12px; }
     </style>
     <div id="r-eps" style="margin-bottom:16px"></div>
+      </div><!-- /.pv-lock-body -->
+      <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
+        <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+        <div class="pv-lock-txt">El análisis completo: foso, ventajas, finanzas, valoración y técnico</div>
+        <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+        <button class="pv-lock-btn" type="button">Ver planes</button>
+      </div>
+    </div>
 
     <!-- News: sección "Noticias Recientes" eliminada a pedido del usuario -->
   </div>
@@ -9614,6 +9645,7 @@ function renderDeepPortfolioAnalysis(T) {
   if (_cushion < 0.05) cons.push('Sin renta fija ni cash significativo — sin dry powder para comprar en caídas fuertes.');
 
   document.getElementById('port-pros-cons').innerHTML = `
+    <div class="pv-lock">
     <div class="pa-prosbox">
       <div class="pa-care strengths">
         <div class="pa-care-title"><span class="material-symbols-outlined">trending_up</span>Fortalezas</div>
@@ -9623,6 +9655,8 @@ function renderDeepPortfolioAnalysis(T) {
         <div class="pa-care-title"><span class="material-symbols-outlined">warning_amber</span>Riesgos</div>
         <ul>${cons.map(c=>`<li>${c}</li>`).join('')}</ul>
       </div>
+    </div>
+    ${(typeof _pvLockOverlay === 'function') ? _pvLockOverlay('Las fortalezas y los riesgos concretos de tu cartera') : ''}
     </div>
   `;
   // ── 4) RETORNO ESPERADO ANUAL (forward 12M) ──────────────────────────────
@@ -21321,6 +21355,14 @@ function _renderQualAnalysis(a, el){
       ${chips ? `<div class="px-scores">${chips}</div>
       <div class="px-hint">La nota es el promedio de las ${RUBROS.filter(([k])=>sc(k)!=null).length} calificaciones de arriba. Cada una sale solo de los números que la empresa publica; un apartado sin datos no se califica ni entra al promedio.</div>` : ''}</div>
   </div>`;
+
+  // La tarjeta de la NOTA sale del flujo de `h` y se pinta en #r-rating-host, que
+  // está FUERA del candado de Pro. Todo lo que se acumule en `h` a partir de aquí
+  // acaba dentro de .pv-lock-body y, en el plan gratuito, difuminado.
+  try {
+    const _rh = document.getElementById('r-rating-host');
+    if (_rh) { _rh.classList.add('pvx'); _rh.innerHTML = h; h = ''; }
+  } catch(e){}
 
   // 2) FOSO competitivo (moat): pill de fuerza + bullets.
   const moatCls = /fuerte/i.test(a.moat.label)?'green': /sin foso|débil/i.test(a.moat.label)?'red':'amber';
