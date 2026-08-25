@@ -9966,7 +9966,7 @@ function renderAssetDetailTable(T) {
           <div class="pa-acell">
             <div class="pa-logo" style="background:${color}">${h.ticker}</div>
             <div>
-              <div class="pa-aname">${h.name}</div>
+              <div class="pa-aname">${pvEsc(h.name)}</div>
               ${sector?`<div class="pa-asector">${sector}</div>`:''}
             </div>
           </div>
@@ -10921,7 +10921,7 @@ function posRowHTML(h, idx, c, T) {
       ${avatar}
       <div style="min-width:0">
         <div class="sym sym-link" onclick="quickSearch('${h.ticker}')" title="Analizar ${h.ticker}">${h.ticker}</div>
-        <div class="sym-sub">${h.name}</div>
+        <div class="sym-sub">${pvEsc(h.name)}</div>
       </div>
     </div></div></td>
     <td><div class="td-inner" style="font-variant-numeric:tabular-nums">${h.qty.toFixed(4)}</div></td>
@@ -11320,9 +11320,14 @@ function updatePreview(idx) {
   }
 
   let warn = '';
-  if (mode === 'buy'  && amt    > CASH + 0.01)       warn = `Cash insuficiente. Tienes ${usd(CASH)} disponible.`;
-  if (mode === 'sell' && shares > h.qty + 0.0001)    warn = `Máximo ${h.qty.toFixed(4)} shares disponibles.`;
-  if (mode === 'sell' && amt    > c.mktVal + 0.01)   warn = `No puedes vender más de ${usd(c.mktVal)}.`;
+  // Sin precio (la cotización aún no llegó, o el proveedor la devolvió en 0) todo lo de
+  // abajo es aritmética con 0: "shares" sale Infinity y el monto NaN. Antes eso se pintaba
+  // tal cual —"+Infinity shares", "$NaN"— con el botón de ejecutar ACTIVO, y al confirmar
+  // buyAsset rechazaba en silencio. Se corta aquí.
+  if (!(h.price > 0)) warn = `Sin precio de ${h.ticker} todavía. Espera a que cargue la cotización.`;
+  else if (mode === 'buy'  && amt    > CASH + 0.01)       warn = `Cash insuficiente. Tienes ${usd(CASH)} disponible.`;
+  if (!warn && mode === 'sell' && shares > h.qty + 0.0001)  warn = `Máximo ${h.qty.toFixed(4)} shares disponibles.`;
+  if (!warn && mode === 'sell' && amt    > c.mktVal + 0.01) warn = `No puedes vender más de ${usd(c.mktVal)}.`;
 
   warnEl.textContent = warn;
   warnEl.classList.toggle('show', !!warn);
@@ -11359,6 +11364,11 @@ function requestTrade(idx) {
   if (_execBtn && _execBtn.disabled) return;
   const h = HOLDINGS[idx];
   const c = calcH(h);
+  // El modo "todo" y el Enter del input no pasan por updatePreview: se repite el corte.
+  if (!h || !(h.price > 0)) {
+    showToast(`Sin precio de ${(h && h.ticker) || 'la posición'} todavía. Espera a que cargue la cotización.`, 'var(--red)');
+    return;
+  }
   const mode      = activeDrawer.mode;
   const orderType = activeDrawer.orderType || 'money';
 
@@ -11382,12 +11392,18 @@ function requestTrade(idx) {
     ? h.costBasis + exact
     : (newQty <= 0 ? 0 : h.costBasis * (newQty / h.qty));
 
-  pendingTx = { idx, mode, shares, amt: exact, newQty, newCash, newCost };
+  // Se guarda el TICKER, no sólo el índice: entre abrir el modal y confirmarlo puede
+  // entrar un sync del broker (aiPortApply reemplaza HOLDINGS entero, y el refresco
+  // periódico corre cada 20 min), y entonces HOLDINGS[idx] es OTRA posición. Confirmar
+  // habría operado sobre el ticker equivocado.
+  pendingTx = { idx, ticker: h.ticker, mode, shares, amt: exact, newQty, newCash, newCost };
 
   const T = calcTotals();
   const T2 = { ...T, mkt: T.mkt + (mode==='buy' ? exact : -exact) };
   const newPct = T2.mkt > 0 ? (newQty * h.price / T2.mkt * 100).toFixed(1) : 0;
-  const realizedGL = mode === 'sell'
+  // h.qty puede ser 0 (posición vaciada por un sync mientras el cajón estaba abierto):
+  // costBasis/0 es Infinity y la fila salía "G/L realizado $NaN".
+  const realizedGL = (mode === 'sell' && h.qty > 0)
     ? (h.price - h.costBasis / h.qty) * shares
     : null;
 
@@ -11424,21 +11440,30 @@ function closeModal() {
 
 function executeConfirmed() {
   if (!pendingTx) return;
-  const { idx, mode, shares, amt, newQty, newCash, newCost } = pendingTx;
-  const h = HOLDINGS[idx];
-  const ticker = h.ticker;
+  const { ticker, mode, amt } = pendingTx;
 
   closeModal();
   pendingTx = null;
   activeDrawer = null;
 
+  // Por ticker y no por índice — ver el comentario de pendingTx. Si la posición
+  // desapareció (venta completa desde el broker) se dice, en vez de reventar en h.ticker.
+  const h = HOLDINGS.find(x => x && x.ticker === ticker);
+  if (!h) {
+    showToast(`${ticker} ya no está en tu portafolio. Vuelve a intentarlo.`, 'var(--red)');
+    return;
+  }
+
   // Delegate entirely to buyAsset / sellAsset so both code paths
   // use the SAME recalculation + persistence + UI refresh logic.
-  if (mode === 'buy') {
-    buyAsset(ticker, amt, h.price);
-  } else {
-    sellAsset(ticker, amt, h.price);
-  }
+  // El resultado SE MIRA: buyAsset/sellAsset devuelven {ok:false,error} ante precio 0,
+  // cash insuficiente o monto inválido, y antes eso se descartaba — el usuario confirmaba
+  // una operación de dinero, el modal se cerraba y no pasaba absolutamente nada, sin un
+  // solo mensaje.
+  const res = (mode === 'buy')
+    ? buyAsset(ticker, amt, h.price)
+    : sellAsset(ticker, amt, h.price);
+  if (res && res.ok === false) showToast(res.error || 'No se pudo ejecutar la operación.', 'var(--red)');
 }
 
 function renderTxLog() {
@@ -14318,7 +14343,7 @@ function showStockNews(ticker, btn) {
   $('newsContainer').innerHTML = `
     <div style="padding:12px 0 10px;border-top:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <span style="font-size:15px;font-weight:700">${ticker}</span>
-      <span style="font-size:12px;color:var(--text3)">${h.name}</span>
+      <span style="font-size:12px;color:var(--text3)">${pvEsc(h.name)}</span>
       <span style="font-size:11px;padding:2px 8px;border-radius: 0;background:var(--surface3);color:var(--text2)">$${h.price.toFixed(2)}</span>
       <span class="${h.dayChgPct>=0?'sp':'sn'}" style="font-size:11px;padding:2px 8px;border-radius:4px">${h.dayChgPct>=0?'+':''}${h.dayChgPct.toFixed(2)}% hoy</span>
       <span style="font-size:11px;color:var(--text2)">Posición: <strong>${usd(c.mktVal)}</strong></span>
@@ -20831,7 +20856,7 @@ function _etfAnalysisHTML(ticker, info) {
   return `
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
     <span style="font-size:10px;font-weight:800;letter-spacing:.5px;background:var(--blue);color:#fff;padding:3px 9px;border-radius:5px">ETF</span>
-    <span style="font-size:15px;font-weight:700;color:var(--text)">${e.name}</span>
+    <span style="font-size:15px;font-weight:700;color:var(--text)">${pvEsc(e.name)}</span>
   </div>
   <p style="font-size:12px;color:var(--text3);margin:0 0 14px">${e.cat} · Emisor: ${e.issuer} · Patrimonio ${e.aum}</p>
 
@@ -24685,7 +24710,7 @@ function renderWatchlist() {
         <div class="wl2-avatar" style="background:${av.bg};color:${av.fg}">${t.charAt(0)}</div>
         <div class="wl2-name-block">
           <div class="wl2-ticker">${t}</div>
-          <div class="wl2-company">${name}</div>
+          <div class="wl2-company">${pvEsc(name)}</div>
         </div>
         <div class="wl2-stat">
           <span class="wl2-stat-label">Precio</span>
