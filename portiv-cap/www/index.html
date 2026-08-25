@@ -2602,6 +2602,28 @@ window._ensureChartJs = (function(){
   .pq-skip { display: block; margin: 14px auto 0; background: none; border: none; color: var(--st-on-surf-var); font-size: 13px; cursor: pointer; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; }
   .pq-skip:hover { color: var(--st-primary); text-decoration: underline; }
 
+  /* ── Entrada manual del quiz: aparece 3 s después del resultado ────────────
+     Con animación CSS y NO con setTimeout + requestAnimationFrame. Medido en el
+     navegador: rAF no se ejecuta ni una vez mientras la vista no está pintando
+     (pestaña de fondo, WebView aún sin componer, transición de pantalla), así
+     que el callback que subía la opacidad no llegaba a correr NUNCA y el enlace
+     se quedaba en opacity:0 de forma permanente — existía en el DOM, ocupaba su
+     sitio y era invisible. Una animación con fill-mode forwards va por tiempo y
+     no por frames: en cuanto la vista vuelve a pintar alcanza su estado final
+     sola, sin depender de que nadie ejecute nada.
+
+     visibility en vez de display para que el hueco esté reservado desde el
+     primer frame: si apareciera de golpe empujaría el contenido y la tarjeta
+     daría un salto justo cuando el usuario está leyendo su perfil. */
+  #pqManualEntry {
+    opacity: 0; visibility: hidden;
+    animation: pqManualIn .45s ease 3s forwards;
+  }
+  @keyframes pqManualIn {
+    from { opacity: 0; visibility: hidden; }
+    to   { opacity: 1; visibility: visible; }
+  }
+
   /* ══ Móvil: cada paso debe caber completo en pantalla, sin scroll ══ */
   @media (max-width: 600px){
     .pq-overlay {
@@ -6805,9 +6827,65 @@ async function renderSettings(){
 .as-confirm:disabled { opacity:.4;pointer-events:none; }
 /* Legacy hidden compat */
 .as-sub,.as-search-row,.as-lookup-btn,.as-inputs,.as-input-group,.as-input,.as-preview-txt { display:none; }
+
+/* ── Modal de compra: que quepa sin scroll y sea fácil de cerrar ─────────────
+   BUG: .as-overlay era display:flex + align-items:center SIN overflow. Un hijo
+   centrado con flex que pasa del alto del contenedor se desborda por ARRIBA y
+   por ABAJO, y en un contenedor position:fixed que no scrollea ese sobrante es
+   inalcanzable: el botón "Confirmar" quedaba fuera de pantalla y la compra no
+   se podía completar en iPhone. No bastaba con overflow-y:auto — con
+   align-items:center el navegador recorta el borde superior y ni scrolleando
+   se llega. Por eso va flex-start + margin:auto en la tarjeta, que centra
+   cuando SOBRA sitio y deja scrollear cuando falta.
+   El overflow es la red de seguridad; la compactación de abajo es lo que hace
+   que en la práctica no haga falta usarla. */
+.as-overlay {
+  align-items: flex-start;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: calc(12px + env(safe-area-inset-top)) 14px calc(12px + env(safe-area-inset-bottom));
+}
+.as-card { margin: auto; max-width: 420px; }
+
+/* Compactación: la tarjeta medía ~780px de alto en un iPhone, justo por encima
+   del viewport útil. Se recortan ~170px de aire (paddings, márgenes y dos
+   tamaños de fuente) sin quitar ni un dato de la pantalla. */
+@media (max-width: 600px) {
+  .as-card            { padding:15px 14px 13px; border-radius:16px; }
+  .as-broker-header   { margin-bottom:12px; }
+  .as-title           { font-size:17px; }
+  .as-field-label     { margin-bottom:5px; }
+  .as-ticker-input    { padding:11px 14px; }
+  .as-ticker-input.has-icon { padding-left:38px; }
+  .as-company-card    { padding:10px 12px; margin-top:9px; gap:11px; }
+  .as-company-avatar  { width:36px; height:36px; font-size:13px; }
+  .as-company-price-val { font-size:18px; }
+  .as-divider         { margin:10px 0; }
+  .as-type-toggle     { margin-bottom:11px; }
+  .as-type-btn        { padding:7px 6px; }
+  .as-big-input       { padding:12px 14px 12px 32px; font-size:24px; }
+  .as-big-input.no-prefix { padding-left:14px; }
+  .as-prefix          { left:14px; font-size:19px; }
+  .as-quick-row       { gap:5px; margin-top:8px; }
+  .as-quick-btn       { padding:5px 12px; }
+  .as-calc-result     { padding:9px 13px; margin-top:10px; }
+  .as-calc-val        { font-size:16px; }
+  .as-summary         { padding:10px 13px; margin-top:10px; }
+  .as-summary-row     { padding:3px 0; }
+  .as-summary-total   { margin-top:4px; padding-top:7px; }
+  .as-warn            { margin-top:10px; padding:8px 12px; }
+  .as-btns            { margin-top:13px; gap:8px; }
+  .as-cancel,.as-confirm { padding:13px; }
+}
 </style>
 
-<div class="as-overlay" id="addStockOverlay">
+<!-- Tocar el fondo cierra. La × de 32px es un blanco pequeño y en el estado
+     desbordado podía quedar fuera de pantalla; el fondo siempre está ahí.
+     El guard target===currentTarget es obligatorio: sin él, cualquier clic
+     dentro de la tarjeta burbujea hasta aquí y cierra el modal a media compra. -->
+<div class="as-overlay" id="addStockOverlay"
+     onclick="if(event.target===event.currentTarget){ try{ closeAddStock(); }catch(e){} }">
   <div class="as-card">
     <div class="as-broker-header">
       <div class="as-title" id="asModalTitle">Comprar Activo</div>
@@ -11097,7 +11175,9 @@ function updateCashBalance(delta) {
 // abre una fila para que el usuario no aterrice en una tabla en blanco.
 // Después pide el efectivo: sin ese dato el Valor Total y el Diagnóstico rápido
 // salen incompletos, y es justo lo que el usuario gratuito viene a ver.
-window._pvManualOnboard = function(){
+window._pvManualOnboard = function(opts){
+  // opts.skipCash → el monto ya se pidió antes (entrada desde el quiz), no repetirlo
+  opts = opts || {};
   try { showTab('settings'); } catch(e){}
   // Diferido: showTab pinta la pestaña de forma asíncrona, así que la fila y el
   // scroll tienen que esperar a que #aiPosRows exista y esté visible.
@@ -11107,7 +11187,7 @@ window._pvManualOnboard = function(){
       if (tb && !tb.querySelectorAll('tr').length && typeof aiPortAddRow === 'function') aiPortAddRow();
       if (tb) tb.scrollIntoView({ behavior:'smooth', block:'center' });
     } catch(e){}
-    try { window._pvAskCash(); } catch(e){}
+    if (!opts.skipCash) { try { window._pvAskCash(); } catch(e){} }
   }, 350);
 };
 
@@ -11115,8 +11195,11 @@ window._pvManualOnboard = function(){
 // #cashDisplay y que suma al Valor Total (Σ(qty × precio) + cash) — no se crea un
 // estado nuevo. Se muestra UNA sola vez: si no, reaparecería en cada arranque de
 // quien decidió quedarse en el plan gratuito.
-window._pvAskCash = function(){
-  try { if (localStorage.getItem('pv_manual_onboard_v1')) return; } catch(e){}
+window._pvAskCash = function(opts){
+  // opts.force  → saltarse la guarda de "una sola vez" (toque explícito del usuario)
+  // opts.onDone → continuación tras guardar U omitir
+  opts = opts || {};
+  try { if (!opts.force && localStorage.getItem('pv_manual_onboard_v1')) return; } catch(e){}
   if (document.getElementById('pvAskCash')) return;
   var o = document.createElement('div');
   o.id = 'pvAskCash';
@@ -11139,6 +11222,7 @@ window._pvAskCash = function(){
   function close(){
     try { localStorage.setItem('pv_manual_onboard_v1', '1'); } catch(e){}
     try { o.remove(); } catch(e){}
+    if (typeof opts.onDone === 'function') { try { opts.onDone(); } catch(e){} }
   }
   o.querySelector('#pvAskCashSkip').onclick = close;   // omitir NO escribe nada
   o.querySelector('#pvAskCashOk').onclick = function(){
@@ -32888,7 +32972,7 @@ document.addEventListener('DOMContentLoaded', function(){
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
       <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>
-      <button type="button" id="pqManualEntry" style="display:none;width:100%;margin-top:10px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer;opacity:0;transition:opacity .45s ease">Prefiero agregar mi portafolio manualmente</button>`;
+      <button type="button" id="pqManualEntry" style="display:block;width:100%;margin-top:10px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">Ingresar posiciones manualmente</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     document.getElementById('pqFinish').onclick = ()=>{
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
@@ -32914,24 +32998,31 @@ document.addEventListener('DOMContentLoaded', function(){
       var _mn = document.getElementById('pqManualEntry');
       if (_mn) {
         _mn.onclick = function(){
-          // Cerrar el quiz PRIMERO: _pvManualOnboard hace showTab('settings') y la
-          // pestaña quedaría pintada debajo del overlay, invisible.
+          // Cerrar el quiz PRIMERO: lo que abrimos después son overlays y la
+          // tarjeta del quiz quedaría pintada encima.
           try {
             if (typeof _closeQuiz === 'function') _closeQuiz();
             else document.getElementById('pqOverlay').classList.remove('open');
           } catch(e){}
-          try { window._pvManualOnboard(); } catch(e){}
-        };
-        setTimeout(function(){
+          // DIRECTO al monto. Antes esto pasaba primero por la pestaña de ajustes
+          // y el paso del valor salía al final, detrás de un scroll y de una tabla
+          // vacía: quien venía a decir "tengo X" tenía que adivinar dónde decirlo.
+          // force:true porque el usuario lo pidió con un toque explícito — la
+          // guarda de "una sola vez" existe para el arranque automático, no para
+          // desactivar un botón que se acaba de pulsar.
+          // Al cerrarse (guardar u omitir) sí se va al editor de posiciones, que
+          // es el paso siguiente natural; skipCash evita repetir el monto.
           try {
-            _mn.style.display = 'block';
-            // Doble rAF: sin él el navegador colapsa el cambio de display y el de
-            // opacity en un solo estilo calculado y la transición no llega a correr.
-            requestAnimationFrame(function(){
-              requestAnimationFrame(function(){ _mn.style.opacity = '1'; });
-            });
-          } catch(e){}
-        }, 3000);
+            window._pvAskCash({ force: true, onDone: function(){
+              try { window._pvManualOnboard({ skipCash: true }); } catch(e){}
+            }});
+          } catch(e){
+            try { window._pvManualOnboard(); } catch(_){}
+          }
+        };
+        // El retardo de 3 s NO se hace aquí: lo lleva la animación CSS de
+        // #pqManualEntry. Ver el comentario de esa regla — la versión con
+        // setTimeout + requestAnimationFrame dejaba el enlace invisible.
       }
     } catch(e){}
   }
