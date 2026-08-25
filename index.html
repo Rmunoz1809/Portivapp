@@ -31895,7 +31895,20 @@ document.addEventListener('DOMContentLoaded', function(){
   // Interruptor del bloqueo VISUAL. En false la app no se tapa nunca (el servidor sigue
   // devolviendo 403 igual: esto no regala acceso a nada, sólo deja de mostrar el muro).
   // Ponlo en false si alguna vez hay usuarios reales sin forma de pagar todavía.
-  var ENFORCE = true;
+  //
+  // ACTUALIZACIÓN — ahora en FALSE a propósito. El muro "Necesitas una suscripción
+  // activa" tapaba la app entera y era la única pantalla que veía quien no pagaba:
+  // ni siquiera podía cargar posiciones a mano ni ver el Diagnóstico rápido, que son
+  // gratis y de coste cero. El control de lo que SÍ cuesta dinero no vive aquí:
+  //   · html.pv-free / html.pv-pro  → difuminan y ponen candado (.pv-lock) sobre las
+  //     features de pago. Lo escribe _pvApplyProClass, que se llama JUSTO DESPUÉS de
+  //     `_last = st` y por tanto SIGUE corriendo con ENFORCE en false.
+  //   · _pvAiEntitled()             → corta la llamada de IA antes de que salga el
+  //     paquete (análisis del asesor y chat).
+  //   · snapConnect()               → sale al paywall si window._pvIsPro === false.
+  // Ninguno de los tres mira ENFORCE, así que apagar el muro NO regala nada premium:
+  // sólo deja entrar a la app. Volver a ponerlo en true restaura el muro tal cual.
+  var ENFORCE = false;
 
   // Mismo bypass que la función SQL. Se duplica a propósito: si sólo estuviera en el
   // servidor, el dueño vería el bloqueo en pantalla aunque las llamadas le funcionaran.
@@ -32822,7 +32835,8 @@ document.addEventListener('DOMContentLoaded', function(){
       </div>
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
-      <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>`;
+      <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>
+      <button type="button" id="pqManualEntry" style="display:none;width:100%;margin-top:10px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer;opacity:0;transition:opacity .45s ease">Prefiero agregar mi portafolio manualmente</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     document.getElementById('pqFinish').onclick = ()=>{
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
@@ -32832,6 +32846,41 @@ document.addEventListener('DOMContentLoaded', function(){
     try {
       var _ib = document.getElementById('pqIbkrNote');
       if (_ib) _ib.onclick = function(){ try { window._pvShowIbkrNote(); } catch(e){} };
+    } catch(e){}
+    // Entrada manual al portafolio. Aparece 3 s DESPUÉS de pintar el resultado, no
+    // a la vez: durante esos 3 s el usuario lee su perfil y el CTA de conectar, que
+    // es el camino bueno. Si aquí sale todo junto, la salida gratuita compite con el
+    // CTA principal desde el primer frame y se lee como "da igual lo que elijas".
+    //
+    // Va en ESTA pantalla y no en el muro de suscripción porque ese muro ya no
+    // existe (ENFORCE=false): sin esta línea, quien no compra en el paywall se queda
+    // sin ninguna forma de cargar su portafolio.
+    //
+    // display+opacity y no sólo opacity: con display:none no ocupa alto mientras
+    // está oculta, así que la tarjeta no reserva un hueco vacío durante 3 s.
+    try {
+      var _mn = document.getElementById('pqManualEntry');
+      if (_mn) {
+        _mn.onclick = function(){
+          // Cerrar el quiz PRIMERO: _pvManualOnboard hace showTab('settings') y la
+          // pestaña quedaría pintada debajo del overlay, invisible.
+          try {
+            if (typeof _closeQuiz === 'function') _closeQuiz();
+            else document.getElementById('pqOverlay').classList.remove('open');
+          } catch(e){}
+          try { window._pvManualOnboard(); } catch(e){}
+        };
+        setTimeout(function(){
+          try {
+            _mn.style.display = 'block';
+            // Doble rAF: sin él el navegador colapsa el cambio de display y el de
+            // opacity en un solo estilo calculado y la transición no llega a correr.
+            requestAnimationFrame(function(){
+              requestAnimationFrame(function(){ _mn.style.opacity = '1'; });
+            });
+          } catch(e){}
+        }, 3000);
+      }
     } catch(e){}
   }
 
