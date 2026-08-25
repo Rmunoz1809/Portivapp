@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html lang="es" class="app-locked">
+<!-- pv-free desde el parseo: _pvApplyProClass no corre hasta el final de un
+     archivo de 2,3 MB, y hasta entonces _pvLocked() daba "desbloqueado" —
+     cualquier feature de pago que se pintara en ese hueco salía sin candado.
+     El defecto es el bloqueado; el veredicto real lo escribe el gate. -->
+<html lang="es" class="app-locked pv-free">
 <head>
 <meta charset="UTF-8">
 <!-- Handshake TCP+TLS adelantado al único origen externo que el arranque SIEMPRE toca
@@ -7514,6 +7518,32 @@ window._pvRepaintUnlocked = function(){
     if (typeof renderDeepPortfolioAnalysis === 'function' && typeof calcTotals === 'function')
       renderDeepPortfolioAnalysis(calcTotals());
   } catch(e){}
+  // Análisis del asesor: generate() marcó _locked y pintó la maqueta con candado, y
+  // nada volvía a llamarlo. Quien acababa de pagar seguía viendo las barras grises
+  // hasta recargar. Aquí sí se va a la red: es justo lo que compró.
+  try {
+    if (typeof PV_AI === 'object' && PV_AI && PV_AI._locked) {
+      PV_AI._locked = false;
+      if (typeof PV_AI.generate === 'function') PV_AI.generate();
+    }
+  } catch(e){}
+  // Tarjeta de conexión del broker (Ajustes): su candado se pinta en el innerHTML, no
+  // por CSS, así que sin repintar se quedaba bloqueada para un suscriptor.
+  try { if (typeof window._pvSnapRerender === 'function') window._pvSnapRerender(); } catch(e){}
+};
+
+// pro → free (caducó, se reembolsó o se cerró sesión con la app abierta). El candado
+// de casi todo es CSS y vuelve solo al cambiar la clase, pero estos dos lo llevan
+// dentro del innerHTML: sin repintarlos, el análisis del asesor y la tarjeta del
+// broker se quedaban DESBLOQUEADOS para alguien que ya no paga.
+window._pvRepaintLocked = function(){
+  try {
+    if (typeof PV_AI === 'object' && PV_AI && !PV_AI._locked) {
+      PV_AI._locked = true;
+      if (typeof PV_AI.render === 'function') PV_AI.render();
+    }
+  } catch(e){}
+  try { if (typeof window._pvSnapRerender === 'function') window._pvSnapRerender(); } catch(e){}
   try {
     const el = document.getElementById('r-analysis');
     if (el && el._pvA && typeof _renderQualAnalysis === 'function') _renderQualAnalysis(el._pvA, el);
@@ -32429,14 +32459,31 @@ document.addEventListener('DOMContentLoaded', function(){
   // window._pvIsPro queda como la respuesta canónica y síncrona a "¿es premium?".
   function _pvApplyProClass(){
     try {
+      // ¿Ya contestó alguien? _last se escribe con el veredicto del servidor (o con
+      // el último definitivo guardado, cuando no hay red). Mientras sea null NO SE
+      // SABE, que no es lo mismo que "no paga".
+      var known = !!_last;
       var pro = !!(window._pvSubActive && window._pvSubActive());
-      var was = window._pvIsPro;          // undefined en el primer paso: aún no hay nada pintado
-      window._pvIsPro = pro;
+      var was = window._pvIsPro;
+      // undefined = todavía sin veredicto. La distinción importa: snapConnect() sólo
+      // manda al paywall con un `false` EXPLÍCITO. Antes esta función corría al cargar
+      // el script con _last en null y escribía `false` de entrada, así que ese guard
+      // nunca veía undefined y el suscriptor que tocaba "Conectar mi broker" antes de
+      // que el gate resolviera acababa en la hoja de compra de una app ya pagada.
+      window._pvIsPro = known ? pro : undefined;
+      // El DOM sí se queda en el lado bloqueado mientras no se sepa: la clase es el
+      // defecto visual, no el veredicto.
       document.documentElement.classList.toggle('pv-pro',  pro);
       document.documentElement.classList.toggle('pv-free', !pro);
-      // free → pro: lo que estaba bloqueado se pintó como maqueta. Sin este repintado
-      // el usuario que acaba de pagar vería barras grises en vez de su análisis.
-      if (pro && was === false) { try { window._pvRepaintUnlocked(); } catch(e){} }
+      // → pro: lo que estaba bloqueado se pintó difuminado y con los fetch caros
+      // cortados. Sin este repintado, quien acaba de pagar se queda con las tarjetas
+      // vacías. `was !== true` y no `=== false` porque el primer veredicto real llega
+      // desde undefined, y para entonces ya puede haber contenido pintado.
+      if (pro && was !== true) { try { window._pvRepaintUnlocked(); } catch(e){} }
+      // Y al revés: perder el acceso con la app abierta tiene que volver a tapar lo
+      // que se pintó desbloqueado. Sólo desde un `true` real: pasar de undefined a
+      // false es el arranque normal, ahí no hay nada que retapar.
+      if (!pro && was === true) { try { window._pvRepaintLocked(); } catch(e){} }
     } catch(e){}
   }
   window._pvApplyProClass = _pvApplyProClass;
@@ -32482,9 +32529,16 @@ document.addEventListener('DOMContentLoaded', function(){
      usuario. Sin esto, un arranque en frío sin red no tiene con qué decidir y
      cualquier salida es a ciegas: o se tapa a quien paga, o se abre a quien no.
      Guarda active/status y nada más — ni tokens ni datos de cobro. */
-  function _ck(uid){ return 'pv_sub_last:' + (uid || 'anon'); }
-  function _cacheGet(uid){ try { return JSON.parse(localStorage.getItem(_ck(uid)) || 'null'); } catch(e){ return null; } }
+  function _ck(uid){ return 'pv_sub_last:' + uid; }
+  // Sin uid no se lee ni se escribe. La clave 'anon' de antes era un veredicto sin
+  // dueño: bastaba una pasada en la que getSession() no devolviera usuario para dejar
+  // un active:true que luego se le servía a CUALQUIER sesión que arrancara sin red.
+  function _cacheGet(uid){
+    if (!uid) return null;
+    try { return JSON.parse(localStorage.getItem(_ck(uid)) || 'null'); } catch(e){ return null; }
+  }
   function _cacheSet(uid, st){
+    if (!uid) return;
     try { localStorage.setItem(_ck(uid), JSON.stringify({
       active: !!(st && st.active), status: (st && st.status) || '', ts: Date.now()
     })); } catch(e){}
@@ -32657,11 +32711,26 @@ document.addEventListener('DOMContentLoaded', function(){
     // refresh() → Promise<boolean isPro> (que por dentro sí llama a
     // getCustomerInfo del SDK) e isPro() → boolean cacheado. En web no existe
     // PortivIAP, por eso todo va detrás de _pvIsNativeApp().
+    //
+    // OJO CON A QUIÉN SE LE PREGUNTA: el entitlement de StoreKit pertenece al APPLE ID
+    // del dispositivo, no a la cuenta de Portiv. Preguntar sin más devolvía "Pro" para
+    // CUALQUIER cuenta que entrara en un iPhone con suscripción — la segunda persona
+    // que usara el teléfono, o el mismo dueño con una cuenta de prueba, se encontraba
+    // la app entera desbloqueada sin haber pagado. Por eso se exige que el App User ID
+    // del SDK sea este usuario: se le identifica primero (login es idempotente por uid)
+    // y sólo se le cree si después coincide. Sin sesión no hay camino rápido.
     if (!srv.active && window._pvIsNativeApp && window._pvIsNativeApp()) {
       try {
         var iap = window.PortivIAP, storeKitPro = false;
-        if (iap && typeof iap.refresh === 'function')     storeKitPro = !!(await iap.refresh());
-        else if (iap && typeof iap.isPro === 'function')  storeKitPro = !!iap.isPro();
+        var _uid = window.__pvUserId;
+        if (iap && _uid && _uid !== 'local') {
+          if (typeof iap.login === 'function') { try { await iap.login(_uid); } catch(_){} }
+          var _rcUid = (typeof iap.appUserId === 'function') ? iap.appUserId() : null;
+          if (_rcUid === _uid) {
+            if (typeof iap.refresh === 'function')     storeKitPro = !!(await iap.refresh());
+            else if (typeof iap.isPro === 'function')  storeKitPro = !!iap.isPro();
+          }
+        }
         if (storeKitPro) {
           try { window._pvEntitlementSync(); } catch(_){}   // reconcilia sin bloquear
           return { active:true, status:'active', source:'storekit',
@@ -32894,10 +32963,37 @@ document.addEventListener('DOMContentLoaded', function(){
   //     "no hemos podido comprobarlo", nunca "tu pago fue rechazado".
   // En ningún caso se habla de cobros: eso es justo lo que aquí no se sabe.
   async function _gateOffline(){
-    var last = null;
-    try { last = _cacheGet(await _localUid()); } catch(e){}
+    var uid = null, last = null;
+    try { uid = await _localUid(); } catch(e){}
+    try { last = _cacheGet(uid); } catch(e){}
+    // Nativo sin veredicto guardado: RevenueCat conserva el entitlement en el
+    // dispositivo, así que todavía se puede saber si ESTE usuario compró. isPro() es
+    // síncrono y no sale a la red — justo lo que hace falta aquí. Mismo requisito de
+    // identidad que el camino rápido de _pvSubStatus: si el SDK está identificado como
+    // otra cuenta, no vale.
+    if (!last && uid) {
+      try {
+        var _iap = window.PortivIAP;
+        if (window._pvIsNativeApp && window._pvIsNativeApp() && _iap
+            && typeof _iap.appUserId === 'function' && _iap.appUserId() === uid
+            && typeof _iap.isPro === 'function' && _iap.isPro()) {
+          last = { active:true, status:'active' };
+        }
+      } catch(e){}
+    }
     var _retry = function(){ try { window._pvSubGate(); } catch(e){} };
     if (!last || last.active) {
+      // Quien pagó no puede quedarse sin sus features por meterse en el metro. Antes
+      // se leía este veredicto, se usaba sólo para NO tapar la app y se tiraba: _last
+      // seguía en null, así que <html> se quedaba en pv-free y el suscriptor veía todo
+      // difuminado. Se siembra como veredicto provisional (source:'cache') y el
+      // servidor lo pisa en cuanto vuelva la red.
+      // Nunca al revés: sin veredicto guardado NO se concede nada — se sigue en el
+      // lado bloqueado, que es el defecto.
+      if (last && last.active && !(_last && _last.active)) {
+        _last = { active:true, status:(last.status || 'active'), source:'cache' };
+        _pvApplyProClass();
+      }
       _unblock();
       _banner('warn',
         'Estableciendo conexión… Estás viendo tus últimos datos guardados.',
@@ -34413,6 +34509,9 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   }
   window._pvSetSyncBanner = _setSyncBanner;
+  // Repintado sin red: al pasar a Pro hay que quitar el candado de esta tarjeta, y
+  // snapRefresh() saldría a SnapTrade sólo para eso. Lo llama _pvRepaintUnlocked.
+  window._pvSnapRerender = function(){ try { _render(_state, _lastMeta); } catch(e){} };
 
   function _render(state, meta){
     _state = state; _lastMeta = meta||{};
