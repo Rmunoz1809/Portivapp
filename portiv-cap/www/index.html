@@ -2774,9 +2774,13 @@ window._ensureChartJs = (function(){
      sin recargar (lo hace _pvApplyProClass al cambiar el veredicto). */
   .pv-lock { position: relative; }
   html.pv-pro .pv-lock-ov { display: none; }
+  /* Quien no ha pagado tiene que VER que hay contenido real debajo — formas, filas,
+     tablas — y no poder leerlo. Lo que impide leer es el radio del blur, no el velo;
+     por eso el velo es flojo (se transparenta el fondo) y el desenfoque se mantiene
+     alto. El mensaje no depende de que el velo tape: va sobre .pv-lock-card. */
   html.pv-free .pv-lock > :not(.pv-lock-ov) {
-    filter: blur(7px) saturate(.55);
-    opacity: .62;
+    filter: blur(6.5px) saturate(.72);
+    opacity: .82;
     pointer-events: none;
     user-select: none;
   }
@@ -2786,13 +2790,24 @@ window._ensureChartJs = (function(){
     align-items: center; justify-content: center;
     gap: 10px; padding: 20px; text-align: center;
     cursor: pointer; border-radius: inherit;
-    background: linear-gradient(180deg, rgba(248,249,255,.35), rgba(248,249,255,.82));
+    background: linear-gradient(180deg, rgba(248,249,255,.16), rgba(248,249,255,.52));
+  }
+  /* Tarjeta del mensaje: fondo propio para leerse sobre un velo flojo. */
+  .pv-lock-card {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 10px; padding: 18px 20px; text-align: center;
+    max-width: 320px;
+    background: rgba(255,255,255,.94);
+    border: 1px solid var(--border, #e3e7ee);
+    border-radius: 18px;
+    box-shadow: 0 10px 34px rgba(4,22,44,.13);
   }
   .pv-lock-ico { width: 44px; height: 44px; border-radius: 50%; background: var(--blue-bg); display: flex; align-items: center; justify-content: center; }
   .pv-lock-txt { font-size: 13px; font-weight: 700; color: var(--text); max-width: 260px; line-height: 1.4; }
   .pv-lock-sub { font-size: 11.5px; color: var(--text3); }
   .pv-lock-btn { margin-top: 2px; height: 38px; padding: 0 18px; border: none; border-radius: 10px; background: var(--green-btn); color: #fff; font: 800 13px system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; cursor: pointer; }
-  body.dark-theme .pv-lock-ov { background: linear-gradient(180deg, rgba(15,29,53,.35), rgba(15,29,53,.86)); }
+  body.dark-theme .pv-lock-ov { background: linear-gradient(180deg, rgba(15,29,53,.18), rgba(15,29,53,.58)); }
+  body.dark-theme .pv-lock-card { background: rgba(21,36,62,.94); border-color: rgba(255,255,255,.10); box-shadow: 0 10px 34px rgba(0,0,0,.42); }
   body.dark-theme .pv-lock-txt { color: #fff; }
 
   /* Variante a PANTALLA COMPLETA (chat). El candado normal envuelve una tarjeta;
@@ -2807,6 +2822,15 @@ window._ensureChartJs = (function(){
   /* La tabla bloqueada no debe poder scrollearse ni seleccionarse por detrás. */
   html.pv-free .pv-lock > .rbl-card { max-height: 420px; overflow: hidden; }
 
+  /* En Ajustes el candado se mete DENTRO de .snap-card, que ya aporta su propio
+     padding (18px) y su radio (12px). Con el .pv-lock dentro del área de contenido,
+     el velo (inset:0) dejaba fuera ese marco de 18px: quedaba un borde nítido con
+     esquinas rectas dentro de una tarjeta redondeada, y por él se escapaba el halo
+     del desenfoque. Se le pasa el padding al .pv-lock para que el velo cubra la
+     tarjeta entera y herede su radio. La clase la pone _render al envolver. */
+  .snap-card.snap-card-locked { padding: 0; overflow: hidden; }
+  .snap-card.snap-card-locked > .pv-lock { padding: 18px 18px 16px; border-radius: inherit; }
+
   /* Variante PILA (análisis de acción): el candado envuelve la columna ENTERA de
      tarjetas y la difumina hasta donde llega de verdad — no se recorta a una caja,
      porque recortar escondía cuánto análisis hay y parecía que la sección se
@@ -2818,9 +2842,10 @@ window._ensureChartJs = (function(){
   .pv-lock-stack { position: relative; }
   html.pv-free .pv-lock-stack > .pv-lock-ov {
     justify-content: flex-start; padding: 0;
-    /* El velo arranca casi opaco y se abre un poco hacia abajo: así el mensaje se
-       lee sobre fondo limpio y más abajo se sigue intuyendo que hay contenido. */
-    background: linear-gradient(180deg, rgba(248,249,255,.62) 0%, rgba(248,249,255,.90) 18%, rgba(248,249,255,.72) 46%, rgba(248,249,255,.62) 100%);
+    /* Velo flojo de arriba abajo: el análisis se sigue viendo (tarjetas, filas,
+       tablas) sin poder leerse. El mensaje no necesita que el velo tape porque
+       .pv-lock-card lleva su propio fondo. */
+    background: linear-gradient(180deg, rgba(248,249,255,.30) 0%, rgba(248,249,255,.44) 20%, rgba(248,249,255,.34) 50%, rgba(248,249,255,.26) 100%);
   }
   /* El mensaje se ancla al PRINCIPIO de la zona difuminada, no a su centro: la pila
      mide miles de píxeles y centrarlo lo dejaba fuera de pantalla.
@@ -2830,26 +2855,36 @@ window._ensureChartJs = (function(){
      nada más. */
   html.pv-free .pv-lock-stack .pv-lock-card {
     position: sticky; top: max(96px, calc(50vh - 140px));
-    margin-top: 116px;
-    display: flex; flex-direction: column; align-items: center;
-    gap: 12px; padding: 20px; text-align: center;
+    margin: 116px auto 0;
+    gap: 12px; padding: 22px 20px; max-width: 340px;
   }
   html.pv-free .pv-lock-stack .pv-lock-ico { width: 54px; height: 54px; }
-  html.pv-free .pv-lock-stack .pv-lock-txt { font-size: 15px; max-width: 300px; }
+  html.pv-free .pv-lock-stack .pv-lock-txt { font-size: 15px; max-width: 280px; }
   html.pv-free .pv-lock-stack .pv-lock-sub { font-size: 12.5px; }
   html.pv-free .pv-lock-stack .pv-lock-btn { height: 44px; padding: 0 24px; font-size: 14px; border-radius: 12px; }
 
   .pv-lock-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .pv-lock-page > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
-  html.pv-free .pv-lock-page > :not(.pv-lock-ov) { filter: blur(9px) saturate(.5); opacity: .55; }
+  html.pv-free .pv-lock-page > :not(.pv-lock-ov) { filter: blur(8px) saturate(.68); opacity: .78; }
   html.pv-free .pv-lock-page .pv-lock-ov {
-    background: linear-gradient(180deg, rgba(248,249,255,.55), rgba(248,249,255,.90));
+    background: linear-gradient(180deg, rgba(248,249,255,.20), rgba(248,249,255,.52));
     gap: 12px;
   }
+  html.pv-free .pv-lock-page .pv-lock-card { gap: 12px; padding: 24px 22px; max-width: 340px; }
   html.pv-free .pv-lock-page .pv-lock-ico { width: 56px; height: 56px; }
-  html.pv-free .pv-lock-page .pv-lock-txt { font-size: 16px; max-width: 300px; }
+  html.pv-free .pv-lock-page .pv-lock-txt { font-size: 16px; max-width: 280px; }
   html.pv-free .pv-lock-page .pv-lock-sub { font-size: 13px; }
   html.pv-free .pv-lock-page .pv-lock-btn { height: 46px; padding: 0 26px; font-size: 14.5px; border-radius: 12px; }
+
+  /* Los velos de PILA y PANTALLA se declaran bajo html.pv-free, que gana por
+     especificidad a `body.dark-theme .pv-lock-ov`: en tema oscuro quedaba un velo
+     BLANCO encima de contenido oscuro. Se repiten aquí en su versión oscura. */
+  html.pv-free body.dark-theme .pv-lock-page .pv-lock-ov {
+    background: linear-gradient(180deg, rgba(15,29,53,.22), rgba(15,29,53,.58));
+  }
+  html.pv-free body.dark-theme .pv-lock-stack > .pv-lock-ov {
+    background: linear-gradient(180deg, rgba(15,29,53,.34) 0%, rgba(15,29,53,.48) 20%, rgba(15,29,53,.38) 50%, rgba(15,29,53,.30) 100%);
+  }
 
   /* Barras de la maqueta bloqueada (_pvAdvisorSkeleton). Sin animación de shimmer:
      esto NO está cargando, está bloqueado — un shimmer prometería que llega solo. */
@@ -4220,10 +4255,12 @@ window._pvAwaitIAP = function(totalMs){
 
   </div>
     <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
-      <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
-      <div class="pv-lock-txt">Pregúntale lo que quieras a <b>Portiv IA</b></div>
-      <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
-      <button class="pv-lock-btn" type="button">Ver planes</button>
+      <div class="pv-lock-card">
+        <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+        <div class="pv-lock-txt">Pregúntale lo que quieras a <b>Portiv IA</b></div>
+        <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+        <button class="pv-lock-btn" type="button">Ver planes</button>
+      </div>
     </div>
   </div>
 </div>
@@ -7484,13 +7521,16 @@ window._pvRepaintUnlocked = function(){
 };
 
 function _pvLockOverlay(txt){
+  // El mensaje va dentro de .pv-lock-card, no suelto sobre el velo: así el velo
+  // puede ser flojo (se ve el contenido detrás) sin que el texto pierda contraste.
   return '<div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">'
+    + '<div class="pv-lock-card">'
     + '<div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" '
     + 'stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     + '<rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>'
     + '<div class="pv-lock-txt">' + txt + '</div>'
     + '<div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>'
-    + '<button class="pv-lock-btn" type="button">Ver planes</button></div>';
+    + '<button class="pv-lock-btn" type="button">Ver planes</button></div></div>';
 }
 
 // Maqueta del "Análisis del asesor" para el estado bloqueado. Hace falta porque
@@ -34388,7 +34428,11 @@ document.addEventListener('DOMContentLoaded', function(){
       // el candado en vez de dejar que el usuario toque "Conectar" y reciba un
       // error. Solo en los estados donde la acción ofrecida es conectar/reconectar:
       // si ya está conectado no hay nada que vender.
-      card.innerHTML = (state === 'disconnected' || state === 'broken')
+      var _cardLocked = (state === 'disconnected' || state === 'broken');
+      // La clase deja que el CSS mueva el padding de la tarjeta al .pv-lock: sin eso
+      // el velo se recorta al área de contenido y no encaja con la tarjeta.
+      card.classList.toggle('snap-card-locked', _cardLocked);
+      card.innerHTML = _cardLocked
         ? '<div class="pv-lock">' + _cardH + _pvLockOverlay('Conecta tu broker y sincroniza tu portafolio solo') + '</div>'
         : _cardH;
     }
