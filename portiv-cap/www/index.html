@@ -10543,8 +10543,28 @@ function renderSummary(T) {
   const period = (typeof activePeriod !== 'undefined') ? activePeriod : '1M';
   const months = _PERIOD_TO_MONTHS[period] || 1;
   let base, change, changePct;
+  // ── UNA SOLA FUENTE: los mismos puntos que dibuja la línea ───────────────────
+  //    La tarjeta se calculaba con PERF_DATA y la línea con PORTIV_CHART.generate(), que
+  //    recortan la ventana con reglas distintas: en una cartera joven PERF_DATA["1W"] devuelve
+  //    el rango COMPLETO (regla "portafolio joven → todo el historial") mientras la gráfica sí
+  //    recorta a 7 días. Medido en cartera de 11 días: línea +2.77%, tarjeta +4.00% para el
+  //    MISMO botón. Normalmente updatePerfHeader corregía la tarjeta después, pero cuando las
+  //    cotizaciones están en vuelo _pvAutoRedraw se salta ese repintado y el número erróneo se
+  //    queda en pantalla. Leyendo de generate() no hay dos verdades que sincronizar.
+  try {
+    if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.generate) {
+      const _ds = PORTIV_CHART.generate(period);
+      if (_ds && _ds.values && _ds.values.length >= 2 && isFinite(_ds.change) && isFinite(_ds.changePct)) {
+        _updateSummaryCardFor(period, _ds.change, _ds.changePct);
+        return;
+      }
+    }
+  } catch (e) {}
   if (period === 'ALL') {
-    base = INITIAL_CAPITAL;
+    // El alta manual nunca fija INITIAL_CAPITAL, así que "Cambio Total" se quedaba clavado
+    // en $0 para siempre por más que la cartera subiera. Sin capital declarado, la base
+    // honesta es el PRIMER valor real de la serie (tu primer día).
+    base = INITIAL_CAPITAL > 0 ? INITIAL_CAPITAL : (PERF_DATA['ALL']?.values?.[0] || 0);
   } else if (period === 'YTD') {
     base = _baseForYTD();
   } else if (period === '1W' || period === '2W') {
@@ -10552,7 +10572,11 @@ function renderSummary(T) {
   } else {
     base = _baseForMonths(months);
   }
-  change    = T.total - base;
+  // Sin base no hay cambio que reportar. Antes solo se protegía el %, así que un usuario
+  // manual (INITIAL_CAPITAL = 0, nunca lo fija el alta manual) veía "Cambio Total +$10,000.00"
+  // junto a "+0.00%": la tarjeta contaba todo su dinero como ganancia. Si no hay referencia,
+  // el cambio es 0 en ambas unidades.
+  change    = base > 0 ? T.total - base : 0;
   changePct = base > 0 ? (change / base) * 100 : 0;
   _updateSummaryCardFor(period, change, changePct);
 }
@@ -14837,7 +14861,24 @@ const PORTIV_CHART = {
     const _daysFromStart = (_firstReal && _fromWin)
       ? Math.round((new Date(_firstReal+'T00:00:00') - new Date(_fromWin+'T00:00:00'))/86400000)
       : 0;
-    const _coversStart = !_fromWin || _daysFromStart <= 4;
+    // ── INCEPTION = el dato MÁS ANTIGUO que existe (broker + diarios de la app) ──
+    //    Antes de esa fecha el portafolio NO EXISTÍA, así que no hay hueco que rellenar:
+    //    simplemente no hay nada. Se calcula aquí para que ni la comprobación de cobertura
+    //    ni la red de seguridad de abajo intenten dibujar antes de ese día.
+    let _earliest = null;
+    try {
+      brokerPts.forEach(p=>{ if(p&&p.date&&(!_earliest||p.date<_earliest)) _earliest=p.date; });
+      this.loadDaily().forEach(p=>{ if(p&&p.date&&(!_earliest||p.date<_earliest)) _earliest=p.date; });
+    } catch(e){}
+    // BUG (portafolio más JOVEN que la ventana): 1M/YTD abrían semanas o meses antes de tu
+    // primer día. Como la serie real empieza después, _coversStart daba false y la red de
+    // seguridad TIRABA los puntos reales para dibujar una recta de 2 puntos que arrancaba en
+    // una fecha en la que no tenías nada. Ejemplo medido: cartera de 11 días con 11 cierres
+    // reales → "1M" salía como una línea recta desde el 25-jul (10 días antes de existir) y
+    // "YTD" desde el 1 de enero. Si la serie YA arranca en el dato más antiguo que hay, no
+    // falta nada: la cobertura es completa por definición.
+    const _startsAtInception = !!(_firstReal && _earliest && _firstReal <= _earliest);
+    const _coversStart = !_fromWin || _daysFromStart <= 4 || _startsAtInception;
     const _coversNow = merged.length>=3 && _daysToNow<=4 && _coversStart;
     // ── RECONSTRUCCIÓN REAL (garantía anti-fechas-viejas) ── Σ qty×cierre real (Yahoo) + efectivo
     //    → serie diaria continua que SIEMPRE llega al último día de mercado. Rellena el hueco hasta
@@ -14862,7 +14903,13 @@ const PORTIV_CHART = {
     // "flash" de línea plana / ALL +0.00% al entrar). Se deja el lienzo limpio hasta que llegue la
     // serie real densa (snapHistory) o la reconstrucción Yahoo real — solo datos reales, sin placeholder.
     var _brkConnNoLive = _brkConn && !window._BROKER_LIVE;
-    if(_fromWin && (merged.length<2 || !_coversStart) && !window._BROKER_HISTORY_PENDING && !_brkConnNoLive){
+    // La ventana de la red se recorta a la inception: rellenar un hueco es legítimo, inventar
+    // días anteriores a tu primer dato no lo es. Si al recortar no queda ni un día (cartera
+    // creada hoy), no se fabrica NADA — más abajo se cae a la sesión intradía, que es real.
+    var _netFrom = _fromWin;
+    if(_earliest && _netFrom && _netFrom < _earliest) _netFrom = _earliest;
+    if(_netFrom && _netFrom >= today) _netFrom = null;
+    if(_netFrom && (merged.length<2 || !_coversStart) && !window._BROKER_HISTORY_PENDING && !_brkConnNoLive){
       const _all={};
       brokerPts.forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
       this.loadDaily().forEach(p=>{_all[p.date]={date:p.date,value:p.value};});
@@ -14882,11 +14929,20 @@ const PORTIV_CHART = {
         };
         let _liveNow=_allArr[_allArr.length-1].value;
         try{ if(typeof calcTotals==='function'){ const _t=+calcTotals().total.toFixed(2); if(_t>0)_liveNow=_t; } }catch(e){}
-        merged=[{date:_fromWin,value:_valAt(_fromWin),label:fmtDate(_fromWin)},
+        merged=[{date:_netFrom,value:_valAt(_netFrom),label:fmtDate(_netFrom)},
                 {date:today,value:_liveNow,label:fmtDate(today)}];
       }
     }
-    if(!merged.length)return null;
+    if(!merged.length){
+      // Sin un solo cierre diario guardado (primer arranque) la ventana queda vacía y antes se
+      // devolvía null: el lienzo se quedaba con lo que hubiera pintado antes — en una cartera
+      // nueva, un punto suelto. La sesión de hoy sí es un dato real y ya tiene dos extremos.
+      if(period!=='1D'){
+        let _i=null; try{ _i=this.generate('1D'); }catch(e){}
+        if(_i && _i.values && _i.values.length>=2) return _i;
+      }
+      return null;
+    }
     // Asegurar que el último punto = total en vivo actual
     if(typeof calcTotals==='function'){
       const liveTotal=+calcTotals().total.toFixed(2);
@@ -14895,6 +14951,17 @@ const PORTIV_CHART = {
         if(last.date===today)last.value=liveTotal;
         else merged.push({date:today,value:liveTotal,label:fmtDate(today)});
       }
+    }
+    // ── UN SOLO PUNTO NO ES UNA LÍNEA ───────────────────────────────────────────
+    //    Cartera estrenada hoy: el único cierre diario que existe es el de hoy, así que
+    //    ALL/YTD/1M devolvían UN punto y Chart.js pintaba un puntito suelto en un lienzo
+    //    vacío (medido: labels=1). Inventar un día anterior sería mentir, pero la sesión
+    //    de HOY sí es un dato real y ya tiene dos extremos (apertura → ahora): se dibuja
+    //    esa. La cartera es de hoy, la gráfica muestra hoy.
+    if(merged.length<2 && period!=='1D'){
+      let _intra=null;
+      try{ _intra=this.generate('1D'); }catch(e){}
+      if(_intra && _intra.values && _intra.values.length>=2) return _intra;
     }
     const vals=merged.map(p=>p.value);
     const lbls=merged.map(p=>p.label||fmtDate(p.date));
@@ -15900,7 +15967,11 @@ const PERIOD_MILESTONES = [
 function _baseForYTD(){
   const ALL = PERF_DATA['ALL'];
   const jan1 = new Date(new Date().getFullYear(), 0, 1); jan1.setHours(0,0,0,0);
-  if (jan1 <= _inceptionDate()) return INITIAL_CAPITAL;
+  // Cartera nacida DESPUÉS del 1 de enero → el año empieza para ti el día que empezaste.
+  // INITIAL_CAPITAL vale 0 en el alta manual, así que se cae al primer valor real antes
+  // que devolver una base 0 (que apagaba el % del año entero).
+  const _firstVal = (ALL && ALL.values && ALL.values.length) ? ALL.values[0] : 0;
+  if (jan1 <= _inceptionDate()) return INITIAL_CAPITAL > 0 ? INITIAL_CAPITAL : _firstVal;
   if (!ALL || !ALL.dates || !ALL.dates.length) return INITIAL_CAPITAL;
   let bestIdx = 0, bestDiff = Infinity; const t = jan1.getTime();
   for (let i=0;i<ALL.dates.length;i++){ const d=new Date(ALL.dates[i]).getTime(); const diff=Math.abs(d-t); if(diff<bestDiff){bestDiff=diff;bestIdx=i;} }
@@ -16189,6 +16260,14 @@ function _applyChartYBounds() {
     return;
   }
   // 2) Fallback (aún sin datos pintados): banda global del historial.
+  // BUG: el afterBuildTicks de arriba es un CIERRE sobre el step del período ANTERIOR y se
+  // queda enganchado al eje. Si la serie nueva no se puede encajar (p.ej. un solo punto), este
+  // camino cambiaba min/max pero dejaba el generador viejo puesto: con un step de $20 sobre una
+  // banda de $1.000 escupía 12 etiquetas amontonadas en el 20% inferior del eje — un borrón
+  // negro ilegible pegado al borde (reproducido en pantalla). Se limpia antes de tocar nada.
+  y.afterBuildTicks = undefined;
+  if (y.ticks) { y.ticks.stepSize = undefined; y.ticks.includeBounds = true; }
+  perfChart._axStep = undefined;
   if (_chartYMin === null) _calcGlobalYBounds();
   if (_chartYMin === null) return;
   y.min = _chartYMin;
