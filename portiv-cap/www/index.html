@@ -2807,19 +2807,37 @@ window._ensureChartJs = (function(){
   /* La tabla bloqueada no debe poder scrollearse ni seleccionarse por detrás. */
   html.pv-free .pv-lock > .rbl-card { max-height: 420px; overflow: hidden; }
 
-  /* Variante PILA (análisis de acción): el candado envuelve una columna larga de
-     tarjetas. Sin tope de altura el overlay mediría miles de píxeles y su mensaje
-     quedaría centrado a media pantalla de scroll. Se recorta la pila a la altura
-     de un par de tarjetas: se ve QUÉ hay debajo sin poder leerlo. */
+  /* Variante PILA (análisis de acción): el candado envuelve la columna ENTERA de
+     tarjetas y la difumina hasta donde llega de verdad — no se recorta a una caja,
+     porque recortar escondía cuánto análisis hay y parecía que la sección se
+     acababa ahí.
+     El problema de difuminar 3.000px es que un overlay `inset:0` centra su mensaje
+     a mitad de esa altura, o sea fuera de pantalla. Por eso el mensaje va en un
+     hijo `sticky`: el velo cubre toda la pila y el candado acompaña al scroll
+     mientras dura. */
   .pv-lock-stack { position: relative; }
-  html.pv-free .pv-lock-stack > .pv-lock-body { max-height: 440px; overflow: hidden; }
-  html.pv-free .pv-lock-stack > .pv-lock-ov { gap: 12px; }
+  html.pv-free .pv-lock-stack > .pv-lock-ov {
+    justify-content: flex-start; padding: 0;
+    /* El velo arranca casi opaco y se abre un poco hacia abajo: así el mensaje se
+       lee sobre fondo limpio y más abajo se sigue intuyendo que hay contenido. */
+    background: linear-gradient(180deg, rgba(248,249,255,.62) 0%, rgba(248,249,255,.90) 18%, rgba(248,249,255,.72) 46%, rgba(248,249,255,.62) 100%);
+  }
+  /* El mensaje se ancla al PRINCIPIO de la zona difuminada, no a su centro: la pila
+     mide miles de píxeles y centrarlo lo dejaba fuera de pantalla.
+     `sticky` se deja puesto a propósito aunque hoy no se active — el ancestro de
+     scroll (#tab-analizar) no llega a desplazarse, así que la tarjeta se queda en su
+     sitio estático; si ese layout cambia, el candado acompañará al scroll sin tocar
+     nada más. */
+  html.pv-free .pv-lock-stack .pv-lock-card {
+    position: sticky; top: max(96px, calc(50vh - 140px));
+    margin-top: 116px;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px; padding: 20px; text-align: center;
+  }
   html.pv-free .pv-lock-stack .pv-lock-ico { width: 54px; height: 54px; }
   html.pv-free .pv-lock-stack .pv-lock-txt { font-size: 15px; max-width: 300px; }
   html.pv-free .pv-lock-stack .pv-lock-sub { font-size: 12.5px; }
   html.pv-free .pv-lock-stack .pv-lock-btn { height: 44px; padding: 0 24px; font-size: 14px; border-radius: 12px; }
-  /* Con Pro el envoltorio tiene que ser invisible: ni recorte, ni tope, ni caja. */
-  html.pv-pro .pv-lock-stack > .pv-lock-body { max-height: none; overflow: visible; }
 
   .pv-lock-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .pv-lock-page > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
@@ -5027,10 +5045,12 @@ window._pvAwaitIAP = function(totalMs){
     <div id="r-eps" style="margin-bottom:16px"></div>
       </div><!-- /.pv-lock-body -->
       <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
-        <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
-        <div class="pv-lock-txt">El análisis completo: foso, ventajas, finanzas, valoración y técnico</div>
-        <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
-        <button class="pv-lock-btn" type="button">Ver planes</button>
+        <div class="pv-lock-card">
+          <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+          <div class="pv-lock-txt">El análisis completo: foso, ventajas, finanzas, valoración y técnico</div>
+          <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+          <button class="pv-lock-btn" type="button">Ver planes</button>
+        </div>
       </div>
     </div>
 
@@ -7441,6 +7461,28 @@ async function _pvAiEntitled(){
 // ha cargado cuando se pinta esto y se veía la palabra "LOCK" en crudo — mismo
 // criterio y mismo path que el candado de _block.
 // El onclick va en el CONTENEDOR, así que el botón hereda el clic: un solo handler.
+// ¿Hay que tratar la pantalla como bloqueada? Fuente única: la clase que escribe
+// _pvApplyProClass. Se lee en el MOMENTO de pintar, así que un cambio de veredicto
+// sólo necesita repintar, nunca recargar.
+function _pvLocked(){
+  try { return document.documentElement.classList.contains('pv-free'); } catch(e){ return false; }
+}
+
+// Al pasar a Pro hay que REPINTAR: lo bloqueado se pintó como maqueta, así que
+// limpiar el blur por CSS dejaría barras grises donde debería ir el análisis.
+// Ninguna de las dos ramas vuelve a la red: el portafolio se recalcula en local y
+// el análisis de acción se repinta desde el objeto `a` que quedó guardado.
+window._pvRepaintUnlocked = function(){
+  try {
+    if (typeof renderDeepPortfolioAnalysis === 'function' && typeof calcTotals === 'function')
+      renderDeepPortfolioAnalysis(calcTotals());
+  } catch(e){}
+  try {
+    const el = document.getElementById('r-analysis');
+    if (el && el._pvA && typeof _renderQualAnalysis === 'function') _renderQualAnalysis(el._pvA, el);
+  } catch(e){}
+};
+
 function _pvLockOverlay(txt){
   return '<div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">'
     + '<div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" '
@@ -21364,6 +21406,12 @@ function _renderQualAnalysis(a, el){
     if (_rh) { _rh.classList.add('pvx'); _rh.innerHTML = h; h = ''; }
   } catch(e){}
 
+  // Plan gratuito: se guarda `a` para poder repintar el análisis COMPLETO —con sus
+  // competidores y su técnico— en cuanto el usuario compre, sin volver a la red a
+  // por la parte cara.
+  const _lockedUI = (typeof _pvLocked === 'function') && _pvLocked();
+  if (_lockedUI) { try { el._pvA = a; } catch(e){} }
+
   // 2) FOSO competitivo (moat): pill de fuerza + bullets.
   const moatCls = /fuerte/i.test(a.moat.label)?'green': /sin foso|débil/i.test(a.moat.label)?'red':'amber';
   h += `<div class="px-card">${stitle('Foso competitivo (moat)','moat')}
@@ -21603,6 +21651,14 @@ function _renderQualAnalysis(a, el){
   h += `<div class="px-disclaimer">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>`;
 
   el.innerHTML = h;
+  // Detrás del candado va el análisis REAL, difuminado. Lo que NO se pide son los
+  // dos rellenos LAZY de abajo: son las únicas llamadas de red de esta función
+  // (competidores y barras diarias de Alpaca) y son POR USUARIO, no compartidas
+  // como la narrativa. Sus tarjetas quedan con el encabezado y el cuerpo vacío —
+  // detrás del blur no se nota — y se llenan de verdad al pasar a Pro, vía
+  // _pvRepaintUnlocked. Lo que sigue DESPUÉS sí corre siempre: sincroniza la NOTA,
+  // que es justo lo único que el plan gratuito ve nítido.
+  if (!_lockedUI) {
   // ② Competidores: llena el slot LAZY. Si ya está cacheado → instantáneo; si no, fetch gentil
   // en 2º plano que re-pinta solo ese slot (nunca bloquea ni rompe el resto del análisis).
   try {
@@ -21626,6 +21682,7 @@ function _renderQualAnalysis(a, el){
     const _th = el.querySelector('#pvx-tec-host');
     if (_th) _pvtFillInto(_th, a.ticker);
   } catch(e){}
+  }   // /if (!_lockedUI)
   // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
   // número, escrito una sola vez cuando ya es definitivo (arriba quedó en "Analizando…").
   try {
@@ -32333,9 +32390,13 @@ document.addEventListener('DOMContentLoaded', function(){
   function _pvApplyProClass(){
     try {
       var pro = !!(window._pvSubActive && window._pvSubActive());
+      var was = window._pvIsPro;          // undefined en el primer paso: aún no hay nada pintado
       window._pvIsPro = pro;
       document.documentElement.classList.toggle('pv-pro',  pro);
       document.documentElement.classList.toggle('pv-free', !pro);
+      // free → pro: lo que estaba bloqueado se pintó como maqueta. Sin este repintado
+      // el usuario que acaba de pagar vería barras grises en vez de su análisis.
+      if (pro && was === false) { try { window._pvRepaintUnlocked(); } catch(e){} }
     } catch(e){}
   }
   window._pvApplyProClass = _pvApplyProClass;
