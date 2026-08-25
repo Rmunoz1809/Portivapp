@@ -127,6 +127,35 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
     try { panel(); } catch(e){}
   }, TIMEOUT_MS);
 })();
+
+/* ─── COLA DE ARRANQUE: nada de red hasta que haya sesión ─────────────────────────
+   init() corre en DOMContentLoaded, o sea TAMBIÉN con la pantalla de login delante.
+   Medido en el navegador sin sesión: 15 peticiones al calendario de resultados, 2 de
+   noticias generales, 10 lecturas del outlook compartido y 10 llamadas a SnapTrade
+   que sólo podían fallar ("Inicia sesión para conectar tu broker") — todo para un
+   visitante anónimo que ni siquiera ha entrado. Es dinero del proxy, batería del
+   teléfono y ruido en la consola, y encima compite con el propio login.
+
+   _pvWhenRevealed(fn) encola ese trabajo hasta revealApp(), que es el ÚNICO punto
+   donde la app se destapa y que sólo se alcanza con sesión ya validada. Si la app ya
+   está revelada, corre en el acto. Los motores que NO dependen de cuenta (precios,
+   gráfica, temporizadores locales) se quedan donde estaban: esto sólo aplaza lo que
+   sale a la red a nombre del usuario. */
+(function(){
+  var q = [];
+  window._pvRevealed = false;
+  window._pvWhenRevealed = function(fn){
+    if (typeof fn !== 'function') return;
+    if (window._pvRevealed) { try { fn(); } catch(e){} return; }
+    q.push(fn);
+  };
+  window._pvFlushRevealed = function(){
+    if (window._pvRevealed) return;
+    window._pvRevealed = true;
+    var list = q; q = [];
+    list.forEach(function(fn){ try { fn(); } catch(e){} });
+  };
+})();
 </script>
 
 <script>
@@ -206,9 +235,16 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
     }
     return false;
   }
+  // Captura para llegar antes que cualquier handler de la app… pero el barrido en sí
+  // se aplaza un tick. sweepFrom pide getComputedStyle + getBoundingClientRect de hasta
+  // 40 ancestros: hacerlo DENTRO del pointerdown fuerza recálculo de estilo y layout
+  // sincrónicos en cada toque, justo en el frame en el que el dedo espera respuesta.
+  // Nada de lo que hace es necesario para ESTE toque (sólo desbloquea los siguientes),
+  // así que corre después, con el frame ya entregado.
   window.addEventListener('pointerdown', function(ev){
-    try { sweepFrom(ev.target); } catch(e){}
-  }, true);   // captura: hay que llegar antes que cualquier handler de la app
+    var t = ev.target;
+    setTimeout(function(){ try { sweepFrom(t); } catch(e){} }, 0);
+  }, true);
 
   // Volver a la pestaña/app es justo el momento en que aparecen estos estados a medias
   // (los temporizadores y las animaciones se congelan en segundo plano). Se barre lo que
@@ -7267,6 +7303,14 @@ async function renderSettings(){
 // ═══════════════════════════════════════════════════
 // Todas las llamadas de IA (texto y visión) van al proxy anthropic-proxy de Supabase,
 // con la key guardada como secreto server-side. Sin claves ni proxies en el cliente.
+// La cola de arranque se define en el <head>. Si por lo que sea ese bloque no corrió,
+// se degrada a "ejecutar en el acto" — o sea, al comportamiento anterior — en vez de
+// dejar sin noticias ni outlook a toda la app por una función ausente.
+if (typeof window._pvWhenRevealed !== 'function') {
+  window._pvWhenRevealed = function(fn){ try { fn(); } catch(e){} };
+  window._pvFlushRevealed = function(){ window._pvRevealed = true; };
+}
+
 // ── Logging de desarrollo: no-op en producción (window.DEBUG=false) ───────────
 window.DEBUG = false;
 window._pvLog = function(){ if (window.DEBUG) { try { console.log.apply(console, arguments); } catch(_){} } };
@@ -7614,7 +7658,7 @@ const _CONSERVE_CLAUDE_QUOTA = true;
 // automática y solo generan bajo demanda (al abrir algo puntual, que ya tiene su propio dedup).
 const _TAB_ID = 'tab_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 const _LEADER_KEY = 'portiv_prewarm_leader';
-const _LEADER_TTL = 20000; // 20s: de sobra entre heartbeats de 7s (pestaña cerrada expira rápido)
+const _LEADER_TTL = 45000; // 45s: de sobra entre heartbeats de 15s (pestaña cerrada expira rápido)
 function _amPrewarmLeader(){
   try {
     const raw = localStorage.getItem(_LEADER_KEY);
@@ -7628,7 +7672,11 @@ function _amPrewarmLeader(){
 }
 // `document.hidden` añadido: era el único timer de los 12 sin puerta de visibilidad, y
 // escribe localStorage (síncrono, a disco) cada 7 s incluso con la app en segundo plano.
-setInterval(() => { if (document.hidden) return; try { _amPrewarmLeader(); } catch(e){} }, 7000);
+// Cada latido es un localStorage.setItem, o sea una escritura SÍNCRONA a disco en el hilo
+// principal; a 7 s son ~12.000 al día de uso. El lock sólo protege ráfagas que ocurren cada
+// 30 min, así que 15 s de latido con TTL de 45 s da exactamente la misma garantía por menos
+// de la mitad de escrituras.
+setInterval(() => { if (document.hidden) return; try { _amPrewarmLeader(); } catch(e){} }, 15000);
 
 const _ANTHROPIC_MODEL_MAP = {
   'claude-haiku-4-5':  'claude-haiku-4-5-20251001',
@@ -14053,22 +14101,30 @@ function renderNewsTab() {
   // Noticias GENERALES compartidas (hoy/esta semana/próxima): sobrescriben las
   // secciones del tab con la copia única de la nube (misma para todos). Si aún no
   // hay copia, queda el fallback de arriba hasta que ensureFresh() la traiga/genere.
-  try { if (window.SharedNews) { SharedNews.apply(); SharedNews.ensureFresh(); } } catch(e){}
+  // apply() es local (pinta lo cacheado) y va siempre. ensureFresh() sale a la nube: se
+  // aplaza hasta que haya sesión — init() llama a renderNewsTab() también con la pantalla
+  // de login delante, y ahí esa lectura no puede servir para nada.
+  try { if (window.SharedNews) SharedNews.apply(); } catch(e){}
+  _pvWhenRevealed(function(){ try { if (window.SharedNews) SharedNews.ensureFresh(); } catch(e){} });
   // Outlook semanal (Esta/Próxima semana): sincroniza con la nube al abrir el tab → si el tick de
   // medianoche ET se perdió (app cerrada), abrir Noticias trae/regenera la copia del día. TTL-gated
   // + lock global → sigue siendo 1× global (lee la nube; solo regenera si está vencida y hay sesión).
-  try { if (window.SharedOutlook && typeof SharedOutlook.sync === 'function') SharedOutlook.sync(); } catch(e){}
+  _pvWhenRevealed(function(){
+    try { if (window.SharedOutlook && typeof SharedOutlook.sync === 'function') SharedOutlook.sync(); } catch(e){}
+  });
   // FALLBACK DETERMINISTA (sin IA, sin costo): si no hay noticias "de hoy" (IA/nube no disponible
   // — p.ej. en file:// o feriado), trae las de mercado REALES de Finnhub vía el
   // proxy remoto (funciona en file://) y re-renderiza. Garantiza que "Most Important News of Today"
   // SIEMPRE muestre algo real en vez de un spinner infinito.
-  try {
-    if ((!GENERAL_NEWS || !GENERAL_NEWS.length) && typeof _refreshGeneralNews === 'function' && !window._genNewsInflight) {
-      window._genNewsInflight = true;
-      _refreshGeneralNews(9000).then(function(n){ window._genNewsInflight = false; if (n) { try{ renderNewsTab(); }catch(e){} } })
-                               .catch(function(){ window._genNewsInflight = false; });
-    }
-  } catch(e){}
+  _pvWhenRevealed(function(){
+    try {
+      if ((!GENERAL_NEWS || !GENERAL_NEWS.length) && typeof _refreshGeneralNews === 'function' && !window._genNewsInflight) {
+        window._genNewsInflight = true;
+        _refreshGeneralNews(9000).then(function(n){ window._genNewsInflight = false; if (n) { try{ renderNewsTab(); }catch(e){} } })
+                                 .catch(function(){ window._genNewsInflight = false; });
+      }
+    } catch(e){}
+  });
   { const _hl = document.getElementById('newsHeaderLabel'); if (_hl) _hl.textContent = 'Panorama del Mercado'; }
   const _nd = document.getElementById('newsDateLabel');
   if (_nd) _nd.textContent = 'Hoy, ' + new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'});
@@ -14180,10 +14236,12 @@ function renderNewsTab() {
   // ── Weekly Outlook ─────────────────────────────────────────────────────────────
   // Al abrir: pinta el caché si está fresco (< 24h, misma semana); si está vencido o
   // ausente, regenera automáticamente. El refresh diario 00:00 ET lo maneja el scheduler.
-  try {
-    if (typeof refreshNextWeekOutlook === 'function') refreshNextWeekOutlook(false);
-    else _buildWeeklyOutlook();
-  } catch(e) { _buildWeeklyOutlook(); }
+  _pvWhenRevealed(function(){
+    try {
+      if (typeof refreshNextWeekOutlook === 'function') refreshNextWeekOutlook(false);
+      else _buildWeeklyOutlook();
+    } catch(e) { _buildWeeklyOutlook(); }
+  });
 
   // ── Análisis IA de noticias: BAJO DEMANDA (lazy) ──────────────────────────────
   // Antes se pre-generaba el resumen IA de TODAS las noticias del feed en segundo
@@ -17764,7 +17822,70 @@ function _fhEndpoint(path) {
 const _fhPlanBlocked = new Set();
 function _fhPathKey(path){ return String(path || '').split('?')[0]; }
 
+// ── Coalescing de fhFetch — un choke point para TODA la API de datos ──────────────
+// Varios bloques piden el mismo endpoint del mismo símbolo casi a la vez: medido con 5
+// posiciones, /quote sale dos veces por ticker y /stock/earnings, /calendar/earnings,
+// /stock/metric, /stock/recommendation, /stock/price-target y /stock/profile2 salen 3-4
+// veces cada uno en el mismo arranque. Cada repetición es una llamada facturada y, peor,
+// es lo que llena la ráfaga que el proxy compartido responde con 403 — y ese 403 cuesta
+// ~11 s de backoff (ver el comentario del 403 más abajo, que describe exactamente este
+// problema desde el otro lado).
+//
+// Dos capas:
+//   · EN VUELO — dos peticiones idénticas simultáneas comparten la misma promesa. Esto no
+//     cambia la semántica: los datos serían byte a byte los mismos.
+//   · MEMO CORTO — por familia de endpoint, con TTL siempre MENOR que la frecuencia real
+//     con la que ese dato cambia (una cotización: 4 s, o sea sólo colapsa la ráfaga; el
+//     perfil de la empresa: 60 min). Los cachés de la app (localStorage) siguen igual:
+//     esto es una capa por debajo, de memoria y de vida corta.
+// La respuesta se CLONA en cada entrega: antes cada llamador recibía su propio objeto de
+// res.json() y podía mutarlo sin afectar a nadie.
+const _FH_TTL = [
+  ['/quote?',                     4 * 1000],
+  ['/stock/candle?',             60 * 1000],
+  ['/stock/metric?',        15 * 60 * 1000],
+  ['/calendar/earnings?',   15 * 60 * 1000],
+  ['/company-news?',         5 * 60 * 1000],
+  ['/news?',                 5 * 60 * 1000],
+  ['/stock/earnings?',      60 * 60 * 1000],
+  ['/stock/recommendation?', 60 * 60 * 1000],
+  ['/stock/price-target?',   60 * 60 * 1000],
+  ['/stock/profile2?',       60 * 60 * 1000],
+];
+const _fhInflight = new Map();
+const _fhMemo     = new Map();
+const _FH_MEMO_MAX = 300;
+function _fhTtlFor(path){
+  const p = String(path || '');
+  for (const [pref, ms] of _FH_TTL) if (p.indexOf(pref) === 0) return ms;
+  return 0;
+}
+function _fhCloneVal(v){
+  try { return (typeof structuredClone === 'function') ? structuredClone(v) : JSON.parse(JSON.stringify(v)); }
+  catch(e){ return v; }
+}
 async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
+  if (_retry) return _fhFetchRaw(path, timeoutMs, _retry);   // reintento interno: sin capa
+  const key = String(path || '');
+  const ttl = _fhTtlFor(key);
+  if (ttl) {
+    const hit = _fhMemo.get(key);
+    if (hit && (Date.now() - hit.ts) < ttl) return _fhCloneVal(hit.val);
+  }
+  const live = _fhInflight.get(key);
+  if (live) return live.then(_fhCloneVal);
+  const p = _fhFetchRaw(key, timeoutMs, 0).then(val => {
+    if (ttl) {
+      if (_fhMemo.size >= _FH_MEMO_MAX) { const k0 = _fhMemo.keys().next().value; _fhMemo.delete(k0); }
+      _fhMemo.set(key, { ts: Date.now(), val });
+    }
+    return val;
+  }).finally(() => { _fhInflight.delete(key); });
+  _fhInflight.set(key, p);
+  return p.then(_fhCloneVal);
+}
+
+async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
   if (_fhPlanBlocked.has(_fhPathKey(path))) throw new Error('Endpoint no incluido en el plan de datos');
   const ep = _fhEndpoint(path);
   if (!ep) throw new Error('Sin API Key — configúrala primero');
@@ -17777,7 +17898,7 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
         (res.status === 404 || (res.status >= 500 && res.status !== 502))) {
       if (ep.kind === 'supabase') _fhProxyDead = true; else _fhNetlifyDead = true;
       clearTimeout(tid);
-      if (_fhEndpoint(path)) return fhFetch(path, timeoutMs, _retry);
+      if (_fhEndpoint(path)) return _fhFetchRaw(path, timeoutMs, _retry);
       throw new Error(`Finnhub no disponible (${res.status})`);
     }
     clearTimeout(tid);
@@ -17813,7 +17934,7 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
           waitMs = base * (0.8 + Math.random() * 0.4);
         }
         await new Promise(r => setTimeout(r, waitMs));
-        return fhFetch(path, timeoutMs, _retry + 1);
+        return _fhFetchRaw(path, timeoutMs, _retry + 1);
       }
       throw new Error('Límite de llamadas alcanzado — espera unos segundos e intenta de nuevo');
     }
@@ -17829,7 +17950,7 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
     const _networkFail = (e && e.name === 'TypeError');
     if ((ep.kind === 'supabase' || ep.kind === 'netlify') && _networkFail) {
       if (ep.kind === 'supabase') _fhProxyDead = true; else _fhNetlifyDead = true;
-      if (_fhEndpoint(path)) return fhFetch(path, timeoutMs, _retry);
+      if (_fhEndpoint(path)) return _fhFetchRaw(path, timeoutMs, _retry);
     }
     throw e.name === 'AbortError' ? new Error('Tiempo de espera agotado') : e;
   }
@@ -18067,7 +18188,46 @@ function _quoteCachePut(ticker, price, change, pct, src){
 }
 function _quoteCacheGet(ticker){ const t=(ticker||'').toUpperCase(); const q=_QUOTE_CACHE[t]; return (q && q.price>0) ? q : null; }
 
+// ── Coalescing de apiCall (sólo lecturas lentas) ──────────────────────────────
+// Tres caminos independientes piden el MISMO calendario de resultados durante el
+// arranque —_earnFetchWeek, _buildWeekCatalysts y PORTIV_NEWS.fetch.earnings— y
+// ninguno sabe de los otros. Medido en el navegador: 15 peticiones a
+// /calendar/earnings de la misma semana en UN arranque, más 2 de /news general.
+// Cada una es una llamada facturada al proxy, y en el teléfono además es batería.
+//
+// Dos capas, ambas acotadas a las tres acciones donde se midió el problema:
+//   · in-flight → dos llamadas idénticas SIMULTÁNEAS comparten la promesa.
+//   · memo TTL  → una llamada idéntica poco después reusa la respuesta.
+// `quote` y `history` NO pasan por aquí: son el precio en vivo y tienen que salir
+// a la red siempre. El resultado se CLONA en cada entrega para que un consumidor
+// que mute su copia no le cambie los datos al siguiente (antes cada llamador
+// recibía un objeto recién creado y podía contar con ello).
+const _API_MEMO_TTL = { earningsCalendar: 10*60*1000, generalNews: 5*60*1000, news: 5*60*1000 };
+const _apiInflight  = new Map();
+const _apiMemo      = new Map();
+function _apiKey(p){
+  return [p.action, p.ticker||'', p.tickers||'', p.period||'', p.from||'', p.to||''].join('|');
+}
+function _apiClone(v){
+  try { return (typeof structuredClone === 'function') ? structuredClone(v) : JSON.parse(JSON.stringify(v)); }
+  catch(e){ return v; }
+}
 async function apiCall(params, timeoutMs = 15000) {
+  const ttl = _API_MEMO_TTL[(params && params.action) || ''] || 0;
+  if (!ttl) return _apiCallRaw(params, timeoutMs);
+  const key = _apiKey(params);
+  const hit = _apiMemo.get(key);
+  if (hit && (Date.now() - hit.ts) < ttl) return _apiClone(hit.val);
+  const live = _apiInflight.get(key);
+  if (live) return live.then(_apiClone);
+  const p = _apiCallRaw(params, timeoutMs)
+    .then(val => { _apiMemo.set(key, { ts: Date.now(), val }); return val; })
+    .finally(() => { _apiInflight.delete(key); });
+  _apiInflight.set(key, p);
+  return p.then(_apiClone);
+}
+
+async function _apiCallRaw(params, timeoutMs = 15000) {
   const { action, ticker, tickers, period, from, to } = params;
 
   if (action === 'quote') {
@@ -22641,25 +22801,40 @@ function _pvtRedibujar(tk, canvas, intento){
 //                       no están pintando, así que no puede ser la única.
 //   · resize          — respaldo universal, funciona incluso donde RO no entrega.
 //   · orientationchange — el giro del teléfono: el reflow llega DESPUÉS del evento, de ahí la espera.
+// Los enganches del canvas anterior se sueltan AQUÍ, al montar el nuevo, y no desde un
+// setInterval de 4 s que seguía despertando al teléfono mucho después de que el canvas
+// muriera (y que además dejaba hasta 4 s de listeners solapados repintando dos canvas).
+// Un solo desmontador vivo a la vez, guardado en el módulo.
+let _pvtDesengancharPrev = null;
 function _pvtEngancharResize(tk, canvas){
+  try { if (_pvtDesengancharPrev) _pvtDesengancharPrev(); } catch(e){}
+  if (canvas._pvtEnganchado) return;   // re-render del MISMO canvas → no dupliques
+  canvas._pvtEnganchado = true;
   let to = null;
   const repintar = () => { clearTimeout(to); to = setTimeout(() => _pvtRedibujar(tk, canvas), 150); };
   const girar    = () => setTimeout(() => _pvtRedibujar(tk, canvas), 250);
-  window.addEventListener('resize', repintar);
-  window.addEventListener('orientationchange', girar);
+  window.addEventListener('resize', repintar, { passive: true });
+  window.addEventListener('orientationchange', girar, { passive: true });
   let ro = null;
   try {
     if (window.ResizeObserver){ ro = new ResizeObserver(repintar); ro.observe(canvas); }
   } catch(e){ ro = null; }
-  // Al salir el canvas del DOM (cambio de acción o de pestaña) se sueltan los tres enganches:
-  // sin esto cada acción visitada dejaría un listener vivo repintando un canvas huérfano.
-  const vigía = setInterval(() => {
-    if (canvas.isConnected) return;
-    if (ro) ro.disconnect();
+  const soltar = () => {
+    _pvtDesengancharPrev = null;
+    canvas._pvtEnganchado = false;
+    if (ro) { try { ro.disconnect(); } catch(e){} }
     window.removeEventListener('resize', repintar);
     window.removeEventListener('orientationchange', girar);
-    clearTimeout(to); clearTimeout(canvas._pvtRetry); clearInterval(vigía);
-  }, 4000);
+    clearTimeout(to); clearTimeout(canvas._pvtRetry);
+  };
+  _pvtDesengancharPrev = soltar;
+  // Red de seguridad para el caso en el que NO se monte otro canvas después (salir de la
+  // pestaña y no volver): una sola comprobación al minuto, no cada 4 s para siempre.
+  const vigía = setInterval(() => {
+    if (canvas.isConnected) return;
+    clearInterval(vigía);
+    if (_pvtDesengancharPrev === soltar) soltar();
+  }, 60000);
 }
 
 // ── Caché del análisis ENSAMBLADO (objeto `a` listo para pintar) ─────────────────
@@ -22681,9 +22856,17 @@ function _qualGet(tk, eKey){
 }
 function _qualSet(tk, a, eKey){
   tk = (tk||'').toUpperCase();
+  // Ante cuota, el fallback anterior guardaba SÓLO este ticker: tiraba el análisis
+  // cacheado de todos los demás y la siguiente visita a cada uno se regeneraba entera.
+  // Ahora se descartan primero los más viejos (se conservan los 12 más recientes) y sólo
+  // si aún así no cabe se cae al caché de un solo ticker.
   try { const c=_qualLoad(); c[tk]={a, eKey:eKey||'na', ts:Date.now()};
-    localStorage.setItem(_QUAL_LS, JSON.stringify(c)); }
-  catch(e){ try { localStorage.setItem(_QUAL_LS, JSON.stringify({[tk]:{a, eKey:eKey||'na', ts:Date.now()}})); } catch(_){} }
+    if (_lsSet(_QUAL_LS, JSON.stringify(c))) return;
+    const ents = Object.entries(c).sort((x,y)=>(x[1].ts||0)-(y[1].ts||0));
+    while (ents.length > 12) { delete c[ents.shift()[0]]; }
+    if (_lsSet(_QUAL_LS, JSON.stringify(c))) return;
+  } catch(e){}
+  try { _lsSet(_QUAL_LS, JSON.stringify({[tk]:{a, eKey:eKey||'na', ts:Date.now()}})); } catch(_){}
 }
 
 // Ensambla el objeto `a` COMPLETO: determinista (_buildQualAnalysis) + narrativa (bio/pros/
@@ -24826,8 +25009,13 @@ async function _buildWeekCatalysts() {
     const fri = new Date(mon); fri.setDate(mon.getDate()+4);
     const items = _macroEventsForWeek(mon);
     try {
-      const f = mon.toISOString().split('T')[0];
-      const t = fri.toISOString().split('T')[0];
+      // Fecha en componentes LOCALES (_earnISO), no toISOString(): _mondayOf devuelve
+      // el lunes ET a las 12:00 hora local, y en husos ≥ UTC+13 (Nueva Zelanda) ese
+      // mediodía cae en el día ANTERIOR en UTC → se pedía la semana equivocada. De
+      // paso, la clave coincide ya con la de _earnFetchWeek y las dos peticiones se
+      // funden en una sola gracias al coalescing de apiCall.
+      const f = _earnISO(mon);
+      const t = _earnISO(fri);
       const { earnings } = await apiCall({action:'earningsCalendar', from:f, to:t}, 10000);
       // ⚠ NO FILTRAR NI PERSONALIZAR POR HOLDINGS AQUÍ.
       // Lo que sale de esta función va a THIS_WEEK_NEWS / NEXT_WEEK_NEWS, que
@@ -25400,6 +25588,7 @@ window._ensureOutlookEarnings = _ensureOutlookEarnings;
 const _EARN_TTL_MS       = 6 * 60 * 60 * 1000;   // caché con resultados → refresco cada 6 h
 const _EARN_TTL_EMPTY_MS = 30 * 60 * 1000;       // caché vacío (o fallo) → reintenta en 30 min
 const _earnInflight = {};
+const _earnLastTry  = {};   // sello EN MEMORIA del último intento (ver _earnEnsureFreshNow)
 
 function _earnKey(off){ return 'portiv_earn_' + (typeof _weekKey === 'function' ? _weekKey(off) : ('off' + off)); }
 function _earnISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -25416,16 +25605,30 @@ async function _earnFetchWeek(off){
   const rows = ((d && d.earnings) || [])
     .filter(e => e && e.symbol && e.date && (held.has(e.symbol) || watch.has(e.symbol)))
     .map(e => ({ date:e.date, symbol:e.symbol, hour:e.hour || '', eps:e.epsEstimate, rev:e.revenueEstimate }));
-  try { localStorage.setItem(_earnKey(off), JSON.stringify({ ts: Date.now(), rows })); } catch(e){}
+  // _lsSet y no setItem: si la cuota está llena, setItem falla en silencio, el caché no
+  // se escribe NUNCA y _earnEnsureFresh vuelve a pedir el calendario en cada render.
+  // _lsSet poda cachés no críticas y reintenta.
+  try { _lsSet(_earnKey(off), JSON.stringify({ ts: Date.now(), rows })); } catch(e){}
   return rows;
 }
 // Refresca en background si el caché venció; al llegar datos NUEVOS repinta ambos cuadros.
 function _earnEnsureFresh(off){
+  // Lo llaman los render, que corren también con el login delante. La lectura del
+  // calendario es una llamada facturada al proxy: espera a que haya sesión.
+  _pvWhenRevealed(function(){ _earnEnsureFreshNow(off); });
+}
+function _earnEnsureFreshNow(off){
   try {
     const c = _earnRead(off);
     const ttl = (c && c.rows.length) ? _EARN_TTL_MS : _EARN_TTL_EMPTY_MS;
     if (c && (Date.now() - (c.ts || 0)) < ttl) return;
+    // Freno EN MEMORIA además del de disco: si localStorage no acepta la escritura
+    // (modo privado, cuota llena), el sello de disco nunca se pone y esta función —que
+    // corre en CADA render— saldría a la API una y otra vez. El de memoria no depende
+    // del disco.
+    if ((Date.now() - (_earnLastTry[off] || 0)) < _EARN_TTL_EMPTY_MS) return;
     if (_earnInflight[off]) return;
+    _earnLastTry[off] = Date.now();
     _earnInflight[off] = true;
     const before = JSON.stringify((c && c.rows) || []);
     _earnFetchWeek(off).then(rows => {
@@ -25436,7 +25639,7 @@ function _earnEnsureFresh(off){
     }).catch(() => {
       _earnInflight[off] = false;
       // Fallo de red: marca el intento para no martillar la API en cada render.
-      try { localStorage.setItem(_earnKey(off), JSON.stringify({ ts: Date.now(), rows: (c && c.rows) || [] })); } catch(e){}
+      try { _lsSet(_earnKey(off), JSON.stringify({ ts: Date.now(), rows: (c && c.rows) || [] })); } catch(e){}
     });
   } catch(e){}
 }
@@ -25615,13 +25818,36 @@ const SharedOutlook = (function(){
   const _canWrite = () => !!window._pvAuthReady && !!window.__pvUserId && window.__pvUserId !== 'local';
   const _locks   = {};
 
-  async function _cloudGet(wk){
+  // Cuatro sitios distintos llaman a sync()/hydrate() durante el arranque (init,
+  // refreshNextWeekOutlook, el prewarm ocioso y el scheduler diario). Cada uno leía
+  // la MISMA fila de `shared_analysis`: medido, 5 lecturas de la semana actual y 5
+  // de la siguiente en un solo arranque. El guard `_syncing` sólo cubre lo
+  // simultáneo, no lo que llega en cadena unos segundos después.
+  // Memo de 60 s + in-flight: la copia compartida se regenera 1×/día, así que dentro
+  // de un minuto releerla no puede aportar nada nuevo. _cloudSet invalida la entrada
+  // para que el generador vea su propia escritura de inmediato.
+  const _CG_TTL  = 60 * 1000;
+  const _cgMemo  = new Map();
+  const _cgLive  = new Map();
+  async function _cloudGetRaw(wk){
     try{ const sb = window.sbClient; if(!sb) return null;
       const { data, error } = await sb.from('shared_analysis').select('data').eq('ticker', _key(wk)).maybeSingle();
       if(error || !data || !data.data) return null; return data.data;
     }catch(e){ return null; }
   }
+  function _cloudGet(wk){
+    const hit = _cgMemo.get(wk);
+    if(hit && (Date.now() - hit.ts) < _CG_TTL) return Promise.resolve(hit.val);
+    const live = _cgLive.get(wk);
+    if(live) return live;
+    const p = _cloudGetRaw(wk)
+      .then(val => { _cgMemo.set(wk, { ts: Date.now(), val }); return val; })
+      .finally(() => { _cgLive.delete(wk); });
+    _cgLive.set(wk, p);
+    return p;
+  }
   async function _cloudSet(wk, payload){
+    try{ _cgMemo.delete(wk); }catch(e){}   // lo que acabamos de subir manda sobre el memo
     try{ const sb = window.sbClient; if(!sb || !_canWrite()) return false;
       // La Edge Function rechaza con `ok:false` dentro de un 200 (sin campo `error`): mirar solo
       // `error` devolvía "subido" para una escritura que nunca ocurrió, y el generador soltaba el
@@ -28686,7 +28912,9 @@ const PORTIV_NEWS = {
     // Sin modelo aún → skeleton + build perezoso (p.ej. al abrir la pestaña antes del primer ciclo).
     if (!model){
       this.skeleton(el);
-      this.buildThisWeek().then(() => this.renderThisWeek()).catch(()=>{});
+      // buildThisWeek() pide el calendario de resultados: espera a que haya sesión.
+      // Mientras tanto queda el skeleton, que es lo que ya se veía antes.
+      _pvWhenRevealed(() => { this.buildThisWeek().then(() => this.renderThisWeek()).catch(()=>{}); });
       return;
     }
     // Aunque no haya NINGÚN evento aún, NO cortamos aquí: el render de abajo pinta SIEMPRE los 5
@@ -28822,11 +29050,15 @@ const PORTIV_NEWS = {
           });
         });
         if (_pending.length) {
-          (async () => {
-            let _any = false;
-            for (const _ev of _pending) { try { if (await _fetchEventBrief(_ev)) _any = true; } catch(e){} }
-            if (_any) { try { this.renderThisWeek(); } catch(e){} }   // repinta: briefs ya cacheados → sin re-generar (loop seguro)
-          })();
+          // Precalentar briefs es puro trabajo de red por adelantado: no antes de que
+          // haya sesión (con el login delante ni siquiera hay a quién servírselos).
+          _pvWhenRevealed(() => {
+            (async () => {
+              let _any = false;
+              for (const _ev of _pending) { try { if (await _fetchEventBrief(_ev)) _any = true; } catch(e){} }
+              if (_any) { try { this.renderThisWeek(); } catch(e){} }   // repinta: briefs ya cacheados → sin re-generar (loop seguro)
+            })();
+          });
         }
       }
     } catch(e) {}
@@ -30063,17 +30295,20 @@ function init() {
     }, 60 * 60 * 1000);
     // Noticias: primera carga casi inmediata (lo cacheado ya se pintó arriba); luego CADA 30 MIN
     // en modo incremental (autoUpdateNews solo agrega noticias NUEVAS; no reescribe lo ya mostrado).
-    setTimeout(autoUpdateNews, 400);
-    setInterval(() => { if (!document.hidden) autoUpdateNews(); }, 30 * 60 * 1000);
-
-    // Refresco DIARIO del outlook a las 00:00 local (nuevo contenido / caen eventos pasados).
-    try { if (typeof _initDailyOutlookRefresh === 'function') _initDailyOutlookRefresh(); } catch(e){}
+    _pvWhenRevealed(() => {
+      setTimeout(autoUpdateNews, 400);
+      setInterval(() => { if (!document.hidden) autoUpdateNews(); }, 30 * 60 * 1000);
+      // Refresco DIARIO del outlook a las 00:00 local (nuevo contenido / caen eventos pasados).
+      try { if (typeof _initDailyOutlookRefresh === 'function') _initDailyOutlookRefresh(); } catch(e){}
+    });
 
     // ── Motor automático de Catalizadores (PORTIV_NEWS): scheduler en zona NY.
     //    Maneja por sí mismo: rotación lunes 08:00 ET · premarket agresivo · refresh horario.
     //    Se arranca tras autoUpdateNews para que el pool de noticias ya esté poblándose.
     if (typeof PORTIV_NEWS !== 'undefined') {
-      setTimeout(() => { try { PORTIV_NEWS.start(); } catch(e){ console.warn('[PORTIV_NEWS] start', e); } }, 1500);
+      _pvWhenRevealed(() => setTimeout(() => {
+        try { PORTIV_NEWS.start(); } catch(e){ console.warn('[PORTIV_NEWS] start', e); }
+      }, 1500));
     }
 
     // ── Pre-genera el Market Context de TODOS los eventos APENAS abre la app ──────────
@@ -30094,8 +30329,10 @@ function init() {
     // → trabajo y riesgo de doble arranque redundantes en el borde local. Uno basta.
     (function _schedulePrewarm(){
       const run = () => { try { _bootPrewarmMarketContext(); } catch(e){} };
-      if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
-      else setTimeout(run, 2600);
+      _pvWhenRevealed(() => {
+        if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 3000 });
+        else setTimeout(run, 2600);
+      });
     })();
 
     // ── Monday 08:00 America/New_York: refetch crudo de noticias (alimenta el pool).
@@ -30113,13 +30350,17 @@ function init() {
       _refreshNewsWeekDates();
       autoUpdateNews(true);   // lunes 08:00 ET (1×/semana, ya gated por flag) → fuerza feed nuevo
     }
-    _mondayNewsRefresh();
-    setInterval(() => { if (!document.hidden) _mondayNewsRefresh(); }, 60 * 1000);
+    _pvWhenRevealed(() => {
+      _mondayNewsRefresh();
+      setInterval(() => { if (!document.hidden) _mondayNewsRefresh(); }, 60 * 1000);
+    });
 
     // ── Refresh DIARIO de "Próxima Semana" a las 00:00 ET (cron 0 0 * * *) ────────
     //    El scheduler regenera el outlook cada medianoche ET y al abrir la app si el
     //    día ET aún no se refrescó. La carga al abrir respeta TTL 24h (refreshNextWeekOutlook).
-    if (typeof scheduleDailyOutlookRefresh === 'function') scheduleDailyOutlookRefresh();
+    _pvWhenRevealed(() => {
+      if (typeof scheduleDailyOutlookRefresh === 'function') scheduleDailyOutlookRefresh();
+    });
 
   } catch(e) {
     console.error('Init error:', e);
@@ -30753,6 +30994,9 @@ if (document.readyState === 'loading') {
     try { if (typeof window._pvMaybeShowQuiz === 'function') window._pvMaybeShowQuiz(); } catch(e){}
     try { document.documentElement.classList.remove('app-locked'); } catch(e){}
     hideOverlay();
+    // A partir de aquí HAY sesión validada: se libera todo el trabajo de red que se
+    // dejó en cola durante el login (noticias, outlook, catalizadores, broker).
+    try { if (typeof window._pvFlushRevealed === 'function') window._pvFlushRevealed(); } catch(e){}
     // Candado de suscripción: se evalúa DESPUÉS de revelar y sin await. Si se hiciera
     // antes, una consulta lenta dejaría la app en negro; y si fallara, nadie entraría.
     // El bloqueo real es el 403 del servidor — esto sólo lo explica en pantalla.
@@ -35167,7 +35411,15 @@ document.addEventListener('DOMContentLoaded', function(){
       _autoRefresh();
     });
   }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _boot); else _boot();
+  // El poll del broker exige token de usuario: sin sesión, stCall rechaza en seco y
+  // el bucle de reintentos gastaba 10 llamadas cada 2 s (20 s de fallos garantizados,
+  // uno por línea en la consola) delante de la pantalla de login. Se arranca cuando la
+  // app se revela, que es justo cuando la sesión ya está validada.
+  function _bootWhenReady(){
+    if (typeof window._pvWhenRevealed === 'function') window._pvWhenRevealed(_boot);
+    else _boot();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', _bootWhenReady); else _bootWhenReady();
 })();
 </script>
 <script>
