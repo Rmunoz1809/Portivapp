@@ -262,42 +262,72 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
-/* ─── iPad → el MISMO diseño del móvil ────────────────────────────────────────
-   El CSS de Portiv tiene un solo diseño validado a mano: el del iPhone (rama
-   ≤899 px, con .m-topbar arriba y .bottom-tabs abajo). El iPad usaba una rama
-   propia — viewport fijado a 1024 y un puñado de reglas 701–1200 que recolocaban
-   la cabecera navy a sangre — y esa rejilla híbrida es la que dejaba la franja
-   blanca entre la barra superior y el arranque navy.
+/* ─── iPad → el diseño del iPhone, exacto y a pantalla completa ───────────────
+   Portiv tiene UN solo diseño validado a mano: el del teléfono. Vive en las
+   media queries ≤480, ≤560, ≤600, ≤700, ≤760 y ≤899 px, y todas tienen que
+   activarse a la vez o el resultado es un híbrido: a 700 px, por ejemplo, la
+   rejilla de noticias sale a dos columnas y la cabecera navy no encaja con la
+   barra superior (la franja/línea de división que se veía).
 
-   Ahora no hay rejilla de iPad: se FIJA el viewport a 700 px lógicos en todos
-   los modelos y en las dos orientaciones, así que TODAS las media queries y el
-   matchMedia del JS (PV_isMobile, ≤899) leen exactamente lo mismo que en el
-   iPhone. Un solo diseño, un solo sistema de animaciones, nada que cambie al
-   rotar ni al pasar de un iPad a otro. Safari escala la página para llenar la
-   pantalla (iPad Air vertical: 820 físicos / 700 lógicos ≈ 1.17×).
+   Por eso el iPad NO usa su ancho real: se maqueta a 480 px lógicos —el ancho
+   más grande que sigue disparando TODAS las reglas del teléfono, incluida la
+   de ≤480— y se escala esa maqueta hasta llenar la pantalla. Un solo diseño,
+   un solo sistema de animaciones (PV_isMobile lee ≤899 y ahora siempre da
+   true), idéntico en iPad mini, Air, Pro, vertical y apaisado.
 
-   700 y no menos: es el límite superior de la rama móvil (`max-width:700px`),
-   o sea el ancho más cómodo que sigue siendo el diseño del teléfono.
+   La escala se calcula y se ESCRIBE (initial/minimum/maximum-scale): sin ella
+   WebKit deja la página a escala 1 dentro de una ventana más ancha y quedan
+   bandas negras a los lados — es lo que hacía que en horizontal "no quedara
+   completa". Fijando las tres, el ancho maquetado cubre exactamente el ancho
+   real del sistema, sin banda ni scroll horizontal, y de paso bloquea el pinch
+   (lo que antes hacía user-scalable=no, que aquí sobra).
 
-   Detección: iPadOS 13+ se anuncia como "Macintosh" en el UA, así que se combina
-   con maxTouchPoints (un Mac real reporta 0, incluido el de Touch Bar). No toca
-   iPhone (que ya está en esta rama por su propio ancho) ni Mac. */
+   Ancho físico = clientWidth × visualViewport.scale: vale tanto ANTES de fijar
+   nada (escala 1) como DESPUÉS (clientWidth=480, escala S), así que el cálculo
+   es idempotente y sirve igual al rotar, en Split View y en Stage Manager.
+
+   Detección: iPadOS 13+ se anuncia como "Macintosh" en el UA, así que se
+   combina con maxTouchPoints (un Mac real reporta 0, incluido el de Touch Bar).
+   No toca iPhone —que ya está en esta rama por su propio ancho— ni Mac. */
 (function () {
   var m = document.querySelector('meta[name="viewport"]');
   if (!m) return;
+  var W = 480;   /* ancho lógico de la maqueta = rama del teléfono al completo */
+  var DEVICE = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
   var ua = navigator.userAgent || '';
   /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama
      del Mac táctil. */
   var isIPad = !/iPhone|iPod/.test(ua) &&
     (/iPad/.test(ua) || (/Mac/.test(ua + (navigator.platform || '')) && navigator.maxTouchPoints > 1));
   if (!isIPad) return;
-  /* Sin initial-scale ni maximum-scale: el viewport final es el MAYOR entre
-     `width` y el que implica la escala, así que initial-scale=1 anularía el
-     width=700 y maximum-scale recortaría la escala calculada (<1) devolviendo
-     el ancho del dispositivo. `user-scalable=no` sí es seguro: sólo bloquea el
-     pinch, no toca la escala. Es un valor constante, así que no hace falta
-     recalcularlo al rotar ni en Split View / Stage Manager. */
-  m.setAttribute('content', 'width=700, user-scalable=no, viewport-fit=cover');
+  function physW() {
+    var w = document.documentElement.clientWidth || window.innerWidth || 0;
+    var s = (window.visualViewport && window.visualViewport.scale) || 1;
+    return w * (s > 0 ? s : 1);
+  }
+  function apply() {
+    var p = physW();
+    if (!p) return;
+    var s = p / W;
+    /* Ventana más angosta que la maqueta (Split View estrecho): escalar a menos
+       de 1 encogería la letra por debajo de lo legible. Ahí el ancho real ya
+       está en la rama del teléfono por sí solo, así que se deja tal cual. */
+    var want = (s < 1) ? DEVICE
+      : 'width=' + W + ', initial-scale=' + s.toFixed(5)
+        + ', minimum-scale=' + s.toFixed(5) + ', maximum-scale=' + s.toFixed(5)
+        + ', viewport-fit=cover';
+    if (m.getAttribute('content') !== want) m.setAttribute('content', want);
+  }
+  apply();
+  var t = null;
+  function onChange() {
+    if (t) clearTimeout(t);
+    /* iOS reporta el tamaño tarde tras rotar: se mide dos veces. */
+    t = setTimeout(function () { t = null; apply(); setTimeout(apply, 260); }, 120);
+  }
+  window.addEventListener('resize', onChange, { passive: true });
+  window.addEventListener('orientationchange', onChange, { passive: true });
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', onChange, { passive: true });
 })();
 </script>
 <title>Portiv — Tu portafolio de inversión, potenciado por IA</title>
@@ -36922,6 +36952,13 @@ html { overflow-x: clip; }
   body:not(.dark-theme):has(#tab-aianalyst.page.active) .dash-topbar-mobile,
   body:not(.dark-theme):has(#tab-settings.page.active)  .dash-topbar-mobile {
     border-radius: 0;
+    /* Sin costura con el bloque navy de abajo. Las dos superficies son del mismo
+       color y ya se solapan, pero el borde entre ellas cae en medio píxel en
+       cuanto la página se escala (iPad: la maqueta de 480 se amplía hasta el
+       ancho real) y ahí aparece un hairline claro. Estos 4px de navy pintados
+       por debajo de la barra lo tapan; en el teléfono caen sobre el mismo navy
+       y no se ven. */
+    box-shadow: 0 4px 0 0 var(--pvr-navy-bar);
   }
 
   /* ── 13. Texto e iconos dentro del navy ──────────────────────────────────
