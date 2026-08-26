@@ -262,60 +262,58 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
 </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
-/* ─── iPad → el diseño del iPhone, exacto y a pantalla completa ───────────────
-   Portiv tiene UN solo diseño validado a mano: el del teléfono. Vive en las
-   media queries ≤480, ≤560, ≤600, ≤700, ≤760 y ≤899 px, y todas tienen que
-   activarse a la vez o el resultado es un híbrido: a 700 px, por ejemplo, la
-   rejilla de noticias sale a dos columnas y la cabecera navy no encaja con la
-   barra superior (la franja/línea de división que se veía).
+/* ─── iPad → densidad de ESCRITORIO, en todos los modelos ─────────────────────
+   OJO: esto NO pone la sidebar. La navegación de iPad es la barra de iconos de abajo
+   (bloque "iPad — NAVEGACIÓN INFERIOR" al final del <style>, que se activa con la clase
+   `pv-ipad` que marca este mismo script). Lo único que se fija aquí es el ANCHO lógico.
 
-   Por eso el iPad NO usa su ancho real: se maqueta a 480 px lógicos —el ancho
-   más grande que sigue disparando TODAS las reglas del teléfono, incluida la
-   de ≤480— y se escala esa maqueta hasta llenar la pantalla. Un solo diseño,
-   un solo sistema de animaciones (PV_isMobile lee ≤899 y ahora siempre da
-   true), idéntico en iPad mini, Air, Pro, vertical y apaisado.
+   El CSS conmuta de paradigma en 900px: ≥900 = grillas y tablas completas, ≤899 = layout
+   de iPhone (una columna, columnas de tabla ocultas). Todo iPad debe caer del lado ≥900,
+   en vertical y en horizontal, para que el contenido use el ancho de la tablet y para que
+   NO haya dos diseños distintos según el modelo (744 mini vs 1024 del 13").
 
-   La escala se calcula y se ESCRIBE (initial/minimum/maximum-scale): sin ella
-   WebKit deja la página a escala 1 dentro de una ventana más ancha y quedan
-   bandas negras a los lados — es lo que hacía que en horizontal "no quedara
-   completa". Fijando las tres, el ancho maquetado cubre exactamente el ancho
-   real del sistema, sin banda ni scroll horizontal, y de paso bloquea el pinch
-   (lo que antes hacía user-scalable=no, que aquí sobra).
+   En horizontal (1180/1194/1366) el ancho real ya supera 900, así que basta con
+   device-width. En vertical (744/820/834) no llega, así que se FIJA el viewport a 1024:
+   TODAS las media queries y el matchMedia del JS (PV_isMobile) leen el mismo ancho a la
+   vez, así que no hay forma de quedar a medio camino. Safari escala la página para llenar
+   la pantalla (en un mini, 1024 lógicos sobre 744 físicos ≈ escala 0.73).
 
-   Ancho físico = clientWidth × visualViewport.scale: vale tanto ANTES de fijar
-   nada (escala 1) como DESPUÉS (clientWidth=480, escala S), así que el cálculo
-   es idempotente y sirve igual al rotar, en Split View y en Stage Manager.
+   Detección: iPadOS 13+ se anuncia como "Macintosh" en el UA, así que se combina con
+   maxTouchPoints (un Mac real reporta 0, incluido el de Touch Bar). No toca iPhone ni Mac.
 
-   Detección: iPadOS 13+ se anuncia como "Macintosh" en el UA, así que se
-   combina con maxTouchPoints (un Mac real reporta 0, incluido el de Touch Bar).
-   No toca iPhone —que ya está en esta rama por su propio ancho— ni Mac. */
+   Split View / Stage Manager: por debajo de SPLIT_MIN la ventana es demasiado angosta para
+   la sidebar y se respeta el layout móvil (forzar 1024 en una ventana de 507 encogería el
+   texto a la mitad). Se recalcula al rotar/redimensionar. Estando fijado, clientWidth vale
+   1024, así que el ancho real se recupera con visualViewport.scale — y sigue cayendo en
+   [SPLIT_MIN, IPAD_MIN_W), así que la decisión es idempotente y no oscila al rotar. */
 (function () {
   var m = document.querySelector('meta[name="viewport"]');
   if (!m) return;
-  var W = 480;   /* ancho lógico de la maqueta = rama del teléfono al completo */
-  var DEVICE = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+  var IPAD_MIN_W = 1024;   // ancho lógico mínimo para que aplique el layout de sidebar
+  var SPLIT_MIN  = 700;    // por debajo (Split View angosto) se respeta el layout móvil
+  var DESKTOP = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
+  /* Sin initial-scale al fijar el ancho: el viewport final es el MAYOR entre `width` y el
+     que implica la escala, así que initial-scale=1 anularía el width=1024.
+     Tampoco `maximum-scale`: la escala inicial en iPad es deviceWidth/1024 (<1) y
+     maximum-scale la recortaría → el viewport volvería al ancho del dispositivo y con él
+     el layout móvil. `user-scalable=no` sí es seguro: sólo bloquea el pinch del usuario,
+     no toca la escala calculada. */
+  var FIXED   = 'width=' + IPAD_MIN_W + ', user-scalable=no, viewport-fit=cover';
   var ua = navigator.userAgent || '';
-  /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama
-     del Mac táctil. */
+  /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama del Mac
+     táctil. (No cambiaría el layout — nunca superan 899 px — pero sí marcaría la clase.) */
   var isIPad = !/iPhone|iPod/.test(ua) &&
     (/iPad/.test(ua) || (/Mac/.test(ua + (navigator.platform || '')) && navigator.maxTouchPoints > 1));
   if (!isIPad) return;
-  function physW() {
+  document.documentElement.classList.add('pv-ipad');
+  function realW() {
     var w = document.documentElement.clientWidth || window.innerWidth || 0;
     var s = (window.visualViewport && window.visualViewport.scale) || 1;
-    return w * (s > 0 ? s : 1);
+    return Math.round(w * (s > 0 ? s : 1));
   }
   function apply() {
-    var p = physW();
-    if (!p) return;
-    var s = p / W;
-    /* Ventana más angosta que la maqueta (Split View estrecho): escalar a menos
-       de 1 encogería la letra por debajo de lo legible. Ahí el ancho real ya
-       está en la rama del teléfono por sí solo, así que se deja tal cual. */
-    var want = (s < 1) ? DEVICE
-      : 'width=' + W + ', initial-scale=' + s.toFixed(5)
-        + ', minimum-scale=' + s.toFixed(5) + ', maximum-scale=' + s.toFixed(5)
-        + ', viewport-fit=cover';
+    var w = realW();
+    var want = (w >= SPLIT_MIN && w < IPAD_MIN_W) ? FIXED : DESKTOP;
     if (m.getAttribute('content') !== want) m.setAttribute('content', want);
   }
   apply();
@@ -327,7 +325,6 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
   }
   window.addEventListener('resize', onChange, { passive: true });
   window.addEventListener('orientationchange', onChange, { passive: true });
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', onChange, { passive: true });
 })();
 </script>
 <title>Portiv — Tu portafolio de inversión, potenciado por IA</title>
@@ -3638,6 +3635,125 @@ window._ensureChartJs = (function(){
   .wl2-remove { padding: 2px 3px !important; font-size: 15px !important; }
 }
 
+/* ╔═══════════════════════════════════════════════════════════════════════════╗
+   ║  iPad — NAVEGACIÓN INFERIOR (sin sidebar)                                 ║
+   ╚═══════════════════════════════════════════════════════════════════════════╝
+   QUÉ cambia: la barra lateral navy desaparece y se navega con la misma barra de
+   iconos de abajo del móvil (.bottom-tabs) + la topbar de marca (.m-topbar).
+
+   QUÉ NO cambia: la DENSIDAD del contenido. El script del <head> sigue fijando el
+   viewport a 1024 en vertical, así que TODO iPad (mini→13", vertical y apaisado)
+   cae siempre en la rama ≥900 del CSS: mismas grillas, mismas tablas, misma
+   tipografía ya validadas. Un solo layout para todos los modelos — no hay banda de
+   anchos donde el diseño cambie de golpe al rotar o al cambiar de iPad.
+
+   POR QUÉ por clase y no por media query: el ancho no distingue un iPad Pro
+   apaisado (1366) de un portátil (1366); la clase `pv-ipad` (detección por UA) sí.
+   Especificidad: `html.pv-ipad X` lleva un selector más que las reglas de la rama
+   ≥900 y ambas son !important → gana siempre, sin depender del orden. */
+:root{
+  --pv-ipad-nav-h: 72px;                                               /* alto del contenido del nav */
+  --pv-ipad-nav-total: calc(var(--pv-ipad-nav-h) + var(--pv-safe-b));  /* + home indicator */
+}
+
+/* ── El body vuelve a apilar en vertical ──
+   Con la sidebar, `body` es un flex ROW (sidebar | contenido). La topbar de marca es hija
+   directa del body, así que en esa fila se colocaba AL LADO del contenido: 260px de ancho
+   y 1366 de alto, una columna vertical absurda. En móvil el body es `block` — se usa lo
+   mismo, que es lo ya probado. La sidebar iba `position:fixed`, fuera del flujo, así que
+   nada del layout de escritorio dependía de ese flex. */
+html.pv-ipad body { display: block !important; }
+
+/* ── Fuera la sidebar y cualquier nav duplicado ── */
+html.pv-ipad .navbar,
+html.pv-ipad .dash-topbar-mobile,
+html.pv-ipad .bottom-nav,
+html.pv-ipad .tabs { display: none !important; }
+
+/* ── Contenido a ancho completo + hueco para el nav de abajo ── */
+html.pv-ipad #tab-portfolio, html.pv-ipad #tab-noticias, html.pv-ipad #tab-watchlist,
+html.pv-ipad #tab-analizar,  html.pv-ipad #tab-settings, html.pv-ipad #tab-aianalyst {
+  margin-left: 0 !important;
+  padding-bottom: calc(var(--pv-ipad-nav-total) + 16px) !important;
+}
+/* .stitch-layout mide 100dvh; sumado al padding del contenedor dejaba ~110px de
+   scroll muerto al final del portafolio. Se le descuenta el alto del nav. */
+html.pv-ipad .stitch-layout { min-height: calc(100dvh - var(--pv-ipad-nav-total)) !important; }
+/* El detalle de noticia arrancaba tras los 220px de la sidebar: ahora full screen. */
+html.pv-ipad .nm-overlay { left: 0 !important; }
+
+/* ── Topbar de marca (el mismo diseño del móvil, escalado a tablet) ── */
+html.pv-ipad .m-topbar {
+  display: flex !important; align-items: center; justify-content: space-between; gap: 10px;
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) 28px 12px;
+  background: #fff; border-bottom: 1px solid var(--st-border);
+  position: sticky; top: 0; z-index: 500;
+}
+html.pv-ipad .m-tb-brand { display: flex; align-items: center; gap: 10px; }
+html.pv-ipad .m-tb-fulllogo { display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+html.pv-ipad .m-tb-name { font-size: 19px; font-weight: 800; color: #0b1c30; letter-spacing: -0.3px; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; }
+html.pv-ipad .m-tb-icons { display: flex; align-items: center; gap: 8px; }
+html.pv-ipad .m-tb-btn {
+  background: none; border: none; color: #44474D; padding: 6px;
+  min-width: 44px; min-height: 44px;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+/* En el chat la topbar estorba: el perfil de la IA ocupa toda la pantalla (igual que en móvil). */
+html.pv-ipad body.chat-active .m-topbar { display: none !important; }
+
+/* ── Barra de iconos inferior ── */
+html.pv-ipad .bottom-tabs {
+  display: flex !important; position: fixed !important;
+  bottom: 0 !important; left: 0 !important; right: 0 !important;
+  height: var(--pv-ipad-nav-total) !important; padding-bottom: var(--pv-safe-b) !important;
+  background: #fff !important; border-top: 1px solid #E5EEFF !important;
+  box-shadow: 0 -2px 16px rgba(11,28,48,.08) !important; z-index: 9000 !important;
+  align-items: stretch !important;
+  /* Centrado, no estirado: 6 pestañas repartidas en 1366px dejaban cada icono
+     perdido en el centro de 227px de vacío. */
+  justify-content: center !important;
+}
+html.pv-ipad .bottom-tab {
+  flex: 0 1 150px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
+  background: none; border: none; cursor: pointer; padding: 10px 6px;
+  color: #9aa0ab !important; font-size: 11px !important; font-weight: 600 !important;
+  white-space: nowrap !important; transition: color .15s;
+}
+html.pv-ipad .bottom-tab svg {
+  width: 24px !important; height: 24px !important; stroke: currentColor; fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+}
+html.pv-ipad .bottom-tab.active { color: #04162C !important; font-weight: 800 !important; }
+html.pv-ipad .bottom-tab.active svg { stroke-width: 2.2; }
+/* Teclado abierto: el nav se va. La regla general `body.pv-kb-open .bottom-tabs`
+   tiene MENOS especificidad que las de arriba, así que hay que repetirla con el
+   mismo prefijo o el nav se quedaría flotando sobre el teclado. */
+html.pv-ipad body.pv-kb-open .bottom-tabs { display: none !important; }
+
+/* ── Portiv IA: alto exacto, sin quedar por debajo del nav ── */
+html.pv-ipad #tab-aianalyst {
+  padding: 0 !important;
+  height: calc(100dvh - var(--pv-ipad-nav-total)) !important;
+  min-height: 0 !important;
+}
+html.pv-ipad .ai-chat-page { height: 100% !important; min-height: 0 !important; }
+/* El nav ya ocupa la safe-area de abajo: sin esto el input sumaba el home indicator
+   por segunda vez y quedaba un hueco muerto sobre la barra. */
+html.pv-ipad .ai-chat-inputarea { padding-bottom: 14px !important; }
+/* La webview arranca DEBAJO de la barra de estado (contentInset: never), y el chat es la
+   única pantalla sin .m-topbar: sin esta reserva la hora del sistema caía justo encima de
+   "Portiv IA". El mínimo cubre los iPad que reportan safe-area-inset-top = 0. */
+html.pv-ipad .ai-chat-header {
+  padding-top: max(26px, calc(env(safe-area-inset-top, 0px) + 14px)) !important;
+}
+/* Con el teclado abierto el chat se ancla al viewport visible, igual que en móvil. */
+html.pv-ipad body.pv-kb-open #tab-aianalyst {
+  position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important;
+  height: var(--vvh, 100dvh) !important; z-index: 900 !important;
+}
+html.pv-ipad body.pv-kb-open { overflow: hidden !important; }
+
 /* ── Panel "Revisión de importación" ──
    Se crea desde JS con estilo inline (bottom:16px; right:16px; z-index:9999), pensado para
    escritorio. En móvil y en iPad eso lo dejaba ENCIMA de la barra de navegación: tapaba las
@@ -3651,6 +3767,7 @@ window._ensureChartJs = (function(){
     bottom: calc(var(--pv-nav-total) + 12px) !important;
   }
 }
+html.pv-ipad #portivReviewPanel { bottom: calc(var(--pv-ipad-nav-total) + 12px) !important; }
 </style>
 <!-- Supabase Auth (login por email + código).
      La etiqueta de script se MOVIÓ junto al bloque que lo consume (justo antes del IIFE de auth,
@@ -36952,13 +37069,6 @@ html { overflow-x: clip; }
   body:not(.dark-theme):has(#tab-aianalyst.page.active) .dash-topbar-mobile,
   body:not(.dark-theme):has(#tab-settings.page.active)  .dash-topbar-mobile {
     border-radius: 0;
-    /* Sin costura con el bloque navy de abajo. Las dos superficies son del mismo
-       color y ya se solapan, pero el borde entre ellas cae en medio píxel en
-       cuanto la página se escala (iPad: la maqueta de 480 se amplía hasta el
-       ancho real) y ahí aparece un hairline claro. Estos 4px de navy pintados
-       por debajo de la barra lo tapan; en el teléfono caen sobre el mismo navy
-       y no se ven. */
-    box-shadow: 0 4px 0 0 var(--pvr-navy-bar);
   }
 
   /* ── 13. Texto e iconos dentro del navy ──────────────────────────────────
@@ -37082,6 +37192,145 @@ body:not(.dark-theme) .ai-chat-inputarea { border-top-color: var(--pvr-line); }
 /* ── 17. Títulos de sección: mismo peso y tracking en toda la app ─────────── */
 .pa-label, .pa-h1, .set-page-title, .sn-title, .sn-feat-title, .pda-h2 {
   letter-spacing: -.02em;
+}
+
+/* ── 18. iPad: el mismo concepto, en su propia rejilla ──────────────────────
+   El iPad se detecta por user-agent (clase html.pv-ipad, Safari y app por
+   igual) y fija el viewport en 1024px, así que aquí siempre se maqueta a 1024
+   y este rango lo cubre entero. En ese modo la app usa la MISMA barra superior
+   y la MISMA barra inferior que el móvil, sin barra lateral: por eso el
+   arranque navy encaja igual, sólo con más aire (40px de lado, curva de 30px).
+
+   Los tirones son distintos a los del móvil porque a 1024 la página lleva
+   padding 24px/28px y .stitch-layout suma otros 24px. Medidos, no estimados. */
+@media (min-width: 701px) and (max-width: 1200px) {
+
+  body:not(.dark-theme) #tab-portfolio .stitch-header,
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    margin-left: calc(50% - 50vw) !important;
+    margin-right: calc(50% - 50vw) !important;
+    width: auto !important;
+    max-width: none !important;
+    box-sizing: border-box !important;
+    background: var(--pvr-navy-bar) !important;
+    border: none !important;
+    border-radius: 0 0 30px 30px !important;
+    box-shadow: none !important;
+    padding-left: 40px !important;
+    padding-right: 40px !important;
+    padding-bottom: 26px !important;
+  }
+  /* El padding-top de .ai-chat-header lleva el safe-area del notch: no se toca. */
+  body:not(.dark-theme) #tab-portfolio .stitch-header,
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { padding-top: 20px !important; }
+
+  /* El contenido del navy se alinea con la columna de tarjetas de SU pestaña,
+     que no es la misma en todas: Portafolio y Noticias abren a 52px (padding de
+     .page más el del layout interno), Watchlist y Analizar a 28px, el chat a
+     20px y Ajustes a la columna centrada de .set-wrap. Medido con
+     getBoundingClientRect() sobre la primera tarjeta real de cada pestaña. */
+  body:not(.dark-theme) #tab-portfolio .stitch-header,
+  body:not(.dark-theme) #tab-noticias .sn-header {
+    padding-left: 52px !important; padding-right: 52px !important;
+  }
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar {
+    padding-left: 28px !important; padding-right: 28px !important;
+  }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header {
+    padding-left: 20px !important; padding-right: 20px !important;
+  }
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    padding-left: calc((100vw - 860px) / 2 + 20px) !important;
+    padding-right: calc((100vw - 860px) / 2 + 20px) !important;
+  }
+
+  body:not(.dark-theme) #tab-portfolio .stitch-header            { margin-top: -48px !important; }
+  body:not(.dark-theme) #tab-noticias .sn-header                 { margin-top: -48px !important; }
+  body:not(.dark-theme) #tab-watchlist > div:first-child         { margin-top: -24px !important; }
+  body:not(.dark-theme) #tab-analizar .research-search-bar       { margin-top: -24px !important; }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header           { margin-top:   0   !important; }
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { margin-top: -28px !important; }
+
+  /* LA FRANJA BLANCA: los márgenes negativos de arriba estaban medidos contra el
+     padding del contenedor de este breakpoint, y basta con que no coincidan al
+     píxel para que entre la barra y el navy asome el fondo claro de la página.
+     En vez de reafinar el número, se quita el hueco: padding-top 0 en la página
+     y en su layout, y margen 0 en la cabecera. El navy arranca exactamente donde
+     termina la barra, sea cual sea el padding, y sin solape que tape texto. */
+  body:not(.dark-theme) #tab-portfolio,
+  body:not(.dark-theme) #tab-noticias,
+  body:not(.dark-theme) #tab-watchlist,
+  body:not(.dark-theme) #tab-analizar,
+  body:not(.dark-theme) #tab-settings { padding-top: 0 !important; }
+  body:not(.dark-theme) #tab-portfolio .stitch-layout,
+  body:not(.dark-theme) #tab-noticias  .sn-layout,
+  body:not(.dark-theme) #tab-settings  .set-wrap { padding-top: 0 !important; }
+  body:not(.dark-theme) #tab-portfolio .stitch-header,
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child { margin-top: 0 !important; }
+
+
+  body:not(.dark-theme) #tab-portfolio .stitch-header    { margin-bottom: 0 !important; }
+  body:not(.dark-theme) #tab-watchlist > div:first-child { margin-bottom: 22px !important; }
+
+  /* La barra superior pierde la curva: el navy continúa hacia abajo. */
+  body:not(.dark-theme):has(#tab-portfolio.page.active) .m-topbar,
+  body:not(.dark-theme):has(#tab-noticias.page.active)  .m-topbar,
+  body:not(.dark-theme):has(#tab-watchlist.page.active) .m-topbar,
+  body:not(.dark-theme):has(#tab-analizar.page.active)  .m-topbar,
+  body:not(.dark-theme):has(#tab-aianalyst.page.active) .m-topbar,
+  body:not(.dark-theme):has(#tab-settings.page.active)  .m-topbar { border-radius: 0; }
+
+  /* Texto sobre el navy. */
+  body:not(.dark-theme) #tab-noticias .sn-title,
+  body:not(.dark-theme) #tab-settings .set-page-title,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-name,
+  body:not(.dark-theme) #tab-portfolio .stitch-header .stitch-val { color: #fff !important; }
+  body:not(.dark-theme) #tab-noticias .sn-date,
+  body:not(.dark-theme) #tab-settings .set-page-sub,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-sub,
+  body:not(.dark-theme) #tab-portfolio .stitch-header .stitch-val-label { color: rgba(255,255,255,.66) !important; }
+
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-avatar {
+    background: rgba(255,255,255,.16) !important; color: #fff !important; border-radius: 18px !important;
+  }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header-badge {
+    background: rgba(255,255,255,.12) !important; color: #fff !important;
+    border-color: transparent !important; border-radius: 999px !important;
+  }
+
+  /* Pastillas de periodo dentro del navy: blancas, activa en navy. */
+  body:not(.dark-theme) #tab-portfolio .stitch-header .period-btn {
+    background: #fff !important; color: #5a6b80 !important; border: none !important;
+    border-radius: 999px !important; box-shadow: 0 1px 2px rgba(11,28,48,.14) !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .stitch-header .period-btn.active {
+    background: var(--pvr-navy) !important; color: #fff !important;
+  }
+
+  /* Búsqueda blanca sobre navy — Watchlist y Analizar igual. */
+  body:not(.dark-theme) #tab-watchlist > div:first-child #wlInput,
+  body:not(.dark-theme) #tab-analizar .research-search-bar .research-input {
+    background: #fff !important; border-color: transparent !important;
+    border-radius: 999px !important; box-shadow: 0 1px 2px rgba(11,28,48,.14) !important;
+  }
+  body:not(.dark-theme) #tab-watchlist > div:first-child button,
+  body:not(.dark-theme) #tab-analizar .research-search-bar .research-btn {
+    background: #fff !important; color: var(--pvr-navy) !important;
+    border-radius: 999px !important; box-shadow: 0 1px 2px rgba(11,28,48,.14) !important;
+  }
+  body:not(.dark-theme) #tab-analizar .research-search-bar .research-btn svg { stroke: var(--pvr-navy) !important; }
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header { border-bottom: none !important; }
 }
 
 /* ── 19. Reducción de movimiento: también lo nuevo ────────────────────────── */
@@ -37533,6 +37782,65 @@ body:not(.dark-theme) .stitch-viewall-btn {
 /* El punto indicador se retira en todos los anchos. */
 .bottom-tab::after,
 .bottom-tab.active::after { display: none !important; }
+
+/* ── 29. iPad: los mismos tokens, con el aire de la tablet ─────────────────
+   El iPad maqueta a 1024px fijos. Se hereda todo el sistema del preview
+   (tarjeta 28px sin borde, pastillas, tipografía) y sólo se recalibra lo que
+   depende del ancho: la curva del navy y la columna de contenido. */
+@media (min-width: 701px) and (max-width: 1200px) {
+  body:not(.dark-theme) #tab-portfolio .stitch-header,
+  body:not(.dark-theme) #tab-noticias .sn-header,
+  body:not(.dark-theme) #tab-watchlist > div:first-child,
+  body:not(.dark-theme) #tab-analizar .research-search-bar,
+  body:not(.dark-theme) #tab-aianalyst .ai-chat-header,
+  body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    border-radius: 0 0 var(--pvr-r-hero) var(--pvr-r-hero) !important;
+  }
+
+  body:not(.dark-theme) #tab-portfolio .stitch-val,
+  body:not(.dark-theme) #tab-portfolio .stitch-val.pos,
+  body:not(.dark-theme) #tab-portfolio .stitch-val.neg {
+    font-size: 48px !important;
+    font-weight: 600 !important;
+    letter-spacing: -.6px !important;
+    line-height: 1.05 !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .stitch-val-label {
+    font-size: 15px !important; font-weight: 600 !important;
+    letter-spacing: .3px !important; margin-bottom: 8px !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .stitch-val-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .stitch-badge {
+    font-size: 15px !important; font-weight: 600 !important;
+    padding: 9px 15px !important; border-radius: 999px !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .stitch-badge.pos {
+    background: var(--pvr-green-soft) !important;
+    color: var(--pvr-green-ink) !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .period-btn {
+    padding: 11px 18px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: #3B4A5C !important;
+  }
+  body:not(.dark-theme) #tab-portfolio .period-btn.active { color: #fff !important; }
+  body:not(.dark-theme) .stitch-card-title { font-size: 24px !important; font-weight: 600 !important; letter-spacing: -.2px !important; }
+  body:not(.dark-theme) #tab-noticias .sn-title {
+    font-size: 38px !important; font-weight: 600 !important;
+    line-height: 1.08 !important; letter-spacing: -.2px !important;
+  }
+  body:not(.dark-theme) .sn-read-btn {
+    background: var(--pvr-navy) !important; color: #fff !important;
+    border-radius: 18px !important; box-shadow: none !important;
+  }
+  body:not(.dark-theme) .bottom-tab { color: #96A2B2 !important; font-weight: 600 !important; }
+  body:not(.dark-theme) .bottom-tab.active { color: var(--pvr-navy) !important; }
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    v7 — MOTION: LO QUE SE ABRE, SE CIERRA Y SE PULSA
