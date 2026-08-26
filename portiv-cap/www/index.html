@@ -34803,10 +34803,13 @@ document.addEventListener('DOMContentLoaded', function(){
       <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>
       <button type="button" id="pqManualEntry" style="display:block;width:100%;margin-top:10px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">Ingresar posiciones manualmente</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
-    document.getElementById('pqFinish').onclick = ()=>{
+    // Las diapositivas de "cómo funciona" ya se vieron al iniciar sesión, antes
+    // de las preguntas, así que aquí se va derecho al muro.
+    const _pqGoPaywall = ()=>{
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
       try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
     };
+    document.getElementById('pqFinish').onclick = _pqGoPaywall;
     // Aviso IBKR: informativo, independiente del CTA. No toca el flujo del paywall.
     try {
       var _ib = document.getElementById('pqIbkrNote');
@@ -34988,12 +34991,1169 @@ document.addEventListener('DOMContentLoaded', function(){
       const has = window.getInvestorProfile();
       if (forced || !has) {
         sessionStorage.removeItem('pv_force_quiz');
-        _openQuiz();   // sin delay → el overlay opaco cubre la app desde el primer frame (sin flash)
+        // Sin delay → el overlay opaco cubre la app desde el primer frame (sin flash).
+        // Primero las diapositivas que explican qué hace la app y, al terminarlas
+        // o saltarlas, las preguntas del perfil. Ambas capas son opacas y a
+        // pantalla completa, así que el relevo no deja ver la app detrás.
+        try {
+          if (typeof window._pvShowSlides === 'function') { window._pvShowSlides(_openQuiz); return; }
+        } catch(e){}
+        _openQuiz();
       }
     } catch(e){}
   };
 })();
 </script>
+<!-- ═══════════════ CÓMO FUNCIONA — diapositivas de onboarding ═══════════════
+     Van al INICIAR SESIÓN y ANTES de las preguntas del perfil: quien entra por
+     primera vez ve qué hace la app antes de que se le pregunte nada.
+     Regla de la sección: cada diapositiva cabe en UNA pantalla, sin scroll.
+     El teléfono sangra por abajo a propósito — se corta, no se encoge, para que
+     el interior de la app se lea a tamaño real.
+     El teléfono replica la versión NUEVA de la app: topbar dentro del bloque
+     navy, chips de periodo montados sobre su borde, tarjeta Performance,
+     tabla de posiciones (Símbolo · Day % · G/L %, lo que el móvil deja ver) y
+     bottom-nav de 6 pestañas. -->
+<style>
+  .pvs-ov{
+    position:fixed; inset:0; z-index:12200; display:none;
+    background:#fff; overflow:hidden; overscroll-behavior:contain;
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+    color:#0b1c30; -webkit-font-smoothing:antialiased;
+  }
+  .pvs-ov.open{ display:block; }
+  /* telón: halo + puntos muy tenues para que el blanco no quede plano */
+  .pvs-ov::before{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:
+      radial-gradient(90% 45% at 88% 4%, rgba(11,28,48,.05), transparent 70%),
+      radial-gradient(circle, rgba(11,28,48,.05) 1px, transparent 1px);
+    background-size:auto, 24px 24px;
+  }
+  /* la app ya lo aplica global; aquí explícito para que el bloque mida igual
+     aislado que dentro de index.html */
+  .pvs-ov, .pvs-ov *{ box-sizing:border-box; }
+  .pvs-wrap{
+    position:relative; height:100%; display:flex; flex-direction:column; overflow:hidden;
+    max-width:460px; margin:0 auto;
+    padding:calc(16px + env(safe-area-inset-top)) 24px 0;
+  }
+
+  /* ── cabecera ── */
+  /* el hueco de arriba lo deja libre el botón Saltar, que va absoluto */
+  .pvs-head{ flex-shrink:0; padding-top:32px; }
+  .pvs-skip{
+    position:absolute; top:calc(14px + env(safe-area-inset-top)); right:22px; z-index:3;
+    background:none; border:0; padding:6px 2px; font-family:inherit;
+    font-size:13px; font-weight:500; color:#a3aeba; cursor:pointer; letter-spacing:-.01em;
+  }
+  .pvs-title{
+    font-size:clamp(25px,7.2vw,31px); font-weight:700; line-height:1.11; letter-spacing:-.038em;
+    margin:0 0 9px; text-wrap:balance;
+  }
+  .pvs-text{ font-size:14.5px; line-height:1.5; color:#7b8795; margin:0; letter-spacing:-.01em; }
+  .pvs-dots{ display:flex; gap:5px; margin:13px 0 0; }
+  .pvs-dot{ height:4px; width:14px; border-radius:999px; background:#dbe2ea; transition:width .3s cubic-bezier(.22,1,.36,1),background .3s; }
+  .pvs-dot.on{ width:34px; background:#2b3a4d; }
+
+  /* ── escenario: el teléfono sangra por abajo ── */
+  .pvs-stage{ flex:1; min-height:0; margin-top:20px; display:flex; justify-content:center; overflow:hidden; }
+  .pvs-phone{
+    width:min(300px,100%); flex-shrink:0; height:620px; border-radius:44px; padding:9px 9px 0;
+    background:linear-gradient(160deg,#1c2f47,#0b1c30 42%);
+    box-shadow:0 -2px 0 rgba(255,255,255,.06) inset, 0 24px 50px -22px rgba(4,22,44,.45);
+    animation:pvsRise .55s cubic-bezier(.22,1,.36,1) both;
+  }
+  @keyframes pvsRise{ from{ opacity:0; transform:translateY(18px) } to{ opacity:1; transform:none } }
+  .pvs-screen{
+    position:relative; border-radius:36px 36px 0 0; overflow:hidden; background:#f4f7fb;
+    display:flex; flex-direction:column; height:100%;
+  }
+  .pvs-notch{
+    position:absolute; top:8px; left:50%; transform:translateX(-50%);
+    width:80px; height:21px; border-radius:999px; background:#04162c; z-index:4;
+  }
+
+  /* ══ bloque navy: barra de estado + topbar + valor total ══ */
+  .pvs-navy{ flex-shrink:0; background:#04162c; border-radius:0 0 22px 22px; padding:11px 15px 22px; }
+  .pvs-status{ display:flex; align-items:center; justify-content:space-between; font-size:11px; font-weight:650; color:#fff; }
+  .pvs-tb{ display:flex; align-items:center; gap:8px; margin-top:12px; }
+  .pvs-tb-name{ font-size:15px; font-weight:700; color:#fff; letter-spacing:-.02em; }
+  .pvs-tb-ic{ margin-left:auto; display:flex; gap:7px; }
+  .pvs-tb-b{
+    width:26px; height:26px; border-radius:50%; background:rgba(255,255,255,.1);
+    display:flex; align-items:center; justify-content:center; color:#fff;
+  }
+  .pvs-hero-lbl{ font-size:10.5px; font-weight:500; color:rgba(255,255,255,.62); margin-top:14px; }
+  .pvs-hero-val{ font-size:29px; font-weight:750; color:#fff; letter-spacing:-.04em; line-height:1.15; margin-top:1px; }
+  .pvs-badge{
+    display:inline-block; margin-top:8px; font-size:10.5px; font-weight:700; color:#0f7a4a;
+    background:#bdf5d8; border-radius:999px; padding:4px 10px;
+  }
+
+  /* chips de periodo montados sobre el borde del bloque navy */
+  .pvs-chips{ display:flex; flex-wrap:wrap; gap:5px; padding:0 11px; margin-top:-13px; position:relative; z-index:2; }
+  .pvs-chip{
+    flex:1 0 15%; text-align:center; font-size:10px; font-weight:650; color:#3d4d61;
+    background:#fff; border:1px solid #e9edf3; border-radius:999px; padding:6px 0;
+    box-shadow:0 1px 3px rgba(4,22,44,.06);
+  }
+  .pvs-chip.on{ background:#0b1c30; border-color:#0b1c30; color:#fff; }
+
+  /* ── cuerpo desplazable de la app ── */
+  .pvs-app{ flex:1; min-height:0; overflow:hidden; padding:9px 11px 0; }
+  .pvs-c{ background:#fff; border:1px solid #eef1f6; border-radius:15px; padding:11px 12px; margin-bottom:8px; }
+  .pvs-c-t{ font-size:13px; font-weight:700; letter-spacing:-.02em; }
+  .pvs-c-s{ font-size:9.5px; color:#93a0ad; margin-top:1px; }
+  .pvs-met{ display:flex; gap:11px; margin-top:4px; align-items:baseline; }
+  .pvs-met-l{ font-size:8px; font-weight:650; text-transform:uppercase; letter-spacing:.08em; color:#93a0ad; }
+  .pvs-met-v{ font-size:10.5px; font-weight:700; color:#0f7a4a; margin-left:4px; }
+  .pvs-chart{ display:block; width:100%; height:70px; margin-top:8px; }
+  .pvs-chart path.ln{ stroke-dasharray:340; stroke-dashoffset:340; animation:pvsDraw 1.1s .2s cubic-bezier(.5,0,.2,1) forwards; }
+  @keyframes pvsDraw{ to{ stroke-dashoffset:0 } }
+
+  .pvs-th{ display:flex; align-items:center; padding:8px 1px 5px; border-bottom:1px solid #f0f3f7; }
+  .pvs-th span{ font-size:8px; font-weight:650; text-transform:uppercase; letter-spacing:.07em; color:#a0abb8; }
+  .pvs-r{ display:flex; align-items:center; padding:7px 1px; border-bottom:1px solid #f5f7fa; }
+  .pvs-col-s{ flex:1; display:flex; align-items:center; gap:8px; min-width:0; }
+  .pvs-col-d{ width:52px; text-align:right; font-size:10px; font-weight:700; }
+  .pvs-col-g{ width:56px; text-align:right; font-size:10px; font-weight:700; }
+  .pvs-kebab{ width:14px; text-align:right; color:#c3ccd7; font-size:9px; }
+  .pvs-av{
+    width:21px; height:21px; border-radius:50%; flex-shrink:0; color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:7.5px; font-weight:800; letter-spacing:-.03em;
+  }
+  .pvs-tk{ font-size:11px; font-weight:700; letter-spacing:-.02em; }
+  .up{ color:#0f7a4a } .dn{ color:#ba1a1a }
+
+  /* ══ Noticias: titular + análisis + temas clave ══ */
+  .pvs-nv-h{ font-size:15px; font-weight:750; color:#fff; letter-spacing:-.03em; margin-top:13px; }
+  .pvs-nv-s{ font-size:10px; color:rgba(255,255,255,.6); margin-top:2px; }
+  .pvs-n{ background:#fff; border:1px solid #eef1f6; border-radius:15px; padding:11px 12px; margin-bottom:8px; }
+  .pvs-n-top{ display:flex; align-items:center; gap:6px; margin-bottom:5px; }
+  .pvs-n-src{ font-size:8.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:#93a0ad; }
+  .pvs-n-imp{ margin-left:auto; font-size:8px; font-weight:750; border-radius:999px; padding:3px 7px; }
+  .pvs-n-imp.hi{ color:#9a3412; background:#ffedd5; }
+  .pvs-n-imp.md{ color:#1e4d8c; background:#dbeafe; }
+  .pvs-n-t{ font-size:11.5px; font-weight:700; line-height:1.32; letter-spacing:-.02em; }
+  .pvs-n-an{ margin-top:7px; background:#f5f8fc; border-left:2px solid #2b3a4d; border-radius:0 8px 8px 0; padding:6px 8px; }
+  .pvs-n-an-l{ font-size:7.5px; font-weight:750; letter-spacing:.09em; text-transform:uppercase; color:#5b6b7d; }
+  .pvs-n-an-t{ font-size:9.5px; line-height:1.42; color:#44546b; margin-top:2px; }
+  .pvs-n-k{ display:flex; flex-wrap:wrap; gap:4px; margin-top:7px; }
+  .pvs-n-k span{ font-size:8px; font-weight:650; color:#3d4d61; background:#eef2f7; border-radius:999px; padding:3px 7px; }
+
+  /* ══ Analizar: KPIs, distribución por sector y health score ══ */
+  .pvs-kg{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .pvs-k{ background:#fff; border:1px solid #eef1f6; border-radius:13px; padding:10px 11px 11px; }
+  .pvs-k.ok{ border-top:2px solid #0f7a4a; }
+  .pvs-k-l{ font-size:7.5px; font-weight:750; letter-spacing:.1em; text-transform:uppercase; color:#6b7787; line-height:1.35; }
+  .pvs-k-v{ font-size:22px; font-weight:800; letter-spacing:-.04em; margin-top:4px; line-height:1; }
+  .pvs-k-s{ font-size:9px; color:#7b8795; margin-top:4px; }
+  .pvs-k-s.g{ color:#0f7a4a; font-weight:750; letter-spacing:.05em; text-transform:uppercase; font-size:8px; }
+  .am{ color:#b45309 }
+  .pvs-dsec{ background:#fff; border:1px solid #eef1f6; border-radius:13px; padding:11px 12px; margin-top:8px; }
+  .pvs-dsec-l{ font-size:8px; font-weight:750; letter-spacing:.1em; text-transform:uppercase; color:#6b7787; margin-bottom:7px; }
+  .pvs-sr{ display:flex; align-items:center; gap:8px; padding:3.5px 0; }
+  .pvs-sr-n{ flex:1; font-size:10px; color:#0b1c30; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pvs-sr-b{ width:58px; height:6px; border-radius:999px; background:#e9eef6; overflow:hidden; flex-shrink:0; }
+  .pvs-sr-b i{ display:block; height:100%; border-radius:999px; }
+  .pvs-sr-p{ width:36px; text-align:right; font-size:10px; font-weight:800; letter-spacing:-.02em; }
+  .pvs-hs{ background:#fff; border:1px solid #eef1f6; border-radius:13px; padding:11px 12px 14px; margin-top:8px; }
+  .pvs-hs-h{ display:flex; align-items:center; gap:6px; font-size:8px; font-weight:750; letter-spacing:.1em; text-transform:uppercase; color:#6b7787; }
+  .pvs-hs-b{ display:flex; align-items:center; gap:12px; margin-top:9px; }
+  .pvs-hs-d{ position:relative; width:66px; height:66px; flex-shrink:0 }
+  .pvs-hs-d svg{ display:block }
+  .pvs-hs-c{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; line-height:1 }
+  .pvs-hs-n{ font-size:19px; font-weight:800; letter-spacing:-.04em; color:#1f7a4d }
+  .pvs-hs-u{ font-size:8px; font-weight:700; color:#93a0ad; margin-top:2px }
+  .pvs-hs-t{ font-size:15px; font-weight:800; color:#0f7a4a; letter-spacing:-.03em; }
+  .pvs-hs-s{ font-size:10px; color:#5b6b7d; line-height:1.4; margin-top:3px; }
+
+  /* ══ Análisis de acción (AAPL) ══ */
+  .pvs-shd{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  .pvs-shd-n{ font-size:19px; font-weight:800; letter-spacing:-.04em; }
+  .pvs-shd-tk{ font-size:9.5px; font-weight:800; color:#0b1c30; background:#e7eefb; border-radius:999px; padding:3px 8px; }
+  .pvs-shd-s{ font-size:11px; color:#44546b; }
+  .pvs-shd-p{ display:flex; align-items:baseline; gap:7px; flex-wrap:wrap; margin-top:5px; }
+  .pvs-shd-pv{ font-size:23px; font-weight:800; letter-spacing:-.045em; }
+  .pvs-shd-pc{ font-size:11.5px; font-weight:750; color:#0f7a4a; }
+  .pvs-shd-pp{ font-size:9.5px; color:#93a0ad; font-weight:650; }
+  .pvs-btns{ display:flex; gap:7px; margin-top:10px; }
+  .pvs-btn{ flex:1; text-align:center; border-radius:11px; padding:9px 0; font-size:11px; font-weight:700; }
+  .pvs-btn.w{ color:#0f7a4a; background:#eefaf3; border:1px solid #9fdcbe; }
+  .pvs-btn.a{ color:#fff; background:#0b1c30; display:flex; align-items:center; justify-content:center; gap:5px; }
+  .pvs-seg{ display:flex; flex-wrap:wrap; gap:2px; background:#eef2fb; border-radius:12px; padding:4px; margin-top:8px; }
+  .pvs-seg span{ flex:1 0 15%; text-align:center; font-size:9.5px; font-weight:650; color:#3d4d61; padding:5px 0; border-radius:999px; }
+  .pvs-seg span.on{ background:#0b1c30; color:#fff; font-weight:750; }
+  .pvs-ax{ position:relative; margin-top:9px; }
+  .pvs-ax-y{ position:absolute; right:0; top:0; bottom:0; width:26px; display:flex; flex-direction:column; justify-content:space-between; font-size:7.5px; color:#a0abb8; text-align:right; }
+  .pvs-ax-x{ display:flex; justify-content:space-between; font-size:7px; color:#a0abb8; margin-top:3px; padding-right:28px; }
+  .pvs-tip{ position:absolute; left:32%; top:16%; background:#3c4756; color:#fff; font-size:8px; font-weight:700; border-radius:7px; padding:5px 8px; white-space:nowrap; }
+  .pvs-rk{ background:#0c1524; border-radius:15px; padding:13px 14px; margin-top:8px; color:#fff; }
+  .pvs-rk-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+  .pvs-rk-rec{ font-size:19px; font-weight:800; letter-spacing:-.02em; color:#33c47e; line-height:1; }
+  .pvs-rk-cap{ font-size:7.5px; color:rgba(255,255,255,.55); margin-top:4px; letter-spacing:.08em; text-transform:uppercase; }
+  .pvs-rk-sc{ font-size:19px; font-weight:800; letter-spacing:-.03em; text-align:right; line-height:1; color:#c9a13f; }
+  .pvs-rk-sc small{ font-size:10px; color:rgba(255,255,255,.55); font-weight:700; }
+  .pvs-rk-hr{ height:1px; background:rgba(255,255,255,.12); margin:12px 0 10px; }
+  .pvs-rk-pills{ display:flex; gap:7px; }
+  .pvs-rk-p{ flex:1; background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.09); border-radius:10px; padding:7px 9px; }
+  .pvs-rk-p-l{ font-size:7px; color:rgba(255,255,255,.55); letter-spacing:.08em; text-transform:uppercase; }
+  .pvs-rk-p-v{ font-size:12px; font-weight:700; margin-top:2px; }
+
+  /* ══ Uso simulado: el cuerpo de la app se desplaza solo ══
+     --sc = cuánto baja cada pantalla (lo fija cada slide con `scroll`).
+     No es un desplazamiento constante: imita el pulgar. Cada tramo es un
+     impulso que sale rápido y frena solo (inercia), las distancias y las
+     pausas son desiguales, y tras los impulsos largos hay un pequeño reajuste
+     como cuando se suelta el dedo. Un recorrido lineal delata la máquina. */
+  .pvs-scroll{ animation:pvsScroll 9.5s ease-out .6s infinite; }
+  @keyframes pvsScroll{
+    0%,9%    { transform:translateY(0);                          animation-timing-function:cubic-bezier(.16,.84,.42,1) }
+    24%      { transform:translateY(calc(var(--sc,0px) * -.44)); animation-timing-function:cubic-bezier(.3,0,.35,1) }
+    27%      { transform:translateY(calc(var(--sc,0px) * -.41)) }
+    38%      { transform:translateY(calc(var(--sc,0px) * -.41)); animation-timing-function:cubic-bezier(.14,.86,.38,1) }
+    56%      { transform:translateY(calc(var(--sc,0px) * -1));   animation-timing-function:cubic-bezier(.3,0,.35,1) }
+    59%      { transform:translateY(calc(var(--sc,0px) * -.96)) }
+    /* de vuelta arriba también a impulsos, no de un tirón */
+    80%      { transform:translateY(calc(var(--sc,0px) * -.96)); animation-timing-function:cubic-bezier(.18,.82,.4,1) }
+    88%      { transform:translateY(calc(var(--sc,0px) * -.4)) }
+    90%      { transform:translateY(calc(var(--sc,0px) * -.4));  animation-timing-function:cubic-bezier(.2,.8,.36,1) }
+    97%,100% { transform:translateY(0) }
+  }
+  /* Pantallas muy largas (portafolio y acción): seis impulsos que recorren el
+     informe entero, cada uno con su propia distancia y su propia pausa, y tres
+     de vuelta arriba. */
+  .pvs-scroll.long{ animation:pvsScrollLong var(--dur,12s) ease-out .5s infinite; }
+  @keyframes pvsScrollLong{
+    0%,6%    { transform:translateY(0);                          animation-timing-function:cubic-bezier(.16,.84,.42,1) }
+    15%      { transform:translateY(calc(var(--sc,0px) * -.15)) }
+    21%      { transform:translateY(calc(var(--sc,0px) * -.15)); animation-timing-function:cubic-bezier(.13,.87,.36,1) }
+    29%      { transform:translateY(calc(var(--sc,0px) * -.34)); animation-timing-function:cubic-bezier(.3,0,.35,1) }
+    31%      { transform:translateY(calc(var(--sc,0px) * -.32)) }
+    35%      { transform:translateY(calc(var(--sc,0px) * -.32)); animation-timing-function:cubic-bezier(.19,.81,.4,1) }
+    42%      { transform:translateY(calc(var(--sc,0px) * -.48)) }
+    46%      { transform:translateY(calc(var(--sc,0px) * -.48)); animation-timing-function:cubic-bezier(.12,.88,.36,1) }
+    55%      { transform:translateY(calc(var(--sc,0px) * -.74)); animation-timing-function:cubic-bezier(.3,0,.35,1) }
+    57%      { transform:translateY(calc(var(--sc,0px) * -.72)) }
+    61%      { transform:translateY(calc(var(--sc,0px) * -.72)); animation-timing-function:cubic-bezier(.2,.8,.35,1) }
+    68%      { transform:translateY(calc(var(--sc,0px) * -.9)) }
+    71%      { transform:translateY(calc(var(--sc,0px) * -.9));  animation-timing-function:cubic-bezier(.22,.78,.4,1) }
+    77%      { transform:translateY(calc(var(--sc,0px) * -1)) }
+    82%      { transform:translateY(calc(var(--sc,0px) * -1));   animation-timing-function:cubic-bezier(.18,.82,.38,1) }
+    87%      { transform:translateY(calc(var(--sc,0px) * -.6)) }
+    89%      { transform:translateY(calc(var(--sc,0px) * -.6));  animation-timing-function:cubic-bezier(.18,.82,.38,1) }
+    94%      { transform:translateY(calc(var(--sc,0px) * -.22)) }
+    95%      { transform:translateY(calc(var(--sc,0px) * -.22)); animation-timing-function:cubic-bezier(.24,.76,.36,1) }
+    100%     { transform:translateY(0) }
+  }
+  /* chips de periodo: el usuario cambia de rango a mitad del recorrido */
+  .pvs-chip.anim{ animation:pvsChip 9.5s steps(1) .6s infinite; }
+  @keyframes pvsChip{ 0%,24%{ background:#fff;border-color:#e9edf3;color:#3d4d61 } 25%,78%{ background:#0b1c30;border-color:#0b1c30;color:#fff } 79%,100%{ background:#fff;border-color:#e9edf3;color:#3d4d61 } }
+  .pvs-chip.on{ animation:pvsChipOff 9.5s steps(1) .6s infinite; }
+  @keyframes pvsChipOff{ 0%,24%{ background:#0b1c30;border-color:#0b1c30;color:#fff } 25%,78%{ background:#fff;border-color:#e9edf3;color:#3d4d61 } 79%,100%{ background:#0b1c30;border-color:#0b1c30;color:#fff } }
+  /* burbuja del chat: entra como si acabara de responder */
+  .pvs-mb{ animation:pvsUp .45s cubic-bezier(.22,1,.36,1) .9s both; }
+  .pvs-mu{ animation:pvsUp .4s cubic-bezier(.22,1,.36,1) .35s both; }
+  @keyframes pvsUp{ from{ opacity:0; transform:translateY(9px) } to{ opacity:1; transform:none } }
+  @media (prefers-reduced-motion:reduce){
+    .pvs-scroll,.pvs-chip.anim,.pvs-chip.on,.pvs-mb,.pvs-mu,.pvs-chart path.ln{ animation:none !important }
+    .pvs-chart path.ln{ stroke-dashoffset:0 !important }
+  }
+
+  /* ══ Noticias: Esta Semana — Catalizadores Clave ══ */
+  .pvs-wk-h{ display:flex; align-items:flex-start; gap:8px; }
+  .pvs-wk-t{ font-size:16px; font-weight:800; letter-spacing:-.035em; line-height:1.15; }
+  .pvs-wk-d{ margin-left:auto; font-size:9px; color:#93a0ad; white-space:nowrap; padding-top:3px; }
+  .pvs-wk-v{ display:inline-block; margin-top:7px; font-size:9.5px; font-weight:750; color:#c1443e; background:#fdeceb; border-radius:999px; padding:4px 10px; }
+  .pvs-wk-s{ background:#fff; border:1px solid #e3ecf8; border-radius:12px; padding:10px 11px; margin-top:9px; font-size:10.5px; font-weight:700; line-height:1.45; color:#0b1c30; }
+  .pvs-day{ border:1px solid #e3ecf8; border-radius:12px; overflow:hidden; margin-top:9px; }
+  .pvs-day-h{ display:flex; align-items:center; background:#eef2f9; padding:7px 10px; }
+  .pvs-day-n{ font-size:10.5px; font-weight:750; }
+  .pvs-day-i{ margin-left:auto; font-size:8.5px; font-weight:750; border-radius:999px; padding:3px 8px; }
+  .pvs-day-i.md{ color:#9a5b12; background:#fbe9d4 }
+  .pvs-day-i.hi{ color:#c1443e; background:#fdeceb }
+  .pvs-day-b{ background:#fff; padding:9px 10px 10px; }
+  .pvs-day-t{ font-size:11px; font-weight:750; letter-spacing:-.02em; line-height:1.3; }
+  .pvs-tg{ display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+  .pvs-tg span{ font-size:8px; font-weight:700; border-radius:999px; padding:3px 7px; color:#5b6b7d; background:#eef2f7; }
+  .pvs-tg span.o{ color:#9a5b12; background:#fbe9d4 }
+  .pvs-kk{ font-size:8px; font-weight:750; letter-spacing:.12em; text-transform:uppercase; color:#a0abb8; margin:13px 0 7px; }
+  .pvs-key{ background:#fff; border:1px solid #e3ecf8; border-radius:12px; padding:10px 11px; margin-bottom:8px; }
+  .pvs-key-t{ font-size:11px; font-weight:750; letter-spacing:-.02em; }
+  .pvs-key-b{ font-size:9.5px; line-height:1.5; color:#44546b; margin-top:3px; }
+
+  /* ══ Portiv Intelligence ══ */
+  .pvs-pi-h{ font-size:16px; font-weight:750; letter-spacing:-.01em; color:#0b1c30; }
+  .pvs-pi-s{ font-size:11.5px; font-weight:750; margin-top:6px; }
+  .pvs-pi-p{ font-size:10px; color:#5b6b7d; margin-top:4px; line-height:1.4 }
+  .pvs-pi-p b{ color:#0b1c30 }
+  .pvs-pi-t{ font-size:10.5px; font-weight:750; letter-spacing:-.01em; margin-top:9px }
+  .pvs-pi-t:first-child{ margin-top:0 }
+  .pvs-pi-b{ font-size:9.5px; line-height:1.55; color:#3a4658; margin-top:3px }
+  .pvs-pi-d{ font-size:9px; font-style:italic; color:#93a0ad; margin-top:11px }
+
+  /* ══ Health score y look-through ══ */
+  .pvs-hm{ display:flex; align-items:center; gap:8px; padding:5px 0; }
+  .pvs-hm-l{ flex:1; min-width:0 }
+  .pvs-hm-n{ font-size:10px; font-weight:750; letter-spacing:-.01em; }
+  .pvs-hm-s{ font-size:8px; color:#93a0ad; margin-top:1px; }
+  .pvs-hm-b{ width:60px; height:5px; border-radius:999px; background:#e9eef6; overflow:hidden; flex-shrink:0 }
+  .pvs-hm-b i{ display:block; height:100%; border-radius:999px }
+  .pvs-hm-v{ width:22px; text-align:right; font-size:11px; font-weight:800; letter-spacing:-.02em }
+  .pvs-lt{ display:flex; align-items:baseline; gap:7px; padding:6px 0; border-top:1px solid #f1f4f8; font-size:9.5px }
+  .pvs-lt b{ font-size:10.5px; font-weight:800; letter-spacing:-.02em }
+  .pvs-lt span{ margin-left:auto; color:#93a0ad; text-align:right }
+
+  /* ══ Acción: nota, moat y dimensiones ══ */
+  .pvs-nota{ font-size:26px; font-weight:800; letter-spacing:-.04em; color:#3563b8; line-height:1 }
+  .pvs-nota-t{ font-size:11px; font-weight:750; color:#3563b8; margin-top:3px }
+  .pvs-nota-c{ font-size:8px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; color:#a0abb8; margin-top:2px }
+  .pvs-nota-b{ font-size:9.5px; line-height:1.55; color:#3a4658; margin-top:9px }
+  .pvs-sect{ display:flex; align-items:flex-start; gap:8px }
+  .pvs-sect-t{ flex:1; font-size:12px; font-weight:800; letter-spacing:-.02em; line-height:1.25; padding-left:7px; border-left:3px solid #1f6b48 }
+  .pvs-sect-s{ flex-shrink:0; font-size:10px; font-weight:800; color:#1f7a4d; border:1px solid #cfe6da; border-radius:999px; padding:3px 8px }
+  .pvs-sect-s small{ color:#93a0ad; font-weight:700; font-size:8px }
+  .pvs-moat{ display:inline-block; margin-top:8px; font-size:9.5px; font-weight:700; color:#1f7a4d; background:#e7f2ec; border-radius:999px; padding:5px 11px }
+  .pvs-li{ display:flex; gap:6px; font-size:9.5px; line-height:1.45; color:#3a4658; margin-top:6px }
+  .pvs-li i{ flex-shrink:0; width:3px; height:3px; border-radius:50%; background:#7b8494; margin-top:6px; display:block }
+
+  /* ══ Análisis de acción: secciones profundas ══ */
+  .pvs-c-d{ font-size:9.5px; line-height:1.5; color:#8b96a4; margin-top:6px }
+  .pvs-note{ font-size:9px; line-height:1.5; color:#a0abb8; margin-top:9px }
+  .pvs-fr{ display:flex; align-items:center; gap:8px; padding:7px 0; border-top:1px solid #f4f6f9 }
+  .pvs-fr-n{ flex:1; font-size:10.5px; font-weight:600; color:#26313f }
+  .pvs-fr-r{ font-size:8.5px; text-align:right; line-height:1.35; max-width:92px; color:#9aa5b2 }
+  .pvs-fr-v{ width:50px; text-align:right; font-size:12.5px; font-weight:800; letter-spacing:-.03em }
+  .pvs-hb{ border:1px solid #eef1f6; border-radius:12px; padding:9px 11px; margin-top:7px }
+  .pvs-hb-l{ font-size:9.5px; color:#8b96a4 }
+  .pvs-hb-v{ font-size:17px; font-weight:800; letter-spacing:-.03em; margin-top:2px }
+  .pvs-hb-s{ font-size:9px; color:#1f7a4d; margin-top:2px }
+  .pvs-gg{ display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:8px }
+  .pvs-gc{ background:#f6f8fb; border-radius:11px; padding:8px 9px }
+  .pvs-gc-l{ font-size:8.5px; color:#8b96a4; line-height:1.35 }
+  .pvs-gc-v{ font-size:16px; font-weight:800; letter-spacing:-.03em; color:#1f7a4d; margin-top:2px }
+  .pvs-gc-s{ font-size:8px; color:#9aa5b2; margin-top:1px }
+  .pvs-bars{ display:flex; align-items:flex-end; gap:9px; height:76px; margin-top:10px; padding:0 4px }
+  .pvs-bar{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100% }
+  .pvs-bar b{ font-size:9.5px; font-weight:750; margin-bottom:3px }
+  .pvs-bar i{ display:block; width:100%; border-radius:5px 5px 0 0 }
+  .pvs-bx{ display:flex; gap:9px; padding:5px 4px 0; border-top:1px solid #eef1f6; margin-top:5px }
+  .pvs-bx span{ flex:1; text-align:center; font-size:8.5px; color:#8b96a4 }
+  .pvs-eq{ display:grid; grid-template-columns:1fr 1fr; gap:7px; margin-top:9px }
+  .pvs-eqc{ border-radius:11px; padding:8px 9px; text-align:center; background:#eff8f3 }
+  .pvs-eqc.bad{ background:#fdeceb }
+  .pvs-eqc-l{ font-size:8.5px; color:#8b96a4 }
+  .pvs-eqc-v{ font-size:12px; font-weight:800; margin-top:2px; color:#1f7a4d }
+  .pvs-eqc.bad .pvs-eqc-v{ color:#b3261e }
+  .pvs-pills{ display:flex; flex-wrap:wrap; gap:5px; margin-top:8px }
+  .pvs-pill{ font-size:9px; font-weight:650; color:#3d4d61; background:#f1f4f8; border-radius:999px; padding:5px 9px }
+  .pvs-pill.bad{ color:#b3261e; background:#fdeceb; font-weight:750 }
+  .pvs-hd{ font-size:9.5px; font-weight:800; letter-spacing:.06em; margin-top:12px; color:#1f7a4d }
+  .pvs-hd.bad{ color:#b3261e }
+  .pvs-tbl{ width:100%; border-collapse:collapse; margin-top:9px }
+  .pvs-tbl th{ font-size:7px; font-weight:750; letter-spacing:.08em; text-transform:uppercase; color:#8b96a4; text-align:right; padding:0 4px 6px }
+  .pvs-tbl th:first-child{ text-align:left; padding-left:6px }
+  .pvs-tbl td{ font-size:10.5px; font-weight:700; text-align:right; padding:8px 4px; border-top:1px solid #f4f6f9 }
+  .pvs-tbl td:first-child{ text-align:left; font-weight:750; padding-left:6px }
+  .pvs-tbl tr.me td{ color:#1f7a4d; background:#f0f8f4; border-top-color:#e2f0e9 }
+  .pvs-quote{ background:#f6f8fb; border-left:3px solid #0b1c30; border-radius:0 11px 11px 0; padding:9px 11px; margin-top:10px; font-size:9.5px; line-height:1.55; color:#3a4658 }
+  .pvs-quote b{ color:#0b1c30 }
+  .pvs-val{ display:inline-block; font-size:10px; font-weight:750; color:#b3261e; background:#fdeceb; border-radius:999px; padding:6px 12px; margin-top:2px }
+  .pvs-sc{ border:1px solid #eef1f6; border-radius:12px; padding:10px 11px; margin-top:8px }
+  .pvs-sc.base{ border-color:#cfe6da; background:#f4faf7 }
+  .pvs-sc-t{ display:inline-block; font-size:8px; font-weight:800; letter-spacing:.1em; border-radius:999px; padding:4px 9px }
+  .pvs-sc-v{ font-size:21px; font-weight:800; letter-spacing:-.04em; margin-top:7px }
+  .pvs-sc-d{ font-size:9.5px; font-weight:750; margin-top:2px }
+  .pvs-sc-b{ font-size:9px; line-height:1.5; color:#8b96a4; margin-top:5px }
+  .pvs-tr{ padding:9px 0; border-top:1px solid #f4f6f9 }
+  .pvs-tr-h{ display:flex; align-items:baseline; gap:8px }
+  .pvs-tr-n{ flex:1; font-size:11px; font-weight:700 }
+  .pvs-tr-v{ font-size:13px; font-weight:800; letter-spacing:-.03em }
+  .pvs-tr-b{ font-size:9px; line-height:1.45; color:#8b96a4; margin-top:4px }
+  .pvs-rsi{ height:5px; border-radius:999px; background:#e9eef6; margin-top:7px; position:relative; overflow:hidden }
+  .pvs-rsi i{ display:block; height:100%; background:#1f7a4d; border-radius:999px }
+  .pvs-rsi u{ position:absolute; top:0; bottom:0; width:1px; background:#fff }
+  .pvs-lg{ display:flex; gap:12px; align-items:center; margin-top:8px; font-size:8.5px; color:#6b7787 }
+  .pvs-lg b{ display:inline-block; width:12px; height:2px; background:#2b3a4d; vertical-align:middle; margin-right:4px }
+  .pvs-lg i{ display:inline-block; width:12px; height:0; border-top:2px dashed #93a0ad; vertical-align:middle; margin-right:4px }
+  .pvs-lg s{ display:inline-block; width:8px; height:8px; background:#e3e9f1; border-radius:2px; vertical-align:middle; margin-right:4px }
+  .pvs-disc{ font-size:8.5px; line-height:1.5; color:#a0abb8; text-align:center; padding:10px 14px 4px }
+
+  /* ══ Análisis de portafolio: rebalanceo y EPS ══ */
+  .pvs-rb-h{ font-size:15px; font-weight:800; letter-spacing:-.02em; text-transform:uppercase; line-height:1.2 }
+  .pvs-rb-i{ font-size:9.5px; line-height:1.6; color:#8b96a4; margin-top:9px }
+  .pvs-rb-i b{ color:#26313f; font-weight:750 }
+  .pvs-rc{ border-top:1px solid #f0f3f7; padding:11px 0 12px }
+  .pvs-rc:first-of-type{ border-top:0 }
+  .pvs-rc-h{ display:flex; align-items:baseline; gap:6px }
+  .pvs-rc-n{ font-size:13px; font-weight:800; letter-spacing:-.02em }
+  .pvs-rc-w{ font-size:9.5px; color:#93a0ad; font-weight:650 }
+  .pvs-rc-a{ display:flex; align-items:center; gap:6px; font-size:11px; font-weight:750; letter-spacing:.02em; margin-top:6px }
+  .pvs-rc-m{ font-size:11.5px; color:#5b6b7d; margin-top:5px }
+  .pvs-rc-m b{ color:#0b1c30; font-weight:800 }
+  .pvs-rc-s{ font-size:8.5px; color:#a0abb8; margin-top:3px }
+  .pvs-rc-b{ font-size:9.5px; line-height:1.55; color:#8b96a4; margin-top:6px }
+  .pvs-eps-h{ font-size:15px; font-weight:800; letter-spacing:-.02em; text-transform:uppercase }
+  .pvs-tog{ display:flex; align-self:flex-end; background:#f1f4f8; border-radius:999px; padding:3px; margin:9px 0 0 auto; width:max-content }
+  .pvs-tog span{ font-size:9.5px; font-weight:700; color:#8b96a4; border-radius:999px; padding:5px 11px }
+  .pvs-tog span.on{ background:#0b1c30; color:#fff }
+  .pvs-eg{ display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:9px }
+  .pvs-ec{ background:#fff; border:1px solid #eef1f6; border-radius:13px; padding:10px 6px 9px; min-width:0; overflow:hidden }
+  .pvs-ec-n{ font-size:11.5px; font-weight:800; letter-spacing:-.02em; padding-left:3px }
+  .pvs-ec-g{ display:flex; gap:1px; margin-top:7px }
+  .pvs-ec-c{ flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; border-radius:7px }
+  .pvs-ec-c.hl{ background:#eef2fb }
+  .pvs-ec-d{ position:relative; width:100%; height:26px }
+  .pvs-ec-d i{ position:absolute; left:50%; margin-left:-2.5px; width:5px; height:5px; border-radius:50% }
+  .pvs-ec-d i.g{ background:#1f9e6e } .pvs-ec-d i.r{ background:#d9453a }
+  .pvs-ec-d i.o{ background:#fff; border:1px solid #c8d1dc; margin-left:-3px; width:4px; height:4px }
+  .pvs-ec-l{ font-size:7px; font-weight:750; text-align:center; line-height:1.3; color:#26313f; padding:2px 0; letter-spacing:-.02em }
+  .pvs-ec-v{ font-size:6px; font-weight:700; text-align:center; line-height:1.35; padding:1px 0 3px; white-space:nowrap; letter-spacing:-.03em }
+  .pvs-ec-v.g{ color:#1f9e6e } .pvs-ec-v.r{ color:#d9453a } .pvs-ec-v.n{ color:#93a0ad; font-weight:600 }
+
+  /* ══ Portiv IA: chat ══ */
+  .pvs-ch{ background:#fff; border-bottom:1px solid #eef1f6; display:flex; align-items:center; gap:9px; padding:10px 12px; }
+  .pvs-ch-av{ width:30px; height:30px; border-radius:50%; background:#0b1c30; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .pvs-ch-n{ font-size:12.5px; font-weight:800; letter-spacing:-.02em; }
+  .pvs-ch-s{ font-size:8.5px; color:#93a0ad; margin-top:1px; }
+  .pvs-ch-b{ margin-left:auto; display:flex; align-items:center; gap:4px; font-size:8.5px; font-weight:700; color:#0f7a4a; background:#eefaf3; border-radius:999px; padding:4px 8px; }
+  .pvs-ch-b i{ width:5px; height:5px; border-radius:50%; background:#0f7a4a; display:block; }
+  .pvs-msgs{ padding:11px 11px 0; display:flex; flex-direction:column; gap:9px; }
+  .pvs-mu{ align-self:flex-end; max-width:78%; background:#0b1c30; color:#fff; font-size:10.5px; line-height:1.45; border-radius:13px 13px 4px 13px; padding:8px 11px; }
+  .pvs-mb{ display:flex; gap:7px; align-items:flex-start; }
+  .pvs-mb-av{ width:20px; height:20px; border-radius:50%; background:#0b1c30; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+  .pvs-mb-t{ background:#fff; border:1px solid #eef1f6; border-radius:13px 13px 13px 4px; padding:9px 11px; font-size:10.5px; line-height:1.5; color:#2b3a4d; }
+  .pvs-mb-t b{ color:#0b1c30 }
+  .pvs-chips2{ display:flex; gap:5px; overflow:hidden; padding:11px 11px 0; }
+  .pvs-chips2 span{ flex-shrink:0; font-size:9px; font-weight:650; color:#3d4d61; background:#fff; border:1px solid #e6eaf0; border-radius:999px; padding:6px 10px; white-space:nowrap; }
+  .pvs-inp{ display:flex; align-items:center; gap:7px; margin:9px 11px 0; background:#fff; border:1px solid #e6eaf0; border-radius:999px; padding:8px 8px 8px 13px; }
+  .pvs-inp-t{ flex:1; font-size:10px; color:#a3aeba; }
+  .pvs-inp-s{ width:26px; height:26px; border-radius:50%; background:#0b1c30; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+
+  /* bottom-nav real (6 pestañas) */
+  .pvs-bn{ flex-shrink:0; display:flex; background:#fff; border-top:1px solid #eef1f6; padding:7px 2px 10px; }
+  .pvs-bn-i{ flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; color:#a3aeba; }
+  .pvs-bn-i.on{ color:#0b1c30 }
+  .pvs-bn-i span{ font-size:7px; font-weight:650; letter-spacing:-.01em; }
+
+  /* ── variante "bullets": el teléfono sube y se recorta, la info va debajo ── */
+  /* Misma estructura que la diapositiva 1: el texto arriba —aquí en forma de
+     lista— y el teléfono debajo, sangrando por el borde inferior. */
+  .pvs-ov.bul .pvs-text{ display:none; }
+  .pvs-bul{ flex:0 0 auto; padding:12px 0 0; display:flex; flex-direction:column; gap:11px; }
+  .pvs-b{ display:flex; gap:10px; align-items:flex-start; }
+  .pvs-b-d{
+    flex-shrink:0; width:6px; height:6px; border-radius:50%; background:#0b1c30; margin-top:6px;
+  }
+  .pvs-b-t{ font-size:13.5px; font-weight:700; letter-spacing:-.02em; line-height:1.3; }
+  .pvs-b-s{ font-size:12.5px; color:#8a96a3; line-height:1.42; letter-spacing:-.01em; margin-top:1px; }
+
+  /* ── controles flotantes sobre el teléfono ── */
+  .pvs-ctrl{
+    position:absolute; left:0; right:0; bottom:0; z-index:5;
+    display:flex; align-items:flex-end; justify-content:flex-end; gap:9px;
+    padding:26px 24px calc(18px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg,rgba(255,255,255,0) 0%,rgba(255,255,255,0) 24%,rgba(255,255,255,.92) 66%,#fff 100%);
+    pointer-events:none;
+  }
+  .pvs-ctrl > *{ pointer-events:auto; }
+  .pvs-back{
+    width:50px; height:50px; border-radius:16px; cursor:pointer; flex-shrink:0;
+    background:#fff; border:1px solid #e6eaf0; color:#5b6b7d;
+    font-family:inherit; font-size:17px; display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 14px -6px rgba(4,22,44,.25);
+  }
+  .pvs-back:disabled{ opacity:0; pointer-events:none; }
+  .pvs-next{
+    height:50px; padding:0 26px; border-radius:16px; border:0; cursor:pointer;
+    background:#0b1c30; color:#fff; font-family:inherit; font-size:15.5px; font-weight:650; letter-spacing:-.01em;
+    box-shadow:0 10px 24px -10px rgba(4,22,44,.55);
+    transition:opacity .15s, transform .05s;
+  }
+  .pvs-next:hover{ opacity:.92 } .pvs-next:active{ transform:translateY(1px) }
+</style>
+
+<div class="pvs-ov" id="pvSlidesOv" role="dialog" aria-modal="true">
+  <button type="button" class="pvs-skip" id="pvsSkip">Saltar</button>
+  <div class="pvs-wrap">
+    <div class="pvs-head" id="pvsHead"></div>
+    <div class="pvs-bul" id="pvsBul" style="display:none"></div>
+    <div class="pvs-stage" id="pvsStage"></div>
+  </div>
+  <div class="pvs-ctrl">
+    <button type="button" class="pvs-back" id="pvsBack" aria-label="Anterior">←</button>
+    <button type="button" class="pvs-next" id="pvsNext">Siguiente</button>
+  </div>
+</div>
+
+<script>
+/* ═══ Diapositivas "cómo funciona" (5) ═══
+   window._pvShowSlides(onDone) — onDone corre al terminar Y al saltar: en ambos
+   casos el usuario sigue al paso siguiente del onboarding. */
+(function(){
+
+  // ── Chrome de la app (versión nueva): navy con topbar dentro + chips montados ──
+  function _phone(inner, tab){
+    tab = tab || 'portfolio';
+    const NAV = [
+      ['portfolio','Portafolio','<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'],
+      ['noticias','Noticias','<path d="M3 6h18M3 11h13M3 16h9"/>'],
+      ['watchlist','Watchlist','<path d="M12 3l2.7 5.5 6 .9-4.3 4.2 1 6-5.4-2.8L6.6 19.6l1-6L3.3 9.4l6-.9L12 3z"/>'],
+      ['analizar','Analizar','<path d="M5 20V11M12 20V4M19 20v-6"/>'],
+      ['aianalyst','Portiv IA','<path d="M21 14a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/>'],
+      ['settings','Ajustes','<circle cx="12" cy="12" r="3"/><path d="M19.1 14.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1A2 2 0 1 1 4.1 17l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8L4.1 7A2 2 0 1 1 7 4.1l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.9 7l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'],
+    ];
+    return `
+    <div class="pvs-phone"><div class="pvs-screen">
+      <div class="pvs-notch"></div>
+      ${inner}
+      <div class="pvs-bn">
+        ${NAV.map(n=>`<div class="pvs-bn-i${n[0]===tab?' on':''}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${n[2]}</svg>
+          <span>${n[1]}</span></div>`).join('')}
+      </div>
+    </div></div>`;
+  }
+
+  // Cabecera navy: barra de estado + topbar (iguales en toda la app) + cuerpo variable.
+  const _navy = body => `
+    <div class="pvs-navy">
+      <div class="pvs-status">
+        <span>9:41</span>
+        <span style="display:flex;align-items:center;gap:5px">
+          <svg width="13" height="10" viewBox="0 0 14 10" fill="#fff"><rect x="0" y="6.5" width="2.4" height="3.5" rx=".6"/><rect x="3.6" y="4.5" width="2.4" height="5.5" rx=".6"/><rect x="7.2" y="2.4" width="2.4" height="7.6" rx=".6"/><rect x="10.8" y="0" width="2.4" height="10" rx=".6"/></svg>
+          <svg width="12" height="10" viewBox="0 0 14 10" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"><path d="M1 3.4a9 9 0 0 1 12 0"/><path d="M3.4 6a5.5 5.5 0 0 1 7.2 0"/><circle cx="7" cy="8.6" r=".9" fill="#fff" stroke="none"/></svg>
+          <svg width="17" height="10" viewBox="0 0 20 10"><rect x=".5" y=".5" width="16" height="9" rx="2.6" fill="none" stroke="#fff" stroke-opacity=".5"/><rect x="2" y="2" width="13" height="6" rx="1.5" fill="#fff"/><path d="M18 3.6v2.8a2 2 0 0 0 0-2.8z" fill="#fff" fill-opacity=".5"/></svg>
+        </span>
+      </div>
+      <div class="pvs-tb">
+        <svg viewBox="0 0 48 48" width="26" height="26" style="display:block;border-radius:9px"><rect width="48" height="48" rx="12" fill="#fff"/><g fill="#0b1c30"><rect x="11" y="28" width="5" height="9" rx="1.5"/><rect x="19" y="23" width="5" height="14" rx="1.5"/><rect x="27" y="26" width="5" height="11" rx="1.5"/><rect x="35" y="19" width="5" height="18" rx="1.5"/></g><polyline points="12,22 20,17 27,20 37,12" fill="none" stroke="#0b1c30" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="37.5" cy="11.5" r="2.6" fill="#0b1c30"/></svg>
+        <span class="pvs-tb-name">Portiv</span>
+        <span class="pvs-tb-ic">
+          <span class="pvs-tb-b"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.6-3.6"/></svg></span>
+          <span class="pvs-tb-b"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.1 14.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1A2 2 0 1 1 4.1 17l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8L4.1 7A2 2 0 1 1 7 4.1l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.9 7l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg></span>
+        </span>
+      </div>
+      ${body}
+    </div>`;
+
+  const HERO_PORTFOLIO = `
+      <div class="pvs-hero-lbl">Valor Total del Portafolio</div>
+      <div class="pvs-hero-val">$87,432.18</div>
+      <div><span class="pvs-badge">↑ 4.82%</span></div>`;
+
+  const CHIPS = `
+    <div class="pvs-chips">
+      <span class="pvs-chip">1D</span><span class="pvs-chip">1W</span><span class="pvs-chip">2W</span>
+      <span class="pvs-chip on">1M</span><span class="pvs-chip">3M</span><span class="pvs-chip anim">6M</span>
+      <span class="pvs-chip">1Y</span><span class="pvs-chip">YTD</span><span class="pvs-chip">ALL</span>
+    </div>`;
+
+  // Fila de posición tal como la pinta el móvil: Símbolo · Day % · G/L % · ⋮
+  const _row = (bg, ini, tk, day, gl) => `
+    <div class="pvs-r">
+      <span class="pvs-col-s"><span class="pvs-av" style="background:${bg}">${ini}</span><span class="pvs-tk">${tk}</span></span>
+      <span class="pvs-col-d ${day[0]==='-'?'dn':'up'}">${day}</span>
+      <span class="pvs-col-g ${gl[0]==='-'?'dn':'up'}">${gl}</span>
+      <span class="pvs-kebab">⋮</span>
+    </div>`;
+
+  const SCREEN_PORTFOLIO = _navy(HERO_PORTFOLIO) + CHIPS + `
+    <div class="pvs-app">
+      <div class="pvs-c">
+        <div class="pvs-c-t">Performance</div>
+        <div class="pvs-met">
+          <span><span class="pvs-met-l">Today</span><span class="pvs-met-v">+$1,224.60</span></span>
+          <span><span class="pvs-met-l">1M</span><span class="pvs-met-v">+4.82%</span></span>
+        </div>
+        <svg class="pvs-chart" viewBox="0 0 260 70" preserveAspectRatio="none" aria-hidden="true">
+          <defs><linearGradient id="pvsG" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#0f7a4a" stop-opacity=".18"/><stop offset="100%" stop-color="#0f7a4a" stop-opacity="0"/>
+          </linearGradient></defs>
+          <path d="M2 57 L24 54 L44 58 L64 47 L84 50 L104 39 L124 42 L146 30 L166 34 L188 22 L208 27 L230 13 L256 6 L256 70 L2 70 Z" fill="url(#pvsG)"/>
+          <path class="ln" d="M2 57 L24 54 L44 58 L64 47 L84 50 L104 39 L124 42 L146 30 L166 34 L188 22 L208 27 L230 13 L256 6"
+                fill="none" stroke="#0f7a4a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="pvs-c">
+        <div class="pvs-c-t">Tus Posiciones</div>
+        <div class="pvs-c-s">Vista en vivo de tus activos actuales</div>
+        <div class="pvs-th"><span class="pvs-col-s">Símbolo</span><span class="pvs-col-d">Day %</span><span class="pvs-col-g">G/L %</span><span class="pvs-kebab"></span></div>
+        ${_row('#e8632a','AA','AAPL','+1.82%','+24.10%')}
+        ${_row('#1f9e6e','MS','MSFT','+0.94%','+18.63%')}
+        ${_row('#2b3a4d','NV','NVDA','+2.61%','+41.27%')}
+        ${_row('#e0533d','GO','GOOGL','-0.42%','+12.05%')}
+        ${_row('#b0332a','AV','AVGO','+1.37%','+29.84%')}
+        ${_row('#1877f2','ME','META','-0.18%','+16.42%')}
+        ${_row('#e59500','AM','AMZN','+0.63%','+9.71%')}
+        ${_row('#1f6b48','TS','TSM','+1.05%','+33.20%')}
+      </div>
+    </div>`;
+
+  // Pestaña Noticias tal como se ve: "Esta Semana — Catalizadores Clave", el
+  // resumen, un bloque por día con sus etiquetas y tickers, y "TEMAS CLAVE".
+  const _day = (d, imp, impCls, tit, tags) => `
+    <div class="pvs-day">
+      <div class="pvs-day-h"><span class="pvs-day-n">${d}</span><span class="pvs-day-i ${impCls}">${imp}</span></div>
+      <div class="pvs-day-b">
+        <div class="pvs-day-t">${tit}</div>
+        <div class="pvs-tg">${tags.map(t=>`<span class="${t[0]==='*'?'o':''}">${t.replace(/^\*/,'')}</span>`).join('')}</div>
+      </div>
+    </div>`;
+  const _key = (t,b) => `<div class="pvs-key"><div class="pvs-key-t">${t}</div><div class="pvs-key-b">${b}</div></div>`;
+
+  const SCREEN_NOTICIAS = _navy('') + `
+    <div class="pvs-app" style="padding-top:11px">
+      <div class="pvs-wk-h"><div class="pvs-wk-t">Esta Semana —<br>Catalizadores Clave</div><span class="pvs-wk-d">24 ago – 28 ago</span></div>
+      <div><span class="pvs-wk-v">Alta Volatilidad</span></div>
+      <div class="pvs-wk-s">El mercado estadounidense navega entre máximos históricos y la expectativa crítica por los resultados de empresas líderes y datos de inflación.</div>
+      ${_day('Lunes 24 ago','Impacto medio','md','Pedidos de bienes duraderos (Durable Goods)',['*Programado · Impacto Medio','*Macro','8:30 AM ET','NVDA','MU','TSM','VOO'])}
+      ${_day('Martes 25 ago','Impacto medio','md','Confianza del consumidor (Conference Board)',['*Programado · Impacto Medio','*Macro','10:00 AM ET','AMZN','MA','AAPL','VOO'])}
+      ${_day('Miércoles 26 ago','Alto impacto','hi','NVDA reporta resultados (tras el cierre)',['*Programado · Impacto Alto','Resultados','Tras el cierre','NVDA'])}
+      ${_day('Jueves 27 ago','Impacto medio','md','Solicitudes iniciales de desempleo (jobless claims)',['*Programado · Impacto Medio','*Macro','8:30 AM ET','VOO','NVDA','MSFT','AMZN'])}
+      ${_day('Viernes 28 ago','Alto impacto','hi','PCE subyacente — inflación favorita de la Fed',['*Programado · Impacto Alto','*Macro','8:30 AM ET','VOO','NVDA','APP','MSFT','TSM'])}
+      <div class="pvs-kk">Temas clave</div>
+      ${_key('Prueba de fuego para el sector tecnológico','El mercado se encuentra en un momento decisivo con la presentación de resultados de empresas de gran peso como Nvidia y CRM. Su capacidad para superar estimaciones y dar una guía sólida sobre la demanda de IA será el catalizador principal.')}
+      ${_key('El consumidor y el empleo como termómetros','La confianza del consumidor y las solicitudes iniciales de desempleo ofrecerán una radiografía clara sobre la fortaleza de la economía estadounidense.')}
+      ${_key('Inflación y la hoja de ruta de la Reserva Federal','El dato de inflación subyacente preferido por la Fed marcará el tono final para la política monetaria y el optimismo por recortes de tasas.')}
+    </div>`;
+
+  const _sr = (n,pct,c) => `<div class="pvs-sr"><span class="pvs-sr-n">${n}</span><span class="pvs-sr-b"><i style="width:${pct*100/33.7}%;background:${c}"></i></span><span class="pvs-sr-p">${pct}%</span></div>`;
+
+  const _pi = (t,b) => `<div class="pvs-pi-t">${t}</div><div class="pvs-pi-b">${b}</div>`;
+  const _hm = (n,sub,v) => `<div class="pvs-hm"><div class="pvs-hm-l"><div class="pvs-hm-n">${n}</div><div class="pvs-hm-s">${sub}</div></div><span class="pvs-hm-b"><i style="width:${v}%;background:${v>=70?'#1f7a4d':'#a9791f'}"></i></span><span class="pvs-hm-v" style="color:${v>=70?'#1f7a4d':'#a9791f'}">${v}</span></div>`;
+
+  // Tarjeta de recomendación de rebalanceo, igual que en la app: ticker con su
+  // peso, la acción, el movimiento de peso y el porqué.
+  const _ACT = { hold:['—','MANTENER','#5b6b7d'], up:['↑','AUMENTAR','#1f7a4d'], down:['↓','REDUCIR','#d9453a'] };
+  const _rb = (tk,w,act,from,to,sub,body) => {
+    const a = _ACT[act];
+    return `<div class="pvs-rc">
+      <div class="pvs-rc-h"><span class="pvs-rc-n">${tk}</span><span class="pvs-rc-w">${w}</span></div>
+      <div class="pvs-rc-a" style="color:${a[2]}"><span>${a[0]}</span><span>${a[1]}</span></div>
+      <div class="pvs-rc-m">${from} → <b>${to}</b></div>
+      ${sub?`<div class="pvs-rc-s">${sub}</div>`:''}
+      <div class="pvs-rc-b">${body}</div>
+    </div>`;
+  };
+
+  // Tarjeta de EPS: cinco trimestres con su sorpresa; el resaltado marca el
+  // último reportado y la última columna, el próximo reporte.
+  const _ec = (n, cols) => `
+    <div class="pvs-ec">
+      <div class="pvs-ec-n">${n}</div>
+      <div class="pvs-ec-g">${cols.map(c=>`
+        <div class="pvs-ec-c${c[4]?' hl':''}">
+          <span class="pvs-ec-d">${c[2].map(d=>`<i class="${d[0]}" style="top:${d[1]}px"></i>`).join('')}</span>
+          <span class="pvs-ec-l">${c[0]}<br>${c[1]}</span>
+          <span class="pvs-ec-v ${c[3][0]==='+'?'g':(c[3][0]==='−'?'r':'n')}">${c[3].replace('|','<br>')}</span>
+        </div>`).join('')}</div>
+    </div>`;
+
+  const SCREEN_ANALISIS = _navy('') + `
+    <div class="pvs-app" style="padding-top:11px">
+      <div class="pvs-kg">
+        <div class="pvs-k"><div class="pvs-k-l">Posiciones</div><div class="pvs-k-v">13</div><div class="pvs-k-s">7 sectores</div></div>
+        <div class="pvs-k"><div class="pvs-k-l">Top 3<br>concentración</div><div class="pvs-k-v am">51.4%</div><div class="pvs-k-s">Media</div></div>
+        <div class="pvs-k"><div class="pvs-k-l">Exposición tech</div><div class="pvs-k-v am">59.1%</div><div class="pvs-k-s">Alta</div></div>
+        <div class="pvs-k ok"><div class="pvs-k-l">Beta ponderada</div><div class="pvs-k-v">1.22</div><div class="pvs-k-s g">Crecimiento</div></div>
+      </div>
+      <div class="pvs-dsec">
+        <div class="pvs-dsec-l">Distribución por sector</div>
+        ${_sr('ETF · Índice',33.7,'#0b1c30')}
+        ${_sr('Tech · Semiconductor…',25.1,'#0f7a4a')}
+        ${_sr('Tech · Internet/Ads',19.6,'#0f7a4a')}
+        ${_sr('Consumer/Cloud',7.2,'#0f7a4a')}
+        ${_sr('Tech · Software/Cloud',6.2,'#0f7a4a')}
+        ${_sr('Tech · Hardware',5.3,'#0f7a4a')}
+        ${_sr('Tech · Adtech',3.0,'#0f7a4a')}
+      </div>
+      <div class="pvs-hs">
+        <div class="pvs-hs-h">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#0f7a4a" stroke-width="2.2" stroke-linecap="round"><path d="M4 19V9M10 19V5M16 19v-7M21 19V3"/></svg>
+          Portfolio Health Score
+        </div>
+        <div class="pvs-hs-b">
+          <div class="pvs-hs-d">
+            <svg width="66" height="66" viewBox="0 0 42 42">
+              <circle cx="21" cy="21" r="17.5" fill="none" stroke="#e9eef6" stroke-width="5"/>
+              <circle cx="21" cy="21" r="17.5" fill="none" stroke="#1f7a4d" stroke-width="5" stroke-linecap="round"
+                      stroke-dasharray="78.1 31.9" stroke-dashoffset="0" transform="rotate(-90 21 21)"/>
+            </svg>
+            <div class="pvs-hs-c"><span class="pvs-hs-n">71</span><span class="pvs-hs-u">/ 100</span></div>
+          </div>
+          <div><div class="pvs-hs-t">Saludable</div>
+          <div class="pvs-hs-s">Buena estructura general, con áreas puntuales a monitorear.</div></div>
+        </div>
+        <div style="margin-top:10px">
+          ${_hm('Diversificación','7 sectores · 13 posiciones',100)}
+          ${_hm('Concentración','Top 3 = 51%',61)}
+          ${_hm('Volatilidad','Beta 1.22',84)}
+          ${_hm('Balance sector','Tech 59%',64)}
+          ${_hm('Momentum','+3.6% / año',58)}
+          ${_hm('Retorno esperado','12.6% / año',70)}
+          ${_hm('Liquidez','Cash 0%',55)}
+        </div>
+        <div style="font-size:8.5px;color:#93a0ad;margin-top:9px;border-top:1px solid #f1f4f8;padding-top:8px">13 de 13 posiciones con datos de mercado reales.</div>
+      </div>
+      <div class="pvs-c">
+        <div class="pvs-c-t">Exposición real (look-through de ETFs)</div>
+        <div class="pvs-c-s" style="line-height:1.45;margin-top:3px">Tus ETFs también contienen estas acciones. Tu exposición REAL suma la tenencia directa más la parte dentro de cada fondo.</div>
+        <div class="pvs-lt" style="border-top:0"><b>NVDA real 12.6%</b><span>directa 9.9% + vía ETF 2.6%</span></div>
+        <div class="pvs-lt"><b>MSFT real 8.2%</b><span>directa 6.2% + vía ETF 2.0%</span></div>
+        <div class="pvs-lt"><b>AAPL real 7.4%</b><span>directa 5.3% + vía ETF 2.1%</span></div>
+      </div>
+      <div style="margin-top:4px">
+        <div class="pvs-pi-h">Portiv Intelligence</div>
+        <div class="pvs-pi-s">Análisis del asesor</div>
+        <div class="pvs-pi-p">Perfil: <b>Moderado</b> · Capacidad Moderado · Disposición Moderado</div>
+        <div class="pvs-c" style="margin-top:9px">
+          ${_pi('Cómo leo tu perfil','Tu perfil es moderado tanto por capacidad financiera como por disposición psicológica. Aunque tu horizonte es largo, el hecho de que ambos indicadores coincidan marca el paso: buscas crecimiento, pero no a cualquier precio.')}
+          ${_pi('Tu cartera frente a tu perfil','Siendo directo: tu cartera actual no encaja con el perfil moderado. Tienes demasiada carga en tecnología (59.1% frente a un tope del 45%) y una beta de 1.22, lo que te expone a una volatilidad superior a la que tu perfil tolera.')}
+          ${_pi('Lo que estaría vigilando','Primero, la concentración sectorial; ese 59.1% en tecnología te hace dependiente de un solo sector muy sensible a los tipos de interés. Segundo, la beta: superar 1.20 en un perfil moderado es jugar con fuego.')}
+          ${_pi('Lo que haría yo','El ajuste es quirúrgico. Reducir peso en los nombres que disparan el riesgo (NVDA al 4.0%, META al 6.9%, AMZN al 5.9%) y reinvertir ese excedente en AVGO (6.0%), APP (5.4%), NFLX (5.4%) y AAPL (6.0%), manteniendo el núcleo en VOO (33.6%) y MSFT.')}
+          <div class="pvs-pi-d">*Este análisis es educativo y no constituye asesoría financiera personalizada.*</div>
+        </div>
+      </div>
+
+      <div class="pvs-c" style="margin-top:8px">
+        <div class="pvs-rb-h">Recomendaciones de rebalanceo</div>
+        <div class="pvs-rb-i">Cada posición se compara con las demás usando los <b>números que publica cada empresa</b> —qué gana por lo que vende, cuánto crece, con cuánta deuda y a qué precio cotiza— y el peso se inclina hacia los negocios que salen mejor parados. Qué rasgos pesan más lo decide tu perfil <b>Moderado</b> (largo plazo (10+ años), riesgo moderado): un perfil conservador penaliza deuda, volatilidad y comprar el pico del ciclo; uno agresivo prima el crecimiento que compone y acepta una cartera más concentrada. Sobre eso van los límites: techo por posición, techo por sector y un mínimo por debajo del cual una posición no aporta. La columna de la derecha explica las dos mitades: qué hace ese nombre <b>dentro de tu cartera</b> y qué está haciendo <b>el negocio</b>. Vender posiciones ganadoras puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.</div>
+        <div style="margin-top:11px">
+          ${_rb('GOOGL','7.3%','hold','7.3%','7.0%','','Pesa 7.3%, n<sup>o</sup>5 de 13. Lo que lo hace difícil de atacar: Monopolio de búsqueda con 90% market share — 25 años de índice web insustituible. Cada dólar reinvertido le rinde 45%: crece sin pedir prestado, y a PEG 1.1 el precio va en línea. Ni el negocio ni el tamaño piden moverla: déjala como está.')}
+          ${_rb('AVGO','3.5%','up','3.5%','6.0%','+0.72 acc · +$253','La ventaja que un competidor no puede comprar: ASIC custom para Google/Meta — barrera tecnológica que NVIDIA no toca. Cada dólar reinvertido le rinde 20%: crece sin pedir prestado, y a PEG 1.2 el precio va en línea. Sus números sostienen más peso del que tiene hoy: subir 2.5 pp (~$253) con lo que recortes de NVDA y AMZN.')}
+          ${_rb('APP','3.0%','up','3.0%','5.4%','+0.79 acc · +$245','Por qué el negocio aguanta: AXON 2.0: ventaja de datos insuperable — procesa más transacciones por día que cualquier competidor. Sus números sostienen más peso del que tiene hoy: subir 2.4 pp (~$245) con lo que recortes de NVDA y AMZN.')}
+          ${_rb('NFLX','4.4%','up','4.4%','5.4%','+1.20 acc · +$98','Lo que lo hace difícil de atacar — Datos: algoritmo de recomendación entrenado con 12 años de viewing data. Sus números sostienen más peso del que tiene hoy: subir 1.0 pp (~$98) con lo que recortes de NVDA y AMZN.')}
+          ${_rb('NVDA','9.9%','down','9.9%','4.0%','−2.84 acc · −$600','Vende con 74% de margen bruto: le sobra para invertir o bajar precios si la atacan, pero viene de un pico (+71%) y en semiconductores eso se da vuelta con el ciclo. Estás pagando un año que difícilmente se repita: recortar 5.9 pp (~$600) hacia APP y NFLX.')}
+          ${_rb('TSM','7.4%','hold','7.4%','7.4%','','Pesa 7.4%, n<sup>o</sup>4 de 13. La ventaja que un competidor no puede comprar: Monopolio efectivo en chips de 3nm y 5nm — Samsung e Intel están 1-2 generaciones atrás. Cada dólar reinvertido le rinde 34%: crece sin pedir prestado, y a PEG 1.0 no pagas por ese crecimiento. Ni el negocio ni el tamaño piden moverla: déjala como está.')}
+          ${_rb('MSFT','6.2%','hold','6.2%','6.5%','','Pesa 6.2%, n<sup>o</sup>7 de 13. Por qué el negocio aguanta — Azure: infraestructura cloud con 50,000 clientes enterprise bajo contratos plurianuales. Cada dólar reinvertido le rinde 27%: crece sin pedir prestado, y a PEG 1.5 el precio va en línea. Ni el negocio ni el tamaño piden moverla: déjala como está.')}
+          ${_rb('META','7.8%','down','7.8%','6.9%','−0.16 acc · −$91','Vende con 82% de margen bruto: le sobra para invertir o bajar precios si la atacan, y a PEG 0.9 no pagas por ese crecimiento. Pesa más de lo que sostiene frente a AVGO y APP: recortar 0.9 pp (~$91) hacia ellas.')}
+          ${_rb('AMZN','7.2%','down','7.2%','5.9%','−0.51 acc · −$132','Por qué el negocio aguanta — AWS: infraestructura cloud líder con backlog de $189B y switching costs de años. Gana más rápido (+90%) de lo que vende (+16%): escala sin que los costos sigan, y a PEG 1.4 el precio va en línea. Pesa más de lo que sostiene frente a AVGO y APP: recortar 1.3 pp (~$132) hacia ellas.')}
+          ${_rb('AAPL','5.3%','up','5.3%','6.0%','+0.22 acc · +$70','Pesa 5.3%, n<sup>o</sup>9 de 13. Vende con 47.9% de margen bruto y convierte 29¢ de cada dólar en efectivo libre. Sus números sostienen más peso del que tiene hoy: subir 0.7 pp (~$70) con lo que recortes de NVDA y AMZN.')}
+        </div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-eps-h">Earnings per share</div>
+        <div class="pvs-tog"><span>GAAP</span><span class="on">Normalized</span></div>
+        <div class="pvs-eg">
+          ${_ec('GOOGL',[['Q3','FY25',[['g',3]],'+$0.70'],['Q4','FY25',[['g',8],['o',13]],'+$0.11'],['Q1','FY26',[['r',11],['o',7]],'−$0.09'],['Q2','FY26',[['r',10],['o',6]],'−$0.13',1],['Q3','FY26',[['o',5]],'—|27 oct']])}
+          ${_ec('AVGO',[['Q3','FY25',[['g',12]],'+$0.01'],['Q4','FY25',[['g',11]],'+$0.05'],['Q1','FY26',[['r',10]],'−$0.02'],['Q2','FY26',[['r',8]],'−$0.01',1],['Q3','FY26',[['o',8]],'—|2 sep']])}
+          ${_ec('APP',[['Q3','FY25',[['g',15]],'+$0.03'],['Q4','FY25',[['g',11],['o',9]],'+$0.28'],['Q1','FY26',[['g',8],['o',11]],'+$0.12'],['Q2','FY26',[['g',6]],'+$0.00',1],['Q3','FY26',[['o',4]],'—|3 nov']])}
+          ${_ec('SNDK',[['Q1','FY26',[['g',13]],'+$0.27'],['Q2','FY26',[['g',12]],'+$2.68'],['Q3','FY26',[['g',9],['o',12]],'+$8.58'],['Q4','FY26',[['g',5],['o',8]],'+$4.11',1],['Q1','FY27',[['o',5]],'—|4 nov']])}
+          ${_ec('NFLX',[['Q3','FY25',[['o',3],['r',9]],'−$0.12'],['Q4','FY25',[['r',10]],'−$0.00'],['Q1','FY26',[['o',4],['r',9]],'−$0.08'],['Q2','FY26',[['r',3]],'−$0.00',1],['Q3','FY26',[['o',3]],'—|19 oct']])}
+          ${_ec('NVDA',[['Q2','FY26',[['g',12]],'+$0.02'],['Q3','FY26',[['g',11]],'+$0.03'],['Q4','FY26',[['g',9]],'+$0.06'],['Q1','FY27',[['g',6]],'+$0.08',1],['Q2','FY27',[['o',6]],'—|26 ago']])}
+        </div>
+      </div>
+    </div>`;
+
+  // Análisis de una acción, tal como se ve en el móvil: tarjeta de la empresa con
+  // precio y botones, "Precio Histórico" con sus 8 periodos y el gráfico, y la
+  // tarjeta navy con BUY / RATING CALIDAD, Horizonte y Nivel de Riesgo.
+  // Filas de "Datos financieros": nombre, lectura y valor, como en la app.
+  const _fr = (n,lec,c,v) => `<div class="pvs-fr"><div class="pvs-fr-n">${n}</div><div class="pvs-fr-r">lectura: <span style="color:${c};font-weight:700">${lec}</span></div><div class="pvs-fr-v">${v}</div></div>`;
+  const _hb = (l,v,s) => `<div class="pvs-hb"><div class="pvs-hb-l">${l}</div><div class="pvs-hb-v">${v}</div><div class="pvs-hb-s">${s}</div></div>`;
+  const _gc = (l,v,s) => `<div class="pvs-gc"><div class="pvs-gc-l">${l}</div><div class="pvs-gc-v">${v}</div><div class="pvs-gc-s">${s}</div></div>`;
+  const _eq = (q,r,bad) => `<div class="pvs-eqc${bad?' bad':''}"><div class="pvs-eqc-l">${q} · resultados</div><div class="pvs-eqc-v">${r}</div></div>`;
+  const _tr = (n,v,b,c) => `<div class="pvs-tr"><div class="pvs-tr-h"><div class="pvs-tr-n">${n}</div><div class="pvs-tr-v"${c?` style="color:${c}"`:''}>${v}</div></div><div class="pvs-tr-b">${b}</div></div>`;
+
+  // Velas japonesas del "Análisis técnico": serie de cierres aproximada de 6 meses
+  // con sus SMA 50 y 200; se dibuja una sola vez al cargar.
+  const _CAND = (()=>{
+    const cl=[300,304,299,306,302,308,301,296,288,283,286,281,284,279,282,277,281,286,283,296,301,298,305,309,303,308,312,306,318,325,321,330,336,332,341,338,333,326,321,317,312,308,314,309,305,311,308,314,318,315,312,309,313,311,314];
+    const lo=Math.min.apply(null,cl)-14, hi=Math.max.apply(null,cl)+8, H=86, W=230;
+    const y=v=>H-((v-lo)/(hi-lo))*H, w=W/cl.length;
+    let out='';
+    for(let i=0;i<cl.length;i++){
+      const o=i?cl[i-1]:cl[0], c=cl[i], up=c>=o, x=i*w+w/2, bw=Math.max(2,w*.58);
+      const col=up?'#1f7a4d':'#c1362c', top=Math.max(o,c)+2.4, bot=Math.min(o,c)-2.4;
+      out+=`<line x1="${x.toFixed(1)}" y1="${y(top).toFixed(1)}" x2="${x.toFixed(1)}" y2="${y(bot).toFixed(1)}" stroke="${col}" stroke-width=".9"/>`
+         + `<rect x="${(x-bw/2).toFixed(1)}" y="${y(Math.max(o,c)).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1.2,Math.abs(y(o)-y(c))).toFixed(1)}" fill="${col}" rx=".7"/>`;
+    }
+    let s50='';
+    for(let i=0;i<cl.length;i++){
+      let a=0,n=0; for(let k=Math.max(0,i-8);k<=i;k++){ a+=cl[k]; n++; }
+      s50+=`${(i*w+w/2).toFixed(1)},${y(a/n).toFixed(1)} `;
+    }
+    const s200=`0,${y(lo+16).toFixed(1)} ${W},${y(lo+40).toFixed(1)}`;
+    let vol=''; const vw=W/cl.length;
+    for(let i=0;i<cl.length;i++){
+      const h=6+((i*37)%17); vol+=`<rect x="${(i*vw+1).toFixed(1)}" y="${(24-h).toFixed(1)}" width="${(vw-2).toFixed(1)}" height="${h}" fill="#e3e9f1" rx=".8"/>`;
+    }
+    return { c:out, s50, s200, vol };
+  })();
+
+  const _dim = (n,v,lbl,c) => `<div class="pvs-hm" style="border-top:1px solid #f4f6f9"><div class="pvs-hm-l"><div class="pvs-hm-n" style="font-weight:600;font-size:10.5px">${n}</div></div><span class="pvs-hm-b"><i style="width:${v}%;background:${c}"></i></span><span style="width:56px;text-align:right;font-size:10px;font-weight:750;color:${c}">${lbl}</span></div>`;
+
+  const SCREEN_ACCION = _navy('') + `
+    <div class="pvs-app" style="padding-top:11px">
+      <div class="pvs-c">
+        <div class="pvs-shd"><span class="pvs-shd-n">Apple Inc</span><span class="pvs-shd-tk">AAPL</span><span class="pvs-shd-s">Technology</span></div>
+        <div class="pvs-shd-p"><span class="pvs-shd-pv">$312.81</span><span class="pvs-shd-pc">+$38.26 (+13.94%)</span><span class="pvs-shd-pp">6M</span></div>
+        <div class="pvs-btns">
+          <span class="pvs-btn w">En Watchlist</span>
+          <span class="pvs-btn a"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.1-2.8-2.8L7 14"/></svg>Analizar</span>
+        </div>
+      </div>
+      <div class="pvs-c">
+        <div class="pvs-c-t" style="font-size:14px">Precio Histórico</div>
+        <div class="pvs-seg">
+          <span>1D</span><span>1W</span><span>1M</span><span>3M</span><span class="on">6M</span><span>1A</span>
+          <span>YTD</span><span>5A</span>
+        </div>
+        <div class="pvs-ax">
+          <svg style="display:block;width:calc(100% - 28px);height:74px" viewBox="0 0 230 74" preserveAspectRatio="none" aria-hidden="true">
+            <g stroke="#eef1f6" stroke-width="1" stroke-dasharray="3 3">
+              <line x1="0" y1="6" x2="230" y2="6"/><line x1="0" y1="28" x2="230" y2="28"/><line x1="0" y1="50" x2="230" y2="50"/><line x1="0" y1="72" x2="230" y2="72"/>
+            </g>
+            <path d="M2 46 L14 40 L22 47 L32 44 L44 55 L56 58 L66 52 L76 55 L86 44 L96 47 L108 38 L118 41 L130 46 L140 30 L150 22 L156 34 L162 20 L170 30 L180 26 L190 22 L200 28 L212 18 L224 24 L224 74 L2 74 Z" fill="url(#pvsG)"/>
+            <path class="ln" d="M2 46 L14 40 L22 47 L32 44 L44 55 L56 58 L66 52 L76 55 L86 44 L96 47 L108 38 L118 41 L130 46 L140 30 L150 22 L156 34 L162 20 L170 30 L180 26 L190 22 L200 28 L212 18 L224 24"
+                  fill="none" stroke="#0f7a4a" stroke-width="1.6" stroke-linejoin="round"/>
+            <circle cx="212" cy="18" r="3" fill="#0f7a4a"/>
+          </svg>
+          <div class="pvs-ax-y"><span>$350</span><span>$300</span><span>$250</span><span>$200</span></div>
+          <div class="pvs-tip">10 Ago: $304.88</div>
+        </div>
+        <div class="pvs-ax-x"><span>9 Feb</span><span>9 Mar</span><span>7 Abr</span><span>5 May</span><span>3 Jun</span><span>5 Jul</span><span>2 Ago</span></div>
+      </div>
+      <div class="pvs-rk">
+        <div class="pvs-rk-top">
+          <div><div class="pvs-rk-rec">BUY</div><div class="pvs-rk-cap">Recomendación Analista</div></div>
+          <div><div class="pvs-rk-sc">7.6<small>/10</small></div><div class="pvs-rk-cap" style="text-align:right">Rating Calidad</div></div>
+        </div>
+        <div class="pvs-rk-hr"></div>
+        <div class="pvs-rk-pills">
+          <div class="pvs-rk-p"><div class="pvs-rk-p-l">Horizonte</div><div class="pvs-rk-p-v">2-3 Años</div></div>
+          <div class="pvs-rk-p"><div class="pvs-rk-p-l">Nivel de Riesgo</div><div class="pvs-rk-p-v">Bajo</div></div>
+        </div>
+      </div>
+      <div class="pvs-kg" style="margin-top:8px">
+        <div class="pvs-k"><div class="pvs-k-l">Market Cap</div><div class="pvs-k-v">$4.90T</div></div>
+        <div class="pvs-k"><div class="pvs-k-l">P/E Ratio (TTM)</div><div class="pvs-k-v">39.9</div></div>
+        <div class="pvs-k"><div class="pvs-k-l">Dividend Yield</div><div class="pvs-k-v">0.32%</div></div>
+        <div class="pvs-k"><div class="pvs-k-l">52W Range</div><div class="pvs-k-v" style="font-size:13px;line-height:1.25">$201.50 –<br>$344.57</div></div>
+      </div>
+      <div class="pvs-c" style="margin-top:8px">
+        <div class="pvs-nota">7.6</div>
+        <div class="pvs-nota-t">Buena</div>
+        <div class="pvs-nota-c">Nota / 10</div>
+        <div class="pvs-nota-b">Apple gana dinero de dos formas. La primera es vendiendo aparatos caros y de alta calidad: el iPhone (que representa la mitad de sus ventas), más Mac, iPad y Apple Watch. La segunda son los servicios digitales (App Store, iCloud, Apple Pay y Apple TV+), que aportan otra cuarta parte de sus ventas y dejan muchísima ganancia (75 centavos de cada dólar).</div>
+      </div>
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Foso competitivo (moat)</span><span class="pvs-sect-s">8.9<small>/10</small></span></div>
+        <div><span class="pvs-moat">Foso fuerte</span></div>
+        <div class="pvs-li"><i></i><span>Ecosistema iOS/macOS: switching cost de ~$1,500 promedio por usuario</span></div>
+        <div class="pvs-li"><i></i><span>Marca premium — justifica 30-40% de precio sobre competidores</span></div>
+        <div class="pvs-li"><i></i><span>Integración vertical hardware-chip-software-servicios única en el mundo</span></div>
+        <div class="pvs-li"><i></i><span>+2B dispositivos activos = flywheel de Servicios imparable</span></div>
+      </div>
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Ventajas competitivas por dimensión</span><span class="pvs-sect-s">8.7<small>/10</small></span></div>
+        <div style="margin-top:8px">
+          ${_dim('Efecto red',52,'Moderado','#a9791f')}
+          ${_dim('Switching costs',82,'Fuerte','#1f7a4d')}
+          ${_dim('Marca fuerte',86,'Fuerte','#1f7a4d')}
+          ${_dim('Economías de escala',84,'Fuerte','#1f7a4d')}
+          ${_dim('Patentes / IP',82,'Fuerte','#1f7a4d')}
+          ${_dim('Distribución dominante',84,'Fuerte','#1f7a4d')}
+          ${_dim('Ventaja regulatoria',12,'Débil','#93a0ad')}
+          ${_dim('Datos exclusivos',80,'Fuerte','#1f7a4d')}
+          ${_dim('Costos bajos',82,'Fuerte','#1f7a4d')}
+          ${_dim('Ventaja tecnológica',84,'Fuerte','#1f7a4d')}
+        </div>
+        <div class="pvs-note">Cada dimensión combina qué ventaja es estructuralmente posible en el sector con la evidencia financiera de la empresa.</div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Datos financieros</span><span class="pvs-sect-s" style="color:#a9791f;border-color:#ecdcbe">5.9<small>/10</small></span></div>
+        <div style="margin-top:8px">
+          ${_fr('P/E TTM','premium','#b3261e','39.9x')}
+          ${_fr('P/E Forward','ganancias mejoran','#1f7a4d','31.1x')}
+          ${_fr('PEG','algo cara','#b3261e','2.65')}
+          ${_fr('EV/EBITDA','premium','#b3261e','30.8x')}
+          ${_fr('P/S','alta','#b3261e','10.8x')}
+          ${_fr('P/B','premium sobre libros','#b3261e','51.0x')}
+          ${_fr('ROE','retorno excepcional','#1f7a4d','146.7%')}
+          ${_fr('ROIC','buen retorno sobre capital','#1f7a4d','69.1%')}
+          ${_fr('Deuda/Equity','apalancamiento elevado','#b3261e','1.35')}
+        </div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Salud financiera</span><span class="pvs-sect-s" style="color:#3563b8;border-color:#cfdcf2">7.6<small>/10</small></span></div>
+        <div class="pvs-c-d">¿La empresa genera efectivo de verdad y aguanta sus deudas? Esto separa un buen negocio de uno frágil.</div>
+        ${_hb('Margen bruto','47.9%','Lo que queda tras el costo de producir')}
+        ${_hb('Margen operativo','32.6%','Tras los costos de operar el negocio')}
+        ${_hb('Margen neto','27.1%','Beneficio final por cada dólar vendido')}
+        ${_hb('Flujo de caja libre (FCF)','$129.5B','Efectivo real que queda tras invertir en el negocio')}
+        ${_hb('Margen de FCF','28.6%','Convierte 29¢ de cada dólar en efectivo libre')}
+        ${_hb('Dividendo','0.32%','Reparte 0.3% anual a sus accionistas')}
+        ${_hb('Deuda / Equity','1.35','Apalancamiento moderado, manejable')}
+        ${_hb('Volatilidad (beta)','1.05','Se mueve parecido al mercado')}
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Crecimiento reciente</span></div>
+        <div class="pvs-c-d">Un solo número no dice si el negocio acelera o frena. Aquí ves la tendencia de los últimos trimestres.</div>
+        <div class="pvs-gg">
+          ${_gc('Ingresos vs. año anterior (TTM)','+12.8%','últimos 12 meses')}
+          ${_gc('Ingresos — último trimestre','+16.6%','trimestre más reciente')}
+          ${_gc('EPS vs. año anterior (TTM)','+29.0%','últimos 12 meses')}
+          ${_gc('EPS — último trimestre','+22.0%','trimestre más reciente')}
+        </div>
+        <div class="pvs-c-t" style="margin-top:12px">EPS reportado por trimestre ($)</div>
+        <div class="pvs-bars">
+          <div class="pvs-bar"><b>$1.85</b><i style="height:65%;background:#1f7a4d"></i></div>
+          <div class="pvs-bar"><b>$2.84</b><i style="height:100%;background:#1f7a4d"></i></div>
+          <div class="pvs-bar"><b>$2.01</b><i style="height:71%;background:#1f7a4d"></i></div>
+          <div class="pvs-bar"><b>$1.91</b><i style="height:67%;background:#c1362c"></i></div>
+        </div>
+        <div class="pvs-bx"><span>Q4 '25</span><span>Q1 '26</span><span>Q2 '26</span><span>Q3 '26</span></div>
+        <div class="pvs-eq">
+          ${_eq('Q4','Superó ▲')}${_eq('Q1','Superó ▲')}${_eq('Q2','Superó ▲')}${_eq('Q3','Falló ▼',1)}
+        </div>
+        <div class="pvs-note">"Superó" = la empresa reportó más ganancias de las que esperaban los analistas. 3 de los últimos 4 trimestres por encima de lo esperado.</div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Earnings análisis</span></div>
+        <div class="pvs-c-d">Qué dejó el último reporte de resultados.</div>
+        <div class="pvs-pills">
+          <span class="pvs-pill">Q3 2026</span>
+          <span class="pvs-pill">Reportado el 30 de junio de 2026</span>
+        </div>
+        <div class="pvs-pills"><span class="pvs-pill bad">EPS $1.91 vs. $2.05 · falló</span></div>
+        <div class="pvs-nota-b">Apple reportó ingresos de $109.4 mil millones en el trimestre fiscal Q3 2026, un alza del 16% interanual y récord para un trimestre de junio, mientras que el EPS se ubicó en $1.91, muy por debajo del estimado de $2.05 (sorpresa de −6.9%). Lo más destacado fue el fuerte crecimiento del iPhone (+22% interanual) y Mac, contrarrestado por caídas en Servicios, iPad y China frente a lo esperado. La dirección proyectó un crecimiento de ingresos de solo 9%-11% para el trimestre de septiembre, por debajo del 12% que esperaba el consenso, citando restricciones de suministro que empeorarán por la escasez de memoria DRAM y capacidad de TSMC.</div>
+        <div class="pvs-hd">✓ QUÉ SALIÓ BIEN</div>
+        <div class="pvs-li"><i></i><span>Ingresos de $109.4 mil millones, un crecimiento del 16% interanual, marcando el mejor trimestre de junio en la historia de la compañía</span></div>
+        <div class="pvs-li"><i></i><span>Ingresos por iPhone de $54.25 mil millones, superando el estimado de $53.86 mil millones, con un crecimiento del 22% interanual</span></div>
+        <div class="pvs-li"><i></i><span>Ingresos por Mac de $10.35 mil millones, muy por encima del estimado de $8.74 mil millones</span></div>
+        <div class="pvs-li"><i></i><span>Ganancia neta de $29.8 mil millones, un aumento del 27% interanual</span></div>
+        <div class="pvs-li"><i></i><span>ROE de 146.7% y ROIC de 69.1%, cifras excepcionalmente altas para el sector tecnológico</span></div>
+        <div class="pvs-hd bad">⚠ QUÉ SALIÓ MAL</div>
+        <div class="pvs-li"><i></i><span>EPS de $1.91 quedó muy por debajo del estimado de $2.05, una sorpresa negativa de −6.9%</span></div>
+        <div class="pvs-li"><i></i><span>Ingresos por Servicios de $30.74 mil millones, por debajo del estimado de $31.22 mil millones, el segmento de mayor margen de la compañía</span></div>
+        <div class="pvs-li"><i></i><span>Ingresos por iPad de $6.19 mil millones, muy por debajo del estimado de $6.92 mil millones</span></div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Comparación con competidores</span></div>
+        <div class="pvs-c-d">La misma acción se ve distinta al lado de sus rivales. Aquí AAPL contra sus competidores del sector.</div>
+        <table class="pvs-tbl">
+          <tr><th>Empresa</th><th>P/E</th><th>Crec. ingresos</th><th>Margen</th></tr>
+          <tr class="me"><td>AAPL</td><td>39.9x</td><td>12.8%</td><td>27.1%</td></tr>
+          <tr><td>GOOGL</td><td>17.3x</td><td>20.1%</td><td>30.9%</td></tr>
+          <tr><td>META</td><td>22.3x</td><td>27.6%</td><td>39.1%</td></tr>
+          <tr><td>AMZN</td><td>21.1x</td><td>15.8%</td><td>10.4%</td></tr>
+          <tr><td>NFLX</td><td>23.4x</td><td>16.0%</td><td>24.6%</td></tr>
+        </table>
+        <div class="pvs-quote"><b>Posición de mercado.</b> AAPL cotiza a 39.9x P/E, con prima sobre la mediana de sus rivales (21.7x). Encabeza a su grupo en ROE. Tiene ~18-20% de los smartphones por unidades, pero captura la mayor parte del beneficio de todo el sector. Su foso es el ecosistema (iOS, App Store, servicios), que retiene al cliente y genera ingresos recurrentes de alto margen. Domina la gama alta, donde está casi todo el dinero.</div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Valoración</span></div>
+        <div style="margin-top:8px"><span class="pvs-val">Algo cara</span></div>
+        <div class="pvs-nota-b">PEG 2.65, P/E fwd 31.1x, EV/EBITDA 30.8x. Cotiza con prima; exige que el crecimiento se mantenga para justificarse.</div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Pros y riesgos</span><span class="pvs-sect-s" style="color:#3563b8;border-color:#cfdcf2">7.1<small>/10</small></span></div>
+        <div class="pvs-hd" style="margin-top:9px">✓ PROS</div>
+        <div class="pvs-li"><i></i><span>Ecosistema iOS/macOS: switching cost de ~$1,500 promedio por usuario</span></div>
+        <div class="pvs-li"><i></i><span>Marca premium — justifica 30-40% de precio sobre competidores</span></div>
+        <div class="pvs-li"><i></i><span>Integración vertical hardware-chip-software-servicios única en el mundo</span></div>
+        <div class="pvs-li"><i></i><span>Apple Intelligence — requiere iPhone 15 Pro+, fuerza ciclo de upgrade</span></div>
+        <div class="pvs-li"><i></i><span>Servicios creciendo +14% YoY con margen 75% — mix shift positivo</span></div>
+        <div class="pvs-hd bad">⚠ RIESGOS</div>
+        <div class="pvs-li"><i></i><span>85% del ensamblaje iPhone en China — aranceles impactan margen</span></div>
+        <div class="pvs-li"><i></i><span>Saturación del mercado premium de smartphones</span></div>
+        <div class="pvs-li"><i></i><span>Regulación App Store (EU, DOJ) puede reducir take rate del 15-30%</span></div>
+        <div class="pvs-li"><i></i><span>Dependencia del ciclo de upgrade — sin AI no hay catalizador claro</span></div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Escenarios a 1 año</span></div>
+        <div class="pvs-c-d">En vez de un solo número, tres futuros posibles. La realidad casi siempre cae en un punto intermedio.</div>
+        <div class="pvs-sc">
+          <span class="pvs-sc-t" style="color:#b3261e;background:#fdeceb">PESIMISTA</span>
+          <div class="pvs-sc-v" style="color:#b3261e">$201.50</div>
+          <div class="pvs-sc-d" style="color:#b3261e">−40%</div>
+          <div class="pvs-sc-b">El crecimiento esperado de 8.6% no se materializa y la acción devuelve todo lo ganado, hasta el mínimo al que cotizó en los últimos 12 meses ($201.50).</div>
+        </div>
+        <div class="pvs-sc base">
+          <span class="pvs-sc-t" style="color:#1f7a4d;background:#dff0e7">BASE</span>
+          <div class="pvs-sc-v">$362.10</div>
+          <div class="pvs-sc-d" style="color:#1f7a4d">+9%</div>
+          <div class="pvs-sc-b">El múltiplo se mantiene donde está hoy (P/E 40.3x) y las ganancias crecen 8.6%, en línea con el consenso de analistas.</div>
+        </div>
+        <div class="pvs-sc">
+          <span class="pvs-sc-t" style="color:#1f7a4d;background:#dff0e7">OPTIMISTA</span>
+          <div class="pvs-sc-v" style="color:#1f7a4d">$374.20</div>
+          <div class="pvs-sc-d" style="color:#1f7a4d">+12%</div>
+          <div class="pvs-sc-b">Las ganancias crecen 8.6% y además el mercado vuelve a pagar el múltiplo más alto de los últimos 12 meses, un 3% por encima del actual (la acción llegó a $344.57).</div>
+        </div>
+      </div>
+
+      <div class="pvs-c">
+        <div class="pvs-sect"><span class="pvs-sect-t">Análisis técnico</span></div>
+        <div class="pvs-c-d">Qué dice el comportamiento del precio y el volumen en los últimos meses.</div>
+        <div class="pvs-ax" style="margin-top:9px">
+          <svg style="display:block;width:calc(100% - 30px);height:86px" viewBox="0 0 230 86" preserveAspectRatio="none" aria-hidden="true">
+            <g stroke="#eef1f6" stroke-width="1"><line x1="0" y1="8" x2="230" y2="8"/><line x1="0" y1="43" x2="230" y2="43"/><line x1="0" y1="80" x2="230" y2="80"/></g>
+            ${_CAND.c}
+            <polyline points="${_CAND.s50}" fill="none" stroke="#2b3a4d" stroke-width="1.4" stroke-linejoin="round"/>
+            <polyline points="${_CAND.s200}" fill="none" stroke="#93a0ad" stroke-width="1.2" stroke-dasharray="4 3"/>
+          </svg>
+          <div class="pvs-ax-y" style="height:86px"><span>349.5</span><span>303.5</span><span>257.5</span></div>
+        </div>
+        <svg style="display:block;width:calc(100% - 30px);height:24px;margin-top:5px" viewBox="0 0 230 24" preserveAspectRatio="none" aria-hidden="true">${_CAND.vol}</svg>
+        <div class="pvs-seg" style="margin-top:8px"><span>3M</span><span class="on">6M</span><span>1A</span><span>5A</span></div>
+        <div class="pvs-lg"><span><b></b>SMA 50</span><span><i></i>SMA 200</span><span><s></s>Volumen</span></div>
+        <div style="margin-top:8px">
+          <div class="pvs-tr">
+            <div class="pvs-tr-h"><div class="pvs-tr-n">RSI (14 días)</div><div class="pvs-tr-v">50.8</div></div>
+            <div class="pvs-rsi"><i style="width:50.8%"></i><u style="left:30%"></u><u style="left:70%"></u></div>
+            <div class="pvs-tr-b">Entre 30 y 70: ni sobrecomprada ni sobrevendida en las últimas 14 sesiones.</div>
+          </div>
+          ${_tr('Media de 200 días','+10.9%','El precio está por encima de su promedio de 200 días, la referencia de tendencia de largo plazo.','#1f7a4d')}
+          ${_tr('MACD (12, 26, 9)','0.11','Lleva 1 sesión por encima de su línea de señal: el impulso reciente es al alza.')}
+          ${_tr('Volatilidad (ATR 14)','2.2%','Movimiento diario dentro de lo normal para una acción de bolsa.')}
+          ${_tr('Volumen relativo (30 días)','0.3x','Menos negociación que de costumbre: pocos participantes detrás del movimiento.')}
+        </div>
+      </div>
+      <div class="pvs-disc">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>
+    </div>`;
+
+  // Portiv IA: cabecera del chat, conversación, chips de sugerencias y barra de
+  // entrada — los mismos textos que usa la pestaña en la app.
+  const _logo = sz => `<svg viewBox="0 0 48 48" width="${sz}" height="${sz}" style="display:block"><g fill="#fff"><rect x="11" y="28" width="5" height="9" rx="1.5"/><rect x="19" y="23" width="5" height="14" rx="1.5"/><rect x="27" y="26" width="5" height="11" rx="1.5"/><rect x="35" y="19" width="5" height="18" rx="1.5"/></g><polyline points="12,22 20,17 27,20 37,12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="37.5" cy="11.5" r="2.6" fill="#fff"/></svg>`;
+
+  const SCREEN_IA = _navy('') + `
+    <div class="pvs-app" style="padding:0">
+      <div class="pvs-ch">
+        <span class="pvs-ch-av">${_logo(18)}</span>
+        <div><div class="pvs-ch-n">Portiv IA</div><div class="pvs-ch-s">Analista de portafolio inteligente</div></div>
+        <span class="pvs-ch-b"><i></i>En línea</span>
+      </div>
+      <div class="pvs-msgs">
+        <div class="pvs-mu">¿Cómo van mis posiciones hoy?</div>
+        <div class="pvs-mb" style="position:relative">
+          <span class="pvs-mb-av">${_logo(12)}</span>
+          <div class="pvs-mb-t">Tu portafolio sube <b>+1.24%</b> hoy. Lo empuja <b>NVDA</b> (+2.61%), que ya pesa un 24% — por encima de lo que tu perfil Moderado aconseja. <b>GOOGL</b> es la única en rojo (−0.42%) tras el recorte de guía del sector publicitario.</div>
+        </div>
+        <div class="pvs-mu" style="animation-delay:1.9s">¿Debería preocuparme por mi exposición a tecnología?</div>
+        <div class="pvs-mb" style="animation-delay:2.5s">
+          <span class="pvs-mb-av">${_logo(12)}</span>
+          <div class="pvs-mb-t">Llevas <b>59.1%</b> en tecnología, por encima del tope del 45% que marca tu perfil Moderado, y una beta de <b>1.22</b>. No es una alarma, pero sí una concentración: si el sector corrige, tu cartera cae más que el mercado. Reducir <b>NVDA</b> y <b>META</b> te devolvería a tu banda objetivo.</div>
+        </div>
+      </div>
+      <div class="pvs-chips2">
+        <span>¿Cómo van mis posiciones hoy?</span><span>Noticias de mi portafolio</span><span>¿Por qué se movió…</span>
+      </div>
+      <div class="pvs-inp">
+        <span class="pvs-inp-t">Escribe tu pregunta…</span>
+        <span class="pvs-inp-s"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+      </div>
+    </div>`;
+
+  const SLIDES = [
+    // ── 1 · Conexión segura con el broker ──
+    { title: 'Conecta tu broker sin entregar tus claves.',
+      text: 'Portiv nunca ve tu usuario ni tu contraseña: entras en el portal de tu broker y él autoriza la conexión. Y es de <b>solo lectura</b> — puede leer tus posiciones, nunca mover tu dinero ni operar por ti.',
+      screen: SCREEN_PORTFOLIO, tab: 'portfolio', scroll: 159 },
+
+    // ── 2 · Noticias de la semana con su análisis ──
+    { title: 'Las noticias de la semana, ya analizadas.',
+      text: '',
+      bullets: [
+        ['Lo que de verdad movió el mercado','Los titulares de la semana, filtrados. Sin leer diez periódicos.'],
+        ['Análisis y temas clave','Qué significa cada noticia y bajo qué tema cae: tasas, IA, energía.'],
+        ['Y cómo te afecta a ti','El impacto sobre las posiciones que ya tienes en tu portafolio.'],
+      ],
+      screen: SCREEN_NOTICIAS, tab: 'noticias', scroll: 749 },
+
+    // ── 3 · Análisis profundo del portafolio ──
+    { title: 'Tu portafolio, analizado a fondo.',
+      text: '',
+      bullets: [
+        ['Concentración, exposición y beta','Cuántas posiciones tienes, cuánto pesan las tres mayores y qué beta cargas.'],
+        ['Distribución por sector','Dónde está metido cada dólar, ordenado de mayor a menor.'],
+        ['Portfolio Health Score','Una nota sobre 100 con la lectura de tu estructura y qué monitorear.'],
+      ],
+      screen: SCREEN_ANALISIS, tab: 'analizar', scroll: 3667 },
+
+    // ── 4 · Análisis de una acción (ejemplo: AAPL) ──
+    { title: 'Estudia una acción antes de comprarla.',
+      text: '',
+      bullets: [
+        ['Precio Histórico','Ocho periodos, de 1D a 5A, con el precio de cada día al tocar el gráfico.'],
+        ['Recomendación y Rating Calidad','BUY, nota sobre 10, horizonte de la tesis y nivel de riesgo.'],
+        ['Guárdala en tu Watchlist','Un toque y la sigues, aunque todavía no la tengas en el portafolio.'],
+      ],
+      screen: SCREEN_ACCION, tab: 'analizar', scroll: 5538 },
+
+    // ── 5 · Portiv IA ──
+    { title: 'Un analista que ya conoce tu portafolio.',
+      text: '',
+      bullets: [
+        ['Pregúntale lo que quieras','"¿Cómo van mis posiciones hoy?", "¿Por qué se movió el mercado?".'],
+        ['Responde con lo que tú tienes','No habla del mercado en abstracto: usa tus posiciones y tu perfil.'],
+        ['Noticias de mi portafolio','Te resume lo que salió publicado y afecta a lo que ya llevas.'],
+      ],
+      screen: SCREEN_IA, tab: 'aianalyst', scroll: 110 },
+  ];
+
+  let _i = 0, _done = null;
+  const $ = id => document.getElementById(id);
+
+  function _render(){
+    const s = SLIDES[_i];
+    $('pvsHead').innerHTML =
+      `<h2 class="pvs-title">${s.title}</h2>
+       <p class="pvs-text">${s.text}</p>
+       <div class="pvs-dots">${SLIDES.map((_,i)=>`<span class="pvs-dot${i===_i?' on':''}"></span>`).join('')}</div>`;
+    $('pvsStage').innerHTML = _phone(s.screen, s.tab);
+    // El cuerpo de la app se envuelve en .pvs-scroll: la animación lo baja y lo
+    // sube sola, como si alguien estuviera usando la app.
+    const app = $('pvsStage').querySelector('.pvs-app');
+    if (app && s.scroll){
+      const w = document.createElement('div');
+      const largo = s.scroll > 1200;
+      w.className = 'pvs-scroll' + (largo ? ' long' : '');
+      w.style.setProperty('--sc', s.scroll + 'px');
+      // ~300 px/s de media: cuanto más informe, más dura el recorrido
+      if (largo) w.style.setProperty('--dur', Math.max(11, Math.round(s.scroll / 300)) + 's');
+      while (app.firstChild) w.appendChild(app.firstChild);
+      app.appendChild(w);
+    }
+    // Con bullets el teléfono sube y se recorta; el detalle va debajo en lista.
+    const bul = $('pvsBul');
+    $('pvSlidesOv').classList.toggle('bul', !!s.bullets);
+    bul.style.display = s.bullets ? '' : 'none';
+    bul.innerHTML = (s.bullets || []).map(b =>
+      `<div class="pvs-b"><span class="pvs-b-d"></span><div><div class="pvs-b-t">${b[0]}</div><div class="pvs-b-s">${b[1]}</div></div></div>`).join('');
+    $('pvsBack').disabled = (_i === 0);
+  }
+
+  function _close(){
+    $('pvSlidesOv').classList.remove('open');
+    const cb = _done; _done = null;
+    if (typeof cb === 'function') { try { cb(); } catch(e){} }
+  }
+
+  window._pvShowSlides = function(onDone){
+    _i = 0; _done = onDone || null;
+    $('pvSlidesOv').classList.add('open');
+    _render();
+  };
+
+  $('pvsNext').onclick = ()=>{ if (_i < SLIDES.length-1){ _i++; _render(); } else _close(); };
+  $('pvsBack').onclick = ()=>{ if (_i > 0){ _i--; _render(); } };
+  $('pvsSkip').onclick = _close;
+})();
+</script>
+
 <!-- ═══════════════════════════════════════════════════════════════════════════
      SNAPTRADE INTEGRATION — inject this whole block once, near the end of <body>
      (after the main app scripts so globals like aiPortImportData / aiPortApply /
