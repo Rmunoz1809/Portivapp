@@ -8509,6 +8509,46 @@ let donutChart = null;
 // FIX: capa de redondeo única a 2 decimales (centavos) para TODO el dinero mostrado.
 function round2(n){ return Math.round(((+n||0) + Number.EPSILON) * 100) / 100; }
 
+// ── Lectura de una CIFRA DE DINERO escrita a mano ─────────────────────────────
+// Los cuatro campos de dinero editables (valor total del alta, efectivo, Valor Total y
+// capital invertido) usaban `parseFloat(txt.replace(/[^0-9.]/g,''))`. Esa limpieza borra
+// la coma pero deja el punto, y la app está en español: quien escribía "10.000" queriendo
+// diez mil se guardaba DIEZ, y "10.000,50" se guardaba como 10,0005 — sin ningún aviso,
+// porque parseFloat encuentra un número válido y nadie se entera. Al revés también fallaba:
+// "10,000" (el formato que sugiere el propio placeholder "Ej: 10,000.00") llegaba como
+// 10000 aquí pero como cadena vacía a los <input type="number">, que descartan el valor y
+// cerraban el paso sin guardar nada.
+//
+// Regla: el separador DECIMAL es el que aparece MÁS A LA DERECHA; el otro es de miles.
+// Con un solo tipo de separador se decide por la forma — tres dígitos detrás (o más de un
+// separador) es agrupación de miles, uno o dos dígitos es decimal. Vale para es-ES, es-419
+// y en-US sin preguntarle al usuario en qué formato escribe.
+// NO se usa en los campos de precio/cantidad (_aiNum): ahí "1.500" sí puede ser un precio
+// con tres decimales y esta heurística lo estropearía.
+function _pvParseMoney(raw){
+  if (raw == null) return null;
+  var s = String(raw).trim().replace(/[^\d.,\-]/g, '');
+  if (!s || !/\d/.test(s)) return null;
+  var neg = s.charAt(0) === '-';
+  s = s.replace(/-/g, '');
+  var lastC = s.lastIndexOf(','), lastD = s.lastIndexOf('.');
+  if (lastC > -1 && lastD > -1) {
+    // Los dos separadores: manda el de más a la derecha.
+    if (lastC > lastD) s = s.replace(/\./g, '').replace(',', '.');
+    else               s = s.replace(/,/g, '');
+  } else if (lastC > -1) {
+    var nC = (s.match(/,/g) || []).length, afterC = s.length - lastC - 1;
+    s = (nC === 1 && afterC > 0 && afterC <= 2) ? s.replace(',', '.') : s.replace(/,/g, '');
+  } else if (lastD > -1) {
+    var nD = (s.match(/\./g) || []).length, afterD = s.length - lastD - 1;
+    if (nD > 1 || afterD === 3) s = s.replace(/\./g, '');   // "1.234.567" / "10.000" → miles
+  }
+  var n = parseFloat(s);
+  if (!isFinite(n)) return null;
+  return neg ? -n : n;
+}
+window._pvParseMoney = _pvParseMoney;
+
 // FIX: prevClose autoritativo ÚNICO por posición. Fuente: h._prevClose si existe; si no,
 // fallback price/(1+dayChgPct/100). De ESE prevClose derivan el día$ y el día% de la fila,
 // para que $ y % siempre vengan del mismo cierre previo y sean coherentes entre sí.
@@ -12888,7 +12928,16 @@ window._pvAskCash = function(opts){
   // opts.force  → saltarse la guarda de "una sola vez" (toque explícito del usuario)
   // opts.onDone → continuación tras guardar U omitir
   opts = opts || {};
-  try { if (!opts.force && localStorage.getItem('pv_manual_onboard_v1')) return; } catch(e){}
+  // Por CUENTA, no por dispositivo: la clave era global, así que en un móvil compartido
+  // (o tras cambiar de cuenta) el segundo usuario no llegaba a ver nunca este paso y se
+  // quedaba sin declarar su valor total.
+  var _obKey = 'pv_manual_onboard_v1_' + (window.__pvUserId || 'local');
+  try {
+    if (!opts.force && (localStorage.getItem(_obKey)
+        // Compatibilidad con la clave vieja: sólo cuenta para quien ya la tenía puesta y
+        // sigue siendo el mismo usuario local (nadie repite un paso que ya completó).
+        || (!window.__pvUserId && localStorage.getItem('pv_manual_onboard_v1')))) return;
+  } catch(e){}
   if (document.getElementById('pvAskCash')) return;
   var o = document.createElement('div');
   o.id = 'pvAskCash';
@@ -12899,7 +12948,7 @@ window._pvAskCash = function(opts){
     + 'padding:28px 26px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.35);">'
     + '<h2 style="margin:0 0 9px;font-size:20px;font-weight:800;color:#0f1d35;">Ingresa el valor total de tu portafolio</h2>'
     + '<p style="margin:0 0 18px;font-size:14.5px;line-height:1.5;color:#5b6c85;">Incluye el valor total: tu efectivo más tus posiciones. Puedes cambiarlo después desde tu portafolio.</p>'
-    + '<input id="pvAskCashInput" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Ej: 10,000.00" '
+    + '<input id="pvAskCashInput" type="text" inputmode="decimal" autocomplete="off" placeholder="Ej: 10,000.00" '
     + 'style="width:100%;height:50px;box-sizing:border-box;border:1.5px solid #d7dee8;border-radius:13px;'
     + 'padding:0 14px;font-size:17px;font-weight:700;color:#0f1d35;text-align:center;outline:none;">'
     + '<button id="pvAskCashOk" style="width:100%;height:50px;margin-top:14px;border:none;border-radius:13px;'
@@ -12909,7 +12958,7 @@ window._pvAskCash = function(opts){
     + '</div>';
   document.body.appendChild(o);
   function close(){
-    try { localStorage.setItem('pv_manual_onboard_v1', '1'); } catch(e){}
+    try { localStorage.setItem(_obKey, '1'); } catch(e){}
     var quitar = function(){ try { o.remove(); } catch(e){} };
     var red = false;
     try { red = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){}
@@ -12926,8 +12975,8 @@ window._pvAskCash = function(opts){
   }
   o.querySelector('#pvAskCashSkip').onclick = close;   // omitir NO escribe nada
   o.querySelector('#pvAskCashOk').onclick = function(){
-    var v = parseFloat((document.getElementById('pvAskCashInput').value || '').replace(/[^0-9.]/g, ''));
-    if (!isNaN(v) && v >= 0) {
+    var v = _pvParseMoney(document.getElementById('pvAskCashInput').value);
+    if (v != null && isFinite(v) && v >= 0) {
       // Lo que se pide es el VALOR TOTAL (efectivo + posiciones), no el efectivo suelto.
       // El Valor Total de la app es Σ(qty × precio) + CASH, así que para que el número
       // que acaba de escribir el usuario sea exactamente su Valor Total, el efectivo es
@@ -19157,8 +19206,8 @@ function updatePerfHeader() {
 
 // ─── Editable cash ───
 $('cashDisplay').addEventListener('blur', function() {
-  const v = parseFloat(this.textContent.replace(/[^0-9.]/g,''));
-  if (isNaN(v) || v < 0) { this.textContent = CASH.toFixed(2); return; }
+  const v = _pvParseMoney(this.textContent);
+  if (v == null || !isFinite(v) || v < 0) { this.textContent = CASH.toFixed(2); return; }
   CASH = v;
   updateCash(); savePortfolio(); renderAll(); showToast('Cash actualizado','var(--blue)');
 });
@@ -19166,8 +19215,8 @@ $('cashDisplay').addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventD
 
 // ─── Editar Valor Total directamente (fija el override) ───
 $('s-total').addEventListener('blur', function() {
-  const v = parseFloat(this.textContent.replace(/[^0-9.]/g,''));
-  if (isNaN(v) || v <= 0) { renderAll(); return; }
+  const v = _pvParseMoney(this.textContent);
+  if (v == null || !isFinite(v) || v <= 0) { renderAll(); return; }
   TOTAL_OVERRIDE = v;
   _OVERRIDE_DAY_REF = _dayChangeNow(); // ancla emparejada con el cambio de hoy actual → muestra v y sigue moviéndose
   savePortfolio(); renderAll(); showToast('Valor total fijado en ' + usd(v), 'var(--blue)');
@@ -19176,8 +19225,8 @@ $('s-total').addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefau
 
 // ─── Editar Costo Base / Capital invertido directamente ───
 $('s-cost').addEventListener('blur', function() {
-  const v = parseFloat(this.textContent.replace(/[^0-9.]/g,''));
-  if (isNaN(v) || v <= 0) { renderAll(); return; }
+  const v = _pvParseMoney(this.textContent);
+  if (v == null || !isFinite(v) || v <= 0) { renderAll(); return; }
   INITIAL_CAPITAL = v;
   savePortfolio(); renderAll(); showToast('Capital invertido actualizado a ' + usd(v), 'var(--blue)');
 });
@@ -31560,11 +31609,34 @@ async function aiPortApply(){
 
   const oldNames = {}; HOLDINGS.forEach(h => oldNames[h.ticker] = h.name);
   HOLDINGS.length = 0;
+  // ── Un ticker = UNA posición ─────────────────────────────────────────────────
+  // El editor manual dejaba crear dos filas del mismo símbolo (lo natural si compraste
+  // en dos momentos a precios distintos) y las metía las dos en HOLDINGS. El total salía
+  // bien, pero todo lo que busca una posición POR TICKER usa .find/.findIndex y sólo veía
+  // la primera: vender NVDA entera dejaba viva la segunda fila, o sea acciones fantasma y
+  // dinero que el usuario creía haber vendido. buyAsset() ya fusiona por ticker; el editor
+  // era el único sitio que podía duplicar. Se suman cantidad y costo, y el precio queda
+  // ponderado por cantidad (los precios deberían coincidir: es el mismo símbolo).
+  const _byTicker = {};
   rows.forEach(p => {
-    HOLDINGS.push({ ticker: p.ticker, name: oldNames[p.ticker] || p.ticker, type: p.type,
-      qty: p.qty, price: p.price, dayChgPct: p.dayChgPct || 0,
-      costBasis: p.costBasis > 0 ? p.costBasis : p.qty * p.price,
-      reinvest: p.reinvest !== false });
+    const prev = _byTicker[p.ticker];
+    const cost = p.costBasis > 0 ? p.costBasis : p.qty * p.price;
+    if (!prev) {
+      _byTicker[p.ticker] = { ticker: p.ticker, name: oldNames[p.ticker] || p.ticker, type: p.type,
+        qty: p.qty, price: p.price, dayChgPct: p.dayChgPct || 0,
+        costBasis: cost, reinvest: p.reinvest !== false };
+      HOLDINGS.push(_byTicker[p.ticker]);
+      return;
+    }
+    const qTot = prev.qty + p.qty;
+    // Precio ponderado por cantidad. Con qTot 0 (una fila y su contraria) no hay ponderación
+    // posible: se conserva el precio que ya había en vez de dividir entre cero.
+    if (qTot !== 0) prev.price = (prev.price * prev.qty + p.price * p.qty) / qTot;
+    prev.qty       = qTot;
+    prev.costBasis = prev.costBasis + cost;
+    // El % del día es del SÍMBOLO, no de la fila: si la segunda lo trae y la primera no, se usa.
+    if (!prev.dayChgPct && p.dayChgPct) prev.dayChgPct = p.dayChgPct;
+    if (p.reinvest === false) prev.reinvest = false;
   });
   CHART_COLORS.length = 0;
   HOLDINGS.forEach((h, i) => CHART_COLORS.push(EXTRA_COLORS[i % EXTRA_COLORS.length]));
