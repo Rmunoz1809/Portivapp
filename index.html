@@ -8362,6 +8362,12 @@ function sanitizeHoldings() {
   HOLDINGS.forEach(h => {
     if (!_validPrice(h.price)) h.price = SEED_PRICES[h.ticker] || h.price || 0;
     if (typeof h.dayChgPct !== 'number' || !isFinite(h.dayChgPct)) h.dayChgPct = 0;
+    // −100 es finito, así que el guard de arriba lo dejaba pasar, y es exactamente el valor
+    // que rompe el cierre previo en calcH (ver su comentario). Se puede escribir a mano en la
+    // columna "Día %" del editor, y quedaba GUARDADO: el portafolio se quedaba con el cambio
+    // del día roto para siempre. Una acción no puede perder el 100% de su valor y seguir
+    // cotizando, así que por debajo de −99% se descarta el dato en vez de propagarlo.
+    if (h.dayChgPct <= -99) h.dayChgPct = 0;
     if (!_validPrice(h.qty)) h.qty = h.qty || 0;
   });
 }
@@ -8507,7 +8513,10 @@ let donutChart = null;
 //  CALC
 // ═══════════════════════════════════════════════════
 // FIX: capa de redondeo única a 2 decimales (centavos) para TODO el dinero mostrado.
-function round2(n){ return Math.round(((+n||0) + Number.EPSILON) * 100) / 100; }
+// `Math.round(Infinity)` es Infinity: round2 dejaba pasar ±Infinity y NaN al total, y de
+// ahí al formateador, que los imprimía tal cual ("$∞"). Es la capa por la que pasa TODO el
+// dinero mostrado, así que es el sitio correcto para cortarlo.
+function round2(n){ const v = +n; if (!isFinite(v)) return 0; return Math.round((v + Number.EPSILON) * 100) / 100; }
 
 // ── Lectura de una CIFRA DE DINERO escrita a mano ─────────────────────────────
 // Los cuatro campos de dinero editables (valor total del alta, efectivo, Valor Total y
@@ -8554,9 +8563,16 @@ window._pvParseMoney = _pvParseMoney;
 // para que $ y % siempre vengan del mismo cierre previo y sean coherentes entre sí.
 function calcH(h) {
   const mktVal = h.qty * h.price;
-  const prevClose = (h._prevClose && h._prevClose > 0)
+  // prevClose se deriva de price/(1 + pct/100), que EXPLOTA cuando el % del día se acerca a
+  // −100: con −100 exacto es una división por cero (prevClose = Infinity → cambio del día
+  // −Infinity → "-$∞" en pantalla) y con −99,99 el cierre previo sale 10.000 veces el precio,
+  // o sea un cambio del día de −499.950% sobre una posición de 1.000 $. Un cierre previo real
+  // nunca es 0 ni negativo, así que si el cálculo no da un número usable se cae al precio
+  // actual — que equivale a "hoy no se ha movido", el neutro honesto cuando el dato es basura.
+  const _pcRaw = (h._prevClose && h._prevClose > 0)
     ? h._prevClose
     : h.price / (1 + (h.dayChgPct || 0) / 100);
+  const prevClose = (isFinite(_pcRaw) && _pcRaw > 0) ? _pcRaw : h.price;
   const dayChgAbs    = h.qty * (h.price - prevClose);
   const dayChgPctEff = prevClose > 0 ? (h.price / prevClose - 1) * 100 : 0;
   const gl = mktVal - h.costBasis;
@@ -12252,6 +12268,7 @@ function renderSummary(T) {
 
 // Formato con signo explícito: +$154.85 / -$40.72 (usd() ya añade el '-')
 function usdSigned(n, dec) {
+  if (!isFinite(+n)) return '—';        // mismo criterio que usd(): ver su comentario
   if (dec != null) {
     const s = Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec});
     return (n<0?'-$':'+$') + s;
@@ -15777,8 +15794,14 @@ function showStockNews(ticker, btn) {
 //  UTILS
 // ═══════════════════════════════════════════════════
 function usd(n) {
-  const s = Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  return (n<0?'-$':'$') + s;
+  // Último cortafuegos del dinero en pantalla. `Math.abs(NaN).toLocaleString()` devuelve
+  // "NaN" y el de Infinity devuelve "∞", así que un solo valor corrupto aguas arriba se
+  // imprimía como "$NaN" o "-$∞" en la cifra que el usuario está mirando. Ante un valor que
+  // no es un número se muestra un guion: no saber cuánto es se dice, no se inventa un cero.
+  const v = +n;
+  if (!isFinite(v)) return '—';
+  const s = Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  return (v<0?'-$':'$') + s;
 }
 function sign(n) { return n>=0?'+':'-'; }
 function $(id) { return document.getElementById(id); }
@@ -19217,6 +19240,30 @@ $('cashDisplay').addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventD
 $('s-total').addEventListener('blur', function() {
   const v = _pvParseMoney(this.textContent);
   if (v == null || !isFinite(v) || v <= 0) { renderAll(); return; }
+  // TOTAL_OVERRIDE sólo lo respeta calcTotals() cuando NO hay posiciones (es un respaldo para
+  // la foto de "resumen" sin tabla de holdings). Con posiciones cargadas, esto fijaba la
+  // variable, cantaba "Valor total fijado en 5.000 $" y acto seguido renderAll() volvía a
+  // pintar el total real: el usuario recibía la confirmación de algo que no había pasado y
+  // veía su cifra saltar de vuelta. Con posiciones, el Valor Total = posiciones + efectivo +
+  // money market, así que lo único que puede absorber la diferencia es el efectivo — la misma
+  // cuenta que hace el paso del alta (_pvAskCash).
+  const _T = calcTotals();
+  if (_T.mkt > 0) {
+    const _resto = round2(_T.mkt + _T.mm);
+    if (v < _resto - 0.01) {
+      // Pedir menos de lo que ya valen las posiciones exigiría un efectivo negativo. No se
+      // toca nada y se dice por qué, en vez de recortar en silencio a un total distinto.
+      renderAll();
+      showToast('Tus posiciones ya valen ' + usd(_resto) + '. Ajusta cantidades o precios para bajar de ahí.', 'var(--red)');
+      return;
+    }
+    TOTAL_OVERRIDE = null;
+    CASH = Math.max(0, round2(v - _resto));
+    updateCash();
+    savePortfolio(); renderAll();
+    showToast('Valor total en ' + usd(v) + ' · efectivo ajustado a ' + usd(CASH), 'var(--blue)');
+    return;
+  }
   TOTAL_OVERRIDE = v;
   _OVERRIDE_DAY_REF = _dayChangeNow(); // ancla emparejada con el cambio de hoy actual → muestra v y sigue moviéndose
   savePortfolio(); renderAll(); showToast('Valor total fijado en ' + usd(v), 'var(--blue)');
