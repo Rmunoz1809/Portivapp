@@ -7105,6 +7105,122 @@ async function renderSettings(){
   .as-card            { padding-bottom:0; }
   .as-card > .as-btns { padding:10px 0 calc(10px + env(safe-area-inset-bottom)); }
 }
+
+/* ════ Compra: hoja anclada abajo, pie siempre visible y sin scroll ═════════
+   Lo que fallaba en el iPhone: la tarjeta iba CENTRADA y medía casi lo mismo
+   que la pantalla. En cuanto el contenido crecía un poco —un nombre largo, el
+   aviso de cash insuficiente, el tamaño de texto del sistema subido— pasaba del
+   alto útil, y como el sobrante de un hijo centrado con flex se reparte arriba
+   y abajo, el pie ("Confirmar compra") se salía por abajo y no había forma de
+   llegar a él: la compra no se podía terminar.
+   Además el alto máximo se calculaba con 100dvh, que en el WebView no siempre
+   coincide con el rectángulo que ocupa el overlay.
+
+   Ahora en móvil es una HOJA pegada al borde inferior:
+   · el alto máximo va en % del propio overlay, no en dvh — el mismo caja que la
+     hoja habita, así que no puede desincronizarse;
+   · el pie vive fuera del scroll y no puede desplazarse;
+   · y se recorta contenido duplicado (buscador ya resuelto, precio y cantidad
+     que se repetían en el resumen) para que quepa entero SIN bajar. */
+@media (max-width: 600px) {
+  /* El hueco de arriba lo pone el OVERLAY, no un calc() dentro de la hoja: así
+     `max-height:100%` se mide contra la caja que la hoja habita de verdad y no
+     hay ninguna unidad de viewport de por medio que pueda descuadrarse. */
+  .as-overlay { align-items:flex-end; padding:calc(env(safe-area-inset-top,0px) + 10px) 0 0; }
+  .as-card {
+    margin:0; width:100%; max-width:none;
+    border-radius:22px 22px 0 0;
+    max-height:100%;
+    padding:8px 16px 0;
+  }
+  /* flex-grow:0 — la hoja se ajusta al contenido y sólo el CUERPO encoge cuando
+     de verdad no cabe. Con grow:1 el reparto dejaba el cuerpo 7 px por debajo de
+     su contenido y aparecía un scroll de nada que no hacía ninguna falta. */
+  .as-card > .as-body{ flex:0 1 auto; }
+  /* asa: dice de un vistazo que esto es una hoja que sube desde abajo */
+  .as-card::before{
+    content:''; flex:0 0 auto; width:38px; height:4px; border-radius:99px;
+    background:var(--st-surface-highest); margin:0 auto 9px;
+  }
+  .as-card > .as-btns{ padding:11px 0 calc(12px + env(safe-area-inset-bottom,0px)); }
+}
+
+/* El buscador se pliega cuando ya hay activo elegido: son ~75 px que se le
+   devuelven a la compra. El ticker no se pierde de vista —está en la tarjeta de
+   la empresa, que ahora lleva un botón "Cambiar" para volver a buscar. */
+#asSearchBlock{
+  overflow:hidden; max-height:130px;
+  transition:max-height .34s var(--pv-ease,cubic-bezier(.33,1,.68,1)), opacity .18s ease;
+}
+.as-overlay.picked #asSearchBlock{ max-height:0; opacity:0; pointer-events:none; }
+.as-overlay.picked .as-company-card{ margin-top:0; }
+.as-chg{
+  flex-shrink:0; align-self:center; border:1.5px solid var(--st-surface-highest);
+  background:#fff; color:var(--st-on-surf-var); border-radius:999px;
+  padding:5px 11px; font:700 11px system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;
+  cursor:pointer; display:none; transition:background .15s, transform .1s;
+}
+.as-overlay.picked .as-chg{ display:block; }
+.as-chg:active{ transform:scale(.94); }
+
+/* El resumen repetía dos datos que ya están arriba: el precio (en la tarjeta de
+   la empresa) y la cantidad (en "Recibirás"). Se quedan en el DOM —el JS les
+   sigue escribiendo— pero no ocupan pantalla. */
+#asSumRowPrice, #asSumRowShares{ display:none; }
+
+/* Un nombre largo ("Taiwan Semiconductor Manufacturing Company Limited") partía
+   la tarjeta en cinco líneas y se comía media hoja. Dos líneas y puntos
+   suspensivos: el ticker de debajo ya identifica el activo sin ambigüedad. */
+.as-company-name{
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; line-height:1.3;
+}
+
+/* Los atajos de importe caben en una sola fila que se desliza; en dos filas
+   costaban 29 px de más y empujaban el resumen fuera. */
+.as-quick-row{ flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+.as-quick-row::-webkit-scrollbar{ display:none; }
+.as-quick-btn{ flex:0 0 auto; }
+
+/* ── Movimiento ────────────────────────────────────────────────────────────
+   La hoja entera entra desde abajo (ver bloque de movimiento al final del
+   archivo); aquí van las piezas de dentro. Todo con transform/opacity, que no
+   provocan reflow, y con la misma curva del resto de la app. */
+@keyframes asRise { from{ opacity:0; transform:translateY(9px) } to{ opacity:1; transform:none } }
+@keyframes asPop  { 0%{ transform:scale(.93); opacity:.4 } 62%{ transform:scale(1.035) } 100%{ transform:none; opacity:1 } }
+@keyframes asFlash{ from{ border-color:var(--st-secondary); background:#fff } to{} }
+
+.as-company-card.visible{ animation:asRise .3s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+/* Escalonado: el bloque de compra se arma de arriba abajo en vez de aparecer
+   entero de golpe. Sólo 4 hijos, así que el retardo total es de 120 ms. */
+#asOrderSection.reveal > *{ animation:asRise .34s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+#asOrderSection.reveal > *:nth-child(3){ animation-delay:.05s }
+#asOrderSection.reveal > *:nth-child(4){ animation-delay:.09s }
+#asOrderSection.reveal > *:nth-child(5){ animation-delay:.09s }
+#asOrderSection.reveal > *:nth-child(6){ animation-delay:.13s }
+/* Cambian de display:none a block cuando el importe ya es válido: la animación
+   se reproduce sola en cada transición. */
+#asCalcResult, #asSummary{ animation:asRise .26s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+.as-calc-val.bump{ animation:asPop .3s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)); }
+.as-big-input.set{ animation:asFlash .5s var(--pv-ease,cubic-bezier(.33,1,.68,1)); }
+.as-quick-btn{ transition:background .15s, color .15s, border-color .15s, transform .1s var(--pv-ease,cubic-bezier(.33,1,.68,1)); }
+.as-quick-btn:active{ transform:scale(.93); }
+.as-type-btn{ transition:background .2s var(--pv-ease,cubic-bezier(.33,1,.68,1)), color .2s, box-shadow .2s; }
+.as-confirm{
+  transition:opacity .22s var(--pv-ease,cubic-bezier(.33,1,.68,1)), transform .11s, box-shadow .22s;
+  box-shadow:0 9px 22px -11px rgba(4,22,44,.65);
+}
+.as-confirm:disabled{ opacity:.34; box-shadow:none; }
+.as-confirm:active{ transform:translateY(1px) scale(.995); }
+.as-close-x{ transition:background .15s, transform .1s; }
+.as-close-x:active{ transform:scale(.9); }
+
+@media (prefers-reduced-motion: reduce){
+  #asSearchBlock, .as-company-card.visible, #asOrderSection.reveal > *,
+  #asCalcResult, #asSummary, .as-calc-val.bump, .as-big-input.set{
+    animation:none !important; transition:none !important;
+  }
+}
 </style>
 
 <!-- Tocar el fondo cierra. La × de 32px es un blanco pequeño y en el estado
@@ -7120,7 +7236,8 @@ async function renderSettings(){
     </div>
 
     <div class="as-body">
-    <!-- Ticker search -->
+    <!-- Ticker search — se pliega en cuanto hay activo elegido (.picked) -->
+    <div id="asSearchBlock">
     <div class="as-field-label">Buscar activo</div>
     <div class="as-ticker-wrap">
       <span class="material-symbols-outlined as-search-icon">search</span>
@@ -7133,6 +7250,7 @@ async function renderSettings(){
       <div id="addSuggestions" class="as-suggest"></div>
       <div class="as-spinner" id="addLookupSpinner"></div>
     </div>
+    </div><!-- /#asSearchBlock -->
 
     <!-- Company card — shown after lookup -->
     <div class="as-company-card" id="addLookupResult">
@@ -7145,6 +7263,7 @@ async function renderSettings(){
         <div class="as-company-price-val" id="addCurrentPrice">—</div>
         <div class="as-company-price-day" id="addDayChange">—</div>
       </div>
+      <button type="button" class="as-chg" onclick="_addChangeTicker()">Cambiar</button>
     </div>
 
     <!-- Order section — revealed after lookup -->
@@ -7195,11 +7314,11 @@ async function renderSettings(){
 
       <!-- Summary preview -->
       <div class="as-summary" id="asSummary" style="display:none">
-        <div class="as-summary-row">
+        <div class="as-summary-row" id="asSumRowPrice">
           <span>Precio actual</span>
           <span id="asSumPrice">—</span>
         </div>
-        <div class="as-summary-row">
+        <div class="as-summary-row" id="asSumRowShares">
           <span>Cantidad</span>
           <span id="asSumShares">—</span>
         </div>
@@ -7372,11 +7491,41 @@ function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protoco
 // y el consentimiento local sigue siendo válido: el gate nunca depende de la red.
 const _PV_AI_CONSENT = {
   _inflight: null,
-  _key(){ return 'pv_ai_consent_' + (window.__pvUserId || 'local'); },
+  // CLAVE FIJA. Antes llevaba el uid dentro ('pv_ai_consent_'+uid) y ahí estaba el
+  // fallo que hacía reaparecer el permiso una y otra vez: window.__pvUserId no
+  // existe hasta que Supabase restaura la sesión, así que una llamada temprana
+  // guardaba la respuesta bajo 'local' y, cuando el uid llegaba, get() miraba otra
+  // clave, la encontraba vacía y volvía a preguntar. Ajustes, que se pinta más
+  // tarde, sí leía la buena y decía "Permitido" — de ahí la contradicción.
+  // La decisión es de este dispositivo (que es quien hace la llamada); el uid sólo
+  // se usa para el espejo en la nube y para detectar un cambio de cuenta.
+  KEY: 'pv_ai_consent',
+  UIDKEY: 'pv_ai_consent_uid',
+  // Claves del esquema viejo, para no volver a preguntar a quien ya aceptó.
+  _viejas(){
+    const ks = ['pv_ai_consent_local'];
+    try { if (window.__pvUserId) ks.unshift('pv_ai_consent_' + window.__pvUserId); } catch(e){}
+    return ks;
+  },
   // 'yes' | 'no' | null (nunca preguntado)
-  get(){ try { return localStorage.getItem(this._key()) || null; } catch(e){ return null; } },
+  get(){
+    try {
+      const v = localStorage.getItem(this.KEY);
+      if (v === 'yes' || v === 'no') return v;
+      const ks = this._viejas();
+      for (let i = 0; i < ks.length; i++) {
+        const o = localStorage.getItem(ks[i]);
+        if (o === 'yes' || o === 'no') { try { localStorage.setItem(this.KEY, o); } catch(e){} return o; }
+      }
+      return null;
+    } catch(e){ return null; }
+  },
   set(v){
-    try { localStorage.setItem(this._key(), v); } catch(e){}
+    try { localStorage.setItem(this.KEY, v); } catch(e){}
+    // El esquema viejo se limpia: si quedara, una lectura futura podría resucitar
+    // una respuesta anterior a esta.
+    try { this._viejas().forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
+    try { if (window.__pvUserId && window.__pvUserId !== 'local') localStorage.setItem(this.UIDKEY, window.__pvUserId); } catch(e){}
     // Espejo en la nube. Best-effort a propósito: un fallo aquí NO invalida la decisión
     // que el usuario acaba de tomar, solo hace que otro dispositivo vuelva a preguntar.
     try {
@@ -7394,10 +7543,23 @@ const _PV_AI_CONSENT = {
     try {
       const sb = window.sbClient, uid = window.__pvUserId;
       if (!sb || !uid || uid === 'local') return;
+      // Otra cuenta en el mismo teléfono: el permiso es de quien lo dio, no del
+      // aparato. Se borra lo local y se le pregunta a este usuario (o se rellena
+      // con lo que él mismo ya hubiera respondido en otro dispositivo).
+      let prev = null;
+      try { prev = localStorage.getItem(this.UIDKEY); } catch(e){}
+      if (prev && prev !== uid) {
+        try {
+          localStorage.removeItem(this.KEY);
+          localStorage.removeItem('pv_ai_consent_local');
+          localStorage.removeItem('pv_ai_consent_' + prev);
+        } catch(e){}
+      }
+      try { localStorage.setItem(this.UIDKEY, uid); } catch(e){}
       if (this.get()) return;
       const { data, error } = await sb.from('profiles').select('ai_consent').eq('id', uid).maybeSingle();
       if (error || !data || data.ai_consent == null) return;
-      try { localStorage.setItem(this._key(), data.ai_consent ? 'yes' : 'no'); } catch(e){}
+      try { localStorage.setItem(this.KEY, data.ai_consent ? 'yes' : 'no'); } catch(e){}
     } catch(e){}
   },
   // Punto de entrada del gate. Devuelve true si se puede llamar a la IA.
@@ -25064,6 +25226,7 @@ function onAddTickerInput(){
   // Reset order section if ticker changed
   if ($('asOrderSection')) $('asOrderSection').style.display = 'none';
   $('addLookupResult').classList.remove('visible');
+  try { $('addStockOverlay').classList.remove('picked'); } catch(e){}
   if ($('addWarn')) { $('addWarn').classList.remove('show'); $('addWarn').textContent = ''; }
   $('addConfirmBtn').disabled = true;
   _addPrice = 0; _addTicker = '';
@@ -25096,6 +25259,7 @@ let _addBuyType = 'money'; // 'money' | 'shares'
 
 function openAddStock() {
   $('addStockOverlay').classList.add('open');
+  $('addStockOverlay').classList.remove('picked');
   $('addTickerInput').value = '';
   $('addLookupResult').classList.remove('visible');
   if ($('asOrderSection')) $('asOrderSection').style.display = 'none';
@@ -25254,6 +25418,9 @@ function _addSetQuick(val) {
   if      (val === -1) inp.value = Math.max(0, CASH).toFixed(2);
   else if (val === -2) inp.value = _addPrice > 0 ? (CASH / _addPrice).toFixed(4) : '';
   else                 inp.value = Number(val).toFixed(_addBuyType === 'shares' ? 4 : 2);
+  // El atajo escribe en un campo que puede estar fuera del alcance de la vista:
+  // el destello confirma que el toque hizo algo.
+  inp.classList.remove('set'); void inp.offsetWidth; inp.classList.add('set');
   _addCalcPreview();
 }
 
@@ -25291,6 +25458,12 @@ function _addCalcPreview() {
   if (errMsg) { hide(); return; }
 
   if (calcRes) calcRes.style.display = 'block';
+  // Latido sólo cuando el número CAMBIA: si late en cada pulsación distrae en vez
+  // de informar.
+  if (_cv && _cv.textContent !== _cv.dataset.prev) {
+    _cv.dataset.prev = _cv.textContent;
+    _cv.classList.remove('bump'); void _cv.offsetWidth; _cv.classList.add('bump');
+  }
   const cashAfter = CASH - amt;
   const _sp = $('asSumPrice'), _ss = $('asSumShares'), _st = $('asSumTotal'), _sc = $('asSumCash'), _sca = $('asSumCashAfter');
   if (_sp) _sp.textContent = `$${_addPrice.toFixed(2)}`;
@@ -25367,10 +25540,30 @@ function _addRevealOrder(ticker, name, price, pct){
     ? `<span class="${pct>=0?'pos':'neg'}">${pct>=0?'+':''}${pct.toFixed(2)}% hoy</span>` : '';
   if ($('addCashAvail'))    $('addCashAvail').textContent = usd(CASH);
   $('addLookupResult').classList.add('visible');
-  if ($('asOrderSection')) $('asOrderSection').style.display = 'block';
+  // Activo elegido: el buscador se pliega (ya no hace falta y son ~75 px) y
+  // aparece el botón "Cambiar" dentro de la tarjeta de la empresa.
+  try { $('addStockOverlay').classList.add('picked'); } catch(e){}
+  const _sec = $('asOrderSection');
+  if (_sec) {
+    _sec.style.display = 'block';
+    // Reiniciar la animación: sin quitar la clase y forzar un reflow, volver a
+    // elegir activo no la reproduce (el navegador no ve ningún cambio).
+    _sec.classList.remove('reveal'); void _sec.offsetWidth; _sec.classList.add('reveal');
+  }
   // Si hay precio en vivo/caché, ocultar el campo de precio manual.
   if (price > 0 && $('asManualPrice')) $('asManualPrice').style.display = 'none';
 }
+
+// Botón "Cambiar" de la tarjeta de la empresa: despliega otra vez el buscador y
+// deja el foco dentro, sin perder nada de lo ya escrito en el importe.
+function _addChangeTicker(){
+  try { $('addStockOverlay').classList.remove('picked'); } catch(e){}
+  const inp = $('addTickerInput');
+  if (inp) { inp.value = ''; try { inp.focus(); } catch(e){} }
+  _addSugItems = []; _addSugIdx = -1;
+  try { _renderAddSuggestions(); } catch(e){}
+}
+window._addChangeTicker = _addChangeTicker;
 
 // Precio manual: cuando no se pudo obtener el precio en vivo, el usuario lo escribe
 // aquí y la compra funciona igual.
@@ -34806,8 +34999,21 @@ document.addEventListener('DOMContentLoaded', function(){
     // Las diapositivas de "cómo funciona" ya se vieron al iniciar sesión, antes
     // de las preguntas, así que aquí se va derecho al muro.
     const _pqGoPaywall = ()=>{
-      try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
-      try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
+      const _muro = ()=>{
+        try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
+        try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
+      };
+      // El permiso de IA se pide AQUÍ: una sola vez, con las preguntas ya
+      // contestadas y antes del muro. Queda guardado y no se vuelve a mostrar —
+      // el gate perezoso de _aiFetch sigue existiendo sólo como red para quien
+      // nunca pasó por el cuestionario (cuentas viejas, demo).
+      try {
+        const c = window._pvAiConsent;
+        // ensure() y no _ask(): si otra parte de la app ya tiene un modal en vuelo,
+        // ensure() devuelve esa misma promesa en lugar de abrir un segundo.
+        if (c && c.get() == null) { c.ensure().then(_muro, _muro); return; }
+      } catch(e){}
+      _muro();
     };
     document.getElementById('pqFinish').onclick = _pqGoPaywall;
     // Aviso IBKR: informativo, independiente del CTA. No toca el flujo del paywall.
@@ -39137,6 +39343,14 @@ body:not(.dark-theme) .stitch-viewall-btn {
 }
 .as-overlay.open { animation: pvOverlayIn .2s var(--pv-ease) both; }
 .as-overlay.open .as-card { animation: pvSheetIn .3s var(--pv-ease-out) both; }
+/* En móvil estos diálogos ya no son una tarjeta centrada sino una hoja pegada al
+   borde inferior, así que entran deslizando desde abajo —de donde vienen— en vez
+   de aparecer con un escalado. Recorrido corto y curva de salida: se lee como
+   que sube, no como que rebota. */
+@keyframes pvSheetUp { from { opacity: 0; transform: translateY(38px); } to { opacity: 1; transform: none; } }
+@media (max-width: 600px) {
+  .as-overlay.open .as-card { animation: pvSheetUp .36s var(--pv-ease-out) both; }
+}
 
 /* ── 4. Foco de teclado visible ────────────────────────────────────────────
    :focus-visible sólo aparece cuando se navega con teclado (el toque y el clic
