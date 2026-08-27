@@ -8227,6 +8227,26 @@ const CHART_COLORS = [
 
 // Transaction log
 let TX_LOG = [];
+// Tope del historial de operaciones. TX_LOG no tenía ninguno y viaja DENTRO del blob de
+// portfolio_state_v4, que savePortfolio() reescribe entero en cada llamada — y savePortfolio()
+// corre dentro de fetchLivePrices(), o sea cada 30 s en horario de mercado. Medido: 1.000
+// operaciones = 122 KB, 5.000 = 602 KB, 20.000 = 2,4 MB, y esa escritura es SÍNCRONA y va a
+// disco en iOS (justo el tirón que savePortfolio ya documentaba sin resolver del todo). El
+// mismo blob se sube además a Supabase en cada push. Y al acercarse a la cuota de ~5 MB del
+// origen, _lsPurgeOld empieza a borrar cachés y al final el portafolio deja de poder
+// guardarse: eso es pérdida de datos, no sólo lentitud. 300 operaciones cubren de sobra el
+// historial que la pantalla enseña y dejan el blob por debajo de 40 KB.
+const TX_LOG_MAX = 300;
+// Único punto de alta del historial: añade respetando el tope y sella la FECHA. Hasta ahora
+// sólo se guardaba HH:MM:SS, así que a los dos días el historial eran decenas de líneas con
+// la misma hora y sin forma de saber de qué día era cada una.
+function _txLogAdd(entry){
+  const _n = new Date();
+  entry.time = _n.toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  entry.date = _n.toISOString().slice(0,10);
+  TX_LOG.unshift(entry);
+  if (TX_LOG.length > TX_LOG_MAX) TX_LOG.length = TX_LOG_MAX;
+}
 
 // Override manual del cambio (%) por período: { '1M':2.5, '3M':8, '6M':..., '1Y':..., '3Y':... }
 // Si un período tiene override, la gráfica y el encabezado usan ese % en vez de calcularlo
@@ -8447,7 +8467,7 @@ function loadSavedPortfolio() {
     if (s.perfMaster && Array.isArray(s.perfMaster.values) && s.perfMaster.values.length >= 2) window._SAVED_PERF_MASTER = s.perfMaster;
     if (s.perfYScale && typeof s.perfYScale.min === 'number' && typeof s.perfYScale.max === 'number') window._SAVED_PERF_YSCALE = s.perfYScale;
     if (s.empty) { HOLDINGS.length = 0; CASH = 0; MONEY_MARKET = 0; INITIAL_CAPITAL = 0; TOTAL_OVERRIDE = null; PERIOD_CHANGE_OVERRIDE = {}; _OVERRIDE_ASOF = null; _OVERRIDE_CAP_NAV = null; window._SAVED_PERF_MASTER = null; }
-    if (Array.isArray(s.txLog))     TX_LOG = s.txLog;
+    if (Array.isArray(s.txLog))     TX_LOG = s.txLog.slice(0, TX_LOG_MAX);   // blobs viejos venían sin tope
     sanitizeHoldings();
   } catch(e) { pvReportError('Portafolio · cargar estado (localStorage)', e, { userMsg: 'No se pudo cargar el portafolio guardado: ' + e.message }); }
 }
@@ -12868,7 +12888,7 @@ function renderTxLog() {
       <div class="tx-side ${tx.mode==='buy'?'tx-buy':'tx-sell'}">${tx.mode==='buy'?'BUY':'SELL'}</div>
       <div class="tx-ticker">${tx.ticker}</div>
       <div class="tx-detail">${tx.shares.toFixed(4)} sh · ${usd(tx.amt)} · $${tx.price.toFixed(2)}/sh${glStr}</div>
-      <div class="tx-time">${tx.time}</div>
+      <div class="tx-time">${tx.date ? tx.date.slice(5).replace('-','/') + ' ' : ''}${tx.time}</div>
     </div>`;
   }).join('');
 }
@@ -13108,15 +13128,20 @@ function buyAsset(ticker, dollarAmount, priceOverride) {
   const newQty = newH ? newH.qty : shares;
 
   // Log
-  TX_LOG.unshift({
-    time: new Date().toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit', second:'2-digit'}),
-    mode: 'buy', ticker, shares, amt: toPay, price, realizedGL: null, qty: newQty
-  });
+  _txLogAdd({ mode: 'buy', ticker, shares, amt: toPay, price, realizedGL: null, qty: newQty });
 
   recalculatePortfolio();
   showToast(`Compraste ${shares.toFixed(4)} sh de ${ticker} por ${usd(toPay)}`, 'var(--green)');
 
-  return { ok: true, message: `Compra ejecutada: ${shares.toFixed(4)} sh ${ticker}`, shares, newQty, newCash: CASH };
+  // `toPay = Math.min(amt, cashAvail)` recorta la compra al efectivo disponible. Devolver
+  // ok:true sin más dejaba a quien llama (incluido el asistente de IA) creyendo que se compró
+  // lo pedido. Se dice el recorte; el importe real ya iba en `shares`.
+  const _recortada = toPay < amt - 0.01;
+  return { ok: true, truncated: _recortada, requested: amt, spent: toPay,
+    message: _recortada
+      ? `Compra ejecutada por ${usd(toPay)} (pediste ${usd(amt)}; era todo el efectivo disponible): ${shares.toFixed(4)} sh ${ticker}`
+      : `Compra ejecutada: ${shares.toFixed(4)} sh ${ticker}`,
+    shares, newQty, newCash: CASH };
 }
 
 /**
@@ -13161,10 +13186,7 @@ function sellAsset(ticker, dollarAmount, priceOverride) {
   if (newQty <= 0.00001) removeEmptyPosition(ticker);
 
   // Log
-  TX_LOG.unshift({
-    time: new Date().toLocaleTimeString('es-MX', {hour:'2-digit', minute:'2-digit', second:'2-digit'}),
-    mode: 'sell', ticker, shares, amt: proceeds, price, realizedGL, qty: newQty
-  });
+  _txLogAdd({ mode: 'sell', ticker, shares, amt: proceeds, price, realizedGL, qty: newQty });
 
   recalculatePortfolio();
   const glStr = realizedGL >= 0 ? `+${usd(realizedGL)}` : `-${usd(Math.abs(realizedGL))}`;
