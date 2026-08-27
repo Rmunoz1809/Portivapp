@@ -7160,12 +7160,10 @@ async function renderSettings(){
 /* El buscador se pliega cuando ya hay activo elegido: son ~75 px que se le
    devuelven a la compra. El ticker no se pierde de vista —está en la tarjeta de
    la empresa, que ahora lleva un botón "Cambiar" para volver a buscar. */
-/* Se pliega con display:none y no con max-height + overflow:hidden. Con el
-   recorte, el desplegable de sugerencias —que va posicionado— quedaba cortado
-   contra el borde del bloque y al escribir no aparecía NADA. Aquí la animación
-   no vale lo que cuesta: el movimiento que se ve es la tarjeta de la empresa y
-   el bloque de compra entrando, que ya llevan el suyo. */
-.as-overlay.picked #asSearchBlock{ display:none; }
+/* El plegado del buscador lo hace _asVerBuscador() midiendo el alto real, no una
+   regla con max-height: la altura del bloque cambia con los resultados de la
+   búsqueda y un tope fijo recortaba el desplegable —por eso al escribir no
+   aparecía nada—. En reposo abierto no queda ningún overflow puesto. */
 .as-overlay.picked .as-company-card{ margin-top:0; }
 .as-chg{
   flex-shrink:0; align-self:center; border:1.5px solid var(--st-surface-highest);
@@ -7263,6 +7261,79 @@ async function renderSettings(){
   }
 }
 @media (prefers-reduced-motion: reduce){ #pvAskCash > div{ animation:none !important; } }
+
+/* ════ Salida de los diálogos ══════════════════════════════════════════════
+   Entraban con animación y desaparecían de golpe en un fotograma, que es lo que
+   los hacía sentir bruscos. `.closing` la pone el JS antes de esconderlos; el
+   velo dura un pelo MÁS que la hoja para que la hoja no se corte a medio bajar. */
+@keyframes pvOverlayOut{ from{ opacity:1 } to{ opacity:0 } }
+@keyframes pvSheetOut  { from{ opacity:1; transform:none } to{ opacity:0; transform:translateY(14px) scale(.985) } }
+@keyframes pvSheetDown { from{ transform:none } to{ transform:translateY(100%) } }
+.as-overlay.open.closing            { animation:pvOverlayOut .26s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+.as-overlay.open.closing .as-card   { animation:pvSheetOut .24s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+#pvAskCash.closing                  { animation:pvOverlayOut .26s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+.as-overlay.open.closing, #pvAskCash.closing{ pointer-events:none; }
+#pvAskCash.closing > div            { animation:pvSheetOut .24s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+@media (max-width:600px){
+  /* En móvil son hojas: se van por donde vinieron, hacia abajo. */
+  .as-overlay.open.closing .as-card { animation:pvSheetDown .24s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+  #pvAskCash.closing > div          { animation:pvSheetDown .24s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+}
+/* El velo del modal del valor total también entra fundiéndose, no de golpe. */
+#pvAskCash{ animation:pvOverlayIn .22s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+
+/* ════ Sugerencias ═════════════════════════════════════════════════════════
+   La cascada corre SÓLO cuando la lista se abre (clase .entra, que el JS quita
+   enseguida). Si corriera en cada render, escribir "AAPL" la reproduciría cuatro
+   veces y el desplegable temblaría bajo el dedo. */
+@keyframes asSugIn{ from{ opacity:0; transform:translateY(-7px) } to{ opacity:1; transform:none } }
+.as-suggest.entra .as-sug-item{ animation:asSugIn .26s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+.as-suggest.entra .as-sug-item:nth-child(2){ animation-delay:.03s }
+.as-suggest.entra .as-sug-item:nth-child(3){ animation-delay:.06s }
+.as-suggest.entra .as-sug-item:nth-child(4){ animation-delay:.09s }
+.as-suggest.entra .as-sug-item:nth-child(5){ animation-delay:.12s }
+.as-suggest.entra .as-sug-item:nth-child(6){ animation-delay:.15s }
+.as-suggest.entra .as-sug-item:nth-child(7){ animation-delay:.17s }
+.as-suggest.entra .as-sug-item:nth-child(n+8){ animation-delay:.19s }
+.as-sug-item{ transition:background .12s var(--pv-ease,cubic-bezier(.33,1,.68,1)), transform .1s; }
+.as-sug-item:active{ transform:scale(.985); background:var(--st-surface-low); }
+.as-sug-wait{ pointer-events:none; }
+.as-sug-wait .as-sug-name{ animation:asWait 1.1s ease-in-out infinite; }
+@keyframes asWait{ 0%,100%{ opacity:.45 } 50%{ opacity:1 } }
+
+/* ════ Selector Por dinero / Por acciones ══════════════════════════════════
+   El fondo blanco saltaba de un botón al otro sin recorrido. Ahora es una sola
+   pastilla que se desliza; los botones se quedan sin fondo propio. La clase
+   .der la pone _asSyncToggle() según cuál esté activo (nada de :has(), que no
+   está en todas las versiones de iOS que soporta la app). */
+.as-type-toggle{ position:relative; }
+.as-type-toggle::before{
+  content:''; position:absolute; z-index:0; top:4px; bottom:4px; left:4px;
+  /* exactamente el ancho de un botón: (ancho - 2·padding - gap) / 2 */
+  width:calc((100% - 12px) / 2); border-radius:9px; background:#fff;
+  box-shadow:0 1px 4px rgba(11,28,48,.10);
+  transition:transform .3s var(--pv-ease-out,cubic-bezier(.22,1,.36,1));
+}
+.as-type-toggle.der::before{ transform:translateX(calc(100% + 4px)); }
+.as-type-btn{ position:relative; z-index:1; background:none !important; box-shadow:none !important; }
+.as-type-btn.active{ color:var(--st-primary); }
+.as-type-btn:active{ transform:scale(.97); }
+
+/* ════ Respuesta al toque en el resto de controles ═════════════════════════ */
+.as-cancel{ transition:background .15s, transform .1s; }
+.as-cancel:active{ transform:scale(.97); }
+.as-ticker-input, .as-big-input{ transition:border-color .18s var(--pv-ease,cubic-bezier(.33,1,.68,1)), background .18s; }
+#pvAskCashInput{ transition:border-color .18s, background .18s, box-shadow .18s; }
+#pvAskCashInput:focus{ border-color:#04162c !important; box-shadow:0 0 0 3px rgba(4,22,44,.08); }
+#pvAskCashOk, #pvAskCashSkip{ transition:opacity .18s, transform .1s; }
+#pvAskCashOk:active, #pvAskCashSkip:active{ transform:scale(.985); opacity:.9; }
+
+@media (prefers-reduced-motion: reduce){
+  .as-overlay.open.closing, .as-overlay.open.closing .as-card,
+  #pvAskCash, #pvAskCash.closing, #pvAskCash.closing > div,
+  .as-suggest.entra .as-sug-item, .as-sug-wait .as-sug-name{ animation:none !important; }
+  .as-type-toggle::before{ transition:none !important; }
+}
 </style>
 
 <!-- Tocar el fondo cierra. La × de 32px es un blanco pequeño y en el estado
@@ -12839,7 +12910,18 @@ window._pvAskCash = function(opts){
   document.body.appendChild(o);
   function close(){
     try { localStorage.setItem('pv_manual_onboard_v1', '1'); } catch(e){}
-    try { o.remove(); } catch(e){}
+    var quitar = function(){ try { o.remove(); } catch(e){} };
+    var red = false;
+    try { red = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){}
+    if (red) { quitar(); }
+    else {
+      // .closing lo lee el CSS: velo que se funde y hoja que baja. El
+      // temporizador manda —con la pestaña en segundo plano no corren las
+      // animaciones y el modal tiene que irse igual—; .closing ya le quita los
+      // eventos, así que no bloquea nada durante esos 300 ms.
+      o.classList.add('closing');
+      setTimeout(quitar, 300);
+    }
     if (typeof opts.onDone === 'function') { try { opts.onDone(); } catch(e){} }
   }
   o.querySelector('#pvAskCashSkip').onclick = close;   // omitir NO escribe nada
@@ -25249,6 +25331,9 @@ function _renderAddSuggestions(){
     }
     box.className='as-suggest'; box.innerHTML=''; return;
   }
+  // .entra sólo en el render que ABRE la lista: si corriera en cada pulsación,
+  // el desplegable se re-animaría entero bajo el dedo.
+  const abriendo = !box.classList.contains('open');
   box.innerHTML = _addSugItems.map((it,i) =>
     `<div class="as-sug-item${i===_addSugIdx?' active':''}"`
     // onmousedown solo retiene el foco (evita que onblur cierre el dropdown antes de
@@ -25263,7 +25348,11 @@ function _renderAddSuggestions(){
     + `<span class="as-sug-tkr">${_escAttr(it.symbol)}</span>`
     + `<span class="as-sug-name">${_escAttr(it.name)}</span></div>`
   ).join('');
-  box.className='as-suggest open';
+  box.className = 'as-suggest open' + (abriendo ? ' entra' : '');
+  if (abriendo){
+    clearTimeout(box._entra);
+    box._entra = setTimeout(function(){ box.classList.remove('entra'); }, 480);
+  }
 }
 // Resalta el item activo SIN reconstruir el dropdown (evita perder el clic).
 function _addSugSetActive(i){
@@ -25298,6 +25387,7 @@ function onAddTickerInput(){
   if ($('asOrderSection')) $('asOrderSection').style.display = 'none';
   $('addLookupResult').classList.remove('visible');
   try { $('addStockOverlay').classList.remove('picked'); } catch(e){}
+  _asVerBuscador(true, false);
   if ($('addWarn')) { $('addWarn').classList.remove('show'); $('addWarn').textContent = ''; }
   $('addConfirmBtn').disabled = true;
   _addPrice = 0; _addTicker = '';
@@ -25338,8 +25428,12 @@ function onAddTickerInput(){
 let _addBuyType = 'money'; // 'money' | 'shares'
 
 function openAddStock() {
+  // 'closing' se limpia por si se reabre dentro de los 340 ms de la salida:
+  // si no, la hoja recién abierta se volvería a ir sola.
+  $('addStockOverlay').classList.remove('closing');
   $('addStockOverlay').classList.add('open');
   $('addStockOverlay').classList.remove('picked');
+  _asVerBuscador(true, false);
   $('addTickerInput').value = '';
   $('addLookupResult').classList.remove('visible');
   if ($('asOrderSection')) $('asOrderSection').style.display = 'none';
@@ -25357,8 +25451,73 @@ function openAddStock() {
   setTimeout(()=>$('addTickerInput').focus(), 100);
 }
 
+// ── Movimiento de los diálogos de compra / efectivo ───────────────────────
+// Sin motion: el modal se puede cerrar con el sistema en "reducir movimiento",
+// con la pestaña en segundo plano (no corren las animaciones) o antes de que el
+// navegador pinte. Por eso el cierre siempre acaba por temporizador y el evento
+// sólo lo adelanta.
+function _asReduce(){
+  try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; }
+}
+function _asCerrar(id, cb){
+  const el = document.getElementById(id);
+  if (!el || !el.classList.contains('open')) return;
+  if (_asReduce()){ el.classList.remove('open','closing'); if (cb) cb(); return; }
+  el.classList.add('closing');
+  let hecho = false;
+  const fin = () => {
+    if (hecho) return; hecho = true;
+    clearTimeout(tmr);
+    el.classList.remove('open','closing');
+    if (cb) cb();
+  };
+  const tmr = setTimeout(fin, 340);
+  el.addEventListener('animationend', function h(e){
+    if (e.target !== el) return;            // la de la tarjeta burbujea: ignorarla
+    el.removeEventListener('animationend', h); fin();
+  });
+}
+// La pastilla blanca del selector se desliza; .der = está activo el segundo botón.
+function _asSyncToggle(tg){
+  if (!tg) return;
+  const b = tg.querySelectorAll('.as-type-btn');
+  tg.classList.toggle('der', b.length === 2 && b[1].classList.contains('active'));
+}
+// Pliega/despliega el buscador midiendo su alto real. No se usa una regla con
+// max-height porque el bloque crece con los resultados de la búsqueda y un tope
+// fijo recorta el desplegable.
+let _asBuscadorVisible = true;
+function _asVerBuscador(ver, animar){
+  const el = document.getElementById('asSearchBlock');
+  if (!el) return;
+  ver = !!ver;
+  if (ver === _asBuscadorVisible && !el.style.height) { if (ver) el.hidden = false; return; }
+  _asBuscadorVisible = ver;
+  clearTimeout(el._plegado);
+  el.style.transition = 'none';
+  if (!animar || _asReduce()){
+    el.style.height = ''; el.style.overflow = ''; el.style.opacity = '';
+    el.hidden = !ver;
+    return;
+  }
+  el.hidden = false;
+  el.style.overflow = 'hidden';
+  const h = el.scrollHeight;
+  el.style.height  = (ver ? 0 : h) + 'px';
+  el.style.opacity = ver ? '0' : '1';
+  void el.offsetHeight;                       // fija el fotograma de partida
+  el.style.transition = 'height .3s cubic-bezier(.22,1,.36,1), opacity .22s ease';
+  el.style.height  = (ver ? h : 0) + 'px';
+  el.style.opacity = ver ? '1' : '0';
+  el._plegado = setTimeout(function(){
+    el.style.transition = '';
+    if (ver){ el.style.height = ''; el.style.overflow = ''; }  // abierto: sin recorte
+    else    { el.hidden = true; }
+  }, 320);
+}
+
 function closeAddStock() {
-  $('addStockOverlay').classList.remove('open');
+  _asCerrar('addStockOverlay');
 }
 
 // ═══════════════════════════════════════════════════
@@ -25368,6 +25527,7 @@ function closeAddStock() {
 let _cashOpType = 'deposit';
 
 function openCashModal(type) {
+  $('cashOverlay').classList.remove('closing');
   _cashOpType = (type === 'withdraw') ? 'withdraw' : 'deposit';
   $('cashOverlay').classList.add('open');
   $('cashAmountInput').value = '';
@@ -25378,7 +25538,7 @@ function openCashModal(type) {
 }
 
 function closeCashModal() {
-  $('cashOverlay').classList.remove('open');
+  _asCerrar('cashOverlay');
 }
 
 function _cashSetType(type) {
@@ -25386,6 +25546,7 @@ function _cashSetType(type) {
   const isW = type === 'withdraw';
   $('cashBtnDeposit').classList.toggle('active', !isW);
   $('cashBtnWithdraw').classList.toggle('active', isW);
+  _asSyncToggle($('cashBtnDeposit').parentElement);
   $('cashModalTitle').textContent = isW ? 'Retirar fondos' : 'Agregar fondos';
   $('cashInputLabel').textContent = isW ? 'Monto a retirar' : 'Monto a depositar';
   $('cashConfirmBtn').textContent = isW ? 'Confirmar retiro' : 'Confirmar depósito';
@@ -25440,7 +25601,7 @@ function confirmCashOp() {
 
 function _addResetToggle() {
   ['asBtnMoney','asBtnShares'].forEach(id => { const el=$(id); if(el) el.classList.remove('active'); });
-  const m = $('asBtnMoney'); if (m) m.classList.add('active');
+  const m = $('asBtnMoney'); if (m) { m.classList.add('active'); _asSyncToggle(m.parentElement); }
   if ($('asInputLabel'))  $('asInputLabel').textContent  = 'Monto a invertir';
   if ($('asInputPrefix')) $('asInputPrefix').textContent = '$';
   const inp = $('asOrderInput');
@@ -25458,7 +25619,7 @@ function _addSetOrderType(type) {
   _addBuyType = type;
   ['asBtnMoney','asBtnShares'].forEach(id => { const el=$(id); if(el) el.classList.remove('active'); });
   const activeEl = $(type === 'money' ? 'asBtnMoney' : 'asBtnShares');
-  if (activeEl) activeEl.classList.add('active');
+  if (activeEl) { activeEl.classList.add('active'); _asSyncToggle(activeEl.parentElement); }
 
   const inp    = $('asOrderInput');
   const label  = $('asInputLabel');
@@ -25623,6 +25784,7 @@ function _addRevealOrder(ticker, name, price, pct){
   // Activo elegido: el buscador se pliega (ya no hace falta y son ~75 px) y
   // aparece el botón "Cambiar" dentro de la tarjeta de la empresa.
   try { $('addStockOverlay').classList.add('picked'); } catch(e){}
+  _asVerBuscador(false, true);
   const _sec = $('asOrderSection');
   if (_sec) {
     _sec.style.display = 'block';
@@ -25638,6 +25800,7 @@ function _addRevealOrder(ticker, name, price, pct){
 // deja el foco dentro, sin perder nada de lo ya escrito en el importe.
 function _addChangeTicker(){
   try { $('addStockOverlay').classList.remove('picked'); } catch(e){}
+  _asVerBuscador(true, true);
   const inp = $('addTickerInput');
   if (inp) { inp.value = ''; try { inp.focus(); } catch(e){} }
   _addSugItems = []; _addSugIdx = -1;
