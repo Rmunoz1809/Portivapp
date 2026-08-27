@@ -12942,7 +12942,27 @@ window._pvAskCash = function(opts){
       // Mismo camino que la edición manual de #cashDisplay: CASH → updateCash →
       // savePortfolio (empuja a la nube) → renderAll.
       CASH = Math.max(0, v - posVal);
+      // El VALOR TOTAL declarado se guarda aparte. Aquí todavía no hay posiciones (es el
+      // primer paso del alta), así que el total entero acaba en CASH; cuando el usuario
+      // cargue sus posiciones, aiPortApply lo relee para restar lo que valen en vez de
+      // sumarlas encima. Sin esto, quien declaraba 10.000 y cargaba 6.800 en acciones
+      // terminaba viendo 16.800: su dinero contado dos veces.
+      try { _lsSet('pv_declared_total', JSON.stringify({ v: v, uid: (window.__pvUserId || 'local') })); } catch(e){}
+      // Resincronizar el campo de efectivo del editor manual. #aiCash es el OTRO sitio que
+      // escribe CASH (aiPortApply lo relee tal cual) y renderAIPortEditor sólo lo rellena al
+      // pintar la pestaña de ajustes. En la entrada por _pvManualOnboard() la pestaña se
+      // pinta ANTES de preguntar el monto, así que el campo se quedaba congelado en "0.00":
+      // al pulsar Aplicar, ese 0 pisaba el CASH recién declarado y el usuario perdía la
+      // cifra entera. Se toca SÓLO el input del efectivo — no renderAIPortEditor(), que
+      // reconstruiría #aiPosRows y borraría las filas que el usuario esté escribiendo.
+      try { var _cEl = document.getElementById('aiCash'); if (_cEl) _cEl.value = (+CASH).toFixed(2); } catch(e){}
+      try { if (typeof aiPortRecalc === 'function') aiPortRecalc(); } catch(e){}
       try { updateCash(); } catch(e){}
+      // Semilla de la serie: sin ella no hay nada que graficar y la barra de períodos se
+      // queda en 1D · YTD · ALL hasta que se cargue la primera posición. Con un valor total
+      // declarado ya hay un punto real desde el que empezar a acumular historial.
+      try { if (typeof _aiSyncPerfSeries === 'function') _aiSyncPerfSeries(); } catch(e){}
+      try { if (typeof unlockPeriods === 'function') unlockPeriods(); } catch(e){}
       try { savePortfolio(); } catch(e){}
       try { renderAll(); } catch(e){}
     }
@@ -17723,6 +17743,23 @@ function _histSpanDays() {
   } catch(e) {}
   return 0;
 }
+// Ventanas que se recortan solas a los datos disponibles (ver _periodAvailable).
+const _SHORT_PERIODS = { '1W':1, '2W':1, '1M':1, '3M':1, '6M':1, '1Y':1 };
+// ¿Existe una serie REAL con la que dibujar, aunque sea la de un solo día?
+// Medir "cuántos días abarca" no sirve para esto: una cuenta manual arranca —y se queda—
+// con dos puntos en la misma fecha, o sea span 0, teniendo un valor real que enseñar.
+// Lo que decide si hay algo que dibujar es si hay serie, no cuánto mide.
+function _hasAnySeries() {
+  try {
+    const A = (typeof PERF_DATA !== 'undefined' && PERF_DATA['ALL'] && PERF_DATA['ALL'].values) || [];
+    if (A.length) return true;
+    const M = (typeof PERF_MASTER !== 'undefined' && PERF_MASTER.values) || [];
+    if (M.length) return true;
+    if (typeof PORTIV_CHART !== 'undefined' && typeof PORTIV_CHART.loadDaily === 'function'
+        && PORTIV_CHART.loadDaily().length) return true;
+  } catch(e) {}
+  return false;
+}
 // ── ¿HAY datos REALES para dibujar este período? — regla ANTI-INVENTO ──
 // Un período solo está disponible si existe historial real que lo cubra. Si no, se OCULTA
 // (nunca se dibuja una gráfica inventada/extrapolada). Se habilita cuando:
@@ -17738,10 +17775,23 @@ function _periodAvailable(key) {
   const margin = 0.9;                                             // 10% de tolerancia de lectura
   if (_brokerSpanDays() >= days * margin) return true;           // (a) serie del broker lo cubre
   if (_histSpanDays() >= days * margin) return true;             // (a') serie reconstruida (Yahoo) lo cubre
-  // El dueño quiere 1M/3M/6M/1Y visibles siempre que exista historial REAL. sliceFromAll
-  // recorta a lo disponible (NUNCA inventa): si el período excede los datos, muestra el
-  // rango real completo (igual que ALL). Habilita esas 4 ventanas en cuanto haya serie real.
-  if ((key === '1M' || key === '3M' || key === '6M' || key === '1Y') && _histSpanDays() > 0) return true;
+  // ── Semanas y meses: disponibles desde el PRIMER día ──────────────────────────
+  // Antes esta puerta sólo abría 1M/3M/6M/1Y y además exigía _histSpanDays() > 0. En una
+  // cuenta MANUAL ese span vale 0 el primer día y sigue valiendo 0 despues: la semilla de
+  // _seedPerfFromNow son DOS puntos en la MISMA fecha, y PERF_MASTER no vuelve a crecer
+  // nunca (el historial diario se acumula en PORTIV_CHART.loadDaily y sólo se fusiona al
+  // DIBUJAR, no ahí). Así que la única puerta que quedaba abierta era (c) "ya pasó ese
+  // tiempo real", y quien acababa de cargar su portafolio veía SÓLO 1D · YTD · ALL: 7 días
+  // de espera para tener 1W, 14 para 2W, 30 para 1M, 91 para 3M. Justo lo contrario de lo
+  // que necesita alguien que está empezando.
+  //
+  // Enseñarlas NO rompe la regla anti-invento: la ventana se recorta siempre a los datos
+  // reales — PORTIV_CHART.generate() la clava al primer punto real (CLAMP A LA FOTO /
+  // inception) y sliceFromAll hace lo mismo ("si no hay suficientes datos, mostrar todo lo
+  // disponible"). Una "1W" de un portafolio de dos días dibuja esos dos días reales, ni uno
+  // más, exactamente igual que ALL. Lo que se gana es que la barra de períodos esté completa
+  // y coherente desde el minuto uno en vez de ir apareciendo a cachos durante tres meses.
+  if (_SHORT_PERIODS[key] && _hasAnySeries()) return true;
   if (_periodOverridePct(key) != null) return true;              // (b) broker etiquetó ese período
   let ageDays = 0;
   try { ageDays = (Date.now() - _inceptionDate().getTime()) / 86400000; } catch(e) {}
@@ -31523,6 +31573,29 @@ async function aiPortApply(){
   TOTAL_OVERRIDE = (totOv != null && totOv > 0) ? totOv : null;
   const cash = _aiNum(document.getElementById('aiCash').value); if (cash != null) CASH = cash;
   const mm = _aiNum(document.getElementById('aiMM').value); if (mm != null) MONEY_MARKET = mm;
+  // ── Reconciliación del VALOR TOTAL declarado en el alta ──────────────────────
+  // _pvAskCash pregunta el valor TOTAL (efectivo + posiciones) y, como en ese momento no
+  // hay ninguna posición cargada, deja el total entero en CASH. Al aplicar aquí las
+  // posiciones, el Valor Total = Σ(qty×precio) + CASH pasaba a ser "lo que declaró el
+  // usuario MÁS sus posiciones" — el mismo dinero contado dos veces. Ahora el efectivo pasa
+  // a ser el total declarado MENOS lo que valen las posiciones, que es exactamente lo que
+  // _pvAskCash ya calcula cuando las posiciones existen de antemano.
+  // Se aplica UNA sola vez y sólo si el campo de efectivo SIGUE valiendo el total declarado:
+  // si el usuario lo editó a mano, manda lo que escribió. La marca se consume en ambos casos.
+  try {
+    var _dRaw = JSON.parse(localStorage.getItem('pv_declared_total') || 'null');
+    // La clave es global al dispositivo y esto es una cifra de dinero: si el respaldo es de
+    // OTRA cuenta se descarta sin usarlo (mismo criterio que pv_port_rescue).
+    var _decl = (_dRaw && _dRaw.uid === (window.__pvUserId || 'local')) ? parseFloat(_dRaw.v) : NaN;
+    if (_dRaw) localStorage.removeItem('pv_declared_total');
+    if (isFinite(_decl) && _decl > 0) {
+      if (cash != null && Math.abs(cash - _decl) < 0.01) {
+        var _mktNow = HOLDINGS.reduce(function(s, h){ return s + h.qty * h.price; }, 0);
+        CASH = Math.max(0, _decl - _mktNow - (MONEY_MARKET || 0));
+        var _cIn = document.getElementById('aiCash'); if (_cIn) _cIn.value = (+CASH).toFixed(2);
+      }
+    }
+  } catch(e){}
   const capv = _aiNum(document.getElementById('aiCapital').value); if (capv != null && capv > 0) INITIAL_CAPITAL = capv;
   // Cambio del día a nivel cuenta: SOLO se prorratea por valor de mercado cuando las
   // posiciones NO trajeron su propio % por acción (ej. una foto de "resumen" sin tabla
