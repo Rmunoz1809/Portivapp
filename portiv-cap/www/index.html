@@ -7126,6 +7126,18 @@ async function renderSettings(){
   /* El hueco de arriba lo pone el OVERLAY, no un calc() dentro de la hoja: así
      `max-height:100%` se mide contra la caja que la hoja habita de verdad y no
      hay ninguna unidad de viewport de por medio que pueda descuadrarse. */
+  /* El desplegable deja de flotar: dentro de una hoja de alto acotado, un
+     dropdown posicionado se recorta contra el cuerpo con scroll. En flujo la
+     hoja crece con los resultados y, si no caben, scrollea — que es justo lo
+     que se espera al buscar un activo. */
+  .as-suggest{ position:static; margin-top:8px; max-height:224px; box-shadow:none; }
+  .as-sug-wait{ cursor:default; opacity:.7; }
+  /* Mientras se busca no hay nada que confirmar y la × de la cabecera ya cierra:
+     el pie sólo le quitaría sitio a los resultados, que es lo único que importa
+     en ese momento. Con el teclado abierto son 68 px — dos activos más a la
+     vista. Va con #addStockOverlay y no con .as-overlay para no tocar el
+     diálogo de efectivo, que nunca lleva la clase .picked. */
+  #addStockOverlay:not(.picked) > .as-card > .as-btns{ display:none; }
   .as-overlay { align-items:flex-end; padding:calc(env(safe-area-inset-top,0px) + 10px) 0 0; }
   .as-card {
     margin:0; width:100%; max-width:none;
@@ -7148,11 +7160,12 @@ async function renderSettings(){
 /* El buscador se pliega cuando ya hay activo elegido: son ~75 px que se le
    devuelven a la compra. El ticker no se pierde de vista —está en la tarjeta de
    la empresa, que ahora lleva un botón "Cambiar" para volver a buscar. */
-#asSearchBlock{
-  overflow:hidden; max-height:130px;
-  transition:max-height .34s var(--pv-ease,cubic-bezier(.33,1,.68,1)), opacity .18s ease;
-}
-.as-overlay.picked #asSearchBlock{ max-height:0; opacity:0; pointer-events:none; }
+/* Se pliega con display:none y no con max-height + overflow:hidden. Con el
+   recorte, el desplegable de sugerencias —que va posicionado— quedaba cortado
+   contra el borde del bloque y al escribir no aparecía NADA. Aquí la animación
+   no vale lo que cuesta: el movimiento que se ve es la tarjeta de la empresa y
+   el bloque de compra entrando, que ya llevan el suyo. */
+.as-overlay.picked #asSearchBlock{ display:none; }
 .as-overlay.picked .as-company-card{ margin-top:0; }
 .as-chg{
   flex-shrink:0; align-self:center; border:1.5px solid var(--st-surface-highest);
@@ -7221,6 +7234,35 @@ async function renderSettings(){
     animation:none !important; transition:none !important;
   }
 }
+
+/* ════ "Ingresa el valor total de tu portafolio" ═══════════════════════════
+   El mismo fallo que arrastraba la hoja de compra, y por eso el cuadro se salía
+   del área de la app: el overlay centra con flex y no tenía ni overflow ni alto
+   máximo. Al abrirse el teclado el viewport se encoge, la tarjeta pasa de largo
+   y el sobrante de un hijo centrado se reparte ARRIBA y abajo — el borde de
+   arriba queda fuera de la pantalla y no hay manera de alcanzarlo.
+   El markup se construye en JS con estilo en línea, así que corregirlo desde la
+   hoja de estilos exige !important en las propiedades que ya van ahí. */
+#pvAskCash{
+  overflow:hidden;
+  padding:calc(14px + env(safe-area-inset-top,0px)) 20px calc(14px + env(safe-area-inset-bottom,0px)) !important;
+}
+#pvAskCash > div{
+  max-height:100%; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;
+  animation:pvAskIn .34s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both;
+}
+@keyframes pvAskIn{ from{ opacity:0; transform:translateY(22px) } to{ opacity:1; transform:none } }
+@media (max-width:600px){
+  /* En móvil, hoja pegada abajo: con el teclado abierto el sitio libre está
+     arriba del teclado, así que el campo y el botón Guardar quedan siempre a la
+     vista en lugar de pelearse por el centro. */
+  #pvAskCash{ align-items:flex-end !important; padding:calc(14px + env(safe-area-inset-top,0px)) 0 0 !important; }
+  #pvAskCash > div{
+    max-width:none !important; border-radius:22px 22px 0 0 !important;
+    padding:24px 20px calc(20px + env(safe-area-inset-bottom,0px)) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce){ #pvAskCash > div{ animation:none !important; } }
 </style>
 
 <!-- Tocar el fondo cierra. La × de 32px es un blanco pequeño y en el estado
@@ -25166,18 +25208,47 @@ const _ADD_SUG_FALLBACK = [
   {symbol:'SPY',name:'SPDR S&P 500 ETF'},{symbol:'QQQ',name:'Invesco QQQ Trust'},
   {symbol:'SCHD',name:'Schwab US Dividend ETF'},{symbol:'SMH',name:'VanEck Semiconductor ETF'},
 ];
+// Orden por cercanía, no por si empieza o no: escribir "AP" tiene que sacar APP
+// (ticker) y AAPL (Apple, por nombre) juntos y arriba, no perdidos entre
+// coincidencias sueltas dentro de un nombre largo.
 function _searchFallback(q){
-  const u = q.toUpperCase();
+  const u = (q || '').trim().toUpperCase();
+  if (!u) return [];
+  const esc = u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pal = new RegExp('\\b' + esc);
+  const rango = (x) => {
+    const s = x.symbol.toUpperCase(), n = x.name.toUpperCase();
+    if (s === u)          return 0;   // ticker exacto
+    if (s.startsWith(u))  return 1;   // ticker por prefijo
+    if (n.startsWith(u))  return 2;   // nombre por prefijo
+    if (pal.test(n))      return 3;   // principio de palabra dentro del nombre
+    if (n.includes(u))    return 4;
+    return 9;
+  };
+  // Con una o dos letras, "aparece en algún sitio del nombre" (rango 4) sólo mete
+  // ruido: "TE" sacaba ocho empresas sin relación. Ahí valen los prefijos y los
+  // principios de palabra, nada más.
+  const tope = u.length <= 2 ? 3 : 4;
   return _ADD_SUG_FALLBACK
-    .filter(x => x.symbol.startsWith(u) || x.name.toUpperCase().includes(u))
-    .sort((a,b) => (b.symbol.startsWith(u)?1:0) - (a.symbol.startsWith(u)?1:0))
-    .slice(0, 8);
+    .map(x => ({ x, r: rango(x) }))
+    .filter(o => o.r <= tope)
+    .sort((a, b) => a.r - b.r || a.x.symbol.length - b.x.symbol.length)
+    .slice(0, 6)
+    .map(o => o.x);
 }
 function _escAttr(s){ return pvEsc(s); }   // delegado al escape único de la app
+let _addSugBuscando = false;
 function _renderAddSuggestions(){
   const box = $('addSuggestions');
   if (!box) return;
-  if (!_addSugItems.length){ box.className='as-suggest'; box.innerHTML=''; return; }
+  if (!_addSugItems.length){
+    if (_addSugBuscando){
+      box.innerHTML = '<div class="as-sug-item as-sug-wait"><span class="as-sug-name">Buscando…</span></div>';
+      box.className = 'as-suggest open';
+      return;
+    }
+    box.className='as-suggest'; box.innerHTML=''; return;
+  }
   box.innerHTML = _addSugItems.map((it,i) =>
     `<div class="as-sug-item${i===_addSugIdx?' active':''}"`
     // onmousedown solo retiene el foco (evita que onblur cierre el dropdown antes de
@@ -25230,8 +25301,9 @@ function onAddTickerInput(){
   if ($('addWarn')) { $('addWarn').classList.remove('show'); $('addWarn').textContent = ''; }
   $('addConfirmBtn').disabled = true;
   _addPrice = 0; _addTicker = '';
-  if (q.length < 1){ _addSugItems = []; _renderAddSuggestions(); return; }
+  if (q.length < 1){ _addSugItems = []; _addSugBuscando = false; _renderAddSuggestions(); return; }
   _addSugItems = _searchFallback(q);
+  _addSugBuscando = true;
   _renderAddSuggestions();
   const seq = ++_addSugSeq;
   _addSugTimer = setTimeout(async () => {
@@ -25246,8 +25318,16 @@ function onAddTickerInput(){
         .filter(x => { const k=x.symbol.toUpperCase(); if (seen.has(k)) return false; seen.add(k); return true; })
         .sort((a,b) => (b.symbol.toUpperCase().startsWith(q.toUpperCase())?1:0) - (a.symbol.toUpperCase().startsWith(q.toUpperCase())?1:0))
         .slice(0, 8);
-      if (items.length){ _addSugItems = items; _addSugIdx = -1; _renderAddSuggestions(); }
-    } catch(e) { /* mantener respaldo local */ }
+      // Los de casa mandan y van primero: son los que el usuario busca el 90% de
+      // las veces y ya están en pantalla. Lo remoto amplía la lista al resto del
+      // mercado en vez de barrer lo que ya se estaba viendo.
+      const loc  = _searchFallback(q);
+      const yaSt = new Set(loc.map(x => x.symbol.toUpperCase()));
+      const todo = loc.concat(items.filter(x => !yaSt.has(x.symbol.toUpperCase()))).slice(0, 10);
+      _addSugBuscando = false;
+      if (todo.length){ _addSugItems = todo; _addSugIdx = -1; }
+      _renderAddSuggestions();
+    } catch(e) { _addSugBuscando = false; _renderAddSuggestions(); /* respaldo local */ }
   }, 220);
   // NO auto-seleccionar: el usuario elige una empresa del dropdown de sugerencias
   // (clic / flechas+Enter). Antes un auto-lookup a los 700ms tomaba el texto crudo
