@@ -2903,6 +2903,14 @@ window._ensureChartJs = (function(){
   html.pv-free .pv-lock-stack .pv-lock-sub { font-size: 12.5px; }
   html.pv-free .pv-lock-stack .pv-lock-btn { height: 44px; padding: 0 24px; font-size: 14px; border-radius: 12px; }
 
+  /* Candados ANIDADOS: varios bloques (rebalanceo, asesor) traen su propio .pv-lock
+     desde el render. Dentro de una pila ya bloqueada sobran: su velo quedaría
+     DESENFOCADO junto al resto (es descendiente de .pv-lock-body, que sí se difumina)
+     y se vería una tarjeta fantasma borrosa flotando sobre el contenido. Aquí se
+     apagan: manda el candado de la pila. */
+  html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > .pv-lock-ov { display: none; }
+  html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > :not(.pv-lock-ov) { filter: none; opacity: 1; }
+  html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > .rbl-card { max-height: none; overflow: visible; }
   .pv-lock-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .pv-lock-page > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
   html.pv-free .pv-lock-page > :not(.pv-lock-ov) { filter: blur(8px) saturate(.68); opacity: .78; }
@@ -4636,6 +4644,13 @@ window._pvAwaitIAP = function(totalMs){
     <!-- Fila 4: KPI bar — rellenada por JS -->
     <div id="port-kpi-bar"></div>
 
+    <!-- De "Análisis Profundo del Portafolio" hacia abajo TODO es Portiv Pro: análisis
+         profundo, Portiv Intelligence, rebalanceo y EPS quedan bajo un único candado.
+         Se usa .pv-lock-stack (no .pv-lock a secas) porque la pila mide miles de píxeles
+         y esa variante ancla el mensaje arriba y lo lleva pegado al scroll; un overlay
+         centrado en `inset:0` dejaría el candado a 1.500px de donde mira el usuario. -->
+    <div class="pv-lock pv-lock-stack" id="portDeepLockWrap">
+      <div class="pv-lock-body">
     <div class="pda-card pa-fullrow">
       <h2 class="pda-h2">Análisis Profundo del Portafolio</h2>
       <div id="port-deep-analysis"></div>
@@ -4651,6 +4666,16 @@ window._pvAwaitIAP = function(totalMs){
     <div class="pda-card pa-fullrow">
       <h2 class="pda-h2">Earnings Per Share</h2>
       <div id="port-eps"></div>
+    </div>
+      </div><!-- /.pv-lock-body -->
+      <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
+        <div class="pv-lock-card">
+          <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+          <div class="pv-lock-txt">El análisis profundo de tu portafolio: diagnóstico, rebalanceo y resultados</div>
+          <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+          <button class="pv-lock-btn" type="button">Ver planes</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -5076,7 +5101,7 @@ window._pvAwaitIAP = function(totalMs){
 
     <!-- Todo lo que va POR DEBAJO de la nota (foso, ventajas, finanzas, valoración,
          proyecciones, técnico, composición del ETF y resultados) es Portiv Pro. -->
-    <div class="pv-lock pv-lock-stack">
+    <div class="pv-lock pv-lock-stack" id="stockLockWrap">
       <div class="pv-lock-body">
       <div class="r-analysis" id="r-analysis"></div>
 
@@ -5125,7 +5150,7 @@ window._pvAwaitIAP = function(totalMs){
         <div class="pv-lock-card">
           <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
           <div class="pv-lock-txt" id="pv-lock-txt">El análisis completo: foso, ventajas, finanzas, valoración y técnico</div>
-          <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+          <div class="pv-lock-sub" id="pv-lock-sub">Se desbloquea con Portiv Pro</div>
           <button class="pv-lock-btn" type="button">Ver planes</button>
         </div>
       </div>
@@ -21780,10 +21805,81 @@ function quickSearch(ticker) {
   setTimeout(() => doResearch(), 180);
 }
 
+// ── Análisis de acción en el plan gratuito: 2 al día ─────────────────────────
+// Mismo patrón que la cuota semanal del chat, pero por DÍA y por TICKER: se guarda qué
+// acciones se abrieron hoy, no un contador pelado. Así volver a la misma acción (o que
+// _fetchResearch se relance con fundamentales frescos) no gasta un segundo cupo, y al
+// cambiar el día la lista se vacía sola → las dos de ayer vuelven a salir difuminadas.
+// No se guarda NINGÚN análisis: lo único que persiste son los tickers del día.
+const _STOCK_FREE_DAILY  = 2;
+const _STOCK_FREE_LS_KEY = 'stock_free_day';
+function _stockDayKey(){
+  // Mismo truco que _chatWeekKey: medianoche LOCAL y luego ISO. En husos negativos
+  // (ET) esa medianoche cae de madrugada UTC del mismo día, así que la fecha coincide.
+  const d = new Date(); d.setHours(0,0,0,0);
+  return d.toISOString().slice(0,10);
+}
+function _pvFreePlan(){
+  try { return document.documentElement.classList.contains('pv-free'); } catch(e){ return false; }
+}
+function _stockFreeState(){
+  try {
+    const st = JSON.parse(localStorage.getItem(_STOCK_FREE_LS_KEY) || 'null');
+    if (st && st.day === _stockDayKey() && Array.isArray(st.t)) return { day: st.day, t: st.t.slice() };
+  } catch(e){}
+  return { day: _stockDayKey(), t: [] };
+}
+// ¿Se puede ver ESTA acción sin candado? Consume cupo solo la primera vez en el día.
+function _stockFreeClaim(ticker){
+  if (!_pvFreePlan()) return true;                     // Pro → sin tope
+  const t = String(ticker || '').toUpperCase();
+  if (!t) return false;                                // sin acción abierta → cerrado por defecto
+  const st = _stockFreeState();
+  if (st.t.indexOf(t) >= 0) return true;               // ya desbloqueada hoy: no vuelve a cobrar
+  if (st.t.length >= _STOCK_FREE_DAILY) return false;  // cupo del día agotado
+  st.t.push(t);
+  try { localStorage.setItem(_STOCK_FREE_LS_KEY, JSON.stringify({ day: st.day, t: st.t })); } catch(e){}
+  return true;
+}
+// Pone o quita el velo de la pila. Igual que _chatApplyFreeGate: con cupo se retiran las
+// clases del candado, y al agotarse vuelven con un mensaje que dice POR QUÉ volvieron
+// —"Se desbloquea con Portiv Pro" a secas, tras dos análisis que sí funcionaron, se lee
+// como si algo se hubiera roto. Devuelve si quedó ABIERTO.
+function _stockApplyFreeGate(ticker){
+  try {
+    if (ticker) window._pvStockLastTicker = String(ticker).toUpperCase();
+    const w = document.getElementById('stockLockWrap'); if (!w) return true;
+    const abierto = _stockFreeClaim(window._pvStockLastTicker || '');
+    w.classList.toggle('pv-lock', !abierto);
+    w.classList.toggle('pv-lock-stack', !abierto);
+    // Marca leída por el render (_renderQualAnalysis reescribe #pv-lock-txt en cada
+    // pintado): sin ella, el texto del tope se perdía en cuanto llegaban los datos.
+    window._pvStockLimitHit = !abierto && _pvFreePlan();
+    const t = document.getElementById('pv-lock-txt'), sub = document.getElementById('pv-lock-sub');
+    if (window._pvStockLimitHit) {
+      if (t)   t.innerHTML = 'Has usado tus <b>' + _STOCK_FREE_DAILY + ' análisis</b> de hoy';
+      if (sub) sub.textContent = 'Con Portiv Pro los análisis son ilimitados';
+    } else {
+      // Al reabrir una acción con cupo hay que DESHACER el texto del tope: el render lo
+      // reescribe con su variante (acción / ETF) enseguida, pero entre medias se quedaba
+      // el aviso del límite sobre un análisis que sí está desbloqueado.
+      if (t)   t.textContent = 'El análisis completo: foso, ventajas, finanzas, valoración y técnico';
+      if (sub) sub.textContent = 'Se desbloquea con Portiv Pro';
+    }
+    return abierto;
+  } catch(e){ return true; }
+}
+window._stockApplyFreeGate = _stockApplyFreeGate;
+
 function doResearch() {
   const ticker = ($('researchInput').value || '').trim().toUpperCase();
   if (!ticker) return;
   currentResearchTicker = ticker;
+  // Cupo diario del plan gratuito. Se resuelve ANTES de pintar para que el análisis
+  // salga ya con (o sin) velo, sin el parpadeo de verlo nítido y taparlo después.
+  // El análisis se carga igual aunque esté cerrado: el usuario ve la forma de lo que
+  // se está perdiendo, que es lo que hace el candado en el resto de la app.
+  if (!_stockApplyFreeGate(ticker)) { try { window._pvShowPaywall(); } catch(e){} }
   researchChartCache = {};
   _activeResearchRange = '1mo';
   if (researchChartInst) { researchChartInst.destroy(); researchChartInst = null; }
@@ -22503,7 +22599,7 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   // (un fondo no tiene ninguna de las dos). Se reemplazan por diversificación y costo,
   // y el horizonte/riesgo salen del perfil del fondo.
   { const _lt = $('pv-lock-txt');
-    if (_lt) _lt.textContent = _isEtfTicker(ticker, info)
+    if (_lt && !window._pvStockLimitHit) _lt.textContent = _isEtfTicker(ticker, info)
       ? 'El análisis completo: composición, concentración, costo, momentum y riesgos'
       : 'El análisis completo: foso, ventajas, finanzas, valoración y técnico'; }
   if (typeof _etfA !== 'undefined' && _etfA) { try { _etfRatingCard(_etfA); } catch(e){} }
@@ -29914,7 +30010,7 @@ function _weekCost(bucket){ return _weekCostGet(bucket).cost; }
 // pregunta en una decisión de racionamiento: el usuario deja de preguntar mucho antes de
 // llegar al tope y no llega a ver el producto, que es justo lo contrario de lo que la
 // cuota busca. El límite solo se nombra cuando se alcanza.
-const _CHAT_FREE_WEEKLY_MSGS = 10;
+const _CHAT_FREE_WEEKLY_MSGS = 5;
 const _CHAT_FREE_LS_KEY = 'chat_free_week_msgs';
 
 // Semana ET compartida con los contadores de costo (_chatWeekKey → lunes): así el chat
@@ -30519,7 +30615,7 @@ async function aiChatSend(){
   if(!_esPro && _chatFreeExhausted()){
     _aiChatAddMsg('user', text);
     input.value=''; input.style.height='auto';
-    _aiChatAddMsg('bot','Has alcanzado el límite de **'+_CHAT_FREE_WEEKLY_MSGS+' mensajes por semana** de la versión gratuita. Con Portiv Pro el chat es ilimitado; si prefieres esperar, se reinicia el lunes.');
+    _aiChatAddMsg('bot','Has alcanzado tu límite semanal de **'+_CHAT_FREE_WEEKLY_MSGS+' mensajes** de la versión gratuita. Para seguir preguntando necesitas **Portiv Pro**, que deja el chat ilimitado. Si prefieres esperar, tu cuota se reinicia el lunes.');
     _chatApplyFreeGate();
     try{ window._pvShowPaywall(); }catch(e){}
     return;
@@ -33293,7 +33389,7 @@ if (document.readyState === 'loading') {
          Apple ni Google —haría falta la contraseña del Apple ID del dueño, con 2FA— y
          sin este formulario el revisor no tendría forma de entrar → Guideline 2.1. -->
     <button type="button" id="authEmailBtn" class="av-acc-btn" aria-expanded="false" aria-controls="authEmailWrap" onclick="_authToggleEmail()">
-      <span id="authEmailLbl">Entrar o crear cuenta con correo</span>
+      <span id="authEmailLbl">Entrar o crear cuenta</span>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
     </button>
 
@@ -33527,7 +33623,7 @@ if (document.readyState === 'loading') {
     // La cabecera del acordeón describe lo que hay DENTRO ahora mismo: en modo registro,
     // "Entrar o crear cuenta" sobra y confunde al plegarlo.
     var lbl = document.getElementById('authEmailLbl');
-    if (lbl) lbl.textContent = signup ? 'Crear cuenta con correo' : 'Entrar o crear cuenta con correo';
+    if (lbl) lbl.textContent = signup ? 'Crear cuenta con correo' : 'Entrar o crear cuenta';
     var tg = document.getElementById('authToggle');
     if (tg) tg.innerHTML = signup ? '¿Ya tienes cuenta? <b>Inicia sesión</b>' : '¿No tienes cuenta? <b>Crear una</b>';
     replay(signup ? su : si);
@@ -35550,6 +35646,7 @@ document.addEventListener('DOMContentLoaded', function(){
       // recalcula aquí porque este es el único punto por el que pasan TODOS los
       // cambios de entitlement, incluido el primero al arrancar.
       try { _chatApplyFreeGate(); } catch(e){}
+      try { window._stockApplyFreeGate && window._stockApplyFreeGate(); } catch(e){}
     } catch(e){}
   }
   window._pvApplyProClass = _pvApplyProClass;
