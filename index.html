@@ -9851,7 +9851,7 @@ function _renderEtfAnalysis(a, el){
   const esc = pvEsc, p = a.p, S = a.scores;
   const rc  = r => r==null?'var(--px-muted)': r>=8?'var(--px-green)': r>=6.5?'var(--px-blue)': r>=5?'var(--px-amber)':'var(--px-red)';
   const pf  = (v,d) => v!=null ? `${(v*100).toFixed(d==null?2:d)}%` : '—';
-  const usd = v => v==null?'—' : '$'+Math.round(v).toLocaleString('en-US');
+  const usd = v => v==null?'—' : _pvSym()+Math.round(v).toLocaleString('en-US');
   const sc  = k => (typeof S[k]==='number' && isFinite(S[k])) ? S[k] : null;
   const badge = k => { const v=sc(k); return v==null?'' : `<span class="px-score" style="border-color:${rc(v)}55"><b style="color:${rc(v)}">${v.toFixed(1)}</b><i>/10</i></span>`; };
   const stitle = (t,k) => `<h2 class="px-sec-title"><span class="t">${esc(t)}</span>${k?badge(k):''}</h2>`;
@@ -10623,7 +10623,7 @@ const PV_AI = {
     const T = (typeof calcTotals === 'function') ? calcTotals() : { mkt:0, total:0, cash:0, mm:0 };
     const m = (typeof _portfolioMetrics === 'function') ? _portfolioMetrics(T) : { items:[], sorted:[], bySector:{}, portBeta:0, top3W:0 };
     const pct = v => (v*100).toFixed(1) + '%';
-    const usd = v => '$' + Math.round(v||0).toLocaleString('en-US');
+    const usd = v => _pvSym() + Math.round(v||0).toLocaleString('en-US');
     const empty = !m.items.length || T.mkt <= 0;
     const techW = this._techWeight(m);
 
@@ -12995,7 +12995,7 @@ function usdSigned(n, dec) {
   if (!isFinite(+n)) return '—';        // mismo criterio que usd(): ver su comentario
   if (dec != null) {
     const s = Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:dec,maximumFractionDigits:dec});
-    return (n<0?'-$':'+$') + s;
+    return (n<0?'-':'+') + _pvSym() + s;
   }
   return (n>=0?'+':'') + usd(n);
 }
@@ -16562,6 +16562,30 @@ function showStockNews(ticker, btn) {
 // ═══════════════════════════════════════════════════
 //  UTILS
 // ═══════════════════════════════════════════════════
+// ── En qué moneda está el dinero que se pinta ───────────────────────────────────────
+// El símbolo estaba cableado a '$' en usd(), y usd() lo usan 79 sitios: total, filas,
+// efectivo, tarjetas, análisis. Una cartera de Interactive Brokers denominada en euros
+// —el caso normal de un usuario europeo— se pintaba entera con el signo del dólar. No es
+// un detalle cosmético: es decirle a alguien que tiene 39.100 dólares cuando tiene euros.
+//
+// La moneda la decide snapMapHoldings (la de presentación de la cartera) y la deja en
+// window._SNAP_CCY. Se persiste porque HOLDINGS se recarga de localStorage mucho antes de
+// que llegue la primera respuesta del broker, y hasta entonces la app pintaría dólares.
+// Sin nada guardado y sin broker, el dólar sigue siendo el valor por defecto de siempre.
+const _PV_CCY_SYM = { USD:'$', EUR:'€', GBP:'£', JPY:'¥', CNY:'CN¥', CHF:'CHF ', CAD:'CA$',
+  AUD:'A$', NZD:'NZ$', MXN:'MX$', BRL:'R$', HKD:'HK$', SGD:'S$', INR:'₹', KRW:'₩',
+  SEK:'kr ', NOK:'kr ', DKK:'kr ', PLN:'zł ', ZAR:'R ', ILS:'₪', TRY:'₺' };
+function _pvCcy() {
+  try {
+    if (window._SNAP_CCY) return String(window._SNAP_CCY).toUpperCase();
+    const c = localStorage.getItem('pv_display_ccy');
+    if (c) return String(c).toUpperCase();
+  } catch(e) {}
+  return 'USD';
+}
+// Símbolo, no código: una moneda que no esté en la tabla se pinta con su código ISO y un
+// espacio ("SAR 1,200.00"). Feo antes que equivocado.
+function _pvSym() { const c = _pvCcy(); return _PV_CCY_SYM[c] || (c + ' '); }
 function usd(n) {
   // Último cortafuegos del dinero en pantalla. `Math.abs(NaN).toLocaleString()` devuelve
   // "NaN" y el de Infinity devuelve "∞", así que un solo valor corrupto aguas arriba se
@@ -16570,7 +16594,7 @@ function usd(n) {
   const v = +n;
   if (!isFinite(v)) return '—';
   const s = Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  return (v<0?'-$':'$') + s;
+  return (v<0?'-':'') + _pvSym() + s;
 }
 function sign(n) { return n>=0?'+':'-'; }
 function $(id) { return document.getElementById(id); }
@@ -38458,6 +38482,9 @@ document.addEventListener('DOMContentLoaded', function(){
     // Estado para la UI: la tarjeta del broker lo convierte en avisos visibles.
     try{
       window._SNAP_CCY = _dom || null;
+      // Persistida para que la primera pintura tras recargar la app ya salga en la moneda
+      // correcta: HOLDINGS vuelve de localStorage mucho antes que la respuesta del broker.
+      try{ if(_dom) localStorage.setItem('pv_display_ccy', _dom); }catch(e){}
       window._SNAP_FX = _excluded ? { dominant:_dom, excluded:_excluded } : null;
       window._SNAP_FX_CONV = _converted ? { dominant:_dom, converted:_converted } : null;
       window._SNAP_FX_WARNING = _excluded ? Object.keys(_excluded) : null;   // compat
