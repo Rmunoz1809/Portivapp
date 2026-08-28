@@ -33187,6 +33187,12 @@ if (document.readyState === 'loading') {
   #authOverlay .av-toggle{font-size:13px;color:var(--pvr-muted,#68788C);cursor:pointer;}
   #authOverlay .av-toggle b{color:var(--pvr-navy,#0B1E36);font-weight:700;}
   #authOverlay .av-toggle:hover b{opacity:.65;}
+  /* Enlace "¿No tienes cuenta? Crea una" al pie de cada formulario. Es un <button>
+     de verdad (no un <span> con onclick) para que el teclado y VoiceOver lo alcancen;
+     el reset quita el aspecto de botón sin perder la semántica. */
+  #authOverlay .av-switch{text-align:center;font-size:13px;font-weight:600;color:var(--pvr-muted,#68788C);margin-top:2px;}
+  #authOverlay .av-switch button{background:none;border:none;padding:0;margin:0;font:inherit;font-weight:700;color:var(--pvr-navy,#0B1E36);cursor:pointer;transition:opacity .18s var(--pvr-ease,ease);}
+  #authOverlay .av-switch button:hover{opacity:.62;}
   #authOverlay .av-secure{display:flex;align-items:center;justify-content:center;gap:7px;color:#9fadbf;font-size:12px;font-weight:600;margin-top:18px;}
   #authOverlay .av-foot{display:flex;align-items:center;justify-content:center;gap:22px;margin-top:18px;flex-wrap:wrap;}
   #authOverlay .av-foot span,#authOverlay .av-foot a{font-size:12px;font-weight:600;color:var(--pvr-muted,#68788C);cursor:pointer;transition:color .18s var(--pvr-ease,ease);text-decoration:none;}
@@ -33287,7 +33293,7 @@ if (document.readyState === 'loading') {
          Apple ni Google —haría falta la contraseña del Apple ID del dueño, con 2FA— y
          sin este formulario el revisor no tendría forma de entrar → Guideline 2.1. -->
     <button type="button" id="authEmailBtn" class="av-acc-btn" aria-expanded="false" aria-controls="authEmailWrap" onclick="_authToggleEmail()">
-      <span>¿Ya tienes una cuenta?</span>
+      <span id="authEmailLbl">Entrar o crear cuenta con correo</span>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
     </button>
 
@@ -33313,6 +33319,7 @@ if (document.readyState === 'loading') {
       </div>
       <label class="av-remember"><input type="checkbox" id="siRemember">Recordar mi sesión</label>
       <button id="siBtn" class="pv-btn" onclick="_authSignin()">Entrar</button>
+      <div class="av-switch">¿No tienes cuenta? <button type="button" id="siToSignup" onclick="_authToggle()">Crea una</button></div>
     </div>
 
     <div id="authSignup" class="pv-form" style="display:none;flex-direction:column;gap:14px;padding-top:2px;">
@@ -33348,6 +33355,7 @@ if (document.readyState === 'loading') {
         </div>
       </div>
       <button id="suBtn" class="pv-btn" onclick="_authSignup()">Crear cuenta</button>
+      <div class="av-switch">¿Ya tienes cuenta? <button type="button" id="suToSignin" onclick="_authToggle()">Inicia sesión</button></div>
     </div>
     </div></div><!-- /authEmailWrap -->
 
@@ -33505,18 +33513,32 @@ if (document.readyState === 'loading') {
   function replay(el){ el.classList.remove('pv-form'); void el.offsetWidth; el.classList.add('pv-form'); }
 
   function setMode(m){
-    mode = m;
+    mode = (m === 'signup') ? 'signup' : 'signin';
+    var signup = (mode === 'signup');
     var si = document.getElementById('authSignin'), su = document.getElementById('authSignup');
-    // El form de entrar sí se muestra (ver comentario en #authSignin); el de
-    // registro no: crear cuenta sigue siendo solo Apple/Google.
-    si.style.display = (m === 'signin') ? 'flex' : 'none';
-    su.style.display = 'none';
-    document.getElementById('authTitle').textContent = m === 'signin' ? 'Iniciar sesión en Portiv' : 'Crea tu cuenta de Portiv';
-    document.getElementById('authToggle').innerHTML = m === 'signin' ? '¿No tienes cuenta? <b>Crear una</b>' : '¿Ya tienes cuenta? <b>Inicia sesión</b>';
-    replay(m === 'signin' ? si : su);
+    // Crear cuenta con correo vuelve a estar disponible: el formulario de registro se
+    // muestra igual que el de entrar. Antes su display quedaba clavado en 'none' y el
+    // modo 'signup' cambiaba los títulos sobre una tarjeta sin formulario dentro.
+    si.style.display = signup ? 'none' : 'flex';
+    su.style.display = signup ? 'flex' : 'none';
+    document.getElementById('authTitle').textContent = signup ? 'Crea tu cuenta de Portiv' : 'Iniciar sesión en Portiv';
+    var sub = document.getElementById('authSub');
+    if (sub) sub.textContent = signup ? 'Regístrate y empieza a seguir tu portafolio' : 'Accede a tu portafolio de forma segura';
+    // La cabecera del acordeón describe lo que hay DENTRO ahora mismo: en modo registro,
+    // "Entrar o crear cuenta" sobra y confunde al plegarlo.
+    var lbl = document.getElementById('authEmailLbl');
+    if (lbl) lbl.textContent = signup ? 'Crear cuenta con correo' : 'Entrar o crear cuenta con correo';
+    var tg = document.getElementById('authToggle');
+    if (tg) tg.innerHTML = signup ? '¿Ya tienes cuenta? <b>Inicia sesión</b>' : '¿No tienes cuenta? <b>Crear una</b>';
+    replay(signup ? su : si);
     setMsg('');
   }
-  window._authToggle = function(){ setMode(mode === 'signin' ? 'signup' : 'signin'); };
+  // Los dos enlaces de cambio viven DENTRO del acordeón, así que al alternar hay que
+  // dejarlo abierto: si algo lo cerró, la tarjeta se quedaría sin formulario visible.
+  window._authToggle = function(){
+    setMode(mode === 'signin' ? 'signup' : 'signin');
+    _authSetEmailPanel(true);
+  };
 
   // Acordeón de correo + contraseña. El alto se anima con grid-template-rows (0fr→1fr)
   // en vez de max-height: no hay que adivinar un alto máximo y la transición no se
@@ -33530,7 +33552,7 @@ if (document.readyState === 'loading') {
     wrap.querySelectorAll('input,button').forEach(function(el){
       if (open) el.removeAttribute('tabindex'); else el.setAttribute('tabindex','-1');
     });
-    if (open) setTimeout(function(){ var f = document.getElementById('siEmail'); if (f) f.focus(); }, 280);
+    if (open) setTimeout(function(){ var f = document.getElementById(mode === 'signup' ? 'suUser' : 'siEmail'); if (f) f.focus(); }, 280);
   }
   window._authToggleEmail = function(){
     var wrap = document.getElementById('authEmailWrap');
@@ -34759,17 +34781,48 @@ if (document.readyState === 'loading') {
     if (p1 !== p2) { setMsg('Las contraseñas no coinciden', true); return; }
     var btn = document.getElementById('suBtn'); btn.disabled = true; btn.textContent = 'Creando...';
     try {
-      try { localStorage.setItem('pv_username', username); } catch(e){}
       var r = await sb.auth.signUp({ email: email, password: p1, options: { data: { username: username, display_name: username } } });
       if (r.error) throw r.error;
+      // Supabase no delata qué correos existen: ante uno ya registrado responde OK con la
+      // lista `identities` VACÍA. Sin este control el usuario leía "Cuenta creada" y luego
+      // no podía entrar con esa contraseña.
+      var _nu = r.data && r.data.user;
+      if (_nu && Array.isArray(_nu.identities) && _nu.identities.length === 0) {
+        setMode('signin');                                  // setMode() limpia el mensaje…
+        var _si = document.getElementById('siEmail'); if (_si) _si.value = email;
+        setMsg('Ya existe una cuenta con ese correo. Inicia sesión o restablece tu contraseña.', true);
+        return;                                             // …por eso el aviso va DESPUÉS
+      }
+      // El nombre de usuario solo se guarda si la cuenta se creó de verdad; antes se
+      // escribía antes del signUp y un fallo dejaba el nombre de un registro fantasma.
+      try { localStorage.setItem('pv_username', username); } catch(e){}
       try { sessionStorage.setItem('pv_force_quiz', '1'); } catch(e){} // cuenta nueva → mostrar cuestionario de perfil
       if (r.data.session) { setMsg('Cuenta creada ✓ Entrando…'); }
       else {
         var r2 = await sb.auth.signInWithPassword({ email: email, password: p1 });
-        if (r2.error) { setMsg('Cuenta creada. Revisa tu correo para confirmarla y luego inicia sesión.'); setMode('signin'); _authSetEmailPanel(true); }
+        if (r2.error) {
+          setMode('signin');
+          var _si2 = document.getElementById('siEmail'); if (_si2) _si2.value = email;
+          _authSetEmailPanel(true);
+          setMsg('Cuenta creada. Revisa tu correo para confirmarla y luego inicia sesión.');
+        }
         else { setMsg('Cuenta creada ✓ Entrando…'); }
       }
-    } catch(e){ setMsg(e.message || 'No se pudo crear la cuenta', true); }
+    } catch(e){
+      var _em = ((e && e.message) || '').toLowerCase();
+      if (/already registered|already exists|user already/.test(_em)) {
+        // Mismo desenlace que la rama de `identities` vacío: llevar al formulario de entrar
+        // con el correo ya escrito, para que el siguiente paso sea teclear la contraseña.
+        setMode('signin');
+        var _si3 = document.getElementById('siEmail'); if (_si3) _si3.value = email;
+        setMsg('Ya existe una cuenta con ese correo. Inicia sesión o restablece tu contraseña.', true);
+      }
+      else if (/rate limit|too many|security purposes/.test(_em))
+        setMsg('Demasiados intentos seguidos. Espera un minuto y vuelve a probar.', true);
+      else if (/password/.test(_em) && /weak|short|length/.test(_em))
+        setMsg('Esa contraseña es demasiado débil. Prueba con una más larga.', true);
+      else setMsg((e && e.message) || 'No se pudo crear la cuenta', true);
+    }
     finally { btn.disabled = false; btn.textContent = 'Crear cuenta'; }
   };
 
@@ -34917,7 +34970,7 @@ if (document.readyState === 'loading') {
   });
 
   ['siEmail','siPass'].forEach(function(id){ document.getElementById(id).addEventListener('keydown', function(e){ if(e.key==='Enter') window._authSignin(); }); });
-  ['suEmail','suPass','suPass2'].forEach(function(id){ document.getElementById(id).addEventListener('keydown', function(e){ if(e.key==='Enter') window._authSignup(); }); });
+  ['suUser','suEmail','suPass','suPass2'].forEach(function(id){ document.getElementById(id).addEventListener('keydown', function(e){ if(e.key==='Enter') window._authSignup(); }); });
 })();
 </script>
 
