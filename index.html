@@ -11266,11 +11266,27 @@ function renderDeepPortfolioAnalysis(T) {
       const _MS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
       const _mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(_lastQ);
       const _fq = _mm ? `${+_mm[3]} de ${_MS[+_mm[2]-1]} de ${_mm[1]}` : _lastQ;
-      _rblFreshHTML = `<div style="font-size:11px;color:var(--text3);margin:-8px 0 14px;line-height:1.5">`
-        + `Calculado con los resultados publicados hasta el <b>${_fq}</b> y con los precios de hoy. `
-        + `Se rehace solo cuando una de tus empresas reporta un trimestre nuevo.</div>`;
+      _rblFreshHTML = `Calculado con los resultados publicados hasta el <b>${_fq}</b> y con los precios de hoy. `
+        + `Se rehace solo cuando una de tus empresas reporta un trimestre nuevo.`;
     }
   } catch(e){}
+  // LA PRUEBA DE QUE EL PLAN RESPONDE AL PERFIL. Antes el diagnóstico podía marcar la
+  // beta FUERA de banda y la tabla de al lado recomendar un reparto que la dejaba igual.
+  // Ahora el motor la corrige y aquí se enseña el antes y el después contra la banda.
+  try {
+    const _bi = window._pvxLastPlanBeta;
+    if (_bi && _bi.band && _bi.before != null && _bi.after != null){
+      const [_bl, _bh] = _bi.band;
+      const _dentro = _bi.after >= _bl - 0.02 && _bi.after <= _bh + 0.02;
+      const _cambio = Math.abs(_bi.after - _bi.before) >= 0.02;
+      _rblFreshHTML += ` <b style="color:var(--text2)">Sensibilidad al mercado:</b> `
+        + (_cambio ? `${_bi.before.toFixed(2)} → <b>${_bi.after.toFixed(2)}</b>` : `<b>${_bi.after.toFixed(2)}</b>`)
+        + ` con el plan aplicado, frente al ${_bl.toFixed(2)}–${_bh.toFixed(2)} que tolera tu perfil`
+        + (_dentro ? ' — dentro de banda.' : ' — todavía por encima: la tabla de abajo propone con qué amortiguarla.');
+    }
+  } catch(e){}
+  if (_rblFreshHTML)
+    _rblFreshHTML = `<div style="font-size:11px;color:var(--text3);margin:-8px 0 14px;line-height:1.55">${_rblFreshHTML}</div>`;
   document.getElementById('port-rebal-recs').innerHTML = `
     <div class="pv-lock">
       <!-- El párrafo que explica CÓMO se calcula el rebalanceo va DENTRO del candado:
@@ -11557,6 +11573,10 @@ function renderAssetDetailTable(T) {
 // peso y se dice por qué. Un ticker sin fundamentales publicados nunca se recorta "por las
 // dudas": se deja en MANTENER con el motivo escrito.
 function _pvxRebalEngine(m, T){
+  // Se limpia de entrada: el motor tiene varias salidas tempranas (cartera vacía, una
+  // sola posición, sin fundamentales suficientes) y si no se borrase, la tarjeta seguiría
+  // enseñando la beta calculada para una cartera ANTERIOR como si fuera la de ahora.
+  try { window._pvxLastPlanBeta = null; } catch(e){}
   const items = (m && m.items) ? m.items.filter(i => i && i.weight > 0) : [];
   const out = {};
   if (!items.length) return out;
@@ -12090,6 +12110,61 @@ function _pvxRebalEngine(m, T){
   }
   }   // fin del reparto (había pool evaluable)
 
+  // ── EL PLAN TIENE QUE ATERRIZAR EN LA BANDA DE VOLATILIDAD DEL PERFIL ──────────
+  // El reparto por calidad no sabe nada de la volatilidad DEL CONJUNTO: podía dejar a un
+  // cliente moderado con una beta de plan de 1.34 cuando su perfil tolera hasta 1.15, y
+  // presentarlo como el reparto correcto. El diagnóstico marcaba esa métrica FUERA de
+  // banda mientras la tabla de al lado recomendaba un plan que la dejaba igual: dos
+  // superficies de la misma app diciendo cosas distintas.
+  //
+  // Se corrige al final, sobre los pesos ya calculados: peso de las posiciones más
+  // volátiles hacia las menos volátiles, en pasos pequeños, hasta entrar en la banda.
+  // Respeta los mismos techos y no toca las filas congeladas (sin datos o núcleo
+  // indexado). Es un ajuste de TAMAÑOS: no cambia la opinión sobre ninguna empresa ni
+  // invierte la dirección que decidió la calidad.
+  const betaBand = (prof && Array.isArray(prof.betaTarget) && prof.betaTarget.length === 2) ? prof.betaTarget : null;
+  const betaOf = r => {
+    const b = (typeof r.it.beta === 'number' && isFinite(r.it.beta)) ? r.it.beta : null;
+    if (b != null && b > 0) return b;
+    if (r.etf && typeof r.etf.beta === 'number' && r.etf.beta > 0) return r.etf.beta;
+    return 1;
+  };
+  const planBeta = () => {
+    const w = rows.reduce((a,r)=>a + (r.tgt||0), 0);
+    return w > 0 ? rows.reduce((a,r)=>a + (r.tgt||0) * betaOf(r), 0) / w : null;
+  };
+  let betaBefore = planBeta(), betaAfter = betaBefore, betaMoved = false;
+  if (betaBand && betaBefore != null && scored.length >= 2){
+    const [bLo, bHi] = betaBand;
+    const PASO = 0.0025;                       // 0.25 pp por iteración: ajuste fino
+    const PISO = 0.005;                        // no se vacía una posición por volatilidad
+    for (let it = 0; it < 240; it++){
+      const cur = planBeta(); if (cur == null) break;
+      const alta = cur > bHi + 0.01, baja = cur < bLo - 0.01;
+      if (!alta && !baja) break;
+      // De más a menos volátil. Si la beta va alta, el donante es el extremo volátil y el
+      // receptor el tranquilo; si va baja, al revés.
+      const orden = scored.filter(r => !r.closed).sort((a,b)=>betaOf(b)-betaOf(a));
+      if (orden.length < 2) break;
+      const donantes  = alta ? orden : orden.slice().reverse();
+      const receptores = alta ? orden.slice().reverse() : orden;
+      const don = donantes.find(r => r.tgt - PISO > 0.0001);
+      const rec = receptores.find(r => r.tgt < capFor(r) - 0.0001);
+      if (!don || !rec || don.tk === rec.tk) break;
+      // Mover peso entre dos posiciones de volatilidad casi idéntica no cambia nada:
+      // sin este corte el bucle giraría 240 veces moviendo dinero para nada.
+      if (Math.abs(betaOf(don) - betaOf(rec)) < 0.05) break;
+      const salto = Math.min(PASO, don.tgt - PISO, capFor(rec) - rec.tgt);
+      if (!(salto > 0.0001)) break;
+      don.tgt -= salto; rec.tgt += salto;
+      don.betaCut = true; rec.betaAdd = true; betaMoved = true;
+    }
+    betaAfter = planBeta();
+  }
+  // Lo lee la tarjeta para enseñar el antes y el después: es la prueba de que el plan
+  // responde al perfil y no a una fórmula suelta.
+  try { window._pvxLastPlanBeta = { before: betaBefore, after: betaAfter, band: betaBand, moved: betaMoved }; } catch(e){}
+
   // Las filas congeladas (sin datos, o núcleo indexado) no pasan por el reparto, pero sí
   // entran en las comparaciones de texto. Sin esto contaban como calidad 0 y hacían parecer
   // "de los más sólidos" a cualquier acción mediocre que estuviera por encima de ellas.
@@ -12275,6 +12350,29 @@ function _pvxRebalEngine(m, T){
     // así que la lectura financiera nunca se sacrifica por dejar sitio a la ventaja
     // competitiva. Al AUMENTAR es al revés: lo que hay que justificar es por qué ese
     // negocio merece más dinero, y eso lo contesta el foso, no un ratio.
+    // ── POR QUÉ SE MOVIÓ POR VOLATILIDAD ────────────────────────────────────────
+    // Si la fila cambió de tamaño para meter la cartera en la banda de su perfil, hay
+    // que decirlo: es la diferencia entre "recorta porque sí" y "recorta porque el
+    // conjunto se mueve más de lo que tu perfil aguanta". Solo se escribe cuando el
+    // ajuste movió la aguja de verdad.
+    let betaTxt = '';
+    if (betaBand && betaBefore != null && betaAfter != null && Math.abs(betaAfter - betaBefore) >= 0.02){
+      const _bb = `${betaBand[0].toFixed(2)}–${betaBand[1].toFixed(2)}`;
+      // Que el ajuste MEJORE la beta no significa que la meta en banda: si todas las
+      // posiciones se mueven parecido, no hay a quién pasarle el peso y el plan se queda
+      // corto. Decir "dentro del 0.90–1.15" cuando quedó en 1.24 sería mentir en la
+      // única frase que el usuario va a usar para confiar en el plan.
+      const _dentroFin = betaAfter >= betaBand[0] - 0.02 && betaAfter <= betaBand[1] + 0.02;
+      const _cierre = _dentroFin
+        ? `dentro del ${_bb} que tolera un perfil ${perfTxt}`
+        : `acercándola al ${_bb} de un perfil ${perfTxt} — moviendo peso entre lo que ya tienes no da para más`;
+      if (r.betaCut && action === 'REDUCIR')
+        betaTxt = ` Parte del recorte es para bajar la sensibilidad de tu cartera de ${betaBefore.toFixed(2)} a ${betaAfter.toFixed(2)}, ${_cierre}.`;
+      else if (r.betaAdd && action === 'AUMENTAR')
+        betaTxt = ` Al pesar más suaviza el conjunto: la sensibilidad de la cartera pasa de ${betaBefore.toFixed(2)} a ${betaAfter.toFixed(2)}, ${_cierre}.`;
+    }
+    if (betaTxt) move = move + betaTxt;
+
     // El momento del precio entra en la escalera con prioridad alta: es la mitad de la
     // decisión que faltaba y la que hace que el motivo cambie de un trimestre a otro.
     // Se sacrifica antes el recuento de cartera (el peso y el nº están en las columnas
@@ -12285,7 +12383,10 @@ function _pvxRebalEngine(m, T){
       : [`${port} ${qual} ${biz} ${mom} ${move}`, `${qual} ${biz} ${mom} ${move}`,
          `${qual} ${mom} ${move}`, `${port} ${biz} ${mom} ${move}`, `${biz} ${mom} ${move}`,
          `${biz} ${move}`, move];
-    const why = cands.map(c => c.replace(/\s{2,}/g, ' ').trim()).find(c => wcx(c) <= 78) || move;
+    // La frase de volatilidad son ~30 palabras y es el motivo de la fila, no un adorno:
+    // si entra, el tope sube para que no la corte la escalera.
+    const CAP = betaTxt ? 105 : 78;
+    const why = cands.map(c => c.replace(/\s{2,}/g, ' ').trim()).find(c => wcx(c) <= CAP) || move;
 
     out[r.tk] = { sug, action, why };
   });
@@ -12327,7 +12428,7 @@ function _pvxFamOf(sector){
 // perfil es apropiada, no si la empresa es buena.
 const _PVX_CAND = {
   'Tecnología':      [['MSFT','c'],['GOOGL','c'],['AAPL','c'],['ORCL','c'],['ADBE','c'],['ACN','c'],['CSCO','d'],['CRM','g'],['AMZN','c']],
-  'Semiconductores': [['AVGO','c'],['TSM','c'],['NVDA','g'],['AMD','g'],['MU','g']],
+  'Semiconductores': [['AVGO','c'],['TSM','c'],['NVDA','g'],['AMD','g'],['MU','g'],['SNDK','g']],
   'Salud':           [['UNH','c'],['LLY','g'],['JNJ','d'],['ABBV','d'],['MRK','d']],
   'Financiero':      [['BRKB','d'],['JPM','c'],['BAC','c']],
   'Pagos':           [['V','c'],['MA','c']],
@@ -12335,6 +12436,43 @@ const _PVX_CAND = {
   'Energía':         [['XOM','d'],['CVX','d']],
   'Comunicación':    [['META','c'],['TMUS','d'],['NFLX','g'],['DIS','c']]
 };
+
+// ── FONDOS ─────────────────────────────────────────────────────────────────────
+// Hay huecos que ninguna acción suelta arregla. "No tienes nada fuera de Estados
+// Unidos" no se resuelve comprando una empresa más: se resuelve con un fondo que
+// traiga miles. Lo mismo con el núcleo indexado y con la renta fija. Estos cuatro
+// huecos son estructurales —de forma de la cartera, no de sector— y por eso van
+// aparte, con su propia detección y sus propios candidatos.
+//
+// El universo es ETF_DB, que ya trae comisión, número de posiciones, beta y tesis
+// por fondo: la razón sale de sus datos, no de un adjetivo.
+const _PVX_ETF_NEED = {
+  nucleo: {
+    etiqueta: 'Fondo · Núcleo',
+    cands: ['VTI','VOO','RSP'],
+    titulo: 'la parte que no depende de acertar con ninguna empresa'
+  },
+  internacional: {
+    etiqueta: 'Fondo · Internacional',
+    cands: ['VXUS','VEA','VWO'],
+    titulo: 'lo que pasa fuera de Estados Unidos'
+  },
+  rentaFija: {
+    etiqueta: 'Fondo · Renta fija',
+    cands: ['BND','AGG','SGOV'],
+    titulo: 'el colchón que no se mueve cuando la bolsa cae'
+  },
+  dividendos: {
+    etiqueta: 'Fondo · Dividendos',
+    cands: ['SCHD','VIG','VYM'],
+    titulo: 'ingreso periódico sin vender posiciones'
+  }
+};
+// Tickers que YA son exposición internacional o renta fija: si el usuario tiene uno,
+// el hueco no existe y recomendarle otro sería vender por vender.
+const _PVX_INTL = new Set(['VXUS','VEA','VWO','IEMG','EFA','VEU','VT','IXUS','ACWX','SCHF','SPDW','KWEB','TSM']);
+const _PVX_BOND = new Set(['BND','AGG','TLT','IEF','SHY','SGOV','BIL','LQD','HYG','TIP','BNDX','VGIT','VGSH','MUB','JEPI','JEPQ']);
+const _PVX_DIVI = new Set(['SCHD','VIG','VYM','JEPI','JEPQ','DVY','NOBL']);
 // Tres empresas con ficha que no están en STOCK_DB y por tanto no tienen nombre ahí.
 const _PVX_NAME_FB = { BRKB:'Berkshire Hathaway', TMUS:'T-Mobile US', MCD:"McDonald's" };
 
@@ -12387,6 +12525,7 @@ function _pvxSuggestNew(m, T){
 
     const okFor = t => risk === 'bajo' ? t !== 'g' : risk === 'alto' ? t !== 'd' : true;
     const nameOf = tk => {
+      try { const e = (typeof ETF_DB !== 'undefined') ? ETF_DB[tk] : null; if (e && e.name) return e.name; } catch(e){}
       try { const row = (typeof STOCK_DB !== 'undefined') ? STOCK_DB.find(r => r[0] === tk) : null; if (row) return row[1]; } catch(e){}
       return _PVX_NAME_FB[tk] || tk;
     };
@@ -12398,24 +12537,38 @@ function _pvxSuggestNew(m, T){
     const cut = (v,n) => { const t = String(v||'').replace(/\s+/g,' ').trim(); return t.length > n ? t.slice(0,n).replace(/[\s,;:—-]+$/,'') + '…' : t; };
     const pctS = v => (v*100).toFixed(1) + '%';
 
+    // ── ¿EL PLAN SE QUEDÓ CORTO CON LA VOLATILIDAD? ──────────────────────────────
+    // El motor de rebalanceo intenta meter la cartera en la banda de beta del perfil
+    // moviendo pesos entre lo que ya tiene. A veces no puede: si TODAS las posiciones
+    // son volátiles, no hay a quién pasarle el peso. Ahí la solución no es rebalancear
+    // más, es comprar algo tranquilo — y esta tabla es el sitio donde decirlo.
+    let calma = false, betaAfter = null, betaHi = null;
+    try {
+      const bi = window._pvxLastPlanBeta;
+      if (bi && bi.band && bi.after != null){
+        betaAfter = bi.after; betaHi = bi.band[1];
+        calma = bi.after > bi.band[1] + 0.01;
+      }
+    } catch(e){}
+    // Con la beta por encima de banda, dentro de cada familia manda la menos volátil.
+    const ordenPerfil = pool => {
+      const rank = t => calma ? ({ d:0, c:1, g:2 })[t] : (risk === 'alto' ? ({ g:0, c:1, d:2 })[t] : ({ c:0, d:1, g:2 })[t]);
+      return pool.slice().sort((a,b) => rank(a[1]) - rank(b[1]));
+    };
+
     const out = [];
-    gaps.forEach(g => {
-      if (out.length >= 5) return;
-      const pool = (_PVX_CAND[g.fam] || []).filter(([tk]) => !held.has(tk));
-      // Primero las apropiadas para el perfil; si la familia entera queda fuera (p. ej.
-      // energía para un agresivo), se acepta la mejor antes que dejar el hueco sin cubrir.
-      const pick = pool.find(([,t]) => okFor(t)) || pool[0];
-      if (!pick) return;
-      const [tk, tipo] = pick;
+    const yaSugerido = new Set();
+    const pushStock = (tk, tipo, g, extra) => {
+      if (yaSugerido.has(tk)) return false;
       const bio = (typeof COMPANY_BIOS !== 'undefined') ? COMPANY_BIOS[tk] : null;
-      if (!bio) return;                                   // sin ficha no se recomienda
-
-      const pesoSug = Math.max(MINW, Math.min(MAXW, Math.round(g.gap * 200) / 200));
-
+      if (!bio) return false;                                  // sin ficha no se recomienda
+      const pesoSug = Math.max(MINW, Math.min(MAXW, Math.round((extra ? g.gap / 2 : g.gap) * 200) / 200));
       // ① Qué arregla en ESTA cartera. ② Por qué ESE negocio. ③ Para qué perfil.
-      const hueco = g.cur <= 0.002
-        ? `Hoy no tienes nada en ${g.fam.toLowerCase()}${coreW > 0.05 ? ' fuera de tu núcleo indexado' : ''}.`
-        : `${g.fam} pesa ${pctS(g.cur)} de tu cartera y a un perfil ${perfTxt} le correspondería cerca de ${pctS(g.tgt)}.`;
+      const hueco = extra
+        ? `Segundo nombre para el mismo hueco: ${g.fam.toLowerCase()} necesita cerca de ${pctS(g.tgt)} y una sola posición no debería cargar con todo.`
+        : (g.cur <= 0.002
+          ? `Hoy no tienes nada en ${g.fam.toLowerCase()}${coreW > 0.05 ? ' fuera de tu núcleo indexado' : ''}.`
+          : `${g.fam} pesa ${pctS(g.cur)} de tu cartera y a un perfil ${perfTxt} le correspondería cerca de ${pctS(g.tgt)}.`);
       const porque = (bio.moat && bio.moat.length) ? cut(bio.moat[0], 150) : cut(bio.desc, 150);
       // Un número vivo solo si la app ya lo tiene cargado: nada de inventar fundamentales.
       let dato = '';
@@ -12426,16 +12579,88 @@ function _pvxSuggestNew(m, T){
         if (gm != null && gm >= 0.45) dato = ` Vende con ${(gm*100).toFixed(0)}% de margen bruto.`;
         else if (rg != null && rg > 0.08) dato = ` Sus ventas crecen ${(rg*100).toFixed(0)}%.`;
       } catch(e){}
+      const calmaTxt = (calma && tipo === 'd')
+        ? ` Además se mueve menos que el mercado, que es lo que le falta a tu cartera para entrar en su banda de volatilidad.`
+        : '';
+      yaSugerido.add(tk);
+      out.push({ ticker: tk, name: nameOf(tk), fam: g.fam, pct: pesoSug, esEtf: false,
+                 why: `${hueco} ${porque}.${dato} ${TIPO_TXT[tipo]}${calmaTxt}` });
+      return true;
+    };
 
-      out.push({ ticker: tk, name: nameOf(tk), fam: g.fam, pct: pesoSug,
-                 why: `${hueco} ${porque}.${dato} ${TIPO_TXT[tipo]}` });
+    // ── FONDOS: los huecos de FORMA, que ninguna acción suelta arregla ────────────
+    const tenidos = new Set(items.map(i => (i.ticker||'').toUpperCase()));
+    const tieneAlgunoDe = set => items.some(i => set.has((i.ticker||'').toUpperCase()));
+    // Internacional: además del ticker, se mira el país que trae la ficha de mercado.
+    let tieneIntl = tieneAlgunoDe(_PVX_INTL);
+    if (!tieneIntl){
+      try {
+        tieneIntl = items.some(i => {
+          const c = (typeof _INFO_CACHE !== 'undefined') ? _INFO_CACHE[(i.ticker||'').toUpperCase()] : null;
+          const p2 = c && c.country ? String(c.country).toUpperCase() : '';
+          return p2 && !['US','USA','UNITED STATES'].includes(p2);
+        });
+      } catch(e){}
+    }
+    const emph = (prof && prof.emphasis) || '';
+    const horizonteCorto = !!(prof && /corto|medio/.test(String(prof.horizon || '')));
+    const necesita = [];
+    // El núcleo indexado: una cartera hecha solo de nombres sueltos depende de acertar
+    // con cada uno. Es el hueco más caro de todos y por eso va primero.
+    if (coreW < 0.15) necesita.push(['nucleo', Math.min(MAXW * 2.2, 0.18 - coreW)]);
+    if (!tieneIntl)   necesita.push(['internacional', risk === 'bajo' ? 0.12 : risk === 'alto' ? 0.07 : 0.10]);
+    // Renta fija: un agresivo a diez años NO necesita colchón y decirle lo contrario
+    // contradice su propio perfil. Solo entra donde de verdad aporta.
+    if (!tieneAlgunoDe(_PVX_BOND) && (risk === 'bajo' || (risk === 'medio' && horizonteCorto)))
+      necesita.push(['rentaFija', risk === 'bajo' ? 0.20 : 0.10]);
+    if (!tieneAlgunoDe(_PVX_DIVI) && /ingreso|preservacion/.test(emph))
+      necesita.push(['dividendos', 0.08]);
+
+    necesita.forEach(([clave, peso]) => {
+      const need = _PVX_ETF_NEED[clave]; if (!need) return;
+      const tk = need.cands.find(c => !tenidos.has(c) && !yaSugerido.has(c)
+                    && (typeof ETF_DB !== 'undefined') && ETF_DB[c]);
+      if (!tk) return;
+      const e = ETF_DB[tk];
+      const partes = [];
+      if (clave === 'nucleo')
+        partes.push(`Toda tu renta variable son acciones elegidas una a una: te falta ${need.titulo}.`);
+      else if (clave === 'internacional')
+        partes.push(`Toda tu renta variable está en Estados Unidos: te falta ${need.titulo}.`);
+      else if (clave === 'rentaFija')
+        partes.push(`No tienes renta fija: a un perfil ${perfTxt} le falta ${need.titulo}.`);
+      else
+        partes.push(`Tu perfil busca ${need.titulo} y hoy no tienes ningún fondo que lo dé.`);
+      const ficha = [];
+      if (e.nHold) ficha.push(`${e.nHold.toLocaleString('es-MX')} posiciones en un ticker`);
+      if (typeof e.er === 'number') ficha.push(`${(e.er*100).toFixed(2)}% de comisión anual`);
+      if (typeof e.divY === 'number' && e.divY >= 0.02) ficha.push(`${(e.divY*100).toFixed(1)}% de dividendo`);
+      if (ficha.length) partes.push(ficha.join(', ') + '.');
+      if (calma && typeof e.beta === 'number' && e.beta <= 0.9)
+        partes.push(`Con beta ${e.beta.toFixed(2)} tira hacia abajo de la volatilidad del conjunto, que hoy queda por encima de lo que tolera tu perfil.`);
+      yaSugerido.add(tk);
+      out.push({ ticker: tk, name: nameOf(tk), fam: need.etiqueta, esEtf: true,
+                 pct: Math.max(MINW, Math.round(peso * 200) / 200), why: partes.join(' ') });
+    });
+
+    // ── ACCIONES: por hueco de sector, de mayor a menor ──────────────────────────
+    gaps.forEach(g => {
+      const pool = ordenPerfil((_PVX_CAND[g.fam] || []).filter(([tk]) => !held.has(tk) && !yaSugerido.has(tk)));
+      const apto = pool.filter(([,t]) => okFor(t));
+      // Si la familia entera queda fuera del perfil (energía para un agresivo, por
+      // ejemplo), se acepta la mejor antes que dejar el hueco sin cubrir.
+      const lista = apto.length ? apto : pool;
+      if (!lista.length) return;
+      pushStock(lista[0][0], lista[0][1], g, false);
+      // Un hueco grande no lo debe tapar un solo nombre: con 5 pp o más, dos.
+      if (g.gap >= 0.05 && lista[1]) pushStock(lista[1][0], lista[1][1], g, true);
     });
 
     // ── CUÁNTO SE PUEDE SUGERIR DE VERDAD ────────────────────────────────────────
-    // Cinco huecos abiertos dan cinco nombres, y sumados pedían mover un tercio de la
-    // cartera de golpe: eso no es un consejo, es una cartera nueva. Se recorta la lista
-    // a lo que el efectivo y los recortes del plan pueden financiar, con un mínimo para
-    // que siempre quede algo accionable y un techo para que nunca sea una reconstrucción.
+    // Los huecos abiertos pueden dar diez nombres, y sumados piden reconstruir la
+    // cartera de golpe: eso no es un consejo. Se recorta a lo que el efectivo y los
+    // recortes del plan pueden financiar, con un mínimo para que siempre quede algo
+    // accionable y un techo para que nunca sea una cartera nueva.
     let fundable = 0;
     try {
       const cashPct = (T && T.total > 0) ? ((T.cash || 0) + (T.mm || 0)) / T.total : 0;
@@ -12443,15 +12668,33 @@ function _pvxSuggestNew(m, T){
       const cortes = plan ? plan.rows.reduce((a, r) => a + Math.max(0, r.cur - r.sug), 0) : 0;
       fundable = cashPct + cortes;
     } catch(e){}
-    const TECHO = Math.max(0.12, Math.min(0.22, fundable));
+    const TECHO = Math.max(0.20, Math.min(0.34, fundable * 1.4));
+    // Se RECORTA el peso del último que entra, no se descarta. Saltarse lo que no cabe
+    // rompía el orden de prioridad: a un conservador sin renta fija se le caía el 20% de
+    // bonos —su recomendación más importante— y en su lugar entraba un fondo de
+    // dividendos del 8% solo porque cabía. Un peso más chico se construye por tramos;
+    // una omisión silenciosa no se puede construir.
+    // Los fondos van primero porque arreglan huecos de forma, pero si se comen todo el
+    // presupuesto la tabla se queda sin una sola empresa — y la pregunta del usuario era
+    // qué EMPRESAS comprar. Se les reserva como mucho el 60% del presupuesto.
+    const TECHO_ETF = TECHO * 0.6;
     const podados = [];
-    let acum = 0;
-    out.forEach(o2 => { if (acum + o2.pct <= TECHO + 0.001){ podados.push(o2); acum += o2.pct; } });
+    let acum = 0, acumEtf = 0;
+    out.forEach(o2 => {
+      if (podados.length >= 8) return;
+      const queda = Math.min(TECHO - acum, o2.esEtf ? TECHO_ETF - acumEtf : Infinity);
+      if (queda < MINW - 0.001) return;
+      const peso = Math.min(o2.pct, Math.round(queda * 200) / 200);
+      if (peso < MINW - 0.001) return;
+      podados.push(Object.assign({}, o2, { pct: peso }));
+      acum += peso;
+      if (o2.esEtf) acumEtf += peso;
+    });
     const finales = podados.length ? podados : out.slice(0, 1);
 
     // Pide en segundo plano los fundamentales de lo sugerido: en el siguiente repintado
     // la razón puede llevar ya un número vivo en vez de solo la ventaja competitiva.
-    try { if (finales.length) _pvxEnsureFundamentals(finales.map(o2 => o2.ticker)); } catch(e){}
+    try { if (finales.length) _pvxEnsureFundamentals(finales.filter(o2 => !o2.esEtf).map(o2 => o2.ticker)); } catch(e){}
     return finales;
   } catch(e){ return []; }
 }
@@ -12465,6 +12708,19 @@ function _pvxSuggestHTML(m, T){
   const fondos = cashPct >= 0.02
     ? `Tienes ${(cashPct*100).toFixed(0)}% en efectivo; el resto sale de los recortes de la tabla de arriba.`
     : `El dinero sale de los recortes de la tabla de arriba o de aportes nuevos.`;
+  const suma = recs.reduce((a,r)=>a+r.pct, 0);
+  const nEtf = recs.filter(r => r.esEtf).length;
+  const mixTxt = nEtf
+    ? ` Hay ${nEtf === 1 ? 'un fondo' : nEtf + ' fondos'} en la lista: los huecos de forma —no tener núcleo indexado, no tener nada fuera de Estados Unidos, no tener renta fija— no se arreglan comprando una empresa más.`
+    : '';
+  // Si el rebalanceo no consiguió meter la volatilidad en banda con lo que ya hay, la
+  // tabla dice por qué está recomendando cosas tranquilas.
+  let calmaTxt = '';
+  try {
+    const bi = window._pvxLastPlanBeta;
+    if (bi && bi.band && bi.after != null && bi.after > bi.band[1] + 0.01)
+      calmaTxt = ` Aun después de rebalancear, tu cartera queda en una sensibilidad de ${bi.after.toFixed(2)} frente al ${bi.band[0].toFixed(2)}–${bi.band[1].toFixed(2)} que tolera tu perfil: mover peso entre lo que ya tienes no alcanza porque todo se mueve parecido. Por eso la lista prioriza lo que amortigua.`;
+  } catch(e){}
   const rows = recs.map(r => `
       <tr>
         <td>
@@ -12478,10 +12734,10 @@ function _pvxSuggestHTML(m, T){
   return `
     <div class="rbl-sub" style="margin-top:22px">
       <b style="color:var(--text)">Lo que le falta a tu cartera</b> — no todo se arregla moviendo pesos
-      entre lo que ya tienes. Estas son empresas que hoy no tienes y que cubren los sectores donde tu
-      cartera queda por debajo de lo que le correspondería a un perfil <b>${perf}</b>. El peso sugerido
+      entre lo que ya tienes. Son empresas y fondos que hoy no tienes y que cubren lo que a tu
+      cartera le queda por debajo de lo que le correspondería a un perfil <b>${perf}</b>. El peso sugerido
       es el destino de cada una sobre el total de tu cartera, para construirlo por tramos y no
-      de una sola vez. ${fondos}
+      de una sola vez; en conjunto suman <b>${(suma*100).toFixed(1)}%</b>. ${fondos}${mixTxt}${calmaTxt}
     </div>
     <div class="rbl-card">
       <table class="rbl-table">
