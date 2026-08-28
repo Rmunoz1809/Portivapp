@@ -2814,6 +2814,11 @@ window._ensureChartJs = (function(){
      sin recargar (lo hace _pvApplyProClass al cambiar el veredicto). */
   .pv-lock { position: relative; }
   html.pv-pro .pv-lock-ov { display: none; }
+  /* Candado RETIRADO (cupo disponible): las clases .pv-lock/.pv-lock-stack se quitan del
+     envoltorio, pero el velo es hijo suyo y su display no dependía de ellas — se quedaba
+     la tarjeta "Ver planes" flotando encima de un análisis nítido. La marca la ponen los
+     gates (_stockApplyFreeGate / _chatApplyFreeGate) en el mismo sitio donde deciden. */
+  .pv-lock-open > .pv-lock-ov { display: none; }
   /* Quien no ha pagado tiene que VER que hay contenido real debajo — formas, filas,
      tablas — y no poder leerlo. Lo que impide leer es el radio del blur, no el velo;
      por eso el velo es flojo (se transparenta el fondo) y el desenfoque se mantiene
@@ -4633,7 +4638,19 @@ window._pvAwaitIAP = function(totalMs){
     <div class="pa-top-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;align-items:start">
       <div class="pa-asset-detail-col">
         <div class="pa-label" style="margin-bottom:12px">Detalle de Activos</div>
-        <div class="pa-asset-card"><div id="port-asset-detail"></div></div>
+        <!-- Candado propio, no el de la pila: "Pros y Contras" va bloqueado a su lado y
+             una fila con una columna nítida y la otra difuminada queda coja. -->
+        <div class="pv-lock">
+          <div class="pa-asset-card"><div id="port-asset-detail"></div></div>
+          <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
+            <div class="pv-lock-card">
+              <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+              <div class="pv-lock-txt">El desglose de cada activo de tu cartera</div>
+              <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+              <button class="pv-lock-btn" type="button">Ver planes</button>
+            </div>
+          </div>
+        </div>
       </div>
       <div>
         <div class="pa-label" style="margin-bottom:12px">Pros y Contras</div>
@@ -9970,7 +9987,7 @@ function _renderEtfAnalysis(a, el){
       <p class="px-intro">El expense ratio se descuenta todos los años del valor del fondo, gane o pierda. Sobre una inversión de $10,000 y con el retorno esperado de esta clase de activo, esto es lo que se queda la comisión:</p>
       <div class="px-hgrid" style="margin-top:16px">
         <div class="px-hbox"><div class="kk">Comisión anual</div><div class="vv">${pf(p.er)}</div><div class="dd ${p.er<=0.002?'good':'warn'}">${p.er<=0.001?'De lo más barato del mercado':p.er<=0.002?'Barato':p.er<=0.005?'Caro frente a un índice amplio':'Muy caro: exige superar al índice solo para empatar'}</div></div>
-        <div class="px-hbox"><div class="kk">Costo acumulado · 10 años</div><div class="vv">${usd(a.costo10)}</div><div class="dd">Sobre $10,000 invertidos</div></div>
+        <div class="px-hbox"><div class="kk">Costo acumulado · 10 años</div><div class="vv">${usd(a.costo10)}</div><div class="dd">Sobre ${_pvSym()}10,000 invertidos</div></div>
         <div class="px-hbox"><div class="kk">Costo acumulado · 20 años</div><div class="vv">${usd(a.costo20)}</div><div class="dd">El costo compuesto crece más rápido que lineal</div></div>
         <div class="px-hbox"><div class="kk">Distribución anual</div><div class="vv">${p.divY!=null?pf(p.divY):'—'}</div><div class="dd ${(p.divY||0)>=0.025?'good':''}">${(p.divY||0)>=0.025?'La renta cubre varias veces la comisión':(p.divY||0)>0?'Renta modesta':'El fondo no distribuye renta'}</div></div>
       </div></div>`;
@@ -11275,7 +11292,7 @@ function renderDeepPortfolioAnalysis(T) {
     const _sign = _deltaUSD >= 0 ? '+' : '−';
     const _deltaTxt = (pr.action === 'MANTENER' || Math.abs(_deltaUSD) < 1)
       ? ''
-      : `<div class="rbl-delta" style="font-size:10px;color:var(--text3);margin-top:3px;font-variant-numeric:tabular-nums">${_sign}${Math.abs(_sh).toFixed(Math.abs(_sh)<10?2:1)} acc · ${_sign}$${Math.abs(Math.round(_deltaUSD)).toLocaleString('en-US')}</div>`;
+      : `<div class="rbl-delta" style="font-size:10px;color:var(--text3);margin-top:3px;font-variant-numeric:tabular-nums">${_sign}${Math.abs(_sh).toFixed(Math.abs(_sh)<10?2:1)} acc · ${_sign}${_pvSym()}${Math.abs(Math.round(_deltaUSD)).toLocaleString('en-US')}</div>`;
     return `
       <tr>
         <td>
@@ -11533,7 +11550,7 @@ function renderDeepPortfolioAnalysis(T) {
       </div>
       <div class="pa-kpi">
         <div class="pa-kpi-label">Ingreso por Dividendos</div>
-        <div class="pa-kpi-val">~$${Math.round(_divIncome).toLocaleString('en-US')}<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> / año</span></div>
+        <div class="pa-kpi-val">~${_pvSym()}${Math.round(_divIncome).toLocaleString('en-US')}<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> / año</span></div>
       </div>
       <div class="pa-kpi">
         <div class="pa-kpi-label">Retorno Anual Esperado</div>
@@ -11579,7 +11596,7 @@ function renderAssetDetailTable(T) {
             </div>
           </div>
         </td>
-        <td class="r"><span class="pa-aprice">$${(+h.price).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></td>
+        <td class="r"><span class="pa-aprice">${_pvPx(+h.price)}</span></td>
         <td class="r"><span class="pa-achg ${up?'pos':'neg'}"><span class="material-symbols-outlined">${up?'arrow_upward':'arrow_downward'}</span>${Math.abs(chg).toFixed(2)}%</span></td>
         <td class="r" style="font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums">${allocPct.toFixed(2)}%</td>
       </tr>`;
@@ -12293,8 +12310,8 @@ function _pvxRebalEngine(m, T){
     // comparación entre negocios que hay detrás del número — cuáles de tus empresas ganan
     // más por lo que venden, crecen sin endeudarse y no dependen de un año irrepetible — y
     // el tamaño que hoy tiene cada una. La nota se usa para calcular; jamás para explicar.
-    const usd = Math.abs(d) * (T && T.mkt ? T.mkt : 0);
-    const money = usd >= 1 ? ` (~$${Math.round(usd).toLocaleString('en-US')})` : '';
+    const montoMov = Math.abs(d) * (T && T.mkt ? T.mkt : 0);
+    const money = montoMov >= 1 ? ` (~${_pvSym()}${Math.round(montoMov).toLocaleString('en-US')})` : '';
     // ¿La lectura del negocio ya dijo lo mismo que va a decir el criterio del perfil?
     const fitDicho = !!r.fit && biz.toLowerCase().indexOf(String(r.fit).slice(0,14).toLowerCase()) !== -1;
     let move;
@@ -13060,7 +13077,7 @@ function posRowHTML(h, idx, c, T) {
       </div>
     </div></div></td>
     <td><div class="td-inner" style="font-variant-numeric:tabular-nums">${h.qty.toFixed(4)}</div></td>
-    <td><div class="td-inner" style="font-variant-numeric:tabular-nums">$${h.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div></td>
+    <td><div class="td-inner" style="font-variant-numeric:tabular-nums">${_pvPx(h.price)}</div></td>
     <td><div class="td-inner ${pccEff}" style="font-variant-numeric:tabular-nums">${dayAmtTxt}</div></td>
     <td><div class="td-inner ${pccEff}" style="font-weight:600;font-variant-numeric:tabular-nums">${dayPctTxt}</div></td>
     <td><div class="td-inner" style="font-weight:600;font-variant-numeric:tabular-nums">${usd(round2(c.mktVal))}</div></td>
@@ -13157,7 +13174,7 @@ function renderTable(T, opts) {
     <td><div class="td-inner" style="text-align:left"><strong>Total efectivo y MM</strong></div></td>
     <td></td><td></td><td></td><td></td>
     <td><div class="td-inner" style="font-weight:700">${usd(cashTotal)}</div></td>
-    <td><div class="td-inner">$0.00</div></td>
+    <td><div class="td-inner">${usd(0)}</div></td>
     <td><div class="td-inner">0.00%</div></td>
     <td><div class="td-inner" style="color:#8a96a3">N/A</div></td>
     <td><div class="td-inner" style="color:#8a96a3">N/A</div></td>
@@ -13277,7 +13294,7 @@ function buildDrawer(idx, T) {
   const isAll     = orderType === 'all';
 
   const qBtns = isMoney
-    ? [100,250,500,1000].map(v=>`<button class="qbtn" onclick="setAmt(${idx},${v})">$${v}</button>`).join('')
+    ? [100,250,500,1000].map(v=>`<button class="qbtn" onclick="setAmt(${idx},${v})">${_pvSym()}${v}</button>`).join('')
       + (mode==='sell'
           ? `<button class="qbtn" onclick="setOrderType(${idx},'all')">Vender todo</button>`
           : `<button class="qbtn" onclick="setAmt(${idx},${CASH.toFixed(2)})">Max cash</button>`)
@@ -13306,7 +13323,7 @@ function buildDrawer(idx, T) {
     <div class="drawer-header">
       <div class="drawer-id">
         <div class="drawer-ticker">${h.ticker}</div>
-        <div class="drawer-price">$${h.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:4})}</div>
+        <div class="drawer-price">${_pvPx(h.price,4)}</div>
       </div>
       <button class="drawer-close" onclick="closeDrawer()" aria-label="Cerrar">×</button>
       <div class="drawer-facts">
@@ -13515,7 +13532,7 @@ function updatePreview(idx) {
     document.getElementById(`prev-shares-${idx}`).textContent =
       `${mode==='buy'?'+':'−'}${shares.toFixed(4)} shares`;
     document.getElementById(`prev-shares-sub-${idx}`).textContent =
-      `@ $${h.price.toFixed(2)}`;
+      `@ ${_pvPx(h.price)}`;
     document.getElementById(`prev-amt-${idx}`).textContent     = usd(exact);
     document.getElementById(`prev-pos-${idx}`).textContent     = `${usd(newPos)} (${newQty.toFixed(4)} sh)`;
     document.getElementById(`prev-cash-${idx}`).textContent    = usd(newCash);
@@ -13581,14 +13598,14 @@ function requestTrade(idx) {
     : null;
 
   $('modalTitle').textContent = `${mode==='buy'?'Comprar':'Vender'} ${h.ticker}`;
-  $('modalSub').textContent = `${h.name} · $${h.price.toFixed(2)} por acción`;
+  $('modalSub').textContent = `${h.name} · ${_pvPx(h.price)} por acción`;
   $('modalConfirmBtn').className = `modal-confirm ${mode}`;
   $('modalConfirmBtn').textContent = `Confirmar ${mode === 'buy' ? 'Compra' : 'Venta'}`;
 
   const rows = [
     { l: 'Operación', v: mode === 'buy' ? '▲ Compra' : '▼ Venta' },
     { l: 'Shares', v: `${mode==='buy'?'+':'−'}${shares.toFixed(4)} sh` },
-    { l: 'Precio por share', v: `$${h.price.toFixed(2)}` },
+    { l: 'Precio por share', v: _pvPx(h.price) },
     { l: 'Monto total', v: usd(exact) },
     { l: 'Qty resultante', v: `${newQty.toFixed(4)} shares` },
     { l: 'Posición resultante', v: usd(newQty * h.price) },
@@ -13649,7 +13666,7 @@ function renderTxLog() {
     return `<div class="tx-item">
       <div class="tx-side ${tx.mode==='buy'?'tx-buy':'tx-sell'}">${tx.mode==='buy'?'BUY':'SELL'}</div>
       <div class="tx-ticker">${tx.ticker}</div>
-      <div class="tx-detail">${tx.shares.toFixed(4)} sh · ${usd(tx.amt)} · $${tx.price.toFixed(2)}/sh${glStr}</div>
+      <div class="tx-detail">${tx.shares.toFixed(4)} sh · ${usd(tx.amt)} · ${_pvPx(tx.price)}/sh${glStr}</div>
       <div class="tx-time">${tx.date ? tx.date.slice(5).replace('-','/') + ' ' : ''}${tx.time}</div>
     </div>`;
   }).join('');
@@ -16569,7 +16586,7 @@ function showStockNews(ticker, btn) {
     <div style="padding:12px 0 10px;border-top:1px solid var(--border);display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <span style="font-size:15px;font-weight:700">${ticker}</span>
       <span style="font-size:12px;color:var(--text3)">${pvEsc(h.name)}</span>
-      <span style="font-size:11px;padding:2px 8px;border-radius: 0;background:var(--surface3);color:var(--text2)">$${h.price.toFixed(2)}</span>
+      <span style="font-size:11px;padding:2px 8px;border-radius: 0;background:var(--surface3);color:var(--text2)">${_pvPx(h.price)}</span>
       <span class="${h.dayChgPct>=0?'sp':'sn'}" style="font-size:11px;padding:2px 8px;border-radius:4px">${h.dayChgPct>=0?'+':''}${h.dayChgPct.toFixed(2)}% hoy</span>
       <span style="font-size:11px;color:var(--text2)">Posición: <strong>${usd(c.mktVal)}</strong></span>
       <span class="${c.gl>=0?'pos':'neg'}" style="font-size:11px">G/L: ${sign(c.gl)}${usd(Math.abs(c.gl))}</span>
@@ -16611,6 +16628,14 @@ function _pvCcy() {
 // Símbolo, no código: una moneda que no esté en la tabla se pinta con su código ISO y un
 // espacio ("SAR 1,200.00"). Feo antes que equivocado.
 function _pvSym() { const c = _pvCcy(); return _PV_CCY_SYM[c] || (c + ' '); }
+// Precio con la divisa de la cartera. usd() fija 2 decimales; un precio a veces necesita 4
+// (fraccionarios, cripto), así que va aparte en vez de duplicar el símbolo en cada plantilla.
+function _pvPx(n, dec) {
+  const v = +n;
+  if (!isFinite(v)) return '—';
+  const d = (dec == null) ? 2 : dec;
+  return (v<0?'-':'') + _pvSym() + Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+}
 function usd(n) {
   // Último cortafuegos del dinero en pantalla. `Math.abs(NaN).toLocaleString()` devuelve
   // "NaN" y el de Infinity devuelve "∞", así que un solo valor corrupto aguas arriba se
@@ -17804,8 +17829,12 @@ const PORTIV_HIST = {
     this._tryAt[kind] = Date.now();
   },
   _tickers(){
+    // `noLive`: el precio lo pone el broker, no Yahoo/Alpaca. Pedir su histórico por el
+    // ticker pelado traía el del homónimo estadounidense y la curva dibujaba el
+    // movimiento de OTRA empresa. Sin serie, su importe entra como constante — que es
+    // lo honesto mientras no haya una fuente con su bolsa de verdad.
     try { return [...new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : [])
-      .filter(h => h && h.ticker && (+h.qty > 0))
+      .filter(h => h && h.ticker && (+h.qty > 0) && !h.noLive)
       .map(h => h.ticker.toUpperCase()))]; } catch(e){ return []; }
   },
   async ensureAsync(){
@@ -18829,11 +18858,11 @@ function _fmtAxisY(v, step) {
   // Y la UNIDAD la decide el paso, no solo el valor: un portafolio de $1.03M con paso de
   // $2K imprimía "$1.03M" cuatro veces seguidas en la escala "M". Si el paso es demasiado
   // fino para el sufijo, se baja un escalón y salen $1030K / $1032K / $1034K.
-  if (a >= 1e6 && s >= 1e4) return '$' + (v / 1e6).toFixed(dec(1e6)) + 'M';
-  if (a >= 1000 && s >= 10) return '$' + (v / 1000).toFixed(dec(1000)) + 'K';
+  if (a >= 1e6 && s >= 1e4) return _pvSym() + (v / 1e6).toFixed(dec(1e6)) + 'M';
+  if (a >= 1000 && s >= 10) return _pvSym() + (v / 1000).toFixed(dec(1000)) + 'K';
   // En unidades el módulo con decimales arrastra error de coma flotante (0.3 % 0.1),
   // así que se compara sobre el paso multiplicado.
-  return '$' + v.toFixed(Number.isInteger(s) ? 0 : Math.abs((s * 10) % 1) < 1e-9 ? 1 : 2);
+  return _pvSym() + v.toFixed(Number.isInteger(s) ? 0 : Math.abs((s * 10) % 1) < 1e-9 ? 1 : 2);
 }
 // Fracción del alto que puede ocupar la curva, en función del movimiento REAL del
 // período. Por debajo de _MOVE_LO es ruido y la curva se queda chica; a partir de
@@ -21852,6 +21881,7 @@ function _stockApplyFreeGate(ticker){
     const abierto = _stockFreeClaim(window._pvStockLastTicker || '');
     w.classList.toggle('pv-lock', !abierto);
     w.classList.toggle('pv-lock-stack', !abierto);
+    w.classList.toggle('pv-lock-open', abierto);   // esconde el velo, no sólo el desenfoque
     // Marca leída por el render (_renderQualAnalysis reescribe #pv-lock-txt en cada
     // pintado): sin ella, el texto del tope se perdía en cuanto llegaban los datos.
     window._pvStockLimitHit = !abierto && _pvFreePlan();
@@ -21879,7 +21909,9 @@ function doResearch() {
   // salga ya con (o sin) velo, sin el parpadeo de verlo nítido y taparlo después.
   // El análisis se carga igual aunque esté cerrado: el usuario ve la forma de lo que
   // se está perdiendo, que es lo que hace el candado en el resto de la app.
-  if (!_stockApplyFreeGate(ticker)) { try { window._pvShowPaywall(); } catch(e){} }
+  // El muro NO se abre solo al agotar el cupo: tapa el análisis recién cargado antes de
+  // que se vea. Se abre al pulsar el candado ("Ver planes"), que ya lo tiene cableado.
+  _stockApplyFreeGate(ticker);
   researchChartCache = {};
   _activeResearchRange = '1mo';
   if (researchChartInst) { researchChartInst.destroy(); researchChartInst = null; }
@@ -23120,7 +23152,7 @@ function _todayMove(ticker, info) {
     ? (() => {
         const prevPx = px / (1 + chgPct/100);
         const impact = holding.qty * (px - prevPx);
-        return `<div style="font-size:11px;color:var(--text3);margin-top:5px">Impacto en tu portafolio hoy: <strong class="${impact>=0?'pos':'neg'}">${impact>=0?'+':''}$${Math.abs(impact).toFixed(2)}</strong></div>`;
+        return `<div style="font-size:11px;color:var(--text3);margin-top:5px">Impacto en tu portafolio hoy: <strong class="${impact>=0?'pos':'neg'}">${usdSigned(impact,2)}</strong></div>`;
       })()
     : '';
 
@@ -26303,6 +26335,17 @@ async function setResearchPeriod(range, btn) {
 //  ADD STOCK
 // ═══════════════════════════════════════════════════
 let _addPrice = 0, _addName = '', _addTicker = '', _addType = 'stock', _addPickedName = '';
+// Precio con el que se opera DE VERDAD. Si ya tienes esa posición y la valora el broker
+// (`noLive`), manda la suya: `_addPrice` viene de Yahoo por ticker pelado y puede ser el
+// de otra empresa homónima, en otra moneda. Mezclarlos inventa patrimonio.
+function _addPxEff(){
+  try{
+    var ex = (typeof HOLDINGS !== 'undefined')
+      ? HOLDINGS.find(function(h){ return h && h.ticker === _addTicker; }) : null;
+    if (ex && ex.noLive && +ex.price > 0) return +ex.price;
+  }catch(e){}
+  return _addPrice;
+}
 const EXTRA_COLORS = ['#e879f9','#fb923c','#a3e635','#22d3ee','#f43f5e','#8b5cf6','#14b8a6','#f59e0b','#d97706','#10b981'];
 
 // ── Autocompletado de tickers (búsqueda Finnhub + respaldo local) ──
@@ -26705,7 +26748,7 @@ function _addSetOrderType(type) {
 function _addSetQuick(val) {
   const inp = $('asOrderInput'); if (!inp) return;
   if      (val === -1) inp.value = Math.max(0, CASH).toFixed(2);
-  else if (val === -2) inp.value = _addPrice > 0 ? (CASH / _addPrice).toFixed(4) : '';
+  else if (val === -2) inp.value = _addPxEff() > 0 ? (CASH / _addPxEff()).toFixed(4) : '';
   else                 inp.value = Number(val).toFixed(_addBuyType === 'shares' ? 4 : 2);
   // El atajo escribe en un campo que puede estar fuera del alcance de la vista:
   // el destello confirma que el toque hizo algo.
@@ -26732,14 +26775,14 @@ function _addCalcPreview() {
   const _lbl = $('asCalcLabel'), _cv = $('asCalcVal');
   if (_addBuyType === 'money') {
     amt    = val;
-    shares = val / _addPrice;
+    shares = val / _addPxEff();
     if (_lbl) _lbl.textContent = 'Recibirás';
     if (_cv)  _cv.textContent  = `${shares.toFixed(4)} acciones`;
   } else {
     shares = val;
-    amt    = val * _addPrice;
+    amt    = val * _addPxEff();
     if (_lbl) _lbl.textContent = 'Costo estimado';
-    if (_cv)  _cv.textContent  = `$${amt.toFixed(2)}`;
+    if (_cv)  _cv.textContent  = usd(amt);
   }
 
   const errMsg = amt > CASH + 0.01 ? `Cash insuficiente. Tienes ${usd(CASH)} disponible.` : '';
@@ -26755,12 +26798,12 @@ function _addCalcPreview() {
   }
   const cashAfter = CASH - amt;
   const _sp = $('asSumPrice'), _ss = $('asSumShares'), _st = $('asSumTotal'), _sc = $('asSumCash'), _sca = $('asSumCashAfter');
-  if (_sp) _sp.textContent = `$${_addPrice.toFixed(2)}`;
+  if (_sp) _sp.textContent = _pvPx(_addPxEff());
   if (_ss) _ss.textContent = `${shares.toFixed(4)} acciones`;
-  if (_st) _st.textContent = `$${amt.toFixed(2)}`;
+  if (_st) _st.textContent = usd(amt);
   if (_sc) _sc.textContent = usd(CASH);
   if (_sca) {
-    _sca.textContent = `$${cashAfter.toFixed(2)}`;
+    _sca.textContent = usd(cashAfter);
     _sca.className   = cashAfter < 0 ? 'neg' : '';
   }
   if (summary) summary.style.display = 'block';
@@ -26824,7 +26867,7 @@ function _addRevealOrder(ticker, name, price, pct){
   const avatarEl = $('addCompanyAvatar'); if (avatarEl) avatarEl.textContent = ticker.slice(0, 2);
   if ($('addTkrSym'))       $('addTkrSym').textContent      = ticker;
   if ($('addCompanyName'))  $('addCompanyName').textContent = _addName;
-  if ($('addCurrentPrice')) $('addCurrentPrice').textContent = price > 0 ? `$${price.toFixed(2)}` : 'Obteniendo precio…';
+  if ($('addCurrentPrice')) $('addCurrentPrice').textContent = price > 0 ? _pvPx(price) : 'Obteniendo precio…';
   if ($('addDayChange'))    $('addDayChange').innerHTML = (price > 0 && pct != null)
     ? `<span class="${pct>=0?'pos':'neg'}">${pct>=0?'+':''}${pct.toFixed(2)}% hoy</span>` : '';
   if ($('addCashAvail'))    $('addCashAvail').textContent = usd(CASH);
@@ -26863,7 +26906,7 @@ function _addSetManualPrice(){
   const v = el ? parseFloat(el.value) : NaN;
   if (v > 0) {
     _addPrice = v;
-    if ($('addCurrentPrice')) $('addCurrentPrice').textContent = `$${v.toFixed(2)}`;
+    if ($('addCurrentPrice')) $('addCurrentPrice').textContent = _pvPx(v);
   } else {
     _addPrice = 0;
   }
@@ -26983,7 +27026,7 @@ async function _addEnrichInfo(ticker) {
     if (!info || _addTicker !== ticker) return;   // el usuario cambió de ticker / cerró el modal
     if (info.regularMarketPrice) {
       _addPrice = info.regularMarketPrice;
-      if ($('addCurrentPrice')) $('addCurrentPrice').textContent = `$${_addPrice.toFixed(2)}`;
+      if ($('addCurrentPrice')) $('addCurrentPrice').textContent = _pvPx(_addPrice);
       _addCalcPreview();                            // recalcula el preview con el precio fino
     }
     _addName = info.longName || info.shortName || _addName || ticker;
@@ -27010,9 +27053,10 @@ function confirmAddStock() {
   const val = parseFloat(inp?.value);
   if (!val || val <= 0) return;
 
+  const _px = _addPxEff();
   let shares, amt;
-  if (_addBuyType === 'money') { amt = val; shares = val / _addPrice; }
-  else                         { shares = val; amt = val * _addPrice; }
+  if (_addBuyType === 'money') { amt = val; shares = val / _px; }
+  else                         { shares = val; amt = val * _px; }
 
   if (amt > CASH + 0.01) {
     if ($('addWarn')) { $('addWarn').textContent = `Cash insuficiente. Tienes ${usd(CASH)} disponible.`; $('addWarn').classList.add('show'); }
@@ -27026,7 +27070,7 @@ function confirmAddStock() {
     existing.costBasis += amt;
     showToast(`+${shares.toFixed(4)} sh de ${_addTicker} agregadas`, 'var(--green)');
   } else {
-    HOLDINGS.push({ ticker:_addTicker, name:_addName, type:_addType, qty:shares, price:_addPrice, dayChgPct:0, costBasis:amt });
+    HOLDINGS.push({ ticker:_addTicker, name:_addName, type:_addType, qty:shares, price:_px, dayChgPct:0, costBasis:amt });
     CHART_COLORS.push(EXTRA_COLORS[(HOLDINGS.length-1) % EXTRA_COLORS.length]);
     if (donutChart) { donutChart.destroy(); donutChart = null; }
     showToast(`${_addTicker} agregado al portafolio`, 'var(--green)');
@@ -29227,7 +29271,7 @@ function _buildTickerArticles(ticker, news) {
       sources: Array.isArray(n._sources) ? n._sources : [],
       // Extended text — minimal but informative auto-generated summary
       ext: `${title}.\n\n${n.summary ? n.summary + '\n\n' : ''}Publicado por ${src}${longDate ? ' el ' + longDate : ''}.\n\n` +
-        `Esta noticia afecta a ${ticker} (${held?.name || ticker}) que hoy cotiza ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a $${held ? held.price.toFixed(2) : '—'}. ` +
+        `Esta noticia afecta a ${ticker} (${held?.name || ticker}) que hoy cotiza ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a ${held ? _pvPx(held.price) : '—'}. ` +
         `${Math.abs(pct) > 3
           ? `El movimiento del ${Math.abs(pct).toFixed(1)}% es notable — revisa si esta noticia es el catalizador principal o hay factores adicionales como el entorno macro o movimientos sectoriales amplios.`
           : Math.abs(pct) > 1.5
@@ -29330,8 +29374,8 @@ async function autoUpdateNews(force) {
       _mover: true,          // marca de mover diario → razón real en Contexto/Mercado
       _ticker: h.ticker,
       ext:
-        `${h.ticker} (${h.name}) cotiza hoy ${dir}${pct.toFixed(2)}% a $${h.price.toFixed(2)} por acción.\n\n` +
-        `Tu posición: $${posUSD} (${posWeight}% del portafolio) · G/L del día: ${glSign}$${Math.abs(glToday).toFixed(2)}.\n\n` +
+        `${h.ticker} (${h.name}) cotiza hoy ${dir}${pct.toFixed(2)}% a ${_pvPx(h.price)} por acción.\n\n` +
+        `Tu posición: ${_pvSym()}${posUSD} (${posWeight}% del portafolio) · G/L del día: ${glSign}${_pvSym()}${Math.abs(glToday).toFixed(2)}.\n\n` +
         `${Math.abs(pct) >= 1.5
           ? `Un movimiento de ${Math.abs(pct).toFixed(1)}% como el de hoy suele tener una causa concreta. Abajo, en "Contexto" y "Mercado", está el catalizador probable del día y qué significa para tu posición.`
           : `Movimiento dentro del rango normal de variación diaria (±1.5%) — ruido típico de la sesión. Mantén el horizonte de largo plazo y no tomes decisiones por movimientos de esta magnitud.`}\n\n` +
@@ -29381,7 +29425,7 @@ async function autoUpdateNews(force) {
       link:   a.link || '',
       img:    a.image || '',
       ext: _composeNewsExt({title:a.title, summary:a.summary, source:a.publisher, dateStr, ticker:a.ticker, name:held?.name || a.ticker, impactStr, sentiment:s}) +
-        `\n\nRendimiento de ${a.ticker} hoy: ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a $${held ? held.price.toFixed(2) : '—'}.`
+        `\n\nRendimiento de ${a.ticker} hoy: ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a ${held ? _pvPx(held.price) : '—'}.`
     };
   });
 
@@ -30035,6 +30079,7 @@ function _chatApplyFreeGate(){
     const cerrar = _pvLocked() && _chatFreeExhausted();
     w.classList.toggle('pv-lock', cerrar);
     w.classList.toggle('pv-lock-page', cerrar);
+    w.classList.toggle('pv-lock-open', !cerrar);   // esconde el velo, no sólo el desenfoque
     // Si el muro vuelve, que diga POR QUÉ volvió: "Se desbloquea con Portiv Pro" a secas,
     // después de diez mensajes que sí funcionaron, se lee como si algo se hubiera roto.
     const t=document.getElementById('aiChatLockTxt'), sub=document.getElementById('aiChatLockSub');
@@ -30158,7 +30203,7 @@ function _chatPersonalCtx(){
     const T=calcTotals();
     const m=(typeof _portfolioMetrics==='function') ? _portfolioMetrics(T) : null;
     const pct=v=>(v*100).toFixed(0)+'%';
-    const usd=v=>'$'+Math.round(v||0).toLocaleString('en-US');
+    const usd=v=>_pvSym()+Math.round(v||0).toLocaleString('en-US');
     const L=['── PERFIL DEL USUARIO ──'];
     if(prof.fullName||prof.username) L.push(`Nombre: ${prof.fullName||prof.username}`);
     if(prof.strategy) L.push(`Estrategia declarada en su perfil: ${prof.strategy}`);
@@ -30272,7 +30317,9 @@ function _chatSmartContext(question, kind, wantsOpinion){
     // solo viajan cuando el usuario pide criterio o pregunta por su cartera; de paso se
     // ahorran ~1K chars de contexto en las preguntas informativas.
     const asesor = !concept && (wantsOpinion || kind==='portfolio');
-    const summary=`Portafolio: $${T.total.toFixed(0)} total, cash $${T.cash.toFixed(0)}, invertido $${INITIAL_CAPITAL.toFixed(0)}, hoy ${T.day>=0?'+':''}$${T.day.toFixed(0)}`;
+    const _s=_pvSym();
+    const summary=`MONEDA DE LA CARTERA: ${_pvCcy()} (todos los importes van en esa moneda). `
+      +`Portafolio: ${_s}${T.total.toFixed(0)} total, cash ${_s}${T.cash.toFixed(0)}, invertido ${_s}${INITIAL_CAPITAL.toFixed(0)}, hoy ${T.day>=0?'+':''}${_s}${T.day.toFixed(0)}`;
     const parts=[];
     // PRIMERO de todo: fecha, estado del mercado, movimiento del día y titulares. Va arriba
     // porque _chatSmartContext tiene un `return` temprano en el branch de tickers — si se
@@ -30305,10 +30352,10 @@ function _chatSmartContext(question, kind, wantsOpinion){
       try{
         const filas = HOLDINGS.slice().sort((a,b)=>calcH(b).mktVal-calcH(a).mktVal).slice(0,12)
           .map(h=>{ const c=calcH(h); const w=(c.mktVal/T.mkt*100);
-            return `${h.ticker} ${w.toFixed(1)}% ($${Math.round(c.mktVal).toLocaleString('en-US')}) · latente ${c.gl>=0?'+':''}${c.glPct.toFixed(0)}%`; });
+            return `${h.ticker} ${w.toFixed(1)}% (${_pvSym()}${Math.round(c.mktVal).toLocaleString('en-US')}) · latente ${c.gl>=0?'+':''}${c.glPct.toFixed(0)}%`; });
         parts.push('PESO Y PLUSVALÍA LATENTE POR POSICIÓN (úsalo para dimensionar cualquier ajuste: de dónde recortas y qué coste fiscal tiene):\n'+filas.join('\n'));
         const glT = (T.gl!=null?T.gl:0), cashT = (T.cash||0);
-        parts.push(`Resultado latente total: ${glT>=0?'+':''}$${Math.round(glT).toLocaleString('en-US')} · efectivo disponible para desplegar: $${Math.round(cashT).toLocaleString('en-US')} (${((cashT/(T.total||1))*100).toFixed(0)}% del total).`);
+        parts.push(`Resultado latente total: ${glT>=0?'+':''}${_pvSym()}${Math.round(glT).toLocaleString('en-US')} · efectivo disponible para desplegar: ${_pvSym()}${Math.round(cashT).toLocaleString('en-US')} (${((cashT/(T.total||1))*100).toFixed(0)}% del total).`);
       }catch(e){}
     }
 
@@ -30320,7 +30367,7 @@ function _chatSmartContext(question, kind, wantsOpinion){
         const block=[`\n[${t}]`];
         // Posición del usuario (si la tiene)
         if(h){ const c=calcH(h); const w=T.mkt>0?(c.mktVal/T.mkt*100).toFixed(1):'0';
-          block.push(`Tu posición: ${h.qty.toFixed(2)}sh @$${h.price.toFixed(2)} =$${c.mktVal.toFixed(0)} (${w}% port.), G/L ${c.gl>=0?'+':''}$${c.gl.toFixed(0)}`); }
+          block.push(`Tu posición: ${h.qty.toFixed(2)}sh @${_pvSym()}${h.price.toFixed(2)} =${_pvSym()}${c.mktVal.toFixed(0)} (${w}% port.), G/L ${c.gl>=0?'+':''}${_pvSym()}${c.gl.toFixed(0)}`); }
         // Datos fundamentales ya cargados en la página (compactos para ahorrar tokens)
         if(bio){
           if(bio.desc) block.push(`Perfil: ${bio.desc.length>300?bio.desc.slice(0,300)+'…':bio.desc}`);
@@ -30342,7 +30389,7 @@ function _chatSmartContext(question, kind, wantsOpinion){
 
     // Pregunta general del portafolio → top-5 por valor
     const top5=HOLDINGS.slice().sort((a,b)=>calcH(b).mktVal-calcH(a).mktVal).slice(0,5);
-    const tops=top5.map(h=>{const c=calcH(h);const w=T.mkt>0?(c.mktVal/T.mkt*100).toFixed(1):'0';return `${h.ticker} $${c.mktVal.toFixed(0)} (${w}%)`;}).join(', ');
+    const tops=top5.map(h=>{const c=calcH(h);const w=T.mkt>0?(c.mktVal/T.mkt*100).toFixed(1):'0';return `${h.ticker} ${_pvSym()}${c.mktVal.toFixed(0)} (${w}%)`;}).join(', ');
     parts.push(`Posiciones principales: ${tops}`);
     return _chatCtxTrim(parts.join('\n'), asesor?7500:6000);
   } catch(e){ return 'Portafolio no disponible.'; }
@@ -32544,7 +32591,9 @@ const _PROF_KEY = 'portiv_profile_v1';
 function profSave() {
   const username = (document.getElementById('profUsername')?.value || '').trim();
   const fullName = (document.getElementById('profFullName')?.value || '').trim();
-  const currency = document.getElementById('currEUR')?.classList.contains('sel') ? 'EUR' : 'USD';
+  // Los botones EUR/USD ya no están en el HTML: el ternario resolvía 'USD' SIEMPRE y
+  // pisaba la moneda real de la cartera. La divisa la manda el broker, no un botón.
+  const currency = _pvCcy();
   const strategy = document.querySelector('#strategyGrid .strategy-option.sel')?.dataset?.strategy || 'moderado';
   try { localStorage.setItem(_PROF_KEY, JSON.stringify({ username, fullName, currency, strategy })); } catch(e){}
   profUpdateAvatar();
@@ -32564,7 +32613,7 @@ function profLoad(overrideEmail) {
     // (#profEmail no existe; el elemento real es #profEmailDisplay, justo debajo)
     const ed  = document.getElementById('profEmailDisplay'); if (ed) ed.textContent = overrideEmail;
   }
-  profSetCurrency(data.currency || 'USD');
+  profSetCurrency(data.currency || _pvCcy());
   if (data.strategy) {
     const sEl = document.querySelector(`#strategyGrid [data-strategy="${data.strategy}"]`);
     if (sEl) profSelectStrategy(sEl, data.strategy);
@@ -36408,7 +36457,7 @@ document.addEventListener('DOMContentLoaded', function(){
     if (Q && Q.dyn === 'c1'){
       let val = 10000;
       try { const t = (typeof calcTotals==='function') ? calcTotals() : null; if (t && t.total > 0) val = t.total; } catch(e){}
-      const f = n => '$' + Math.round(n).toLocaleString('en-US');
+      const f = n => _pvSym() + Math.round(n).toLocaleString('en-US');
       return { block:'C',
         q:`Tu portafolio vale hoy aproximadamente ${f(val)}. Imagina que el próximo mes cae a ~${f(val*0.75)} (una pérdida de ~${f(val*0.25)}). ¿Qué haces?`,
         a:[['Vendo para frenar la pérdida',0],['Vendo una parte',3],['No hago nada',7],['Compro más',10]] };
@@ -38374,8 +38423,13 @@ document.addEventListener('DOMContentLoaded', function(){
     // (aiMM → MONEY_MARKET) y que suma al patrimonio igual que el efectivo. Así el dinero
     // aparece una sola vez y encima con su nombre.
     var _ce=[];   // candidatas; se confirman después contra el efectivo de su moneda
+    // Efectivo por (CUENTA, moneda). El global `_byCcy` no vale para confirmar un fondo
+    // monetario: con brokerage + IRA, el efectivo de la primera avalaba el fondo de la
+    // segunda y ese dinero desaparecía del patrimonio. La bandera es de la cuenta que la
+    // reporta, así que se comprueba contra el saldo de esa misma cuenta.
+    var _ceCash={};
     var _accCcys=[];   // moneda base declarada por cada cuenta que trae total
-    accounts.forEach(function(acc){
+    accounts.forEach(function(acc, _ai){
       // Moneda BASE de la cuenta, cuando el broker la reporta. Es el último recurso para
       // una posición o un saldo que llegue sin moneda propia: mejor la de su cuenta que
       // asumir dólares, que es lo que se hacía antes en silencio.
@@ -38390,7 +38444,9 @@ document.addEventListener('DOMContentLoaded', function(){
       if(Array.isArray(bals)) bals.forEach(function(b){
         var v = _n(b.cash!=null?b.cash:b.amount);
         if(!v) return;                       // un balance a 0 en otra moneda no la hace "presente"
-        cash += v; _bucket(_ccyOf(b) || accCcy).cash += v;
+        var _bc = _ccyOf(b) || accCcy || 'USD';
+        cash += v; _bucket(_bc).cash += v;
+        _ceCash[_ai+'\u0000'+_bc] = (_ceCash[_ai+'\u0000'+_bc]||0) + v;
       });
       var at = acc.account && acc.account.balance && acc.account.balance.total;
       // Clave '' = el broker no dijo en qué moneda está este total. No se le asigna una por
@@ -38428,7 +38484,7 @@ document.addEventListener('DOMContentLoaded', function(){
                     market_value:mv, day_change_pct:0, type: _snapAssetType(so, p), currency: ccy };
         // Se aparta, no se decide todavía: sólo es dinero ya contado en el efectivo si el
         // efectivo de SU moneda da para cubrirlo (ver el bloque de confirmación, abajo).
-        if(p.cash_equivalent === true && mv){ _ce.push(row); return; }
+        if(p.cash_equivalent === true && mv){ row._acct = _ai; _ce.push(row); return; }
         _bucket(ccy).mv += (mv||0);
         positions.push(row);
       });
@@ -38460,10 +38516,16 @@ document.addEventListener('DOMContentLoaded', function(){
     var _mmByCcy = {}, _mmTickers = [];
     if(_ce.length){
       var _want = {};
-      _ce.forEach(function(r){ var c = r.currency || 'USD'; _want[c] = (_want[c]||0) + (r.market_value||0); });
+      var _ceKey = function(r){ return r._acct + '\u0000' + (r.currency || 'USD'); };
+      _ce.forEach(function(r){ var k = _ceKey(r); _want[k] = (_want[k]||0) + (r.market_value||0); });
       _ce.forEach(function(r){
         var c = r.currency || 'USD';
-        var ok = (_byCcy[c] ? _byCcy[c].cash : 0) + 1e-6 >= _want[c];
+        var k = _ceKey(r);
+        // Holgura relativa: 1e-6 absoluto no es nada sobre un saldo de ocho cifras, donde
+        // el error de coma flotante de la propia suma ya es mayor que eso.
+        var _tol = Math.max(1e-6, Math.abs(_want[k]) * 1e-9);
+        var ok = (_ceCash[k]||0) + _tol >= _want[k];
+        delete r._acct;
         if(ok){
           _mmByCcy[c] = (_mmByCcy[c]||0) + (r.market_value||0);
           if(_mmTickers.indexOf(r.ticker) < 0) _mmTickers.push(r.ticker);
@@ -38521,7 +38583,11 @@ document.addEventListener('DOMContentLoaded', function(){
     }
     // Las FILAS también se convierten: si no, el peso de cada posición compararía monedas
     // distintas contra un total ya unificado, y el donut sumaría cualquier cosa menos 100 %.
-    // Lo que no tenga cambio se queda como está y, como antes, fuera del total.
+    // La que no tenga cambio NO se entrega: aguas abajo nadie mira la divisa de la fila
+    // —calcH hace qty*price y calcTotals lo suma— así que 94.000 USD sueltos se sumaban
+    // como 94.000 EUR al mismo tiempo que la tarjeta decía que ese dinero estaba fuera
+    // del total. Se saca de las filas y se declara, igual que _dropped y _noPrice.
+    var _fxOut = [];
     positions.forEach(function(p){
       if(!p.currency) p.currency = _dom;
       if(!_dom || p.currency === _dom) return;
@@ -38532,19 +38598,30 @@ document.addEventListener('DOMContentLoaded', function(){
       p.market_value = (p.market_value||0) * r;
       p._fxFrom = p.currency; p._fxRate = r; p.currency = _dom;
     });
+    positions = positions.filter(function(p){
+      if(!p._fxUnresolved) return true;
+      _fxOut.push({ ticker:p.ticker, currency:p.currency, value:p.market_value||0 });
+      return false;
+    });
     // FIX 1 — Agrega por ticker ANTES de entregar a aiPortImportData: ese pipeline (diseñado para
     // OCR) DESCARTA tickers repetidos, y snapMapHoldings emite una entrada por cuenta. Con AAPL en
     // brokerage + AAPL en la Roth IRA, o en dos brokers distintos, la segunda se perdía en silencio.
     var _noCost=[];
     positions = (function(rows){
       var by={}, order=[];
+      // La clave lleva la divisa DE ORIGEN: 'AIR' es Airbus en París y AAR Corp en Nueva
+      // York, y fundirlas sumaba 100 acciones de una con 50 de la otra en una sola fila
+      // con un único precio. En una cartera de una sola divisa la clave es equivalente a
+      // la de siempre, así que el comportamiento normal no cambia.
+      var _aggKey = function(p){ return p.ticker + '\u0000' + (p._fxFrom || p.currency || ''); };
       rows.forEach(function(p){
-        var a = by[p.ticker];
-        if(!a){ a = by[p.ticker] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:null,
+        var _k = _aggKey(p);
+        var a = by[_k];
+        if(!a){ a = by[_k] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:null,
                                      market_value:0, day_change_pct:0, type:p.type, currency:p.currency,
                                      _fxFrom:p._fxFrom||null, _fxUnresolved:!!p._fxUnresolved,
                                      _costSum:0, _costShares:0 };
-                order.push(p.ticker); }
+                order.push(_k); }
         a.shares       += p.shares;
         a.market_value += p.market_value;
         // Sólo pondera los lotes que SÍ traen coste. Si AAPL está en dos cuentas y sólo una
@@ -38557,8 +38634,14 @@ document.addEventListener('DOMContentLoaded', function(){
         if(p._fxUnresolved) a._fxUnresolved = true;
         if(!a._fxFrom && p._fxFrom) a._fxFrom = p._fxFrom;
       });
+      // Sólo si un mismo ticker acabó en DOS grupos hace falta desambiguarlo: aguas abajo
+      // aiPortImportData descarta tickers repetidos, así que sin sufijo una de las dos
+      // posiciones se perdería en silencio, que es peor que el nombre feo.
+      var _seen={};
+      order.forEach(function(k){ var t=by[k].ticker; _seen[t]=(_seen[t]||0)+1; });
       return order.map(function(k){
         var a=by[k];
+        if(_seen[a.ticker] > 1 && a._fxFrom) a.ticker = a.ticker + '.' + a._fxFrom;
         // Con el MISMO ticker largo en una cuenta y CORTO en otra, _costShares puede quedar
         // pegado a cero: `>0` lo dejaba pasar y _costSum/_costShares explotaba a Infinity o a
         // un coste absurdo, con la comparación de cobertura satisfecha porque `shares` también
@@ -38645,6 +38728,9 @@ document.addEventListener('DOMContentLoaded', function(){
       window._SNAP_NO_PRICE = _noPrice.length ? _noPrice : null;
       window._SNAP_DROPPED = _dropped.length || 0;
       window._SNAP_CASH_EQ = _mmTickers.length ? { tickers:_mmTickers, value:_mmDom } : null;
+      window._SNAP_FX_OUT = _fxOut.length ? _fxOut : null;
+      if(_fxOut.length) console.warn('[snaptrade] sin tipo de cambio, fuera de la cartera:',
+        _fxOut.map(function(o){ return o.ticker+' ('+o.currency+')'; }).join(', '));
       if(_dropped.length) console.warn('[snaptrade] '+_dropped.length+' posición(es) SIN símbolo reconocible descartadas — el total va corto.');
       if(_noPrice.length) console.warn('[snaptrade] sin precio ni market_value:', _noPrice.join(', '));
       if(_noCost.length)  console.warn('[snaptrade] sin coste de adquisición (no se muestra rendimiento):', _noCost.join(', '));
@@ -38719,15 +38805,19 @@ document.addEventListener('DOMContentLoaded', function(){
       // sellan AQUÍ, antes del primer _render de la cadena: el estado 'broken' se pinta unas
       // líneas más abajo, antes incluso de snapMapHoldings.
       try{
-        window._SNAP_PARTIAL     = !!j.partial;
-        window._SNAP_STALE       = !!(j.stale || j.partial);
+        var _has = function(k){ try{ return Object.prototype.hasOwnProperty.call(j, k); }catch(e){ return false; } };
+        // Mismo criterio `hasOwnProperty` que el resto del bloque: la respuesta servida
+        // DESDE CACHÉ no recalcula estas banderas, y ponerlas a false borraba el aviso de
+        // "foto incompleta" mientras se seguía enseñando esa misma foto incompleta.
+        if(_has('partial')) window._SNAP_PARTIAL = !!j.partial;
+        if(_has('stale') || _has('partial')) window._SNAP_STALE = !!(j.stale || j.partial);
         // Mismo criterio que `institutions` (ver abajo): la respuesta de caché no las trae,
         // y nulificarlas escondía el aviso de "broker sin conexión" durante toda la hora.
         // Ojo: la caché se sirve con `!brokenFlagged`, y esa bandera sólo se levanta cuando
         // se caen TODAS las conexiones — con dos brokers y uno caído se llegaba aquí.
         if(Object.prototype.hasOwnProperty.call(j,'staleConnections'))
           window._SNAP_STALE_CONNS = (j.staleConnections && j.staleConnections.length) ? j.staleConnections : null;
-        window._SNAP_NO_SYNC     = j.accountsWithoutSync || 0;
+        if(_has('accountsWithoutSync')) window._SNAP_NO_SYNC = j.accountsWithoutSync || 0;
         // F5 — Quién es tu broker DE VERDAD. Hasta ahora la tarjeta enseñaba siempre los
         // mismos dos nombres de adorno, con lo que alguien conectado a Fidelity leía
         // "Charles Schwab · Interactive Brokers" en su propia tarjeta de conexión.
@@ -38739,13 +38829,15 @@ document.addEventListener('DOMContentLoaded', function(){
         // siguiente lectura viva: parpadeaban en lugar de estar. Ausente = "no lo sé ahora",
         // que no es lo mismo que "ya no hay". El "ya no hay" se resuelve arriba, en la rama
         // de !connected, que sí las borra.
-        var _has = function(k){ try{ return Object.prototype.hasOwnProperty.call(j, k); }catch(e){ return false; } };
         if(_has('institutions')) window._SNAP_INSTITUTIONS = (j.institutions && j.institutions.length) ? j.institutions : null;
         // Slug real de IBKR, tal y como lo reporta SnapTrade. Viaja desde el servidor a
         // propósito: es el ÚNICO sitio donde vive ese valor, y así corregirlo no toca ni una
         // línea de cliente. Sin él, _snapIsIbkr() devuelve false para todo y la app se
         // comporta igual que antes de este trabajo — que es el fallo correcto.
-        if(_has('brokerSlugs')){
+        // Una lista VACÍA no es "IBKR ya no existe": es el modo lazy contestando desde un
+        // isolate frío. Machacar con null dejaba _snapIsIbkr() en false hasta una hora.
+        if(_has('brokerSlugs') && j.brokerSlugs &&
+           (j.brokerSlugs.ibkr || (j.brokerSlugs.ibkrAll && j.brokerSlugs.ibkrAll.length))){
           window._SNAP_IBKR_SLUG  = (j.brokerSlugs && j.brokerSlugs.ibkr) || null;
           window._SNAP_IBKR_SLUGS = (j.brokerSlugs && j.brokerSlugs.ibkrAll && j.brokerSlugs.ibkrAll.length)
                                     ? j.brokerSlugs.ibkrAll : (window._SNAP_IBKR_SLUG ? [window._SNAP_IBKR_SLUG] : null);
@@ -38987,6 +39079,10 @@ document.addEventListener('DOMContentLoaded', function(){
             // cuenta" a secas invita a reintentar; el motivo real es otro y tiene arreglo distinto.
             : (j.noConvertibles ? 'Una de tus cuentas está en una moneda para la que no tenemos tipo de cambio, así que no entra en esta curva: los valores históricos salen por debajo de tu total actual.'
             : 'Falta al menos una de tus cuentas en esta curva: los valores históricos pueden salir por debajo de tu total actual.'));
+        // La curva completa pero REEXPRESADA no es `partial`, así que el aviso de arriba no
+        // la cubre: se dice aparte. Sin serie histórica de divisas, los puntos antiguos
+        // llevan el cambio de hoy y parte de la pendiente es moneda, no mercado.
+        try{ if(j.fxSpot && !j.partial) _perfNote('Parte de tu cartera está en otra moneda: el histórico se ha convertido al cambio de hoy, así que parte de la subida o bajada de esta curva es el tipo de cambio, no el mercado.'); }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
       } else if(j && (j.terminal || j.reason==='not_connected')){
         // F12 — Reintentar no puede cambiar nada. getAccountBalanceHistory es EXPERIMENTAL y
@@ -39360,7 +39456,7 @@ document.addEventListener('DOMContentLoaded', function(){
       var op = window._SNAP_OPTIONS;
       if(op && op.count){
         out.push('Tienes <b>'+op.count+'</b> '+(op.count>1?'posiciones':'posición')+' en opciones que no mostramos ni sumamos'
-               +(op.value ? ' (~'+_fmtMoney(op.value)+' según tu broker)' : '')+'. Tu cartera real es mayor que la que ves aquí.');
+               +(op.value ? ' (~'+_fmtMoney(op.value, window._SNAP_CCY)+' según tu broker)' : '')+'. Tu cartera real es mayor que la que ves aquí.');
       }
       // F2.1 — Futuros y CFDs: se dicen en número y clase, nunca en dinero (ver snapMapHoldings).
       var ot = window._SNAP_OTHER;
