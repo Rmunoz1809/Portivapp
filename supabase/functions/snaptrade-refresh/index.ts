@@ -26,6 +26,8 @@ import {
   requireUser,
   loadProfile,
   isEntitled,
+  resolveIbkrSlugs,
+  fxRatesFor,
 } from "../_shared/snaptrade.ts";
 
 const CACHE_MS = 60 * 60 * 1000; // 60 minutes
@@ -55,7 +57,49 @@ const STALE_MS = 15 * 60 * 1000;           // datos con < 15 min no se pagan por
 // específica de IBKR queda INERTE y la app se comporta igual que antes — que es el fallo
 // correcto: es mejor no tratar a IBKR de forma especial que tratar como IBKR al broker
 // equivocado por haber adivinado el slug.
-const IBKR_SLUG = (Deno.env.get("SNAPTRADE_IBKR_SLUG") ?? "").trim().toUpperCase();
+// El valor ya no se lee a pelo del entorno: `resolveIbkrSlug` lo VALIDA contra el catálogo
+// real de SnapTrade y, si el secreto está mal escrito o no está, lo descubre. Un slug
+// equivocado no da error en ninguna parte — simplemente apaga toda la lógica de IBKR en
+// silencio y deja el portal en blanco —, así que confiar en él sin comprobarlo no vale.
+// Nunca lanza; devuelve null cuando no se puede determinar (comportamiento de siempre).
+async function ibkrSlug(lazy = false): Promise<{ ibkr: string | null; ibkrAll: string[] }> {
+  try {
+    const all = await resolveIbkrSlugs(snaptrade(), lazy ? { lazy: true } : undefined);
+    return { ibkr: all[0] ?? null, ibkrAll: all };
+  } catch { return { ibkr: null, ibkrAll: [] }; }
+}
+
+// Divisas presentes en un payload de holdings (efectivo y posiciones). Es lo que hay que
+// cubrir con tipos de cambio para que el cliente pueda dar UN total en vez de un total
+// parcial más una nota de lo que no cabe.
+function currencyCodesOf(holdings: any): string[] {
+  const out = new Set<string>();
+  const code = (c: any) => {
+    const v = (c && typeof c === "object") ? (c.code ?? c.iso_code) : c;
+    if (typeof v === "string" && /^[A-Za-z]{3,5}$/.test(v)) out.add(v.toUpperCase());
+  };
+  const arr = Array.isArray(holdings) ? holdings : (holdings?.accounts ?? []);
+  for (const h of Array.isArray(arr) ? arr : []) {
+    for (const b of (Array.isArray(h?.balances) ? h.balances : [])) code(b?.currency);
+    for (const p of (Array.isArray(h?.positions) ? h.positions : [])) {
+      code(p?.currency);
+      const so = p?.symbol;
+      code(so?.currency);
+      code(so?.symbol?.currency);
+    }
+    code(h?.account?.balance?.currency);
+  }
+  return Array.from(out);
+}
+
+/** Tabla de cambio para las divisas de este payload. Nunca lanza; {} si no hace falta. */
+async function ratesFor(holdings: any): Promise<Record<string, number>> {
+  try {
+    const codes = currencyCodesOf(holdings);
+    if (codes.length < 2) return {};
+    return await fxRatesFor(snaptrade(), codes);
+  } catch { return {}; }
+}
 
 // Días sin una sola cuenta ni un solo sync tras los que una conexión se declara dormida
 // (ver el bloque `dormantConnections`, más abajo).
@@ -157,7 +201,12 @@ Deno.serve(async (req) => {
         // cliente todo lo específico de IBKR hasta la siguiente lectura viva. Las
         // `institutions` sí exigirían una llamada a SnapTrade, así que NO se recalculan
         // aquí: el cliente conserva las últimas que recibió (ver snapRefresh).
-        brokerSlugs: { ibkr: IBKR_SLUG || null },
+        brokerSlugs: await ibkrSlug(true),
+        // Los tipos de cambio viajan TAMBIÉN con la caché: son de la tabla del isolate, no
+        // cuestan una llamada, y sin ellos el cliente pasaría 60 minutos (lo que dura la
+        // caché) sin poder dar un total único en una cartera multidivisa — que es justo el
+        // caso normal de Interactive Brokers.
+        rates: await ratesFor(profile.snaptrade_holdings),
         fromCache: true,
       });
     }
@@ -239,7 +288,11 @@ Deno.serve(async (req) => {
         staleConnections: downInstitutions.map((i) => ({
           id: i.id, name: i.name, disabledSince: i.disabledSince, accounts: i.accounts,
         })),
-        brokerSlugs: { ibkr: IBKR_SLUG || null },
+        // Aquí NO se pide la versión perezosa: este camino ya ha hablado con SnapTrade, y es
+        // justo el del usuario con la conexión caída — el que más necesita que la app sepa
+        // que su broker es IBKR para ofrecerle la guía correcta al reconectar.
+        brokerSlugs: await ibkrSlug(),
+        rates: await ratesFor(profile.snaptrade_holdings),
         fromCache: true,
       });
     }
@@ -597,10 +650,19 @@ Deno.serve(async (req) => {
         try { optionPositions = (await (st as any).options.listOptionHoldings({ ...sid, accountId })).data ?? []; } catch { /* optional */ }
       }
       const total = a?.balance?.total?.amount ?? a?.balance?.total ?? null;
+      // La divisa del total se descartaba. En una cuenta multidivisa —IBKR siempre lo es—
+      // ese número está en la moneda BASE de la cuenta, y sin saber cuál es el cliente no
+      // podía ni compararlo con la suma de las posiciones ni convertirlo: lo trataba como si
+      // fuera de la moneda dominante que él mismo dedujo. Cuando no coincidían, el total del
+      // broker mandaba y la cartera entera quedaba mal denominada.
+      const totalCcy = a?.balance?.total?.currency?.code ?? a?.balance?.total?.currency ?? null;
       return {
         broken: !pos.ok || !bal.ok,
         entry: {
-          account: { id: accountId, ...(total != null ? { balance: { total } } : {}) },
+          account: { id: accountId,
+                     ...(total != null
+                         ? { balance: { total, ...(typeof totalCcy === "string" && totalCcy ? { currency: totalCcy } : {}) } }
+                         : {}) },
           balances: bal.data,
           positions: pos.data,
           option_positions: optionPositions,
@@ -668,7 +730,8 @@ Deno.serve(async (req) => {
           staleConnections,
           institutions,
           dormantConnections,
-          brokerSlugs: { ibkr: IBKR_SLUG || null },
+          brokerSlugs: await ibkrSlug(),
+          rates: await ratesFor(profile.snaptrade_holdings),
           accountsWithoutSync,
           closedAccounts,
           fromCache: true,
@@ -741,7 +804,8 @@ Deno.serve(async (req) => {
         staleConnections,
         institutions,
         dormantConnections,
-        brokerSlugs: { ibkr: IBKR_SLUG || null },
+        brokerSlugs: await ibkrSlug(),
+        rates: await ratesFor(holdArr),
         accountsWithoutSync,
         closedAccounts,
         syncQueued,
@@ -800,7 +864,12 @@ Deno.serve(async (req) => {
       staleConnections,
       institutions,
       dormantConnections,
-      brokerSlugs: { ibkr: IBKR_SLUG || null },
+      brokerSlugs: await ibkrSlug(),
+      // Cambio real entre las divisas de ESTA cartera (SnapTrade primero, Yahoo para los
+      // huecos). Es lo que le faltaba al cliente para dar UN total en vez de "el total en
+      // la moneda dominante, y aparte lo que no cabe". Un par que no se resuelva no viaja:
+      // el cliente vuelve solo al comportamiento anterior para esa moneda.
+      rates: await ratesFor(holdings),
       accountsWithoutSync,
       closedAccounts,
       syncQueued,

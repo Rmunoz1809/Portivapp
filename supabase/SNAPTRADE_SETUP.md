@@ -44,6 +44,32 @@ supabase secrets set SNAPTRADE_CRON_SECRET=<random>              # verify cron p
 # (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are injected automatically.)
 ```
 
+#### `SNAPTRADE_IBKR_SLUG` — identidad de Interactive Brokers
+
+```bash
+supabase secrets set SNAPTRADE_IBKR_SLUG=INTERACTIVE-BROKERS-FLEX
+```
+
+Es el `slug` con el que SnapTrade presenta a Interactive Brokers en
+`referenceData.listAllBrokerages()`. Se usa para dos cosas:
+
+* `snaptrade-connect` lo manda como parámetro `broker` para que el portal entre
+  **directo** al flujo de IBKR (pegar Query ID + Token) en vez de a la pantalla
+  de selección, donde el usuario no sabe qué elegir.
+* `snaptrade-refresh` se lo pasa al cliente en `brokerSlugs` para que la app
+  reconozca una conexión de IBKR **por slug y nunca por nombre** — y con ello
+  enseñe la guía del engranaje, el aviso de que esa conexión no entrega
+  histórico y la detección de conexión dormida.
+
+**No es obligatorio y no puede quedarse desactualizado.** `resolveIbkrSlugs()`
+(en `_shared/snaptrade.ts`) valida el valor contra el catálogo real de SnapTrade
+y, si no existe o el secreto no está, lo **descubre** — dejando además un
+`console.error` con el valor equivocado. Si SnapTrade publicara IBKR con varios
+slugs, se envían todos: la app reconoce cualquiera de ellos y se conecta por el
+primero. Un slug mal escrito no daba ningún error visible: apagaba en silencio
+toda la lógica de IBKR y dejaba el portal en blanco. Por eso ya no se cree a
+ciegas.
+
 ### 2. Migrations
 ```bash
 supabase db push    # applies both 20260712170000_snaptrade.sql and _cron.sql

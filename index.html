@@ -8010,6 +8010,18 @@ const AI_MODELS = {
   // cambio: si el chat vuelve a "entrevistar", subir esta clave a 'gemini-3.7-flash' (o a
   // 'claude-sonnet-5' para devolverlo a Anthropic) y nada más — el ruteo lo sigue solo.
   chat:       'gemini-3.1-flash-lite',
+  // Chat en modo OPINIÓN = modelo grande. Una pregunta de hecho ("cuánto facturó NVDA")
+  // la resuelve el chico igual de bien y a un tercio del costo; una RECOMENDACIÓN es
+  // criterio de inversión —pesar la posición contra el perfil, la valuación, la
+  // correlación y el coste de oportunidad a la vez— y ahí el -lite se queda corto: da
+  // veredictos genéricos porque no sostiene tantas variables en la cabeza. Como
+  // _chatWantsOpinion ya separa los dos modos de forma determinista, se paga el modelo
+  // caro SOLO en los mensajes donde la calidad cambia la decisión del cliente.
+  // Coste aproximado por mensaje (prompt ~2.5K tok + ~350 tok de salida):
+  //   gemini-3.1-flash-lite ~$0.0013 · gemini-3.7-flash ~$0.0037 · claude-sonnet-5 ~$0.015
+  // Con _WEEKLY_LIMIT = $0.15 y ~30% de mensajes en modo opinión, la mezcla sale a
+  // ~$0.0020/mensaje: unos 75 mensajes por semana. Sonnet 5 aquí lo bajaría a ~27.
+  chatOpinion: 'gemini-3.7-flash',
 };
 
 // ── Pre-calentamiento de briefs "Cómo afecta al mercado" ─────────────────────────
@@ -20928,7 +20940,11 @@ function _calcRealDayChange() {
 }
 
 async function fetchLivePrices() {
-  const syms = HOLDINGS.map(h => h.ticker);
+  // Sólo se piden cotizaciones de las posiciones que el feed SABE cotizar: ticker pelado =
+  // valor listado en EE. UU. y en dólares. Una posición europea, o una ya convertida a la
+  // moneda de la cartera, se quedaría con el precio de otro valor distinto (mismo ticker,
+  // otra bolsa) o con dólares dentro de una cartera en euros. Ahí manda el precio del broker.
+  const syms = HOLDINGS.filter(h => !h.noLive).map(h => h.ticker);
   const batchSize = 5;
   let updated = false;
   // Mapa ticker → previousClose recibido de la API (para guardar al final)
@@ -20941,7 +20957,7 @@ async function fetchLivePrices() {
       const quotes = data?.quoteResponse?.result || [];
       quotes.forEach(q => {
         const h = HOLDINGS.find(x => x.ticker === q.symbol);
-        if (!h) return;
+        if (!h || h.noLive) return;
         const px = q.regularMarketPrice;
 
         // Capturar previousClose de la API para calcular 1D change real del portafolio
@@ -29812,6 +29828,12 @@ const _PRICING = {
   // entrada AQUÍ. Si falta, _tokAdd cae a _PRICE_DEFAULT — que es el precio de Haiku, un
   // modelo de Anthropic — y el badge de gasto miente en silencio, sin ningún error visible.
   'gemini-3.1-flash-lite': { in: 0.25, out:  1.50 },
+  // Fallback del gemini-proxy: si el id 3.1-lite no existe en la API, MODEL_FALLBACK.lite
+  // reintenta con 3.5-flash-lite (supabase/functions/gemini-proxy/index.ts). Sin esta entrada
+  // el gasto de ESE reintento se cobraba a _PRICE_DEFAULT — el precio de Haiku, $1/$5 — e
+  // inflaba el badge ~3.5x sobre el costo real. Precio de la familia lite; VERIFICAR en
+  // ai.google.dev/gemini-api/docs/pricing y corregir si Google lo tarifa distinto.
+  'gemini-3.5-flash-lite': { in: 0.25, out:  1.50 },
   // gemini-3.7-flash tiene precio promocional HASTA EL 2026-12-31. A partir del 2027-01-01
   // sube a { in: 1.50, out: 7.50 } — actualizar esta línea en esa fecha o el badge subestimará.
   'gemini-3.7-flash':      { in: 0.75, out:  3.75 },
@@ -30094,6 +30116,22 @@ function _chatSmartContext(question, kind, wantsOpinion){
       }
     } catch(e){}
 
+    // DIMENSIONAR REQUIERE VER LA CARTERA ENTERA, NO SOLO EL TICKER PREGUNTADO. Recortar
+    // una posición con un +140% latente y una con un -12% no es la misma decisión (coste
+    // fiscal, anclaje, tesis rota vs tesis ganadora), y para proponer una compra hace falta
+    // saber de dónde sale el dinero. Sin estas dos líneas el modelo recomendaba en el vacío.
+    // Solo en modo asesor: en una respuesta informativa es contexto tirado.
+    if(asesor && Array.isArray(HOLDINGS) && HOLDINGS.length && T.mkt>0){
+      try{
+        const filas = HOLDINGS.slice().sort((a,b)=>calcH(b).mktVal-calcH(a).mktVal).slice(0,12)
+          .map(h=>{ const c=calcH(h); const w=(c.mktVal/T.mkt*100);
+            return `${h.ticker} ${w.toFixed(1)}% ($${Math.round(c.mktVal).toLocaleString('en-US')}) · latente ${c.gl>=0?'+':''}${c.glPct.toFixed(0)}%`; });
+        parts.push('PESO Y PLUSVALÍA LATENTE POR POSICIÓN (úsalo para dimensionar cualquier ajuste: de dónde recortas y qué coste fiscal tiene):\n'+filas.join('\n'));
+        const glT = (T.gl!=null?T.gl:0), cashT = (T.cash||0);
+        parts.push(`Resultado latente total: ${glT>=0?'+':''}$${Math.round(glT).toLocaleString('en-US')} · efectivo disponible para desplegar: $${Math.round(cashT).toLocaleString('en-US')} (${((cashT/(T.total||1))*100).toFixed(0)}% del total).`);
+      }catch(e){}
+    }
+
     const tickers=_chatDetectTickers(question);
     if(tickers.length){
       tickers.forEach(t=>{
@@ -30119,21 +30157,25 @@ function _chatSmartContext(question, kind, wantsOpinion){
         }
         parts.push(block.join('\n'));
       });
-      return _chatCtxTrim(parts.join('\n'));
+      return _chatCtxTrim(parts.join('\n'), asesor?7500:6000);
     }
 
     // Pregunta general del portafolio → top-5 por valor
     const top5=HOLDINGS.slice().sort((a,b)=>calcH(b).mktVal-calcH(a).mktVal).slice(0,5);
     const tops=top5.map(h=>{const c=calcH(h);const w=T.mkt>0?(c.mktVal/T.mkt*100).toFixed(1):'0';return `${h.ticker} $${c.mktVal.toFixed(0)} (${w}%)`;}).join(', ');
     parts.push(`Posiciones principales: ${tops}`);
-    return _chatCtxTrim(parts.join('\n'));
+    return _chatCtxTrim(parts.join('\n'), asesor?7500:6000);
   } catch(e){ return 'Portafolio no disponible.'; }
 }
 
 // Tope duro del contexto. Con el bloque de mercado + perfil + cartera + plan de rebalanceo
 // + Portiv Intelligence + tickers, el prompt puede crecer bastante; 6K chars (~1.5K tokens)
 // es de sobra para responder y acota el costo por mensaje.
-function _chatCtxTrim(s){ return (s && s.length>6000) ? s.slice(0,6000)+'\n…' : (s||''); }
+// El corte es por el FINAL, y al final viven los bloques por ticker: apretar demasiado
+// dejaba la recomendación sin la ficha de la empresa por la que preguntaban. En modo
+// asesor viajan además el plan, Portiv Intelligence y la tabla de pesos, así que ese modo
+// tiene su propio tope. 7500 chars ≈ 1.9K tokens ≈ +$0.0005 por mensaje en el modelo grande.
+function _chatCtxTrim(s, max){ const L = max || 6000; return (s && s.length>L) ? s.slice(0,L)+'\n…' : (s||''); }
 
 // ── ROUTER DE CONOCIMIENTO ──────────────────────────────────────────────────────
 // Decide, pregunta a pregunta, QUÉ sabe ya la app y por tanto cuánta búsqueda web hace
@@ -30187,6 +30229,14 @@ function _chatWantsOpinion(q){
 function _chatRoute(q, prevKind){
   const r = _chatRouteCore(q, prevKind) || {web:1, kind:'general', why:'ruta vacía'};
   r.opinion = _chatWantsOpinion(q);
+  // SUELO DE DATO FRESCO EN MODO OPINIÓN. "¿debo vender NVDA?" caía en la rama RE_LOCAL
+  // con web:0 —todo el contexto local— y salía una recomendación construida solo con
+  // pesos y perfil, sin un múltiplo ni un precio actual. Recomendar una operación sin
+  // saber a qué valuación cotiza el activo es exactamente lo que un gestor no hace: el
+  // tamaño de la posición dice si SOBRA, pero solo el precio dice si conviene vender HOY.
+  // Una búsqueda, y solo cuando hay un ticker concreto sobre la mesa (las preguntas de
+  // cartera en abstracto —"¿voy bien?"— siguen resolviéndose gratis con el contexto).
+  try{ if(r.opinion && r.web === 0 && _chatDetectTickers(q).length){ r.web = 1; r.why += ' + dato fresco para la recomendación'; } }catch(e){}
   return r;
 }
 
@@ -30416,20 +30466,20 @@ async function aiChatSend(){
     const _route = _chatRoute(text, _chatLastKind);
     _chatLastKind = _route.kind;
     const ctx = _chatSmartContext(text, _route.kind, _route.opinion);
-    const system = `Eres un inversor profesional con más de 20 años de experiencia en los mercados de renta variable, con un track record real y un rendimiento anual sobresaliente (consistentemente por encima del S&P 500). Eres un experto en acciones: dominas valuación (P/E, EV/EBITDA, DCF, PEG), análisis de fundamentales, lectura de earnings, dinámicas de sector, ciclos de mercado y gestión de riesgo. Has vivido el dot-com, la crisis de 2008, el COVID y el boom de la IA. Hablas como alguien que ha ganado y perdido dinero de verdad.
+    const system = `Eres el gestor principal de un fondo de inversión de veinte mil millones de dólares. Más de veinte años en renta variable y un track record que ha batido al S&P 500 de forma consistente. Dominas valuación (P/E, EV/EBITDA, DCF, PEG, rentabilidad del flujo de caja libre), análisis de fundamentales, lectura de resultados trimestrales, dinámica sectorial, ciclos de mercado, correlación entre posiciones y dimensionamiento por convicción. Has gestionado capital a través del dot-com, 2008, el COVID y el ciclo de la IA. Le escribes a un cliente del fondo: le debes criterio, precisión y franqueza.
 
-REGLA #1 — ERES UN ASISTENTE QUE RESPONDE, NO QUE ENTREVISTA (inviolable):
-- NUNCA le hagas una pregunta al usuario. Ni de aclaración, ni retórica al cierre, ni "para afinar el análisis". Cero signos de interrogación dirigidos a él.
-- Si la pregunta es ambigua, ELIGE la interpretación más probable, dilo en media frase y responde: "Asumiendo que hablas de tu cartera: …". Nunca pidas que elija por ti.
-- Nunca pidas que el usuario te traiga datos, ni que te diga qué vio, ni que te dé contexto. Los datos los sacas del CONTEXTO de abajo o los buscas tú.
-- Nunca digas que no tienes un dato. Si no está en el contexto, búscalo. Si tampoco puedes buscarlo, razona con lo que sí tienes y declara el supuesto en media frase.
-- Nunca cierres invitando a responder, ni ofreciendo hacer algo más. Terminas cuando la respuesta está completa.
+REGLA #1 — RESPONDES, NO ENTREVISTAS (inviolable):
+- NUNCA le haces una pregunta al cliente. Ni de aclaración, ni retórica al cierre, ni "para afinar el análisis". Cero signos de interrogación dirigidos a él.
+- Si la pregunta es ambigua, ELIGES la interpretación más probable, lo declaras en media frase y respondes: "Entiendo que te refieres a tu cartera: …". Nunca le pides que elija por ti.
+- Nunca le pides datos, ni que te diga qué vio, ni que te dé contexto. Los datos salen del CONTEXTO de abajo o los buscas tú.
+- Nunca dices que no tienes un dato. Si no está en el contexto, lo buscas. Si tampoco puedes buscarlo, razonas con lo que sí tienes y declaras el supuesto en media frase.
+- Nunca cierras invitando a responder ni ofreciendo hacer algo más. Terminas cuando la respuesta está completa.
 
-REGLA #2 — RESPONDE LO QUE TE PREGUNTAN, NADA MÁS (inviolable):
-- Tu opinión y tus recomendaciones se dan SOLO cuando el usuario las pide. Si te pregunta un HECHO, entregas el hecho y te callas. Un buen asesor contesta lo que le preguntan; el que aprovecha cada pregunta para colar su recomendación deja de ser creíble justo cuando importa.
+REGLA #2 — RESPONDES LO QUE TE PREGUNTAN, NADA MÁS (inviolable):
+- Tu opinión y tus recomendaciones se dan SOLO cuando el cliente las pide. Si te pregunta un HECHO, entregas el hecho y te detienes. Un gestor que aprovecha cada pregunta para colar su recomendación pierde credibilidad justo cuando importa.
 - Prohibido cerrar una respuesta informativa con un consejo no pedido, con el plan de rebalanceo, con "mantén la disciplina", con "ejecuta la reducción de…" o con cualquier variante de "lo que deberías hacer es…".
 - Prohibido reconducir una pregunta sobre una empresa hacia el peso que esa empresa tiene en su cartera, salvo que te lo pregunten. Que NVDA esté sobreponderada no es la respuesta a "cómo le fue en sus resultados".
-- Puedes mencionar su posición en una sola frase cuando de verdad aclara el dato ("ese +8.7% son unos $340 en tu posición"), pero eso es contexto, no consejo: sin veredicto, sin acción, sin recordarle el plan.
+- Puedes mencionar su posición en una sola frase cuando de verdad aclara el dato ("ese +8.7% equivale a unos 340 dólares en tu posición"), pero eso es contexto, no consejo: sin veredicto, sin acción, sin recordarle el plan.
 - El MODO de este mensaje viene indicado más abajo. Respétalo al pie de la letra.
 
 FRASES PROHIBIDAS (no las escribas nunca, en ninguna variante):
@@ -30439,75 +30489,88 @@ CÓMO DESAMBIGUAR SIN PREGUNTAR (aplica siempre):
 - "el mercado" → S&P 500 y Nasdaq.
 - "mi portafolio" / "mi cartera" → las posiciones del CONTEXTO.
 - "hoy" → la fecha ET del CONTEXTO.
-- "¿por qué bajó/subió?" → explica con los TITULARES del CONTEXTO + la composición de SU cartera (peso sectorial, beta, top-3). Nunca contestes que no sabes qué pasó.
-- Pregunta sin ticker ni sujeto claro → asume su cartera completa.
+- "¿por qué bajó/subió?" → lo explicas con los TITULARES del CONTEXTO y la composición de SU cartera (peso sectorial, beta, top-3). Nunca contestas que no sabes qué pasó.
+- Pregunta sin ticker ni sujeto claro → asumes su cartera completa.
 
-PERSONALIDAD Y TONO:
-- Habla en primera persona, con la seguridad y franqueza de un veterano: directo, sin rodeos. Cuando te pidan criterio, da TU opinión y no un resumen neutral de Wikipedia; cuando te pidan un dato, dalo con esa misma seguridad y sin adornarlo de consejos.
-- Usa el lenguaje natural del mundo de la inversión (moat, margen de seguridad, asimetría riesgo/recompensa, "el mercado ya lo tiene priceado", "conviction", "comprar el miedo", etc.) sin sonar acartonado.
-- Sé concreto: cuando opines sobre una acción, da tu lectura de la tesis, los riesgos reales y a qué precio o valuación te parece atractiva o cara.
+REGISTRO: FORMAL Y HUMANO A LA VEZ (obligatorio):
+- Español formal y cuidado, tuteando al cliente. Frases completas, sintaxis limpia, terminología precisa. Es la voz de un gestor institucional escribiendo a un cliente, no la de un trader en una sala.
+- Humano, no protocolario: hablas en primera persona ("yo recortaría", "esa tesis no me convence", "prefiero esperar"), asumes la autoría del juicio y reconoces la incertidumbre cuando existe. La confianza está en el criterio y en las cifras, no en el volumen.
+- Prohibido: coloquialismos y jerga de sala ("mójate", "comprar el miedo", "está en fuego"), exclamaciones, emojis, muletillas, anglicismos cuando existe el término en español (valuación, foso competitivo, relación riesgo/recompensa, consenso de analistas, previsión).
+- Prosa continua. Sin viñetas, sin encabezados, sin listas numeradas: le escribes a una persona, no rellenas un formulario.
+- Sin preámbulo ni cortesía de apertura. La primera frase ya contiene información.
 
-DATOS, NO ADJETIVOS (regla dura):
-- Prohibido calificar sin la cifra que lo sostiene. "Resultados sólidos", "superó las expectativas", "fuerte demanda", "cifras por encima de lo esperado", "guía optimista" son frases vacías si no dices CUÁNTO. Di el número: ingresos y su crecimiento, beneficio por acción frente al esperado, la cifra de la división que movió la aguja, el rango de la previsión.
-- La pregunta de fondo siempre es POR QUÉ, no QUÉ. "Le fue bien" no es una respuesta; "le fue bien porque centro de datos facturó X, un Y% más, y la previsión del trimestre entrante quedó Z por encima del consenso" sí lo es.
-- Si te falta la cifra concreta, BÚSCALA antes de responder en vago. Contestar con adjetivos porque no buscaste el dato es el peor resultado posible.
-- Un dato mal recordado es peor que uno buscado: si no estás seguro de la cifra, búscala.
-- No seas wishy-washy. Si algo te parece caro, dilo. Si una tesis te convence, comprométete. Pero reconoce la incertidumbre como lo haría un profesional honesto.
-- Responde SIEMPRE en español, con tono natural y conversacional. Corto: 2 a 4 frases. Si necesitas más, es que estás rellenando.
-- En modo OPINIÓN, cierra con una conclusión accionable o un nivel a vigilar, como haría un inversor real. En modo INFORMATIVO, cierra cuando el dato está dado.
+CIFRAS, NO ADJETIVOS (regla dura):
+- Toda afirmación evaluativa va acompañada, en la misma frase, de la cifra que la sostiene. "Resultados sólidos", "superó las expectativas", "fuerte demanda", "guía optimista" son frases vacías si no dices CUÁNTO: ingresos y su crecimiento interanual, beneficio por acción frente al consenso, la división que movió la aguja, el rango de la previsión.
+- Siempre que la pregunta trate de una empresa, de la cartera o del mercado, la respuesta lleva un MÍNIMO de dos cifras concretas. Sin ellas no has informado de nada.
+- La pregunta de fondo siempre es POR QUÉ, no QUÉ. "Le fue bien" no es una respuesta; "le fue bien porque centro de datos facturó X, un Y% más, y la previsión quedó Z por encima del consenso" sí lo es.
+- Si te falta la cifra concreta, BÚSCALA antes de responder en vago. Un dato mal recordado es peor que uno buscado: si no estás seguro, lo buscas.
+- No des garantías de rentabilidad ni promesas absolutas. Opina con convicción dentro de ese marco.
 
-LÍMITES:
-- No des garantías de rentabilidad ni promesas absolutas; el mercado siempre tiene riesgo. Pero opina con convicción dentro de ese marco.
-- No repitas literalmente los datos ya visibles en pantalla; intérpretalos.
+CÓMO SE DA UNA RECOMENDACIÓN (solo en modo OPINIÓN — es tu producto, cuídalo):
+1. VEREDICTO en la primera frase, sin rodeos: qué harías tú y con qué parte de la posición.
+2. LA RAZÓN, CUANTIFICADA: al menos dos cifras que la sostengan (peso actual frente a su tope, múltiplo frente a su media histórica o al sector, crecimiento, beta de la cartera frente a su banda objetivo).
+3. EJECUCIÓN: cuánto, en cuántos tramos y con qué disparador. "Reducir" sin tamaño no es una recomendación; "bajar del 10.6% al 4% en tres tramos" sí lo es.
+4. LO QUE LA INVALIDA: el nivel, la cifra o el hecho que te haría cambiar de opinión. Un gestor serio siempre dice qué rompería su tesis.
+5. CONVICCIÓN: declara si es alta, media o baja, y por qué. No todas las decisiones merecen el mismo tamaño.
+- La recomendación se juzga contra la alternativa: mantener, el índice o el efectivo. Si tu propuesta no bate a no hacer nada, la respuesta correcta es no hacer nada, y lo dices.
+- Todo eso en prosa y en 3 a 6 frases. Si necesitas más, es que estás rellenando.
+
+CRITERIO DE GESTOR (uso interno, no lo recites ni lo enumeres):
+- Dimensionas por convicción y por riesgo, no por entusiasmo. El error caro casi nunca es elegir mal la empresa: es ponerle demasiado peso.
+- Un buen negocio a un precio malo es una mala inversión. Separas siempre la calidad del activo del precio que se paga por él.
+- Distingues volatilidad de pérdida permanente de capital. Una caída del 30% en una tesis intacta y una del 30% con la tesis rota exigen decisiones opuestas.
+- La diversificación real es por factor de riesgo, no por número de nombres: diez posiciones que dependen del mismo ciclo son una sola apuesta.
+- Tienes en cuenta la fricción: coste fiscal de realizar una plusvalía grande, comisiones y el riesgo de ejecutar todo de golpe. Por eso los ajustes grandes van por tramos.
+- Nunca justificas una decisión por el precio al que compró. Lo que se compró ya no importa; lo que importa es si comprarías hoy a este precio.
 
 ESTILO (obligatorio):
-- Da la respuesta directamente, sin narrar tu proceso. NUNCA digas "no tengo ese dato", "no está visible", "voy a buscarlo" o "déjame buscar". Entrega la información o el análisis como si ya lo supieras.
-- No menciones de dónde sacas la información (ni la página ni internet).
-- No narres lo que vas a hacer ni lo que buscaste. Entrega la conclusión.
-- Extensión: 2-4 frases. Densidad alta, cero relleno, cero preámbulo. Cada frase tiene que traer información que el usuario no tenía.
+- Entregas la respuesta directamente, sin narrar tu proceso. NUNCA digas "no tengo ese dato", "no está visible", "voy a buscarlo" o "déjame buscar". Entregas la información como si ya la supieras.
+- No mencionas de dónde sale la información (ni la página ni internet).
+- Extensión: 2 a 4 frases en modo INFORMATIVO, 3 a 6 en modo OPINIÓN. Densidad alta, cero relleno. Cada frase aporta algo que el cliente no tenía.
+- No repitas literalmente los datos ya visibles en pantalla; interprétalos.
 
 FUENTES DE DATOS — PRIMERO LA APP, DESPUÉS LA WEB (uso interno, nunca lo menciones):
-1. PRIMERO busca la respuesta en el CONTEXTO de abajo, que es lo que la app ya tiene cargado: fecha y estado del mercado, movimiento del día de su cartera y por posición, titulares de hoy, ficha de empresa (a qué se dedica, moat, catalizadores, riesgos, competidores, TAM), noticias por ticker y datos del portafolio. Casi toda pregunta se responde aquí, gratis y en coherencia con lo que el usuario ve en pantalla.
-2. SOLO si el dato no está ahí, búscalo en la web en silencio y responde directamente con la cifra, sin avisar que la buscaste y sin decir de dónde salió.
-3. Nunca contradigas un dato del CONTEXTO con uno de la web: si ambos existen, manda el del contexto, que es el que el usuario está viendo.
+1. PRIMERO buscas la respuesta en el CONTEXTO de abajo, que es lo que la app ya tiene cargado: fecha y estado del mercado, movimiento del día de su cartera y por posición, titulares de hoy, ficha de empresa (actividad, foso competitivo, catalizadores, riesgos, competidores, mercado direccionable), noticias por ticker, pesos, plusvalía latente y datos del portafolio. Casi toda pregunta se responde aquí, sin coste y en coherencia con lo que el cliente ve en pantalla.
+2. SOLO si el dato no está ahí, lo buscas en la web en silencio y respondes directamente con la cifra, sin avisar que la buscaste y sin decir de dónde salió.
+3. Nunca contradices un dato del CONTEXTO con uno de la web: si ambos existen, manda el del contexto, que es el que el cliente está viendo.
 
 CUÁNDO BUSCAR EN INTERNET (criterio, no reflejo):
-- NO busques si la respuesta ya está en el CONTEXTO. Concretamente: por qué se movió el mercado hoy (están los TITULARES), cómo va su cartera hoy (está el movimiento por posición), a qué se dedica una empresa / su moat / riesgos / competidores (está la ficha), si está diversificado o qué dice su perfil (están las métricas), o cualquier concepto de inversión que ya sepas explicar. Buscar aquí solo añade latencia y riesgo de contradecir a la app.
-- SÍ busca cuando hace falta un dato de mercado FRESCO que el contexto no trae: precio o valuación actual, múltiplos concretos, resultados o guidance recién publicados, movimientos de analistas, o un evento macro del que el contexto no tenga titular.
+- NO busques si la respuesta ya está en el CONTEXTO: por qué se movió el mercado hoy (están los TITULARES), cómo va su cartera hoy (está el movimiento por posición), a qué se dedica una empresa, su foso, riesgos o competidores (está la ficha), si está diversificado o qué dice su perfil (están las métricas), o cualquier concepto de inversión que ya sepas explicar.
+- SÍ busca cuando hace falta un dato de mercado FRESCO que el contexto no trae: precio o valuación actual, múltiplos concretos, resultados o previsión recién publicados, movimientos de analistas, o un evento macro sin titular en el contexto.
+- Cuando vayas a recomendar una operación sobre una empresa concreta, el precio y el múltiplo actuales son parte del argumento: si no están en el contexto, los buscas antes de dar el veredicto.
 - Si buscas, una o dos consultas bien apuntadas. No encadenes búsquedas para confirmar algo que ya leíste.
 - Busques o no, la respuesta se entrega igual: con veredicto y sin preguntar nada.
 
 PERSONALIZACIÓN (obligatorio):
-- El CONTEXTO incluye el PERFIL DEL USUARIO (nombre, perfil de riesgo del test —capacidad vs disposición—, horizonte, énfasis, estrategia declarada, topes sugeridos) y su CARTERA REAL (posiciones, pesos, beta, concentración top-3, exposición tech, sectores, cash).
-- Cuando OPINES sobre una acción o una decisión, no lo hagas en abstracto: conéctala con SU cartera (solapamientos, concentración, beta, exposición sectorial) y con SU tolerancia al riesgo y horizonte. Esto vale para el modo OPINIÓN; en modo INFORMATIVO el perfil no se menciona salvo que la pregunta lo pida.
-- Si hay un DESAJUSTE entre su perfil de riesgo y su cartera (p. ej. beta o tech por encima de su tope), díselo con franqueza y prioriza el ajuste — pero solo cuando te haya pedido criterio. No lo saques a colación en una respuesta informativa.
-- Usa su nombre de forma natural si está disponible. Si aún NO completó el test de perfil, responde con lo que sabes de su cartera y sugiérele una vez completar el test para afinar el análisis.
+- El CONTEXTO incluye el PERFIL DEL CLIENTE (nombre, perfil de riesgo del test —capacidad frente a disposición—, horizonte, énfasis, estrategia declarada, topes sugeridos) y su CARTERA REAL (posiciones, pesos, plusvalía latente por posición, beta, concentración top-3, exposición tech, sectores, efectivo).
+- Cuando OPINES sobre una acción o una decisión, no lo hagas en abstracto: conéctala con SU cartera (solapamientos, concentración, beta, exposición sectorial, de dónde sale el dinero) y con SU tolerancia al riesgo y horizonte. Esto vale para el modo OPINIÓN; en modo INFORMATIVO el perfil no se menciona salvo que la pregunta lo pida.
+- Si hay un DESAJUSTE entre su perfil de riesgo y su cartera (por ejemplo beta o tech por encima de su tope), se lo dices con franqueza y priorizas ese ajuste — pero solo cuando te haya pedido criterio.
+- Usa su nombre con naturalidad si está disponible. Si aún NO completó el test de perfil, respondes con lo que sabes de su cartera y le sugieres una vez completarlo para afinar el análisis.
 - No vuelques los números crudos del contexto; interprétalos en función de SU situación.
 
-COHERENCIA (obligatorio — no te contradigas con lo que el usuario ve en la app):
-- El CONTEXTO puede incluir un PLAN DE REBALANCEO y el análisis "Portiv Intelligence". Solo se te pasan cuando la pregunta pide criterio; si no están, no los inventes ni los eches de menos. Cuando estén, tus recomendaciones NO pueden ir en contra: si el plan dice AUMENTAR un ticker, no sugieras venderlo; si dice REDUCIR, no digas que lo cargue más; si dice MANTENER, no propongas moverlo sin una razón nueva y explícita.
+COHERENCIA (obligatorio — no te contradigas con lo que el cliente ve en la app):
+- El CONTEXTO puede incluir un PLAN DE REBALANCEO y el análisis "Portiv Intelligence". Solo se te pasan cuando la pregunta pide criterio; si no están, no los inventes. Cuando estén, tus recomendaciones NO pueden ir en contra: si el plan dice AUMENTAR un ticker, no sugieras venderlo; si dice REDUCIR, no digas que lo cargue más; si dice MANTENER, no propongas moverlo sin una razón nueva y explícita.
 - Si el análisis "Portiv Intelligence" concluye que la cartera ENCAJA con su perfil, no la llames "demasiado agresiva"; si detecta un desajuste, alinéate con ese desajuste.
 - Puedes añadir matices, contexto o el porqué con tu criterio, pero la DIRECCIÓN por ticker y el VEREDICTO de encaje deben coincidir con el plan y el análisis.
 
 EJEMPLO 1 — NO DEVUELVAS LA PREGUNTA:
-Usuario: "porque el mercado bajo hoy tanto"
-❌ MAL: "No tengo el dato exacto de qué índices cayeron. ¿Te refieres al S&P 500, al Nasdaq, o a tu cartera? Búscame ese dato y te doy mi lectura."
-✅ BIEN: "El Nasdaq se llevó la peor parte y tu cartera cayó $129 (-1.3%). El detonante fue [titular del contexto], que golpeó sobre todo a semiconductores: NVDA y TSM explican dos tercios de la caída."
+Cliente: "porque el mercado bajo hoy tanto"
+MAL: "No tengo el dato exacto de qué índices cayeron. ¿Te refieres al S&P 500, al Nasdaq, o a tu cartera? Búscame ese dato y te doy mi lectura."
+BIEN: "El Nasdaq se llevó la peor parte y tu cartera cedió 129 dólares, un 1.3%. El detonante fue [titular del contexto], que golpeó sobre todo a semiconductores: NVDA y TSM explican dos tercios de esa caída."
 
 EJEMPLO 2 — PREGUNTA DE HECHO: EL DATO Y NADA MÁS (este es el error que más se repite):
-Usuario: "como le fue a nvidia en los reportes de ayer"
-❌ MAL: "Nvidia cerró con una subida del 8.7% tras unos resultados sólidos. Recuerda que según el plan de rebalanceo la estrategia con NVDA es reducir del 10.6% al 3.2%, aprovechando justamente estos momentos de euforia. Con una exposición tech del 59% frente a tu tope del 45%, mantén la disciplina y ejecuta la reducción." ← te preguntaron por unos resultados y contestaste con un sermón de rebalanceo que nadie pidió.
-❌ TAMBIÉN MAL: "Nvidia presentó resultados que superaron las expectativas en ingresos y beneficio por acción, impulsados por la sólida demanda de su división de centros de datos, y dio una guía por encima de las estimaciones." ← puros adjetivos, ni un solo número: no dice cuánto facturó, cuánto creció, ni por cuánto batió. No has informado de nada.
-✅ BIEN: "Facturó $57,000 millones en el trimestre, un 62% más que hace un año, y centro de datos aportó $51,200 millones de eso. El beneficio por acción salió en $1.30 contra los $1.25 del consenso, y la previsión para el trimestre en curso, $65,000 millones, quedó unos $3,000 millones por encima de lo que se esperaba. De ahí el +8.7% de ayer: unos $340 en tu posición."
+Cliente: "como le fue a nvidia en los reportes de ayer"
+MAL: "Nvidia cerró con una subida del 8.7% tras unos resultados sólidos. Recuerda que según el plan de rebalanceo la estrategia con NVDA es reducir del 10.6% al 3.2%. Con una exposición tech del 59% frente a tu tope del 45%, mantén la disciplina y ejecuta la reducción." ← te preguntaron por unos resultados y contestaste con un sermón de rebalanceo que nadie pidió.
+TAMBIÉN MAL: "Nvidia presentó resultados que superaron las expectativas en ingresos y beneficio por acción, impulsados por la sólida demanda de su división de centros de datos, y dio una guía por encima de las estimaciones." ← puros adjetivos, ni un solo número: no dice cuánto facturó, cuánto creció ni por cuánto batió.
+BIEN: "Facturó 57.000 millones de dólares en el trimestre, un 62% más que hace un año, y centro de datos aportó 51.200 millones de esa cifra. El beneficio por acción salió en 1.30 dólares frente a los 1.25 del consenso, y la previsión para el trimestre en curso, 65.000 millones, quedó unos 3.000 millones por encima de lo esperado. De ahí el 8.7% de ayer, que en tu posición equivale a unos 340 dólares."
 
-EJEMPLO 3 — AQUÍ SÍ TE PIDEN CRITERIO:
-Usuario: "crees que deberia reducir nvidia?"
-✅ BIEN: "Sí, y no por la empresa sino por el tamaño. Con 10.6% en un solo nombre y 59% en tecnología frente a tu tope del 45%, NVDA es el que te descuadra la cartera. Bajarla al 3.2% no es dudar de la tesis: es dejar de depender de que un semiconductor cíclico siga siendo el mejor del mercado tres años seguidos. Yo haría el recorte por tramos, no de golpe."
+EJEMPLO 3 — AQUÍ SÍ TE PIDEN CRITERIO (veredicto, cifras, tamaño, qué lo invalida y convicción):
+Cliente: "crees que deberia reducir nvidia?"
+BIEN: "Sí, recortaría hasta dejarla en torno al 4%, y no por la empresa sino por el tamaño. Con un 10.6% en un solo nombre y un 59% en tecnología frente a tu tope del 45%, NVDA es la posición que te descuadra la cartera y la que explica que tu beta esté en 1.34 cuando tu banda objetivo llega hasta 1.15. Lo haría en tres tramos a lo largo del trimestre, no de golpe, porque llevas un 140% de plusvalía latente y realizarla entera de una vez tiene un coste fiscal que no compensa. Cambiaría de opinión si el crecimiento de centro de datos se desacelera por debajo del 30% interanual: ahí el problema dejaría de ser de tamaño y pasaría a ser de tesis. Convicción alta en el recorte, media en el ritmo."
 
 MODO DE ESTE MENSAJE: ${_route.opinion
-  ? 'OPINIÓN — el usuario está pidiendo tu criterio. Da tu lectura, mójate y cierra con una acción concreta o un nivel a vigilar.'
-  : 'INFORMATIVO — el usuario está preguntando un HECHO, no pidiendo consejo. Responde exactamente lo que preguntó, con datos. PROHIBIDO añadir tu opinión, recomendaciones, el plan de rebalanceo, advertencias sobre su perfil o cualquier "lo que deberías hacer". Si al terminar te queda la tentación de añadir un consejo, no lo añadas.'}
-
+  ? 'OPINIÓN — el cliente está pidiendo tu criterio. Aplica la estructura de recomendación: veredicto en la primera frase, razón cuantificada con al menos dos cifras, tamaño y tramos de la operación, qué la invalidaría y tu nivel de convicción. En prosa, 3 a 6 frases.'
+  : 'INFORMATIVO — el cliente está preguntando un HECHO, no pidiendo consejo. Responde exactamente lo que preguntó, con cifras. PROHIBIDO añadir tu opinión, recomendaciones, el plan de rebalanceo, advertencias sobre su perfil o cualquier "lo que deberías hacer". Si al terminar te queda la tentación de añadir un consejo, no lo añadas.'}
 CONTEXTO (datos ya cargados en la página):
 ${ctx}`;
     // slice(-6): con 4 se perdían intercambios completos enseguida y el modelo repetía
@@ -30520,7 +30583,12 @@ ${ctx}`;
     // fijo ignorando su argumento, así que el modelo del chat no se podía cambiar sin
     // afectar a todas las vías de background. Con la clave propia, el chat es un knob suelto.
     // max_tokens 900: el prompt pide 3-6 frases; 1500 solo alargaba la cola de streaming.
-    const body = { model: AI_MODELS.chat, max_tokens: 900, system, prompt: convText2 };
+    // El MODO ya está decidido de forma determinista por _chatWantsOpinion, así que la
+    // elección de modelo no cuesta ni una llamada extra: hecho → modelo chico; criterio →
+    // modelo grande. max_tokens sube en opinión porque la recomendación lleva veredicto,
+    // cifras, tamaño de la operación y qué la invalidaría.
+    const _chatModel = _route.opinion ? (AI_MODELS.chatOpinion || AI_MODELS.chat) : AI_MODELS.chat;
+    const body = { model: _chatModel, max_tokens: _route.opinion ? 1100 : 900, system, prompt: convText2 };
     if(_webN > 0){
       // Mismo par allowed_tools + tools que ya usa el resto del archivo (el proxy hace
       // passthrough de esta forma exacta). Sin `tools` explícito la búsqueda era poco fiable.
@@ -30581,6 +30649,11 @@ function aiPortAddRow(p){
   const _tip = (reasons.join(' · ') + (lowConf && p.confidence!=null ? ` · confianza ${p.confidence.toFixed(2)}` : '')).replace(/"/g,'&quot;') || 'Revisar: lectura dudosa';
   const warnIco = flag ? '<span class="ai-row-warn" title="'+_tip+'" style="color:#d99a00;font-weight:800;margin-right:5px;cursor:help">⚠</span>' : '';
   const reinvOn = (p.reinvest !== false);   // default: reinvertir dividendos activado
+  // La moneda de la posición y el veto al feed en vivo viajan en la fila, no en un global:
+  // _aiReadRows reconstruye las posiciones desde el DOM y cualquier cosa que no esté aquí se
+  // pierde entre la importación y HOLDINGS. Sin marca (ruta de la foto) no se escribe nada.
+  if (p.ccy) tr.dataset.ccy = String(p.ccy);
+  if (p.noLive) tr.dataset.noLive = '1';
   // FIX 5 (cont.) — El selector solo ofrecía Stock/ETF, así que un 'fund'/'crypto'/'bond' que sí
   // clasificó snapMapHoldings volvía a colapsar a 'stock' al leer la fila. Se amplían las opciones.
   const _TY_OPTS = [['stock','Stock'],['etf','ETF'],['fund','Fondo'],['crypto','Cripto'],['bond','Bono']];
@@ -30611,6 +30684,8 @@ function _aiReadRows(){
       costBasis: _aiNum(g('.ai-c').value) || 0,
       dayChgPct: _aiNum(g('.ai-d').value) || 0,
       reinvest:  g('.ai-r') ? (g('.ai-r').value !== 'no') : true,
+      ccy:       tr.dataset.ccy || null,
+      noLive:    tr.dataset.noLive === '1',
     };
   }).filter(p => p.ticker);
 }
@@ -32229,6 +32304,9 @@ function aiPortImportData(data){
     // si no se ve (null/undefined) → default activado (se resuelve en aiPortAddRow con !== false).
     const reinvest = (p.reinvest_dividends === true) ? true : (p.reinvest_dividends === false ? false : undefined);
     return { ticker: p.ticker, type: p.type, shares, price, mv, cb, dayChgPct, reinvest,
+             // Moneda de la fila y veto al feed en vivo (los pone snapMapHoldings). Por la
+             // ruta de la foto llegan undefined y todo se comporta igual que siempre.
+             ccy: p.currency || null, noLive: p.no_live === true,
              needsReview: !!p._needsReview, reasons: p._reviewReasons || [], confidence: _aiNum(p.confidence) };
   });
 
@@ -32253,6 +32331,7 @@ function aiPortImportData(data){
     // FIX 5 (cont.) — `type` se perdía aquí: aiPortAddRow caía a _aiIsETF(ticker) y la clasificación
     // real que trae el broker (et/mf/oef/cef/crypto) nunca llegaba a la fila ni a HOLDINGS.
     aiPortAddRow({ ticker: p.ticker, type: p.type, shares: p.shares ?? '', price: p.price != null ? +p.price.toFixed(4) : '', cost_basis: p.cb != null ? +p.cb.toFixed(2) : '', day: p.dayChgPct ?? '', reinvest: p.reinvest,
+      ccy: p.ccy, noLive: p.noLive,
       needsReview: p.needsReview, reasons: p.reasons, confidence: p.confidence });
   });
   aiPortRecalc();
@@ -32336,7 +32415,7 @@ function renderAIPortEditor(){
     const v = _periodOverridePct(k); el.value = (v != null) ? v : '';
   });
   const tbody = document.getElementById('aiPosRows'); tbody.innerHTML = '';
-  HOLDINGS.forEach(h => aiPortAddRow({ ticker: h.ticker, type: h.type, shares: h.qty, price: h.price, cost_basis: h.costBasis, day: h.dayChgPct, reinvest: h.reinvest }));
+  HOLDINGS.forEach(h => aiPortAddRow({ ticker: h.ticker, type: h.type, shares: h.qty, price: h.price, cost_basis: h.costBasis, day: h.dayChgPct, reinvest: h.reinvest, ccy: h.ccy, noLive: h.noLive }));
   if (!HOLDINGS.length) aiPortAddRow();
   aiPortRecalc();
 }
@@ -32377,7 +32456,10 @@ async function aiPortApply(){
       const tk = (tr.querySelector('.ai-t')?.value || '').trim();
       const q  = _aiNum(tr.querySelector('.ai-q')?.value) || 0;
       const px = _aiNum(tr.querySelector('.ai-p')?.value) || 0;
-      return tk && q > 0 && !(px > 0);
+      // Mismo veto que fetchLivePrices: buscarle precio en Yahoo a un valor que no cotiza en
+      // dólares trae el de otro valor con su mismo ticker, y eso es peor que no traer nada.
+      // `q !== 0` y no `q > 0`: una posición CORTA sin precio también necesita el respaldo.
+      return tk && q !== 0 && !(px > 0) && tr.dataset.noLive !== '1';
     });
     if (_need.length && typeof apiCall === 'function') {
       // Silencioso en la ruta broker: este sync corre solo (arranque, cada 20 min, al volver
@@ -32506,7 +32588,8 @@ async function aiPortApply(){
     if (!prev) {
       _byTicker[p.ticker] = { ticker: p.ticker, name: oldNames[p.ticker] || p.ticker, type: p.type,
         qty: p.qty, price: p.price, dayChgPct: p.dayChgPct || 0,
-        costBasis: cost, reinvest: p.reinvest !== false };
+        costBasis: cost, reinvest: p.reinvest !== false,
+        ...(p.ccy ? { ccy: p.ccy } : {}), ...(p.noLive ? { noLive: true } : {}) };
       HOLDINGS.push(_byTicker[p.ticker]);
       return;
     }
@@ -37969,22 +38052,47 @@ document.addEventListener('DOMContentLoaded', function(){
       return (typeof c === 'string' && c) ? c.toUpperCase() : null;
     }catch(e){ return null; }
   }
+  // ── Tipos de cambio REALES (los sirve el servidor en `rates`) ────────────────────
+  // Clave 'EURUSD' = cuántos USD vale 1 EUR. El servidor los saca de SnapTrade —la misma
+  // fuente que da los saldos— y, para los pares que SnapTrade no cubre, de Yahoo.
+  //
+  // Sin tabla, o sin el par concreto, esto devuelve null y el mapeo se comporta EXACTAMENTE
+  // como antes de que existiera: la moneda no convertible se queda fuera del total y se
+  // declara en pantalla. Nunca se estima un cambio ni se asume la paridad.
+  function _fxRate(from, to){
+    if(!from || !to) return null;
+    if(from === to) return 1;
+    try{
+      var t = window._SNAP_RATES;
+      if(!t) return null;
+      var r = Number(t[from + to]);
+      return (isFinite(r) && r > 0) ? r : null;
+    }catch(e){ return null; }
+  }
   function snapMapHoldings(holdings){
     var accounts = Array.isArray(holdings)?holdings:((holdings&&holdings.accounts)||[]);
-    var cash=0, total=0, positions=[];
+    var cash=0, positions=[];
     // FIX 4 — El acumulado de account.balance.total solo es fiable si TODAS las cuentas lo aportan.
     // En un setup mixto (una cuenta lo expone y otras no) el acumulado es PARCIAL y subvalúa el
     // portafolio entero — y ese número va directo a TOTAL_OVERRIDE, que manda sobre las posiciones.
     var _totalAccounts = 0;
+    // …y sólo es sumable si se sabe EN QUÉ MONEDA está cada uno. `balance.total` viene en la
+    // moneda BASE de su cuenta: sumar el de una cuenta en euros con el de otra en dólares
+    // producía un número que no es dinero de ninguna divisa. Ahora se acumula por moneda y se
+    // convierte al final, igual que todo lo demás.
+    var _totByCcy = {};
     // ── Divisa (F3) ────────────────────────────────────────────────────────────────
-    // SnapTrade da un balance POR MONEDA y el precio en la moneda del símbolo. Antes esto
-    // sólo se instrumentaba: los importes se sumaban 1:1, así que 5.000 USD + 5.000 CAD
-    // se mostraban como "10.000" — un ~40 % de inflación sobre el patrimonio real, sin
-    // aviso alguno en pantalla. No tenemos fuente de tipos de cambio (Yahoo se retiró por
-    // licencia y Finnhub free no da FX), y ANTES que un número inventado va un número
-    // correcto: se acumula por moneda, el total se calcula SÓLO con la moneda dominante y
-    // el resto se declara aparte para que la UI lo diga. Cada cifra mostrada es cierta.
-    var _byCcy = {};   // { USD: {cash, mv}, CAD: {...} }
+    // SnapTrade da un balance POR MONEDA y el precio en la moneda del símbolo. Una cuenta de
+    // Interactive Brokers es multidivisa por diseño (efectivo en euros, acciones en dólares),
+    // así que esto no es un caso raro: es EL caso de IBKR.
+    //
+    // Hasta ahora no había fuente de cambio, así que la única salida honesta era acotar el
+    // total a la moneda dominante y declarar el resto aparte — o sea, parte del patrimonio
+    // del usuario no aparecía por ninguna parte y los pesos de la cartera comparaban euros
+    // con dólares. Ahora el servidor sirve el cambio REAL: se convierte todo a una sola
+    // moneda y el total vuelve a ser el total. Lo que no haya cambio para convertir sigue
+    // quedando fuera y dicho en pantalla; sigue sin inventarse ni una cifra.
+    var _byCcy = {};   // { USD: {cash, mv}, EUR: {...} }
     function _bucket(c){ c = c || 'USD'; return (_byCcy[c] || (_byCcy[c] = { cash:0, mv:0 })); }
     // Las opciones viven en acc.option_positions, FUERA de acc.positions. Portiv no sabe
     // valorar contratos (no hay fuente de cadenas de opciones con licencia), así que no se
@@ -37992,24 +38100,56 @@ document.addEventListener('DOMContentLoaded', function(){
     // cuadren. Eso deja al usuario viendo una cartera MENOR que la real: lo mínimo es
     // decírselo en pantalla (_SNAP_OPTIONS lo pinta la tarjeta del broker), no sólo en
     // console.warn, que no lee nadie.
-    var _optValue=0, _optCount=0;
+    var _optValue=0, _optCount=0, _optByCcy={};
     var _othCount=0, _othKinds=[];   // F2.1 — futuros/CFDs: se declaran, no se valoran
     var _dropped=[];    // posiciones sin ticker reconocible
     var _noPrice=[];    // con acciones pero sin precio ni market_value
+    // ── Equivalentes a efectivo ──────────────────────────────────────────────────────
+    // SnapTrade marca con `cash_equivalent` las posiciones —típicamente fondos monetarios—
+    // que el broker YA cuenta dentro del saldo en efectivo y del poder de compra. Emitirlas
+    // además como fila contaba ese dinero DOS VECES: inflaba el total cuando el broker no
+    // daba su propio total, y en todos los casos hinchaba el peso de esa "posición" en el
+    // donut y en el análisis de la cartera.
+    //
+    // No se descartan: se separan al cubo de money market, que Portiv ya sabe representar
+    // (aiMM → MONEY_MARKET) y que suma al patrimonio igual que el efectivo. Así el dinero
+    // aparece una sola vez y encima con su nombre.
+    var _ce=[];   // candidatas; se confirman después contra el efectivo de su moneda
+    var _accCcys=[];   // moneda base declarada por cada cuenta que trae total
     accounts.forEach(function(acc){
+      // Moneda BASE de la cuenta, cuando el broker la reporta. Es el último recurso para
+      // una posición o un saldo que llegue sin moneda propia: mejor la de su cuenta que
+      // asumir dólares, que es lo que se hacía antes en silencio.
+      var accCcy = null;
+      try{
+        var _ab = acc.account && acc.account.balance;
+        var _ac = _ab && _ab.currency;
+        if(_ac && typeof _ac === 'object') _ac = _ac.code || _ac.iso_code;
+        if(typeof _ac === 'string' && _ac) accCcy = _ac.toUpperCase();
+      }catch(e){}
       var bals = acc.balances || acc.balance || [];
       if(Array.isArray(bals)) bals.forEach(function(b){
         var v = _n(b.cash!=null?b.cash:b.amount);
         if(!v) return;                       // un balance a 0 en otra moneda no la hace "presente"
-        cash += v; _bucket(_ccyOf(b)).cash += v;
+        cash += v; _bucket(_ccyOf(b) || accCcy).cash += v;
       });
       var at = acc.account && acc.account.balance && acc.account.balance.total;
-      if(at!=null){ total += _n(at); _totalAccounts++; }
+      // Clave '' = el broker no dijo en qué moneda está este total. No se le asigna una por
+      // nuestra cuenta: se trata como "la de presentación", que es lo que se venía haciendo
+      // implícitamente cuando sólo había una moneda en juego.
+      if(at!=null){ var _tk = accCcy || ''; _totByCcy[_tk] = (_totByCcy[_tk]||0) + _n(at); _totalAccounts++; _accCcys.push(accCcy||''); }
       (acc.positions||[]).forEach(function(p){
         var so = _snapSymbolObj(p);
         var ticker = _snapTicker(so, p);
         if(!ticker){ _dropped.push(p && p.units); return; }
-        var ccy    = _ccyOf(so) || _ccyOf(p) || null;
+        // ── Qué moneda manda ─────────────────────────────────────────────────────────
+        // `p.currency` es la moneda de POSICIÓN: la de `price` y `average_purchase_price`,
+        // que es lo único que aquí se multiplica. La del símbolo es la de COTIZACIÓN en su
+        // bolsa de origen, y no tienen por qué coincidir — un ADR o un valor extranjero en
+        // IBKR se valora en la moneda con la que el broker lo lleva. Mirar primero la del
+        // símbolo metía ese dinero en el cubo equivocado y, al convertir, lo cambiaba dos
+        // veces o ninguna.
+        var ccy    = _ccyOf(p) || _ccyOf(so) || accCcy || null;
         var shares = _n(p.units!=null?p.units:p.fractional_units);
         var price  = _n(p.price);
         var mvRaw  = _n(p.market_value);
@@ -38025,16 +38165,21 @@ document.addEventListener('DOMContentLoaded', function(){
         // sin resolver y la posición se pinta sin rendimiento — que es la verdad.
         var avgRaw = (p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
         var avg    = (avgRaw==null || avgRaw==='') ? null : (_n(avgRaw) || null);
+        var row = { ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
+                    market_value:mv, day_change_pct:0, type: _snapAssetType(so, p), currency: ccy };
+        // Se aparta, no se decide todavía: sólo es dinero ya contado en el efectivo si el
+        // efectivo de SU moneda da para cubrirlo (ver el bloque de confirmación, abajo).
+        if(p.cash_equivalent === true && mv){ _ce.push(row); return; }
         _bucket(ccy).mv += (mv||0);
-        positions.push({ ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-                         market_value:mv, day_change_pct:0, type: _snapAssetType(so, p), currency: ccy });
+        positions.push(row);
       });
       var opts = acc.option_positions || acc.optionPositions || [];
       if(Array.isArray(opts)) opts.forEach(function(o){
         var u  = _n(o.units!=null?o.units:o.fractional_units);
         var px = _n(o.price);
         var mv = _n(o.market_value); if(!mv) mv = u*px*100;   // contrato = 100 subyacentes
-        _optValue += mv; _optCount++;
+        var oc = _ccyOf(o) || accCcy || 'USD';
+        _optValue += mv; _optCount++; _optByCcy[oc] = (_optByCcy[oc]||0) + mv;
       });
       // F2.1 — Clases que SnapTrade SÍ reporta y Portiv no sabe valorar (futuros, CFDs). Hasta
       // ahora no aparecían en ninguna parte: ni como fila, ni en un aviso, ni descontadas del
@@ -38048,6 +38193,86 @@ document.addEventListener('DOMContentLoaded', function(){
         if(k && _othKinds.indexOf(k) < 0) _othKinds.push(k);
       });
     });
+    // ── Confirmación de los equivalentes a efectivo ─────────────────────────────────
+    // La bandera dice que el broker ya los cuenta dentro del efectivo. Se comprueba antes de
+    // creérsela: si el efectivo de esa moneda no llega a cubrirlos, la bandera está mintiendo
+    // (o el saldo llegó incompleto) y restarlo dejaría un efectivo negativo. En ese caso la
+    // posición vuelve a ser una fila normal, que es el comportamiento de siempre.
+    var _mmByCcy = {}, _mmTickers = [];
+    if(_ce.length){
+      var _want = {};
+      _ce.forEach(function(r){ var c = r.currency || 'USD'; _want[c] = (_want[c]||0) + (r.market_value||0); });
+      _ce.forEach(function(r){
+        var c = r.currency || 'USD';
+        var ok = (_byCcy[c] ? _byCcy[c].cash : 0) + 1e-6 >= _want[c];
+        if(ok){
+          _mmByCcy[c] = (_mmByCcy[c]||0) + (r.market_value||0);
+          if(_mmTickers.indexOf(r.ticker) < 0) _mmTickers.push(r.ticker);
+        } else {
+          _bucket(c).mv += (r.market_value||0);
+          positions.push(r);
+        }
+      });
+    }
+    // ── Moneda de presentación y conversión ─────────────────────────────────────────
+    // La dominante por valor: es la que menos cifras mueve y la que el usuario reconoce como
+    // "su" moneda. Todo lo demás se convierte a ella con el cambio del servidor.
+    var _ccyList = Object.keys(_byCcy).filter(function(c){ return _byCcy[c].cash || _byCcy[c].mv; });
+    // Ordenar por el importe CRUDO elegía la moneda por el tamaño de sus billetes: 300.000 ¥
+    // (unos 2.000 $) ganaba a 5.000 €, y con ella se llevaba por delante todo lo demás, porque
+    // la moneda de presentación es también la única que sobrevive entera al total.
+    // Se elige por dos criterios, en este orden:
+    //   1. Cobertura: cuántas de las monedas presentes se pueden convertir a ésta. La que más
+    //      cubra deja menos dinero fuera del total, que es lo único que de verdad importa.
+    //   2. A igualdad, la que más dinero PROPIO tenga — medido en una sola moneda, no crudo.
+    function _pickDom(list){
+      if(list.length <= 1) return list[0] || null;
+      var best = null;
+      list.forEach(function(c){
+        var cov = 0;
+        list.forEach(function(x){ if(_fxRate(x, c)) cov++; });
+        var native = _byCcy[c].cash + _byCcy[c].mv;
+        if(!best){ best = { c:c, cov:cov, native:native }; return; }
+        if(cov !== best.cov){ if(cov > best.cov) best = { c:c, cov:cov, native:native }; return; }
+        var r = _fxRate(c, best.c);
+        var mine = (r != null) ? native * r : native;   // sin cambio no hay comparación posible
+        if(mine > best.native) best = { c:c, cov:cov, native:native };
+      });
+      return best ? best.c : list[0];
+    }
+    // La moneda BASE de la cuenta manda cuando todas coinciden y está entre las presentes: es
+    // la que el usuario eligió en su broker y en la que el broker le da su propio total.
+    var _baseCcy = null;
+    try{
+      var _uniq = _accCcys.filter(function(v,i,a){ return v && a.indexOf(v)===i; });
+      if(_uniq.length === 1 && _ccyList.indexOf(_uniq[0]) >= 0) _baseCcy = _uniq[0];
+    }catch(e){}
+    var _dom = _baseCcy || (_ccyList.length ? _pickDom(_ccyList)
+                                            : (Object.keys(_totByCcy).filter(Boolean)[0] || null));
+    var _mixed = _ccyList.length > 1;
+    var _converted = null, _excluded = null;
+    if(_mixed){
+      _ccyList.forEach(function(c){
+        if(c === _dom) return;
+        var amt = _byCcy[c].cash + _byCcy[c].mv;
+        var r = _fxRate(c, _dom);
+        if(r) (_converted || (_converted = {}))[c] = { amount: amt, rate: r, as: amt * r };
+        else  (_excluded  || (_excluded  = {}))[c] = amt;
+      });
+    }
+    // Las FILAS también se convierten: si no, el peso de cada posición compararía monedas
+    // distintas contra un total ya unificado, y el donut sumaría cualquier cosa menos 100 %.
+    // Lo que no tenga cambio se queda como está y, como antes, fuera del total.
+    positions.forEach(function(p){
+      if(!p.currency) p.currency = _dom;
+      if(!_dom || p.currency === _dom) return;
+      var r = _fxRate(p.currency, _dom);
+      if(!r){ p._fxUnresolved = true; return; }
+      if(p.current_price) p.current_price = p.current_price * r;
+      if(p.avg_cost != null) p.avg_cost = p.avg_cost * r;
+      p.market_value = (p.market_value||0) * r;
+      p._fxFrom = p.currency; p._fxRate = r; p.currency = _dom;
+    });
     // FIX 1 — Agrega por ticker ANTES de entregar a aiPortImportData: ese pipeline (diseñado para
     // OCR) DESCARTA tickers repetidos, y snapMapHoldings emite una entrada por cuenta. Con AAPL en
     // brokerage + AAPL en la Roth IRA, o en dos brokers distintos, la segunda se perdía en silencio.
@@ -38058,6 +38283,7 @@ document.addEventListener('DOMContentLoaded', function(){
         var a = by[p.ticker];
         if(!a){ a = by[p.ticker] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:null,
                                      market_value:0, day_change_pct:0, type:p.type, currency:p.currency,
+                                     _fxFrom:p._fxFrom||null, _fxUnresolved:!!p._fxUnresolved,
                                      _costSum:0, _costShares:0 };
                 order.push(p.ticker); }
         a.shares       += p.shares;
@@ -38069,6 +38295,8 @@ document.addEventListener('DOMContentLoaded', function(){
         if(!a.current_price && p.current_price) a.current_price = p.current_price;
         if(a.type==='stock' && p.type && p.type!=='stock') a.type = p.type;
         if(a.currency !== p.currency) a.currency = a.currency || p.currency;
+        if(p._fxUnresolved) a._fxUnresolved = true;
+        if(!a._fxFrom && p._fxFrom) a._fxFrom = p._fxFrom;
       });
       return order.map(function(k){
         var a=by[k];
@@ -38085,47 +38313,81 @@ document.addEventListener('DOMContentLoaded', function(){
         if(covered) a.avg_cost = a._costSum / a._costShares;
         else { delete a.avg_cost; _noCost.push(a.ticker); }   // sin clave → cost basis desconocido
         delete a._costSum; delete a._costShares;
+        if(!a._fxFrom) delete a._fxFrom;
+        if(!a._fxUnresolved) delete a._fxUnresolved;
+        // ── Precio en vivo: NO para todo ────────────────────────────────────────────
+        // fetchLivePrices manda el ticker PELADO a Yahoo y machaca el precio con lo que
+        // vuelva. Para un valor que no cotiza en dólares eso es cambiar su precio por el de
+        // OTRO valor: "AIR" es Airbus en París (~160 €) y AAR Corp en Nueva York (~70 $), y
+        // el ticker es idéntico. También estropea cualquier fila ya convertida: la
+        // cotización de Yahoo llega en dólares y aquí todo está en la moneda de
+        // presentación. En esos casos manda el precio del broker, que además es el correcto.
+        a.no_live = (a.currency && a.currency !== 'USD') || !!a._fxFrom || !!a._fxUnresolved;
         return a;
       });
     })(positions);
-    // FIX 4 (cont.) — acumulado parcial → se descarta y se reconstruye desde cash + Σ market_value.
-    if(_totalAccounts && _totalAccounts < accounts.length){
-      console.warn('[snaptrade] balance.total parcial ('+_totalAccounts+'/'+accounts.length+' cuentas) → se usa cash + Σ market_value');
-      total = 0;
+    // ── Totales, todos en la moneda de presentación ─────────────────────────────────
+    var _cashDom = 0, _mvDom = 0, _mmDom = 0, _optDom = 0;
+    _ccyList.forEach(function(c){
+      var r = _fxRate(c, _dom);
+      if(!r) return;                       // sin cambio → esa moneda no entra en el total
+      _cashDom += _byCcy[c].cash * r;
+      _mvDom   += _byCcy[c].mv   * r;
+    });
+    Object.keys(_mmByCcy).forEach(function(c){ var r=_fxRate(c,_dom); if(r) _mmDom += _mmByCcy[c]*r; });
+    Object.keys(_optByCcy).forEach(function(c){ var r=_fxRate(c,_dom); if(r) _optDom += _optByCcy[c]*r; });
+    // El total declarado por el broker manda cuando lo dan TODAS las cuentas y todas sus
+    // monedas son convertibles. Si falta una cuenta o falta un cambio, ese acumulado es
+    // parcial: subvaluaría la cartera entera, así que se reconstruye desde efectivo + Σ mv.
+    var _totDom = 0, _totUsable = (_totalAccounts > 0 && _totalAccounts === accounts.length);
+    if(_totUsable){
+      var _tk = Object.keys(_totByCcy);
+      // Sólo se usa el total del broker si NO hay que convertirlo. Esa cifra ya viene
+      // convertida por el broker con SU tipo de cambio; volver a convertirla con el nuestro
+      // mete el diferencial entre los dos justo entre la cifra grande y la suma de las filas,
+      // y ese descuadre no tiene ninguna explicación que darle al usuario. Con conversión de
+      // por medio manda nuestra suma, que sale de los mismos tipos que las filas y cuadra.
+      _totUsable = _tk.every(function(c){ return c === '' || c === _dom; });
+      if(_totUsable) _totDom = _tk.reduce(function(a,c){ return a + _totByCcy[c]; }, 0);
     }
-    // ── Total (F3) ────────────────────────────────────────────────────────────────
-    // Con una sola moneda: como siempre. Con varias: el total se limita a la dominante y
-    // el resto se declara aparte. `account.balance.total` tampoco sirve mezclado — SnapTrade
-    // lo da en la moneda de CADA cuenta —, así que también se descarta.
-    var _ccyList = Object.keys(_byCcy).filter(function(c){ return _byCcy[c].cash || _byCcy[c].mv; });
-    var _mixed = _ccyList.length > 1;
-    var _dom = null, _excluded = null;
-    if(_mixed){
-      _dom = _ccyList.slice().sort(function(a,b){
-        return (_byCcy[b].cash+_byCcy[b].mv) - (_byCcy[a].cash+_byCcy[a].mv);
-      })[0];
-      total = _byCcy[_dom].cash + _byCcy[_dom].mv;
-      _excluded = {};
-      _ccyList.forEach(function(c){ if(c!==_dom) _excluded[c] = _byCcy[c].cash + _byCcy[c].mv; });
-      console.warn('[snaptrade] cartera multidivisa: total en '+_dom+' ('+total.toFixed(2)+'); NO incluye', JSON.stringify(_excluded));
+    if(_totalAccounts && _totalAccounts < accounts.length)
+      console.warn('[snaptrade] balance.total parcial ('+_totalAccounts+'/'+accounts.length+' cuentas) → se usa cash + Σ market_value');
+    var total;
+    if(_totUsable && _totDom){
+      total = _totDom;
+      // El total del broker incluye las opciones; las filas no. Se descuenta para que
+      // filas + efectivo cuadren con la cifra grande.
+      if(_optDom) total -= _optDom;
     } else {
-      if(!total) total = cash + positions.reduce(function(s,p){return s+(p.market_value||0);},0);
-      else if(_optValue) total -= _optValue;   // el total del broker incluye opciones; las filas no.
+      total = _cashDom + _mvDom;
+    }
+    // El efectivo que se muestra NO puede incluir los equivalentes: van aparte, en money
+    // market, y los dos suman al patrimonio. Contarlos en ambos sitios duplicaría el dinero.
+    var _cashOut = _cashDom - _mmDom;
+    if(!(isFinite(_cashOut))) _cashOut = _cashDom;
+    if(_mixed){
+      console.warn('[snaptrade] cartera multidivisa en '+_dom+': total '+total.toFixed(2)
+                 + (_converted ? '; convertido ' + JSON.stringify(_converted) : '')
+                 + (_excluded  ? '; SIN cambio (fuera del total) ' + JSON.stringify(_excluded) : ''));
     }
     // Estado para la UI: la tarjeta del broker lo convierte en avisos visibles.
     try{
-      window._SNAP_FX = _mixed ? { dominant:_dom, excluded:_excluded } : null;
-      window._SNAP_FX_WARNING = _mixed ? Object.keys(_excluded) : null;   // compat
-      window._SNAP_OPTIONS = _optCount ? { count:_optCount, value:_optValue } : null;
+      window._SNAP_CCY = _dom || null;
+      window._SNAP_FX = _excluded ? { dominant:_dom, excluded:_excluded } : null;
+      window._SNAP_FX_CONV = _converted ? { dominant:_dom, converted:_converted } : null;
+      window._SNAP_FX_WARNING = _excluded ? Object.keys(_excluded) : null;   // compat
+      window._SNAP_OPTIONS = _optCount ? { count:_optCount, value:_optDom || _optValue } : null;
       window._SNAP_OTHER = _othCount ? { count:_othCount, kinds:_othKinds } : null;
-      window._SNAP_OPTIONS_VALUE = _optValue || 0;                        // compat
+      window._SNAP_OPTIONS_VALUE = _optDom || _optValue || 0;                // compat
       window._SNAP_NO_COST = _noCost.length ? _noCost : null;
       window._SNAP_NO_PRICE = _noPrice.length ? _noPrice : null;
       window._SNAP_DROPPED = _dropped.length || 0;
+      window._SNAP_CASH_EQ = _mmTickers.length ? { tickers:_mmTickers, value:_mmDom } : null;
       if(_dropped.length) console.warn('[snaptrade] '+_dropped.length+' posición(es) SIN símbolo reconocible descartadas — el total va corto.');
       if(_noPrice.length) console.warn('[snaptrade] sin precio ni market_value:', _noPrice.join(', '));
       if(_noCost.length)  console.warn('[snaptrade] sin coste de adquisición (no se muestra rendimiento):', _noCost.join(', '));
-      if(_optCount)       console.warn('[snaptrade] '+_optCount+' posición(es) de opciones no mapeadas; '+_optValue.toFixed(2)+' fuera del total.');
+      if(_optCount)       console.warn('[snaptrade] '+_optCount+' posición(es) de opciones no mapeadas; '+(_optDom||_optValue).toFixed(2)+' fuera del total.');
+      if(_mmTickers.length) console.warn('[snaptrade] equivalentes a efectivo ya incluidos en el saldo (no se emiten como fila):', _mmTickers.join(', '));
     }catch(e){}
     // Bloque 2.3: si el broker expone rendimiento por período en el payload (algunas cuentas lo
     // traen), léelo → aiPortImportData lo ancla vía _injectPeriodAnchors. Si NO viene, NO se
@@ -38134,7 +38396,7 @@ document.addEventListener('DOMContentLoaded', function(){
     try {
       var _src = null;
       if (holdings && typeof holdings==='object' && !Array.isArray(holdings)) _src = holdings.period_changes || holdings.performance || holdings.returns || null;
-      if (!_src) { for (var _i=0;_i<accounts.length;_i++){ var _a=accounts[_i]; var _c=_a&&(_a.period_changes||_a.performance||_a.returns); if(_c){ _src=_c; break; } } }
+      if (!_src) { for (var _j=0;_j<accounts.length;_j++){ var _a=accounts[_j]; var _c=_a&&(_a.period_changes||_a.performance||_a.returns); if(_c){ _src=_c; break; } } }
       if (_src && typeof _src==='object') {
         var _pc={};
         ['1M','3M','6M','YTD','1Y','2Y','3Y'].forEach(function(k){
@@ -38145,11 +38407,11 @@ document.addEventListener('DOMContentLoaded', function(){
         if (Object.keys(_pc).length) period_changes=_pc;
       }
     } catch(e){}
-    // En multidivisa el efectivo también tiene que ir en la moneda dominante. Dejarlo como
-    // la suma cruda 1:1 mientras `portfolio_value` sí está acotado deja las dos cifras
-    // contradiciéndose (efectivo > total en carteras con mucho saldo extranjero) y filtra
-    // por la puerta de atrás la misma suma inventada que se acaba de quitar del total.
-    var out = { cash_balance: (_mixed ? _byCcy[_dom].cash : cash), portfolio_value:total, positions:positions };
+    // `money_market` se emite SIEMPRE, también a 0: aiPortImportData sólo pisa #aiMM cuando el
+    // campo viene, así que omitirlo dejaba vivo el money market de una importación anterior y
+    // ese dinero fantasma se sumaba al patrimonio en cada sincronización posterior.
+    var out = { cash_balance: _cashOut, portfolio_value: total, money_market: _mmDom || 0,
+                positions: positions, currency: _dom || null };
     if (period_changes) out.period_changes = period_changes;
     return out;
   }
@@ -38179,7 +38441,7 @@ document.addEventListener('DOMContentLoaded', function(){
         // en el bloque de abajo porque ese bloque ahora CONSERVA lo que no venga en la
         // respuesta (ver allí): sin este borrado, los chips del broker y el aviso de
         // conexión dormida sobrevivirían a la desconexión.
-        try{ window._SNAP_INSTITUTIONS=null; window._SNAP_DORMANT=null; window._SNAP_STALE_CONNS=null; }catch(e){}
+        try{ window._SNAP_INSTITUTIONS=null; window._SNAP_DORMANT=null; window._SNAP_STALE_CONNS=null; window._SNAP_RATES=null; }catch(e){}
         // El servidor dice POR QUÉ no hay conexión. Sin esto los tres casos —nunca
         // conectó, la desconectó él, y "se la dimos de baja porque venció la
         // suscripción"— pintaban el mismo cartel de captación, y el usuario que
@@ -38221,7 +38483,17 @@ document.addEventListener('DOMContentLoaded', function(){
         // propósito: es el ÚNICO sitio donde vive ese valor, y así corregirlo no toca ni una
         // línea de cliente. Sin él, _snapIsIbkr() devuelve false para todo y la app se
         // comporta igual que antes de este trabajo — que es el fallo correcto.
-        if(_has('brokerSlugs')) window._SNAP_IBKR_SLUG = (j.brokerSlugs && j.brokerSlugs.ibkr) || null;
+        if(_has('brokerSlugs')){
+          window._SNAP_IBKR_SLUG  = (j.brokerSlugs && j.brokerSlugs.ibkr) || null;
+          window._SNAP_IBKR_SLUGS = (j.brokerSlugs && j.brokerSlugs.ibkrAll && j.brokerSlugs.ibkrAll.length)
+                                    ? j.brokerSlugs.ibkrAll : (window._SNAP_IBKR_SLUG ? [window._SNAP_IBKR_SLUG] : null);
+        }
+        // Tipos de cambio del servidor (SnapTrade primero, Yahoo para los huecos). Se sellan
+        // AQUÍ porque snapMapHoldings —que corre unas líneas más abajo— los lee de window para
+        // dar UN total en vez de "el total en la moneda dominante y, aparte, lo que no cabe".
+        // Mismo criterio `hasOwnProperty` que los demás: ausente = "ahora no lo sé", y se
+        // conserva la última tabla buena en lugar de apagar la conversión a mitad de sesión.
+        if(_has('rates')) window._SNAP_RATES = (j.rates && Object.keys(j.rates).length) ? j.rates : null;
         // Conexiones vivas que llevan días sin entregar una sola cuenta ni un solo sync.
         if(_has('dormantConnections')) window._SNAP_DORMANT = (j.dormantConnections && j.dormantConnections.length) ? j.dormantConnections : null;
       }catch(e){}
@@ -38649,11 +38921,24 @@ document.addEventListener('DOMContentLoaded', function(){
   // valor concreto llega del servidor (window._SNAP_IBKR_SLUG): aquí no hay ningún slug
   // escrito. Si el servidor no lo tiene configurado, esto es false para todo y la app se
   // comporta exactamente igual que antes — nunca trata como IBKR a otro broker.
+  // El servidor manda TODOS los slugs con los que SnapTrade presenta IBKR, no uno: su
+  // catálogo puede tener más de una entrada del mismo broker (la de Flex Query y cualquier
+  // integración que añadan después), y con un solo valor la app reconocía una y trataba la
+  // otra como un broker cualquiera — sin guía del Query ID, sin el aviso de que esa conexión
+  // no da histórico y sin detección de conexión dormida. Aquí sigue sin haber ningún slug
+  // escrito: si el servidor no manda ninguno, esto es false para todo, como siempre.
   function _snapIsIbkr(inst){
     try{
-      var s = window._SNAP_IBKR_SLUG;
-      if(!s || !inst || !inst.slug) return false;
-      return String(inst.slug).toUpperCase() === String(s).toUpperCase();
+      if(!inst || !inst.slug) return false;
+      var list = window._SNAP_IBKR_SLUGS;
+      if(!list || !list.length){
+        var one = window._SNAP_IBKR_SLUG;
+        if(!one) return false;
+        list = [one];
+      }
+      var s = String(inst.slug).toUpperCase();
+      for(var i=0;i<list.length;i++){ if(String(list[i]).toUpperCase() === s) return true; }
+      return false;
     }catch(e){ return false; }
   }
   function _snapIbkrConn(){
@@ -38770,11 +39055,36 @@ document.addEventListener('DOMContentLoaded', function(){
   function _snapNotes(){
     var out=[];
     try{
+      // Lo que SÍ se convirtió. Se dice, con el cambio usado: el usuario tiene derecho a saber
+      // que la cifra grande incluye dinero que su broker no le enseña en esa moneda, y a qué
+      // tipo se hizo la cuenta. Callarlo dejaría un total que no cuadra con ninguna pantalla
+      // de su broker y sin ninguna forma de averiguar por qué.
+      var fxc = window._SNAP_FX_CONV;
+      if(fxc && fxc.converted){
+        var _cv = Object.keys(fxc.converted).map(function(c){
+          var e = fxc.converted[c];
+          return _fmtMoney(e.amount, c)+' → '+_fmtMoney(e.as, fxc.dominant);
+        });
+        out.push('Tu cartera tiene varias divisas. La mostramos entera en <b>'+fxc.dominant+'</b>, convirtiendo '
+               + _cv.join(' y ')+' al cambio de hoy. Los importes en su moneda original no cambian.');
+      }
       var fx = window._SNAP_FX;
       if(fx && fx.excluded){
         var partes = Object.keys(fx.excluded).map(function(c){ return _fmtMoney(fx.excluded[c], c); });
         out.push('Tu total está en <b>'+fx.dominant+'</b> y <b>no incluye</b> '+partes.join(' + ')
-               +'. No convertimos divisas: preferimos no enseñarte una cifra inventada.');
+               +': no tenemos tipo de cambio para esa'+(partes.length>1?'s':'')+' divisa'+(partes.length>1?'s':'')
+               +' y preferimos no enseñarte una cifra inventada.');
+      }
+      // Equivalentes a efectivo: el broker ya los cuenta dentro del saldo, así que aquí van
+      // como money market y NO como una posición más. Se dice para que nadie los busque en
+      // la lista de posiciones y crea que se han perdido.
+      var ce = window._SNAP_CASH_EQ;
+      if(ce && ce.tickers && ce.tickers.length){
+        var _cet = ce.tickers.slice(0,3).map(_escHtml).join(', ');
+        out.push('<b>'+_cet+'</b>'+(ce.tickers.length>3?' y '+(ce.tickers.length-3)+' más':'')
+               +' '+(ce.tickers.length>1?'son fondos equivalentes':'es un fondo equivalente')+' a efectivo: tu broker ya '
+               +(ce.tickers.length>1?'los cuenta':'lo cuenta')+' dentro del saldo, así que '+(ce.tickers.length>1?'aparecen':'aparece')
+               +' como <b>money market</b> y no como una posición más. El dinero está, contado una sola vez.');
       }
       var op = window._SNAP_OPTIONS;
       if(op && op.count){

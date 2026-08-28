@@ -18,6 +18,7 @@ import {
   requireUser,
   loadProfile,
   requireEntitlement,
+  resolveIbkrSlug,
 } from "../_shared/snaptrade.ts";
 
 // ── Entrada directa al flujo de un broker concreto ───────────────────────────────
@@ -33,8 +34,13 @@ import {
 //      Un slug basura rompe el portal y el error que devuelve SnapTrade no dice qué pasó:
 //      el usuario ve una pantalla muerta y nosotros no vemos nada.
 // Un alias desconocido es 400 aquí mismo, con nombre.
-const BROKER_ALIASES: Record<string, string> = {
-  ibkr: (Deno.env.get("SNAPTRADE_IBKR_SLUG") ?? "").trim().toUpperCase(),
+//
+// El slug ya no sale a pelo del secreto: `resolveIbkrSlug` lo comprueba contra el catálogo
+// real de SnapTrade y, si el secreto está mal escrito o falta, lo descubre. Un slug que
+// SnapTrade no reconoce no da un error legible: devuelve 400 sin explicar nada y el usuario
+// se queda mirando una pantalla en blanco donde debería haberse abierto el portal de IBKR.
+const BROKER_ALIASES: Record<string, (st: any) => Promise<string | null>> = {
+  ibkr: (st) => resolveIbkrSlug(st),
 };
 
 Deno.serve(async (req) => {
@@ -200,7 +206,7 @@ Deno.serve(async (req) => {
       if (!Object.prototype.hasOwnProperty.call(BROKER_ALIASES, brokerAlias)) {
         return jsonResponse(req, { error: `Broker no reconocido: ${brokerAlias}` }, 400);
       }
-      brokerSlug = BROKER_ALIASES[brokerAlias] || null;
+      brokerSlug = await BROKER_ALIASES[brokerAlias](st);
       if (!brokerSlug) {
         // El alias es válido pero su slug no está configurado. Es un fallo NUESTRO de
         // despliegue, no del usuario, y se dice como tal: mandarlo al portal genérico sin
@@ -237,7 +243,7 @@ Deno.serve(async (req) => {
 
     // Generate a fresh Connection Portal link (read-only). If the stored secret is
     // stale (auth failure), heal once and retry.
-    const doLogin = async (withReconnect = !!reconnectId) => {
+    const doLogin = async (withReconnect = !!reconnectId, opts?: { readOnly?: boolean; noBroker?: boolean }) => {
       const l = (await st.authentication.loginSnapTradeUser({
         userId: snapUserId!,
         userSecret: userSecret!,
@@ -251,14 +257,15 @@ Deno.serve(async (req) => {
         // hacía reventar el portal para otros brokers (ver arriba). Si alguna vez se
         // comprueba con una conexión IBKR real que esta combinación falla, el arreglo es
         // enviar "read" SÓLO cuando `brokerSlug` sea el de IBKR — nunca cambiar el global.
-        connectionType: "trade-if-available",
+        // `readOnly` sólo lo activa el reintento de abajo, ante un 400 real del portal.
+        connectionType: opts?.readOnly ? "read" : "trade-if-available",
         // Salta la pantalla de selección y entra directo al flujo de ese broker.
         // `broker` NO se manda junto a `reconnect`: reconectar ya sabe de qué conexión —y por
         // tanto de qué broker— se trata, y mandar los dos es una petición contradictoria que
         // SnapTrade rechaza con 400 (comprobado). Hoy no coinciden nunca desde el cliente (el
         // botón de IBKR va en modo 'add', que ni siquiera lista conexiones), pero el 400
         // sería mudo y el usuario sólo vería que "no conecta": se descarta aquí.
-        ...(brokerSlug && !(withReconnect && reconnectId) ? { broker: brokerSlug } : {}),
+        ...(brokerSlug && !opts?.noBroker && !(withReconnect && reconnectId) ? { broker: brokerSlug } : {}),
         ...(redirect ? { customRedirect: redirect } : {}),
         // El portal entra directo al flujo de reconexión de ESA conexión y renueva su token.
         ...(withReconnect && reconnectId ? { reconnect: reconnectId } : {}),
@@ -267,7 +274,33 @@ Deno.serve(async (req) => {
       return l?.redirectURI ?? l?.redirectUri ?? null;
     };
     let redirectURI: string | null = null;
-    try { redirectURI = await doLogin(); }
+    // ── El portal de IBKR no puede quedarse en una pantalla muerta ───────────────────
+    // Si `loginSnapTradeUser` responde 400 con el broker fijado, SnapTrade no dice cuál de
+    // los dos parámetros no le gusta y el usuario sólo ve que "no pasa nada". Hay dos causas
+    // conocidas y las dos tienen arreglo, así que se prueban en orden antes de rendirse:
+    //   1. `connectionType: trade-if-available` — IBKR no ofrece trading por SnapTrade. La
+    //      doc dice que ese valor cae solo a solo-lectura, pero si no lo hace, "read" sí. No
+    //      se manda de entrada a nadie: forzar "read" es lo que rompía el portal de OTROS
+    //      brokers (ver arriba), así que aquí sólo se usa como reintento, ante un fallo real.
+    //   2. El propio `broker`. Sin él el usuario aterriza en la pantalla de selección: peor
+    //      que entrar directo, infinitamente mejor que no llegar a ninguna parte.
+    // Portiv sigue siendo solo-lectura en los tres casos: nunca envía órdenes.
+    const loginWithFallbacks = async (withReconnect = !!reconnectId) => {
+      try { return await doLogin(withReconnect); }
+      catch (e: any) {
+        const st400 = (e?.response?.status ?? e?.status ?? 0) === 400;
+        if (!st400 || !brokerSlug || _isAuthish(e)) throw e;
+        console.warn("[snaptrade-connect] portal 400 con broker='" + brokerSlug + "' → reintento solo-lectura:",
+          _detail(e).slice(0, 200));
+        try { return await doLogin(withReconnect, { readOnly: true }); }
+        catch (e2: any) {
+          console.warn("[snaptrade-connect] solo-lectura también falló → reintento sin fijar broker:",
+            _detail(e2).slice(0, 200));
+          return await doLogin(withReconnect, { noBroker: true });
+        }
+      }
+    };
+    try { redirectURI = await loginWithFallbacks(); }
     catch (e) {
       if (_isAuthish(e)) {
         await healOrphan();
@@ -281,14 +314,14 @@ Deno.serve(async (req) => {
           .from("profiles")
           .update({ snaptrade_connection_id: null, snaptrade_connection_broken: false })
           .eq("id", userId);
-        redirectURI = await doLogin(false);
+        redirectURI = await loginWithFallbacks(false);
       }
       else if (reconnectId) {
         // La conexión a reconectar puede haber desaparecido en SnapTrade (el usuario la
         // borró desde el broker, o se depuró). Reintentar como alta normal es mejor que
         // devolverle un error a alguien que sólo quiere volver a enlazar su cuenta.
         console.warn("[snaptrade-connect] reconnect falló, se reintenta como alta:", _detail(e).slice(0, 200));
-        redirectURI = await doLogin(false);
+        redirectURI = await loginWithFallbacks(false);
       }
       else throw e;
     }
