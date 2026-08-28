@@ -10576,7 +10576,7 @@ const PV_AI = {
   // Versión de la LÓGICA del análisis. Al cambiarla se invalida cualquier análisis
   // cacheado y se regenera 1 vez con el prompt nuevo (evita servir un análisis viejo
   // que contradiga al asesor determinista). Súbela cuando cambie el prompt/bandas.
-  _VER: 'advisor-v3-human',
+  _VER: 'advisor-v5-nombres',
   _busy: false,
   _key(){ return 'pv_profile_ai_' + (window.__pvUserId || 'local') + '_' + (typeof getLang==='function'?getLang():'es'); },
   load(){ try { return JSON.parse(localStorage.getItem(this._key()) || 'null'); } catch(e){ return null; } },
@@ -10641,6 +10641,35 @@ const PV_AI = {
       if (_mayor) ctx += `Posición mayor: ${_mayor.ticker} con ${pct(_mayor.weight)}\n`;
       ctx += `Núcleo pasivo (ETFs de índice): ${pct(_pasivoW)} del valor a mercado; el resto es selección de acciones concretas\n`;
       ctx += `Retorno anual esperado de la cartera: ${(m.expGrowth*100).toFixed(1)}%\n`;
+
+      // ── FICHA POR POSICIÓN ────────────────────────────────────────────────────
+      // Sin esto el análisis solo podía hablar de pesos y de beta, que es justo lo que
+      // lo hacía sonar a informe genérico: cualquier cartera con 59% en tech recibía el
+      // mismo texto. Lo que distingue a un asesor de verdad es que habla de los NOMBRES
+      // —qué hace cada negocio, por qué merece o no convicción, qué lo puede romper y
+      // cuánto se mueve— así que aquí se le pasa esa materia prima, sacada de la misma
+      // ficha (COMPANY_BIOS) que el usuario ya puede abrir en la app.
+      //
+      // La volatilidad va traducida a PALABRAS, no a beta: el usuario pidió menos
+      // aritmética y más criterio, y "se mueve bastante más que el mercado" es lo que
+      // de verdad significa un beta de 1.4 para quien tiene el dinero puesto.
+      const _volTxt = b => b >= 1.35 ? 'muy volátil, se mueve bastante más que el mercado'
+                        : b >= 1.15 ? 'volátil, amplifica los movimientos del mercado'
+                        : b >= 0.85 ? 'se mueve más o menos como el mercado'
+                                    : 'defensiva, aguanta mejor las caídas';
+      const _cut = (v, n) => { const t = String(v||'').replace(/\s+/g,' ').trim(); return t.length > n ? t.slice(0, n) + '…' : t; };
+      ctx += '\n── FICHA DE CADA POSICIÓN (habla de ESTOS negocios por su nombre; es lo que hace personal el análisis) ──\n';
+      m.items.slice().sort((a,b)=>b.weight-a.weight).slice(0,10).forEach(it => {
+        const bio = (typeof COMPANY_BIOS !== 'undefined') ? COMPANY_BIOS[it.ticker] : null;
+        ctx += `\n• ${it.ticker}${it.name ? ' — '+it.name : ''} · ${pct(it.weight)} de la cartera · ${it.sector}\n`;
+        ctx += `  Volatilidad: ${_volTxt(it.beta || 1)}${it.betaEstimated ? ' (estimada)' : ''}\n`;
+        ctx += `  Cómo le va al usuario en ella: ${it.gl >= 0 ? 'gana' : 'pierde'} ${usd(Math.abs(it.gl))} (${(it.glPct||0).toFixed(1)}%)\n`;
+        if (bio && bio.moat && bio.moat.length)      ctx += `  Por qué merece convicción: ${_cut(bio.moat[0], 170)}\n`;
+        if (bio && bio.risks && bio.risks.length)    ctx += `  Lo que la puede romper: ${_cut(bio.risks[0], 170)}\n`;
+        if (bio && bio.catalysts && bio.catalysts.length) ctx += `  Lo que la puede impulsar: ${_cut(bio.catalysts[0], 140)}\n`;
+        if (!bio) ctx += `  (sin ficha cargada: háblala por su sector y su comportamiento, no inventes datos del negocio)\n`;
+      });
+      if (m.items.length > 10) ctx += `\n(y ${m.items.length - 10} posiciones más de menor peso)\n`;
     }
     // ── BANDAS OBJETIVO DEL PERFIL ──────────────────────────────────────────────
     // Se pasan las MISMAS bandas que usa el asesor determinista (_pvAdvisorBlock) para
@@ -10686,7 +10715,7 @@ COHERENCIA (lo más importante — que todo cuadre entre sí y con su perfil):
 - Mide el encaje SOLO con las "BANDAS OBJETIVO DE ESTE PERFIL" y el "VEREDICTO DETERMINISTA" del contexto. Prohibido usar bandas genéricas de libro (tech 25-35%, beta 0.95-1.10, cash 15-25%): esas son de un perfil moderado y aquí no aplican.
 - Tu conclusión DEBE coincidir con el VEREDICTO DETERMINISTA. Si dice que ENCAJA, tú dices que encaja y tus recomendaciones son ajustes finos de mantenimiento, no recortes drásticos de posiciones que están dentro de banda. Si dice que requiere ajustes, explícalos en línea con los puntos que te doy.
 - Una beta agresiva DENTRO de la banda de un perfil agresivo es justo lo que ese perfil pidió: NO la llames "excesiva" ni recomiendes añadir cash o defensas a un agresivo de largo plazo que está en banda. Eso contradiría su tolerancia.
-- Usa los MISMOS números del contexto (beta, tech %, top-3 %). Nada de cifras nuevas.
+- Cuando uses un número, que salga del contexto (beta, tech %, top-3 %, pesos, pérdidas y ganancias). Nada de cifras nuevas ni inventadas.
 
 VOZ (que NO parezca escrito por una IA):
 - Primera persona con mesura: "lo que veo", "me gusta", "el punto que yo vigilaría", "aquí no tocaría nada". Habla como una persona con oficio, no como un informe.
@@ -10699,13 +10728,28 @@ NO REPITAS LO QUE YA ESTÁ EN PANTALLA (importante):
 - El usuario YA ve, justo encima de tu texto, su perfil y sus dos componentes ("Perfil: Moderado · Capacidad Moderado · Disposición Moderado"). NO abras explicándole cuál es su perfil ni parafraseando capacidad frente a disposición: eso es repetirle lo que acaba de leer y suena a relleno.
 - El perfil es tu VARA DE MEDIR, no tu tema. Menciónalo solo cuando sirva para juzgar algo concreto de la cartera ("para un perfil moderado, esa beta de 1.23 es el punto flojo").
 
-ESTRUCTURA (usa **negritas** en los títulos, MÁXIMO ~270 palabras EN TOTAL, en español — denso, profesional, sin relleno):
-**A qué le estás apostando** — di, como lo diría un gestor, qué APUESTA es esta cartera: qué sector la manda y con cuánto peso (tecnología, semiconductores, financiero, consumo, salud, energía…), cuánto es núcleo pasivo de índice y cuánto selección propia, cuántos nombres la componen y cuál pesa más. Usa los datos del bloque "CARÁCTER DE LA CARTERA". Nómbrala con carácter: una cartera de crecimiento apalancada al ciclo de la IA no es lo mismo que un núcleo indexado con satélites. Nada de perfil de riesgo en este bloque.
-**Qué me parece** — tu juicio profesional de esa apuesta: qué está bien construido y qué no, dónde está la calidad y dónde el punto flojo, y si el conjunto encaja o no con las bandas de su perfil (coherente con el VEREDICTO DETERMINISTA). Opina de verdad, no describas.
-**Lo que estaría vigilando** — dos o tres riesgos reales de ESTA cartera, con tu criterio: concentración, sensibilidad al ciclo o a los tipos, solapamiento entre posiciones, dependencia de un solo cliente o tecnología. Riesgos concretos de estos nombres, no genéricos de manual.
-**Lo que haría yo** — recomendaciones priorizadas y coherentes con el veredicto y con el plan de rebalanceo: si encaja, cómo sostener el rumbo; si no, qué ajustaría, con rangos en %.
+HABLA DE EMPRESAS, NO DE ESTADÍSTICA (lo que separa a un asesor de una hoja de cálculo):
+- El corazón del análisis son SUS POSICIONES, por su nombre. Recibes una FICHA DE CADA POSICIÓN con lo que hace el negocio, por qué merece convicción, qué lo puede romper, qué lo puede impulsar, cuánto se mueve y cómo le va al usuario en ella. Ese es tu material principal: úsalo.
+- De cada nombre relevante di qué es realmente esa empresa en una frase de persona normal, cuánta convicción merece y POR QUÉ (la ventaja concreta, no "es una buena empresa"), qué tendría que pasar para que la tesis se rompa, y qué hace ese nombre DENTRO de esta cartera en particular.
+- Distingue lo estructural de lo cíclico: no es lo mismo un negocio que cobra peaje todos los días que uno que depende de que el ciclo de inversión siga abierto. Dilo cuando aplique.
+- Señala solapamientos reales entre sus posiciones ("tres nombres distintos que en el fondo son la misma apuesta"). Eso es lo que un cliente no ve solo.
+- La volatilidad se cuenta con palabras y con consecuencias ("en una corrección esta es la que más te va a doler"), no con la cifra de beta.
 
-Cierra en una sola línea recordando que es un análisis educativo, no asesoría financiera personalizada. Si el portafolio viene vacío, el primer bloque explica a qué debería apostar según su perfil y el segundo propone una asignación objetivo inicial.`,
+NÚMEROS: LOS JUSTOS (el usuario se quejó de que el análisis parecía una hoja de cálculo):
+- Prohibido encadenar porcentajes. No abras párrafos con "59.5% frente al 45% permitido" ni construyas el argumento sobre pesos y beta: esas cifras ya están en la tabla de rebalanceo y en el diagnóstico, justo al lado.
+- Menciona la palabra "beta" como MUCHO una vez en todo el texto, y solo si hace falta para explicar algo. Mejor: dilo en castellano.
+- Usa un número cuando el número ES el argumento (un peso que se sale de madre, una pérdida que duele, un margen que sostiene la tesis). Todo lo demás en palabras: "algo más de la mitad", "tu posición más grande con diferencia", "casi el doble de lo que te correspondería".
+
+ESTRUCTURA (en español, entre 480 y 620 palabras — es una carta de asesor, no un resumen):
+Escribe TRES secciones con el título en **negritas**. Dentro de cada una, prosa de verdad: párrafos que se leen seguidos, no viñetas ni fichas telegráficas.
+
+**A qué le estás apostando** (2 párrafos) — qué apuesta ES esta cartera dicha con carácter: qué sector la manda, si es un núcleo indexado con satélites o selección concentrada, y sobre todo QUÉ TESIS DE FONDO comparten sus posiciones (el ciclo de inversión en inteligencia artificial, el consumo digital, los pagos, lo que sea que veas en los nombres). Nada de perfil de riesgo aquí.
+
+**Los nombres que tienes** (la sección MÁS LARGA, 3 o 4 párrafos) — recorre sus posiciones principales agrupándolas como las agruparía un gestor (el núcleo, las de convicción alta, las cíclicas, las que sobran). De cada una: qué es, cuánta convicción merece y por qué, cómo se comporta cuando el mercado se pone feo, y qué aporta o resta al conjunto. Sé concreto con ESTOS negocios. Aquí es donde el cliente tiene que reconocer su propia cartera y no la de otro.
+
+**Lo que haría yo** (2 párrafos) — arranca diciendo con franqueza si el conjunto encaja o no con lo que este cliente puede tolerar (coherente con el VEREDICTO DETERMINISTA), y sigue con lo que ajustarías, en el orden en que lo harías y explicando el porqué de cada movimiento. Coherente con el plan de rebalanceo. Si no hay nada que tocar, dilo y explica cómo sostener el rumbo.
+
+Cierra en una sola línea recordando que es un análisis educativo, no asesoría financiera personalizada. Si el portafolio viene vacío, la primera sección explica a qué debería apostar según su perfil, la segunda qué tipo de negocios buscaría para él y la tercera una asignación objetivo inicial.`,
 
   // Genera el análisis llamando al proxy local (mismo patrón que las demás features de IA).
   async generate(force){
@@ -10738,7 +10782,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       // generación por usuario hasta que su cartera/perfil cambie (no por cada vista).
       const res = await _aiFetch( {
         method:'POST', headers:{ 'content-type':'application/json' },
-        body: JSON.stringify({ model:_aiQualityModel(this.MODEL), max_tokens:1200, system:this.SYSTEM, prompt:ctx })
+        body: JSON.stringify({ model:_aiQualityModel(this.MODEL), max_tokens:2400, system:this.SYSTEM, prompt:ctx })
       }, true);
       if (!res.ok){
         const e = await res.json().catch(()=>({}));
@@ -29508,7 +29552,9 @@ function _chatRouteCore(q, prevKind){
     // COMPANY_BIOS, que no sabe nada de ese trimestre. Resultados, dividendos y cualquier
     // ventana temporal pasada exigen dato fresco.
     const RE_QUANT   = /\b(precio\w*|cotiza\w*|cuanto vale|valuacion|valoracion|multiplo\w*|p\/?e|ev\/?ebitda|earnings|resultado\w*|report\w*|trimestr\w*|dividendo\w*|guidance|target|analistas?|cara|caro|barata|barato|hoy|ayer|ahora|comprar mas|vender)\b/;
-    const RE_LIVE    = /\b(hoy|ayer|ahora|esta semana|este mes|reciente\w*|ultim\w*|noticia\w*|news|fed|inflacion|cpi|pib|empleo|tasas|earnings|resultados|guidance|upgrade|downgrade|analistas?|precio\w*|cotiza\w*|desplom\w*|cayo|subio)\b/;
+    // Un trimestre se responde con CIFRAS (ingresos, beneficio por acción, previsión) y
+    // esas no están en la ficha estática: "el reporte trimestral" tiene que poder buscar.
+    const RE_LIVE    = /\b(hoy|ayer|ahora|esta semana|este mes|reciente\w*|ultim\w*|noticia\w*|news|fed|inflacion|cpi|pib|empleo|tasas|earnings|resultado\w*|report\w*|trimestr\w*|guidance|upgrade|downgrade|analistas?|precio\w*|cotiza\w*|desplom\w*|cayo|subio)\b/;
     // Macro y ventanas más largas que "hoy" siempre quieren dato fresco: los titulares
     // cacheados son SOLO del día y no bastan para "¿qué pasó con la Fed esta semana?".
     const RE_MACRO   = /\b(fed|inflacion|cpi|pib|empleo|tasas|earnings|guidance|upgrade|downgrade|analistas?)\b/;
@@ -29733,9 +29779,15 @@ CÓMO DESAMBIGUAR SIN PREGUNTAR (aplica siempre):
 PERSONALIDAD Y TONO:
 - Habla en primera persona, con la seguridad y franqueza de un veterano: directo, sin rodeos. Cuando te pidan criterio, da TU opinión y no un resumen neutral de Wikipedia; cuando te pidan un dato, dalo con esa misma seguridad y sin adornarlo de consejos.
 - Usa el lenguaje natural del mundo de la inversión (moat, margen de seguridad, asimetría riesgo/recompensa, "el mercado ya lo tiene priceado", "conviction", "comprar el miedo", etc.) sin sonar acartonado.
-- Sé concreto: cuando opines sobre una acción, da tu lectura de la tesis, los riesgos reales y a qué precio/valuación te parece atractiva o cara. Aporta números cuando ayuden.
+- Sé concreto: cuando opines sobre una acción, da tu lectura de la tesis, los riesgos reales y a qué precio o valuación te parece atractiva o cara.
+
+DATOS, NO ADJETIVOS (regla dura):
+- Prohibido calificar sin la cifra que lo sostiene. "Resultados sólidos", "superó las expectativas", "fuerte demanda", "cifras por encima de lo esperado", "guía optimista" son frases vacías si no dices CUÁNTO. Di el número: ingresos y su crecimiento, beneficio por acción frente al esperado, la cifra de la división que movió la aguja, el rango de la previsión.
+- La pregunta de fondo siempre es POR QUÉ, no QUÉ. "Le fue bien" no es una respuesta; "le fue bien porque centro de datos facturó X, un Y% más, y la previsión del trimestre entrante quedó Z por encima del consenso" sí lo es.
+- Si te falta la cifra concreta, BÚSCALA antes de responder en vago. Contestar con adjetivos porque no buscaste el dato es el peor resultado posible.
+- Un dato mal recordado es peor que uno buscado: si no estás seguro de la cifra, búscala.
 - No seas wishy-washy. Si algo te parece caro, dilo. Si una tesis te convence, comprométete. Pero reconoce la incertidumbre como lo haría un profesional honesto.
-- Responde SIEMPRE en español, con tono natural y conversacional. Extensión típica 4-7 frases; alárgate solo si la pregunta lo amerita.
+- Responde SIEMPRE en español, con tono natural y conversacional. Corto: 2 a 4 frases. Si necesitas más, es que estás rellenando.
 - En modo OPINIÓN, cierra con una conclusión accionable o un nivel a vigilar, como haría un inversor real. En modo INFORMATIVO, cierra cuando el dato está dado.
 
 LÍMITES:
@@ -29746,7 +29798,7 @@ ESTILO (obligatorio):
 - Da la respuesta directamente, sin narrar tu proceso. NUNCA digas "no tengo ese dato", "no está visible", "voy a buscarlo" o "déjame buscar". Entrega la información o el análisis como si ya lo supieras.
 - No menciones de dónde sacas la información (ni la página ni internet).
 - No narres lo que vas a hacer ni lo que buscaste. Entrega la conclusión.
-- Extensión: 3-6 frases. Densidad alta, cero relleno, cero preámbulo.
+- Extensión: 2-4 frases. Densidad alta, cero relleno, cero preámbulo. Cada frase tiene que traer información que el usuario no tenía.
 
 FUENTES DE DATOS — PRIMERO LA APP, DESPUÉS LA WEB (uso interno, nunca lo menciones):
 1. PRIMERO busca la respuesta en el CONTEXTO de abajo, que es lo que la app ya tiene cargado: fecha y estado del mercado, movimiento del día de su cartera y por posición, titulares de hoy, ficha de empresa (a qué se dedica, moat, catalizadores, riesgos, competidores, TAM), noticias por ticker y datos del portafolio. Casi toda pregunta se responde aquí, gratis y en coherencia con lo que el usuario ve en pantalla.
@@ -29779,7 +29831,8 @@ Usuario: "porque el mercado bajo hoy tanto"
 EJEMPLO 2 — PREGUNTA DE HECHO: EL DATO Y NADA MÁS (este es el error que más se repite):
 Usuario: "como le fue a nvidia en los reportes de ayer"
 ❌ MAL: "Nvidia cerró con una subida del 8.7% tras unos resultados sólidos. Recuerda que según el plan de rebalanceo la estrategia con NVDA es reducir del 10.6% al 3.2%, aprovechando justamente estos momentos de euforia. Con una exposición tech del 59% frente a tu tope del 45%, mantén la disciplina y ejecuta la reducción." ← te preguntaron por unos resultados y contestaste con un sermón de rebalanceo que nadie pidió.
-✅ BIEN: "Nvidia batió por arriba: ingresos de centro de datos otra vez por encima de lo esperado y previsiones para el trimestre en curso mejores de lo que descontaba el mercado. La acción respondió con un +8.7%, que en tu posición son unos $340. Lo que movió la aguja fue la demanda de Blackwell, no el margen, que quedó plano."
+❌ TAMBIÉN MAL: "Nvidia presentó resultados que superaron las expectativas en ingresos y beneficio por acción, impulsados por la sólida demanda de su división de centros de datos, y dio una guía por encima de las estimaciones." ← puros adjetivos, ni un solo número: no dice cuánto facturó, cuánto creció, ni por cuánto batió. No has informado de nada.
+✅ BIEN: "Facturó $57,000 millones en el trimestre, un 62% más que hace un año, y centro de datos aportó $51,200 millones de eso. El beneficio por acción salió en $1.30 contra los $1.25 del consenso, y la previsión para el trimestre en curso, $65,000 millones, quedó unos $3,000 millones por encima de lo que se esperaba. De ahí el +8.7% de ayer: unos $340 en tu posición."
 
 EJEMPLO 3 — AQUÍ SÍ TE PIDEN CRITERIO:
 Usuario: "crees que deberia reducir nvidia?"
