@@ -10718,6 +10718,16 @@ const PV_AI = {
         ctx += plan.text + '\n';
         ctx += 'Regla dura: si un ticker dice AUMENTAR, no lo recortes; si dice REDUCIR, no lo subas; si dice MANTENER, no propongas moverlo. Puedes explicar el porqué con tu criterio, pero la DIRECCIÓN por ticker debe ser idéntica a este plan.\n';
       }
+      // Las empresas sugeridas se muestran en la misma tarjeta, justo debajo del plan. Si
+      // el análisis no las conoce, acaba proponiendo otras distintas dos centímetros más
+      // abajo en la misma pantalla.
+      try {
+        const sug = (typeof _pvxSuggestNew === 'function') ? _pvxSuggestNew(m, T) : [];
+        if (sug.length){
+          ctx += '\n── EMPRESAS SUGERIDAS QUE EL USUARIO VE JUSTO DEBAJO DEL PLAN (no propongas otras distintas) ──\n';
+          sug.forEach(x => { ctx += `• ${x.ticker} (${x.fam}) — peso sugerido ${(x.pct*100).toFixed(1)}%\n`; });
+        }
+      } catch(e){}
     }
     return { ctx, empty, hasProfile: !!p, planSig };
   },
@@ -10957,6 +10967,37 @@ async function _pvxEnsureFundamentals(tickers){
 // "Portiv Intelligence" (PV_AI) y el chatbot. Así las tres dicen lo MISMO: si el plan dice
 // AUMENTAR NVDA, ni el análisis ni el chat pueden decir "reduce NVDA". Evita la lógica
 // duplicada que antes vivía suelta en la tabla y podía contradecir al resto.
+// ── FECHA DEL ÚLTIMO TRIMESTRE PUBLICADO, PERSISTIDA ───────────────────────────────
+// El plan tiene que rehacerse cuando una empresa publica resultados nuevos: son los
+// números con los que el motor la califica, y un plan calculado con el trimestre
+// anterior recomienda sobre una foto vieja.
+//
+// No se puede colgar de _analysisEarningsKey a secas: EPS._cache vive solo en memoria,
+// así que al recargar la app devuelve 'na' hasta que llega la petición. Si la firma del
+// plan dependiera de eso, cambiaría en CADA sesión y el análisis con IA se regeneraría
+// —y se cobraría— una vez por apertura. Guardando la última fecha conocida, la firma solo
+// se mueve cuando de verdad hay un trimestre nuevo.
+const _PV_EARN_LS = 'pv_earn_keys_v1';
+let _pvEarnKeys = {};
+try { _pvEarnKeys = JSON.parse(localStorage.getItem(_PV_EARN_LS) || '{}') || {}; } catch(e){ _pvEarnKeys = {}; }
+function _pvEarnKey(tk){
+  tk = (tk || '').toUpperCase();
+  if (!tk) return 'na';
+  let live = 'na';
+  try { live = _analysisEarningsKey(tk) || 'na'; } catch(e){}
+  if (live !== 'na' && _pvEarnKeys[tk] !== live){
+    _pvEarnKeys[tk] = live;
+    try { _lsSet(_PV_EARN_LS, JSON.stringify(_pvEarnKeys)); } catch(e){}
+  }
+  return _pvEarnKeys[tk] || 'na';
+}
+// El trimestre más reciente entre las posiciones — para decirle al usuario con qué datos
+// está mirando el plan, en vez de dejarlo suponer que son de hoy.
+function _pvLastEarnDate(tickers){
+  const ds = (tickers || []).map(t => _pvEarnKey(t)).filter(d => d && d !== 'na').sort();
+  return ds.length ? ds[ds.length - 1] : null;
+}
+
 function _buildRebalPlan(m){
   try {
     if (!m) {
@@ -10984,7 +11025,10 @@ function _buildRebalPlan(m){
     const text = rows.length
       ? rows.map(r => `• ${r.ticker}: ${r.action} (${pctS(r.cur)} → ${pctS(r.sug)})`).join('\n')
       : '(sin posiciones)';
-    const sig = rows.map(r => r.ticker + ':' + r.action).join('|');   // firma de DIRECCIONES (para invalidar caché)
+    // Firma de DIRECCIONES + TRIMESTRE (para invalidar caché). Con la fecha del último
+    // reporte dentro, publicar resultados invalida el plan cacheado y el análisis con IA
+    // que se apoya en él, que es exactamente cuando deben rehacerse.
+    const sig = rows.map(r => r.ticker + ':' + r.action + '@' + _pvEarnKey(r.ticker)).join('|');
     return { rows, text, sig };
   } catch(e){ return { rows: [], text: '(no disponible)', sig: '' }; }
 }
@@ -11211,6 +11255,22 @@ function renderDeepPortfolioAnalysis(T) {
 
   const _pp = (typeof getInvestorProfile==='function') ? getInvestorProfile() : null;
   const _perfilTxt = _pp ? `tu perfil <strong>${_pp.label}</strong> (${_pp.horizonLabel.toLowerCase()}, riesgo ${_pp.riskLabel.toLowerCase()})` : 'tu perfil de inversionista';
+  // CON QUÉ DATOS ESTÁ HECHO ESTE PLAN. Un plan de rebalanceo sin fecha se lee como si
+  // fuera de hoy siempre; en realidad se recalcula cuando una de tus empresas publica
+  // resultados. Decirlo evita que el usuario actúe sobre una foto que cree más fresca
+  // de lo que es, y hace visible que el plan SÍ se actualiza cada trimestre.
+  let _rblFreshHTML = '';
+  try {
+    const _lastQ = (typeof _pvLastEarnDate === 'function') ? _pvLastEarnDate(HOLDINGS.map(h => h.ticker)) : null;
+    if (_lastQ){
+      const _MS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const _mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(_lastQ);
+      const _fq = _mm ? `${+_mm[3]} de ${_MS[+_mm[2]-1]} de ${_mm[1]}` : _lastQ;
+      _rblFreshHTML = `<div style="font-size:11px;color:var(--text3);margin:-8px 0 14px;line-height:1.5">`
+        + `Calculado con los resultados publicados hasta el <b>${_fq}</b> y con los precios de hoy. `
+        + `Se rehace solo cuando una de tus empresas reporta un trimestre nuevo.</div>`;
+    }
+  } catch(e){}
   document.getElementById('port-rebal-recs').innerHTML = `
     <div class="pv-lock">
       <!-- El párrafo que explica CÓMO se calcula el rebalanceo va DENTRO del candado:
@@ -11226,16 +11286,22 @@ function renderDeepPortfolioAnalysis(T) {
         uno agresivo prima el crecimiento que compone y acepta una cartera más concentrada.
         Sobre eso van los límites: techo por posición, techo por sector y un mínimo por debajo del
         cual una posición no aporta.
-        La columna de la derecha explica las dos mitades: qué hace ese nombre <strong>dentro de tu
-        cartera</strong> y qué está haciendo <strong>el negocio</strong>. Vender posiciones ganadoras
+        Sobre eso se mira además <strong>dónde está el precio hoy</strong>: la misma empresa en la
+        parte baja de su rango del año y en máximos no merece el mismo peso, así que el momento
+        ajusta el tamaño de la posición — nunca decide si la empresa debe estar en la cartera.
+        La columna de la derecha explica las tres mitades: qué hace ese nombre <strong>dentro de tu
+        cartera</strong>, qué está haciendo <strong>el negocio</strong> y qué está haciendo
+        <strong>el precio</strong>. Vender posiciones ganadoras
         puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
       </div>
+      ${_rblFreshHTML}
       <div class="rbl-card">
         <table class="rbl-table">
           <thead><tr><th>Activo</th><th>Acción</th><th>Rebalanceo</th><th>Análisis</th></tr></thead>
           <tbody>${recRows}</tbody>
         </table>
       </div>
+      ${(typeof _pvxSuggestHTML === 'function') ? _pvxSuggestHTML(m, T) : ''}
       ${(typeof _pvLockOverlay === 'function') ? _pvLockOverlay('Qué comprar, qué recortar y cuánto, posición por posición') : ''}
     </div>
     <div class="rbl-sub" style="margin-top:12px">
@@ -11592,6 +11658,70 @@ function _pvxRebalEngine(m, T){
   // dentro de una frase; "semiconductores" sí.
   const secTxt = s => String(s || '').split('·').pop().trim().toLowerCase();
 
+  // ── MOMENTO DEL PRECIO ─────────────────────────────────────────────────────────
+  // El plan miraba el NEGOCIO (calidad, valoración, ciclo) y el TAMAÑO de la posición,
+  // pero no DÓNDE ESTÁ EL PRECIO HOY — que es justo lo que separa una buena empresa de
+  // una buena compra. La misma compañía a un 40% de su máximo del año y en su máximo no
+  // merecen el mismo peso, y sin esto el plan decía lo mismo en los dos casos: por eso
+  // sonaba a plantilla.
+  //
+  // Se lee del rango de 52 semanas y del objetivo de consenso, que es lo que hay
+  // publicado. Si falta el dato NO se inventa momento: la fila simplemente no se toca
+  // por él (misma regla anti-invento que el resto del motor).
+  const momOf = tk => {
+    const f = infoOf(tk); if (!f) return null;
+    const px = num(f,'regularMarketPrice'), hi = num(f,'fiftyTwoWeekHigh'), lo = num(f,'fiftyTwoWeekLow');
+    if (px == null || hi == null || lo == null || hi <= lo || px <= 0) return null;
+    const pos     = Math.max(0, Math.min(1, (px - lo) / (hi - lo)));   // 0 = mínimo del año, 1 = máximo
+    const offHigh = px / hi - 1;
+    const tgt     = num(f,'targetMeanPrice');
+    const upside  = (tgt != null && tgt > 0) ? (tgt / px - 1) : null;
+    const label   = pos >= 0.92 ? 'maximos' : pos >= 0.72 ? 'alto'
+                  : pos >= 0.30 ? 'medio'   : pos >= 0.12 ? 'bajo' : 'minimos';
+    return { px, hi, lo, pos, offHigh, upside, label };
+  };
+  // El momento AJUSTA, no decide: como mucho medio punto de nota sobre 10. Un motor que
+  // deje al precio mandar sobre el negocio compra lo que sube y vende lo que baja, que es
+  // la forma más cara de rebalancear. El agresivo puede inclinarse algo más; el
+  // conservador, menos.
+  const MOMMAX = risk === 'alto' ? 0.5 : risk === 'bajo' ? 0.3 : 0.4;
+  const momTiltOf = (r, q) => {
+    const mo = r.mom; if (!mo) return 0;
+    let t = 0;
+    // Buen negocio castigado por el mercado: el negocio no cambió y el precio sí.
+    if (q >= 7 && mo.pos <= 0.30) t += 0.45;
+    // Cíclica en máximos: comprar el pico del ciclo es el error caro de un rebalanceo.
+    if (mo.pos >= 0.90 && (r.cycPeak || isCyc(r.it.sector))) t -= 0.45;
+    // Negocio flojo que además ya subió: pagar más por lo que menos lo sostiene.
+    if (q < 5.5 && mo.pos >= 0.85) t -= 0.35;
+    // Consenso por debajo del precio actual: el mercado ya descontó más de lo que se espera.
+    if (mo.upside != null && mo.upside <= -0.10) t -= 0.25;
+    else if (mo.upside != null && mo.upside >= 0.20 && q >= 6.5) t += 0.20;
+    return Math.max(-MOMMAX, Math.min(MOMMAX, t));
+  };
+  // La frase del momento solo se escribe cuando el precio está en un extremo del rango:
+  // "está a media tabla de su rango" no le dice nada a nadie y gasta palabras del tope.
+  const momRead = r => {
+    const mo = r.mom; if (!mo) return '';
+    // El núcleo indexado NO se cronometra: avisar de que "cotiza en máximos" a quien tiene
+    // el S&P 500 como base es empujarle a esperar un mejor precio para estar diversificado,
+    // que es justo lo contrario de para qué está ahí. En el núcleo, el precio no opina.
+    if (r.core) return '';
+    const off = Math.abs(mo.offHigh * 100);
+    const up  = (mo.upside != null && Math.abs(mo.upside) >= 0.12)
+      ? ` El consenso de analistas lo sitúa un ${Math.abs(mo.upside*100).toFixed(0)}% ${mo.upside > 0 ? 'por encima' : 'por debajo'} del precio de hoy.`
+      : '';
+    if (mo.label === 'minimos')
+      return `Cotiza en la zona baja de su rango del año, un ${off.toFixed(0)}% bajo su máximo.${up}`;
+    if (mo.label === 'bajo')
+      return `El precio va un ${off.toFixed(0)}% por debajo de su máximo del año.${up}`;
+    if (mo.label === 'maximos')
+      return `Cotiza en máximos de 52 semanas: hoy pagas el precio más alto que ha tenido en un año.${up}`;
+    if (mo.label === 'alto')
+      return `Está a un ${off.toFixed(0)}% de su máximo del año, en la parte alta de su rango.${up}`;
+    return '';
+  };
+
   const cap1 = t => t ? t.charAt(0).toUpperCase() + t.slice(1) : t;
   const wcx  = s => (String(s).match(/\S+/g) || []).length;
 
@@ -11906,7 +12036,11 @@ function _pvxRebalEngine(m, T){
     // Y aquí entra el criterio del cliente: mismo negocio, distinto tamaño según a quién
     // se lo estás dimensionando.
     r.tilt = tiltOf(r);
-    q = Math.max(1, Math.min(10, q + r.tilt));
+    // El momento entra DESPUÉS del ciclo y del criterio de perfil, y acotado: ajusta el
+    // tamaño de la posición, nunca decide si la empresa merece estar en la cartera.
+    r.mom     = momOf(r.tk);
+    r.momTilt = momTiltOf(r, q);
+    q = Math.max(1, Math.min(10, q + r.tilt + r.momTilt));
     r.qEff = q; r.raw = Math.pow(Math.max(1,q), CONC);
   });
   let rawSum = scored.reduce((s,r)=>s+r.raw, 0) || 1;
@@ -12003,6 +12137,11 @@ function _pvxRebalEngine(m, T){
     // una posición con deuda alta subía diciendo "sus números lo sostienen", ignorando el aviso
     // que la propia frase anterior acababa de dar.
     const biz  = bizRead(r);
+    // Las filas congeladas (sin nota, o núcleo indexado) no pasan por el reparto y por
+    // tanto no tienen momento calculado. Se calcula aquí para que el motivo pueda hablar
+    // del precio también en ellas.
+    if (r.mom === undefined) r.mom = momOf(r.tk);
+    const mom  = momRead(r);
     // No se le vende el foso a alguien a quien le estás diciendo que cierre la posición, ni
     // se abre la nota alabando el negocio de una empresa que pierde dinero o quema caja: el
     // aviso va primero y la ventaja competitiva, si cabe, después.
@@ -12112,8 +12251,16 @@ function _pvxRebalEngine(m, T){
       else
         move = `Sus números sostienen más peso del que tiene hoy: ${up}${with_}`;
     } else {
+      // MANTENER era la fila más pobre del plan: una sola frase igual para todos. Con el
+      // momento delante, "no la muevas" deja de ser un encogimiento de hombros y pasa a
+      // ser una decisión con fecha: el peso está bien HOY, y el precio dice si el dinero
+      // nuevo debería ir aquí o esperar.
       move = r.core
         ? `Por eso no se toca: vender índice para comprar acciones sueltas cambia diversificación por apuesta.`
+        : (r.mom && (r.mom.label === 'minimos' || r.mom.label === 'bajo') && (r.qEff || 0) >= 7)
+          ? `El peso ya es el correcto y lo que se movió fue el precio, no el negocio: déjala, y si entra dinero nuevo este es de los sitios donde ponerlo.`
+        : (r.mom && r.mom.label === 'maximos' && isCyc(r.it.sector))
+          ? `El peso está bien, pero agrandarla comprando en máximos de su ciclo es el error caro: déjala como está.`
         : `Ni el negocio ni el tamaño piden moverla: déjala como está.`;
     }
 
@@ -12128,15 +12275,220 @@ function _pvxRebalEngine(m, T){
     // así que la lectura financiera nunca se sacrifica por dejar sitio a la ventaja
     // competitiva. Al AUMENTAR es al revés: lo que hay que justificar es por qué ese
     // negocio merece más dinero, y eso lo contesta el foso, no un ratio.
+    // El momento del precio entra en la escalera con prioridad alta: es la mitad de la
+    // decisión que faltaba y la que hace que el motivo cambie de un trimestre a otro.
+    // Se sacrifica antes el recuento de cartera (el peso y el nº están en las columnas
+    // de al lado) que el precio o la razón de negocio.
     const cands = action === 'REDUCIR'
-      ? [`${port} ${qual} ${biz} ${move}`, `${qual} ${biz} ${move}`, `${biz} ${move}`, move]
-      : [`${port} ${qual} ${biz} ${move}`, `${qual} ${biz} ${move}`, `${qual} ${move}`,
-         `${port} ${biz} ${move}`, `${biz} ${move}`, move];
-    const why = cands.map(c => c.replace(/\s{2,}/g, ' ').trim()).find(c => wcx(c) <= 60) || move;
+      ? [`${port} ${qual} ${biz} ${mom} ${move}`, `${qual} ${biz} ${mom} ${move}`,
+         `${biz} ${mom} ${move}`, `${biz} ${move}`, move]
+      : [`${port} ${qual} ${biz} ${mom} ${move}`, `${qual} ${biz} ${mom} ${move}`,
+         `${qual} ${mom} ${move}`, `${port} ${biz} ${mom} ${move}`, `${biz} ${mom} ${move}`,
+         `${biz} ${move}`, move];
+    const why = cands.map(c => c.replace(/\s{2,}/g, ' ').trim()).find(c => wcx(c) <= 78) || move;
 
     out[r.tk] = { sug, action, why };
   });
   return out;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════
+//  QUÉ LE FALTA A ESTA CARTERA — empresas sugeridas por perfil
+// ══════════════════════════════════════════════════════════════════════════════════
+// El plan de rebalanceo solo sabe repartir entre lo que YA tienes: si a la cartera le
+// falta un sector entero, mover pesos entre semiconductores no lo arregla. Esta tabla
+// contesta la otra mitad de la pregunta —qué comprar que todavía no tengas— y lo hace
+// por hueco real, no por lista de moda: primero se mide qué familia está por debajo de
+// lo que le correspondería a ESE perfil, y solo después se elige el nombre.
+//
+// Universo: las empresas con ficha en COMPANY_BIOS. La razón de cada una sale de su
+// `moat` —una ventaja concreta y verificable, escrita empresa por empresa— y no de un
+// adjetivo generado al vuelo. Sin ficha no entra: no se recomienda lo que no se puede
+// justificar.
+
+// Familia canónica a partir del sector que ya usa la app. El orden importa: una
+// semiconductora también casa con /tech/, así que lo específico va primero.
+function _pvxFamOf(sector){
+  const s = String(sector || '');
+  if (/etf|índice|indice/i.test(s))                                   return 'Índice';
+  if (/semiconduct|memoria|semis/i.test(s))                           return 'Semiconductores';
+  if (/salud|health|farma|biotec/i.test(s))                           return 'Salud';
+  if (/pago|payment|fintech/i.test(s))                                return 'Pagos';
+  if (/banc|financ|seguro|asegur/i.test(s))                           return 'Financiero';
+  if (/energ|petról|petrol|oil|gas/i.test(s))                         return 'Energía';
+  if (/consumo|consumer|retail|alimen|bebida|defensiv/i.test(s))      return 'Consumo';
+  if (/comunicac|media|streaming|telecom|internet|ads|adtech/i.test(s)) return 'Comunicación';
+  if (/tech|software|cloud|hardware|industri/i.test(s))               return 'Tecnología';
+  return 'Otros';
+}
+
+// Candidatas por familia, ordenadas de más a menos duradera dentro de cada una.
+// `t` = carácter del negocio: d defensiva · c compone · g crecimiento. Decide para qué
+// perfil es apropiada, no si la empresa es buena.
+const _PVX_CAND = {
+  'Tecnología':      [['MSFT','c'],['GOOGL','c'],['AAPL','c'],['ORCL','c'],['ADBE','c'],['ACN','c'],['CSCO','d'],['CRM','g'],['AMZN','c']],
+  'Semiconductores': [['AVGO','c'],['TSM','c'],['NVDA','g'],['AMD','g'],['MU','g']],
+  'Salud':           [['UNH','c'],['LLY','g'],['JNJ','d'],['ABBV','d'],['MRK','d']],
+  'Financiero':      [['BRKB','d'],['JPM','c'],['BAC','c']],
+  'Pagos':           [['V','c'],['MA','c']],
+  'Consumo':         [['COST','c'],['PG','d'],['WMT','d'],['KO','d'],['PEP','d'],['HD','c'],['MCD','d']],
+  'Energía':         [['XOM','d'],['CVX','d']],
+  'Comunicación':    [['META','c'],['TMUS','d'],['NFLX','g'],['DIS','c']]
+};
+// Tres empresas con ficha que no están en STOCK_DB y por tanto no tienen nombre ahí.
+const _PVX_NAME_FB = { BRKB:'Berkshire Hathaway', TMUS:'T-Mobile US', MCD:"McDonald's" };
+
+// Reparto objetivo por familia según el perfil. No es una cartera modelo: es la vara con
+// la que se mide QUÉ FALTA. Un conservador debe pesar más en salud y consumo básico;
+// un agresivo, en tecnología y semiconductores. Suman ~100 en cada columna.
+const _PVX_FAM_TARGET = {
+  bajo:  { 'Tecnología':0.15, 'Salud':0.16, 'Consumo':0.18, 'Financiero':0.14, 'Pagos':0.09, 'Comunicación':0.06, 'Energía':0.07, 'Semiconductores':0.05 },
+  medio: { 'Tecnología':0.21, 'Salud':0.13, 'Consumo':0.12, 'Financiero':0.11, 'Pagos':0.09, 'Comunicación':0.08, 'Energía':0.05, 'Semiconductores':0.11 },
+  alto:  { 'Tecnología':0.26, 'Salud':0.09, 'Consumo':0.06, 'Financiero':0.07, 'Pagos':0.07, 'Comunicación':0.09, 'Energía':0.03, 'Semiconductores':0.19 }
+};
+
+function _pvxSuggestNew(m, T){
+  try {
+    const items = (m && m.items) ? m.items.filter(i => i && i.weight > 0) : [];
+    if (!items.length) return [];
+    const prof  = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
+    const riskS = String((prof && prof.riskLabel) || '').toLowerCase();
+    const risk  = /agres|alto/.test(riskS) ? 'alto' : /conserv|baj/.test(riskS) ? 'bajo' : 'medio';
+    const perfTxt = risk === 'alto' ? 'agresivo' : risk === 'bajo' ? 'conservador' : 'moderado';
+    const MAXW  = risk === 'alto' ? 0.12 : risk === 'bajo' ? 0.07 : 0.09;
+    const MINW  = 0.025;
+    const target = _PVX_FAM_TARGET[risk];
+    const held  = new Set(items.map(i => (i.ticker||'').toUpperCase()));
+
+    // ── Cuánto de la cartera es núcleo indexado ──────────────────────────────────
+    // Un fondo de 500 empresas YA da exposición a salud, financiero y consumo. Decirle a
+    // alguien con 40% en el S&P 500 que "no tiene nada en salud" sería sencillamente
+    // falso, así que el núcleo se descuenta: los objetivos se miden sobre la parte de la
+    // cartera que son acciones elegidas una a una.
+    const isCore = i => {
+      const tk = (i.ticker||'').toUpperCase();
+      try { if (typeof ETF_DB !== 'undefined' && ETF_DB[tk] && (ETF_DB[tk].nHold||0) >= 50) return true; } catch(e){}
+      return /etf|índice|indice/i.test(String(i.sector||''));
+    };
+    const coreW  = items.filter(isCore).reduce((a,i)=>a+i.weight, 0);
+    const stockW = Math.max(0, 1 - coreW);
+    if (stockW < 0.15) return [];   // cartera casi toda indexada: no hay hueco que llenar
+
+    const famCur = {};
+    items.filter(i => !isCore(i)).forEach(i => {
+      const f = _pvxFamOf(i.sector); famCur[f] = (famCur[f] || 0) + i.weight;
+    });
+
+    // Hueco por familia, ya descontado el núcleo indexado.
+    const gaps = Object.keys(target).map(f => ({
+      fam: f, cur: famCur[f] || 0, tgt: target[f] * stockW, gap: target[f] * stockW - (famCur[f] || 0)
+    })).filter(g => g.gap >= 0.015).sort((a,b)=>b.gap-a.gap);
+    if (!gaps.length) return [];
+
+    const okFor = t => risk === 'bajo' ? t !== 'g' : risk === 'alto' ? t !== 'd' : true;
+    const nameOf = tk => {
+      try { const row = (typeof STOCK_DB !== 'undefined') ? STOCK_DB.find(r => r[0] === tk) : null; if (row) return row[1]; } catch(e){}
+      return _PVX_NAME_FB[tk] || tk;
+    };
+    const TIPO_TXT = {
+      d: 'Es de las que menos se mueven cuando el mercado cae.',
+      c: 'Compone sin depender de que el ciclo acompañe.',
+      g: 'Aporta crecimiento, y con él volatilidad.'
+    };
+    const cut = (v,n) => { const t = String(v||'').replace(/\s+/g,' ').trim(); return t.length > n ? t.slice(0,n).replace(/[\s,;:—-]+$/,'') + '…' : t; };
+    const pctS = v => (v*100).toFixed(1) + '%';
+
+    const out = [];
+    gaps.forEach(g => {
+      if (out.length >= 5) return;
+      const pool = (_PVX_CAND[g.fam] || []).filter(([tk]) => !held.has(tk));
+      // Primero las apropiadas para el perfil; si la familia entera queda fuera (p. ej.
+      // energía para un agresivo), se acepta la mejor antes que dejar el hueco sin cubrir.
+      const pick = pool.find(([,t]) => okFor(t)) || pool[0];
+      if (!pick) return;
+      const [tk, tipo] = pick;
+      const bio = (typeof COMPANY_BIOS !== 'undefined') ? COMPANY_BIOS[tk] : null;
+      if (!bio) return;                                   // sin ficha no se recomienda
+
+      const pesoSug = Math.max(MINW, Math.min(MAXW, Math.round(g.gap * 200) / 200));
+
+      // ① Qué arregla en ESTA cartera. ② Por qué ESE negocio. ③ Para qué perfil.
+      const hueco = g.cur <= 0.002
+        ? `Hoy no tienes nada en ${g.fam.toLowerCase()}${coreW > 0.05 ? ' fuera de tu núcleo indexado' : ''}.`
+        : `${g.fam} pesa ${pctS(g.cur)} de tu cartera y a un perfil ${perfTxt} le correspondería cerca de ${pctS(g.tgt)}.`;
+      const porque = (bio.moat && bio.moat.length) ? cut(bio.moat[0], 150) : cut(bio.desc, 150);
+      // Un número vivo solo si la app ya lo tiene cargado: nada de inventar fundamentales.
+      let dato = '';
+      try {
+        const f = (typeof _INFO_CACHE !== 'undefined') ? _INFO_CACHE[tk] : null;
+        const gm = f && typeof f.grossMargins === 'number' ? f.grossMargins : null;
+        const rg = f && typeof f.revenueGrowth === 'number' ? f.revenueGrowth : null;
+        if (gm != null && gm >= 0.45) dato = ` Vende con ${(gm*100).toFixed(0)}% de margen bruto.`;
+        else if (rg != null && rg > 0.08) dato = ` Sus ventas crecen ${(rg*100).toFixed(0)}%.`;
+      } catch(e){}
+
+      out.push({ ticker: tk, name: nameOf(tk), fam: g.fam, pct: pesoSug,
+                 why: `${hueco} ${porque}.${dato} ${TIPO_TXT[tipo]}` });
+    });
+
+    // ── CUÁNTO SE PUEDE SUGERIR DE VERDAD ────────────────────────────────────────
+    // Cinco huecos abiertos dan cinco nombres, y sumados pedían mover un tercio de la
+    // cartera de golpe: eso no es un consejo, es una cartera nueva. Se recorta la lista
+    // a lo que el efectivo y los recortes del plan pueden financiar, con un mínimo para
+    // que siempre quede algo accionable y un techo para que nunca sea una reconstrucción.
+    let fundable = 0;
+    try {
+      const cashPct = (T && T.total > 0) ? ((T.cash || 0) + (T.mm || 0)) / T.total : 0;
+      const plan = (typeof _buildRebalPlan === 'function') ? _buildRebalPlan(m) : null;
+      const cortes = plan ? plan.rows.reduce((a, r) => a + Math.max(0, r.cur - r.sug), 0) : 0;
+      fundable = cashPct + cortes;
+    } catch(e){}
+    const TECHO = Math.max(0.12, Math.min(0.22, fundable));
+    const podados = [];
+    let acum = 0;
+    out.forEach(o2 => { if (acum + o2.pct <= TECHO + 0.001){ podados.push(o2); acum += o2.pct; } });
+    const finales = podados.length ? podados : out.slice(0, 1);
+
+    // Pide en segundo plano los fundamentales de lo sugerido: en el siguiente repintado
+    // la razón puede llevar ya un número vivo en vez de solo la ventaja competitiva.
+    try { if (finales.length) _pvxEnsureFundamentals(finales.map(o2 => o2.ticker)); } catch(e){}
+    return finales;
+  } catch(e){ return []; }
+}
+
+function _pvxSuggestHTML(m, T){
+  const recs = _pvxSuggestNew(m, T);
+  if (!recs.length) return '';
+  const prof = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
+  const perf = prof ? prof.label : 'tu perfil';
+  const cashPct = (T && T.total > 0) ? ((T.cash||0) + (T.mm||0)) / T.total : 0;
+  const fondos = cashPct >= 0.02
+    ? `Tienes ${(cashPct*100).toFixed(0)}% en efectivo; el resto sale de los recortes de la tabla de arriba.`
+    : `El dinero sale de los recortes de la tabla de arriba o de aportes nuevos.`;
+  const rows = recs.map(r => `
+      <tr>
+        <td>
+          <div class="rbl-tk">${r.ticker}</div>
+          <div class="rbl-tkw">${r.name}</div>
+        </td>
+        <td><span class="rbl-rebal">${r.fam}</span></td>
+        <td><span class="rbl-rebal"><strong>${(r.pct*100).toFixed(1)}%</strong></span></td>
+        <td><div class="rbl-note">${r.why}</div></td>
+      </tr>`).join('');
+  return `
+    <div class="rbl-sub" style="margin-top:22px">
+      <b style="color:var(--text)">Lo que le falta a tu cartera</b> — no todo se arregla moviendo pesos
+      entre lo que ya tienes. Estas son empresas que hoy no tienes y que cubren los sectores donde tu
+      cartera queda por debajo de lo que le correspondería a un perfil <b>${perf}</b>. El peso sugerido
+      es el destino de cada una sobre el total de tu cartera, para construirlo por tramos y no
+      de una sola vez. ${fondos}
+    </div>
+    <div class="rbl-card">
+      <table class="rbl-table">
+        <thead><tr><th>Empresa</th><th>Sector</th><th>Peso sugerido</th><th>Por qué</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
 }
 
 // Razón genérica de rebalanceo si no hay nota custom
