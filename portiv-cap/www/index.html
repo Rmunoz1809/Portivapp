@@ -36880,12 +36880,16 @@ document.addEventListener('DOMContentLoaded', function(){
           // desactivar un botón que se acaba de pulsar.
           // Al cerrarse (guardar u omitir) sí se va al editor de posiciones, que
           // es el paso siguiente natural; skipCash evita repetir el monto.
+          // Al terminar el monto se ABRE PORTAFOLIO, no Ajustes. _pvManualOnboard hace
+          // showTab('settings') para dejar al usuario sobre el editor de posiciones, y
+          // quien acaba de decir cuánto tiene espera ver su portafolio, no un formulario
+          // de ajustes. El resto de entradas a _pvManualOnboard siguen igual.
           try {
             window._pvAskCash({ force: true, onDone: function(){
-              try { window._pvManualOnboard({ skipCash: true }); } catch(e){}
+              try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
             }});
           } catch(e){
-            try { window._pvManualOnboard(); } catch(_){}
+            try { if (typeof showTab === 'function') showTab('portfolio'); } catch(_){}
           }
         };
         // El retardo de 3 s NO se hace aquí: lo lleva la animación CSS de
@@ -37516,6 +37520,52 @@ document.addEventListener('DOMContentLoaded', function(){
     transition:opacity .15s, transform .05s;
   }
   .pvs-next:hover{ opacity:.92 } .pvs-next:active{ transform:translateY(1px) }
+
+  /* ══ iPad ═══════════════════════════════════════════════════════════════════
+     Mismo diseño, mismas animaciones y el mismo interior de la app: sólo cambia el
+     aparato. El teléfono en una pantalla de 1024 px quedaba como una tira estrecha
+     en medio de dos franjas vacías, y "Saltar" y "Siguiente" se iban a las esquinas
+     mientras el texto vivía en una columna de 460 px — nada alineaba con nada.
+
+     El interior NO se rehace: se dibuja a su tamaño de diseño y se escala con
+     transform. Así las proporciones, los tipos y los fotogramas de las animaciones
+     son EXACTAMENTE los mismos, sólo que más grandes. Reescribir cada medida a mano
+     habría sido rediseñar la maqueta, que es justo lo que no se pide.
+
+     El alto mínimo (>=700px) deja fuera al móvil en horizontal: ahí no cabe un marco
+     de 760 px y el que vale es el del teléfono. */
+  @media (min-width:768px) and (min-height:700px){
+    .pvs-wrap{ max-width:720px; padding-left:36px; padding-right:36px; }
+    /* Saltar y los controles se alinean con la columna, no con el borde de la pantalla. */
+    .pvs-skip{ right:max(22px, calc(50% - 338px)); top:calc(14px + env(safe-area-inset-top)); font-size:14px; }
+    .pvs-head::before{ width:64px; height:34px; }
+    .pvs-title{ font-size:clamp(31px,4.2vw,40px); margin-bottom:10px; }
+    .pvs-text{ font-size:16.5px; line-height:1.55; }
+    .pvs-dots{ margin-top:14px; }
+    .pvs-dot{ height:5px; width:18px; }
+    .pvs-dot.on{ width:42px; }
+    .pvs-stage{ margin-top:20px; }
+    /* Marco de iPad: bisel uniforme, esquinas menos redondas y sin muesca. */
+    .pvs-phone{
+      width:min(620px,100%); border-radius:34px; padding:16px 16px 0;
+      height:max(760px, calc(100% + 64px));
+    }
+    .pvs-notch{ display:none; }
+    /* --pvs-z: cuánto se agranda el interior. width/height se dividen por él para que,
+       ya escalado, el contenido mida exactamente el hueco del marco. */
+    .pvs-screen{
+      --pvs-z:1.6;
+      width:calc(100% / var(--pvs-z)); height:calc(100% / var(--pvs-z));
+      transform:scale(var(--pvs-z)); transform-origin:top left;
+      border-radius:calc(20px / var(--pvs-z)) calc(20px / var(--pvs-z)) 0 0;
+    }
+    .pvs-ctrl{
+      max-width:792px; margin:0 auto;
+      padding:22px 36px calc(20px + env(safe-area-inset-bottom));
+    }
+    .pvs-back{ width:56px; height:56px; border-radius:18px; font-size:19px; }
+    .pvs-next{ height:56px; padding:0 32px; border-radius:18px; font-size:17px; }
+  }
 </style>
 
 <div class="pvs-ov" id="pvSlidesOv" role="dialog" aria-modal="true">
