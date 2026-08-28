@@ -4253,7 +4253,7 @@ window._pvAwaitIAP = function(totalMs){
        compositor: difuminar únicamente la barra de abajo dejaba media pantalla
        nítida y el muro se leía como un bug. El overlay se pinta solo con
        html.pv-free (ver .pv-lock en el bloque de CSS del candado). -->
-  <div class="pv-lock pv-lock-page">
+  <div class="pv-lock pv-lock-page" id="aiChatLockWrap">
   <div class="ai-chat-page">
 
     <!-- Header -->
@@ -4297,8 +4297,8 @@ window._pvAwaitIAP = function(totalMs){
     <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
       <div class="pv-lock-card">
         <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
-        <div class="pv-lock-txt">Pregúntale lo que quieras a <b>Portiv IA</b></div>
-        <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+        <div class="pv-lock-txt" id="aiChatLockTxt">Pregúntale lo que quieras a <b>Portiv IA</b></div>
+        <div class="pv-lock-sub" id="aiChatLockSub">Se desbloquea con Portiv Pro</div>
         <button class="pv-lock-btn" type="button">Ver planes</button>
       </div>
     </div>
@@ -29878,6 +29878,57 @@ function _weekCostSave(bucket, cost){
   try{ localStorage.setItem(key, JSON.stringify({ week:_chatWeekKey(), cost })); }catch(e){}
 }
 function _weekCost(bucket){ return _weekCostGet(bucket).cost; }
+
+// ── CUOTA DEL CHAT EN LA VERSIÓN GRATUITA ──────────────────────────────────────
+// Hasta ahora el chat era Pro-o-nada: el usuario gratuito se topaba con el muro sin
+// haber visto nunca lo que estaba comprando. Diez mensajes por semana son suficientes
+// para que lo entienda, y baratos: al coste real de hoy (~$0.0072 de media, y el peor
+// caso —recomendación con búsqueda— $0.015) el techo del regalo es $0.15 por usuario
+// gratuito y semana, y en la práctica bastante menos.
+//
+// DELIBERADAMENTE NO SE MUESTRA EL CONTADOR. Enseñar "te quedan 3 de 10" convierte cada
+// pregunta en una decisión de racionamiento: el usuario deja de preguntar mucho antes de
+// llegar al tope y no llega a ver el producto, que es justo lo contrario de lo que la
+// cuota busca. El límite solo se nombra cuando se alcanza.
+const _CHAT_FREE_WEEKLY_MSGS = 10;
+const _CHAT_FREE_LS_KEY = 'chat_free_week_msgs';
+
+// Semana ET compartida con los contadores de costo (_chatWeekKey → lunes): así el chat
+// y el badge de gasto rotan a la vez y no hay dos nociones de "esta semana".
+function _chatFreeUsed(){
+  try{ const s=JSON.parse(localStorage.getItem(_CHAT_FREE_LS_KEY)||'null');
+       return (s && s.week===_chatWeekKey()) ? (s.n||0) : 0; }catch(e){ return 0; }
+}
+function _chatFreeBump(){
+  try{ localStorage.setItem(_CHAT_FREE_LS_KEY, JSON.stringify({week:_chatWeekKey(), n:_chatFreeUsed()+1})); }catch(e){}
+}
+function _chatFreeExhausted(){ return _chatFreeUsed() >= _CHAT_FREE_WEEKLY_MSGS; }
+
+// El candado del chat tapa la PANTALLA ENTERA (.pv-lock-page), así que para regalar los
+// diez mensajes no basta con dejar pasar la llamada: hay que quitar las clases del velo
+// mientras quede cuota y devolverlas al agotarse. _pvLocked() (html.pv-free, que escribe
+// _pvApplyProClass) es la fuente de verdad de "es gratuito", igual que en el resto del
+// archivo, y es síncrona — nada de await en la ruta de pintado.
+function _chatApplyFreeGate(){
+  try{
+    const w=document.getElementById('aiChatLockWrap'); if(!w) return;
+    const cerrar = _pvLocked() && _chatFreeExhausted();
+    w.classList.toggle('pv-lock', cerrar);
+    w.classList.toggle('pv-lock-page', cerrar);
+    // Si el muro vuelve, que diga POR QUÉ volvió: "Se desbloquea con Portiv Pro" a secas,
+    // después de diez mensajes que sí funcionaron, se lee como si algo se hubiera roto.
+    const t=document.getElementById('aiChatLockTxt'), sub=document.getElementById('aiChatLockSub');
+    if(t && sub){
+      if(cerrar){
+        t.innerHTML='Has usado tus <b>'+_CHAT_FREE_WEEKLY_MSGS+' mensajes</b> de esta semana';
+        sub.textContent='Con Portiv Pro el chat es ilimitado';
+      } else {
+        t.innerHTML='Pregúntale lo que quieras a <b>Portiv IA</b>';
+        sub.textContent='Se desbloquea con Portiv Pro';
+      }
+    }
+  }catch(e){}
+}
 // El bloqueo aplica EXCLUSIVAMENTE al bucket del chat (las demás features no bloquean el chat).
 function _chatBlocked(){ return false; }   // Topes eliminados: chat ilimitado. El costo se controla por eficiencia (TTL/caché/modelo por vía), no por bloqueo. Los contadores + badge siguen activos (informativos).
 // Bloqueo del bucket 'intel' (por qué se movió / resultado real / cómo afecta). Independiente
@@ -30436,7 +30487,19 @@ async function aiChatSend(){
   // _chatBusy y del botón deshabilitado, para no dejar la UI trabada.
   // Doble capa a propósito: el candado sobre el compositor es visual y se puede
   // evadir desde la consola; esto no.
-  if(!(await _pvAiEntitled())){ try{ window._pvShowPaywall(); }catch(e){} return; }
+  // Pro = ilimitado. Gratuito = _CHAT_FREE_WEEKLY_MSGS por semana; al agotarlos se le
+  // dice el límite UNA vez, en el hilo, y se abre el muro. El aviso va como mensaje del
+  // bot y no como alert para que quede en la conversación: es la explicación de por qué
+  // la pantalla se acaba de bloquear.
+  const _esPro = await _pvAiEntitled();
+  if(!_esPro && _chatFreeExhausted()){
+    _aiChatAddMsg('user', text);
+    input.value=''; input.style.height='auto';
+    _aiChatAddMsg('bot','Has alcanzado el límite de **'+_CHAT_FREE_WEEKLY_MSGS+' mensajes por semana** de la versión gratuita. Con Portiv Pro el chat es ilimitado; si prefieres esperar, se reinicia el lunes.');
+    _chatApplyFreeGate();
+    try{ window._pvShowPaywall(); }catch(e){}
+    return;
+  }
   const key = _ensureApiKey();
   if(!key){ _aiChatAddMsg('bot','Falta tu Anthropic API key.'); return; }
 
@@ -30620,6 +30683,14 @@ ${ctx}`;
     let answer = data.text||'';
     if(!answer && Array.isArray(data.content)) data.content.forEach(b=>{if(b.type==='text') answer+=b.text;});
     answer = answer.trim()||'No pude generar una respuesta.';
+    // Se descuenta AQUÍ y no en el gate: un acierto de caché no llega hasta este punto
+    // (devuelve antes) y un error de red tampoco, así que el usuario gratuito solo gasta
+    // cuota por respuestas que ha recibido de verdad.
+    // Se descuenta, pero el muro NO se levanta aquí: .pv-lock-page difumina la pantalla
+    // entera, así que cerrar justo al recibir la décima respuesta se la taparía al
+    // usuario en la cara. El velo lo pone el intento nº11 (con su aviso en el hilo) o
+    // _pvApplyProClass la próxima vez que se abra la app.
+    if(!_esPro){ _chatFreeBump(); }
 
     // No cachear respuestas que usaron búsqueda web: son las más perecederas y, además,
     // el hit de caché no restituye las `sources` (se servirían sin fuentes).
@@ -35397,6 +35468,11 @@ document.addEventListener('DOMContentLoaded', function(){
       // que se pintó desbloqueado. Sólo desde un `true` real: pasar de undefined a
       // false es el arranque normal, ahí no hay nada que retapar.
       if (!pro && was === true) { try { window._pvRepaintLocked(); } catch(e){} }
+      // El chat gratuito no sigue la regla general "gratis = bloqueado": tiene cuota
+      // semanal, así que su velo depende de la cuota y no solo del veredicto. Se
+      // recalcula aquí porque este es el único punto por el que pasan TODOS los
+      // cambios de entitlement, incluido el primero al arrancar.
+      try { _chatApplyFreeGate(); } catch(e){}
     } catch(e){}
   }
   window._pvApplyProClass = _pvApplyProClass;
