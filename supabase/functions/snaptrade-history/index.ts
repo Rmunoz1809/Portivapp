@@ -20,6 +20,18 @@
 //   partial:  hay curva pero le falta alguna cuenta → la suma va por debajo de la real.
 //   partialBrokers: [{name,slug}] de quién son esas cuentas ausentes, para poder decir si
 //     el hueco es transitorio o una limitación permanente de esa conexión (IBKR).
+//   currency: en qué moneda está la curva. El cliente manda la suya en `currency` (la que
+//     snapMapHoldings eligió para el total) y aquí se convierte cada cuenta a esa moneda.
+//
+// ── POR QUÉ LA MONEDA ─────────────────────────────────────────────────────────────
+// mergeSeries sumaba los saldos de todas las cuentas 1:1. Con una cuenta en euros y otra
+// en dólares —lo normal en Interactive Brokers, que es multidivisa por diseño— eso producía
+// una curva que no está en ninguna moneda: ni euros ni dólares, la suma cruda de las dos.
+// Y desde que snaptrade-refresh presenta el total en UNA moneda, esa curva y la cifra grande
+// de la tarjeta discrepan sin que nada lo explique: el usuario compara el último punto de su
+// gráfica con su patrimonio y no cuadran. Ahora cada serie se convierte antes de sumarse, y
+// la cuenta cuya moneda no se pueda convertir se queda FUERA y se declara (partial), que es
+// lo mismo que ya se hacía con la cuenta que no responde.
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
 import {
@@ -28,6 +40,7 @@ import {
   requireUser,
   loadProfile,
   requireEntitlement,
+  fxRatesFor,
 } from "../_shared/snaptrade.ts";
 
 const todayUTC = () => new Date().toISOString().slice(0, 10);
@@ -105,6 +118,11 @@ Deno.serve(async (req) => {
 
     const userId = await requireUser(req, admin, body?.userId);
     await requireEntitlement(admin, userId); // gate: no entitlement → no history
+    // Moneda en la que el cliente está presentando la cartera (la que eligió snapMapHoldings).
+    // Sin ella no se convierte nada y todo se comporta como antes.
+    const wantCcy = (typeof body?.currency === "string" && /^[A-Za-z]{3,5}$/.test(body.currency))
+      ? body.currency.toUpperCase()
+      : null;
     const profile = await loadProfile(admin, userId);
 
     if (!profile?.snaptrade_user_id || !profile?.snaptrade_user_secret) {
@@ -115,7 +133,10 @@ Deno.serve(async (req) => {
     // lookback completo de 1 año en SnapTrade, un "Actualizar" manual trae el historial
     // ampliado al instante en vez de esperar hasta 24h a que expire la caché diaria).
     const cached: any = profile.snaptrade_history;
-    if (!body?.force && cached && cached.updatedAt && String(cached.updatedAt).slice(0, 10) === todayUTC()) {
+    // La caché guarda la curva YA convertida, así que sólo sirve si está en la misma moneda
+    // que se pide ahora. Servirla a ciegas devolvía euros a quien acababa de pasar a dólares.
+    const cacheCcyOk = !wantCcy || (cached?.currency ?? null) === wantCcy;
+    if (!body?.force && cacheCcyOk && cached && cached.updatedAt && String(cached.updatedAt).slice(0, 10) === todayUTC()) {
       return jsonResponse(req, {
         history: cached.history ?? [],
         available: !!cached.available,
@@ -124,6 +145,7 @@ Deno.serve(async (req) => {
         partial: !!cached.partial,
         partialBrokers: cached.partialBrokers ?? [],
         accounts: cached.accounts ?? null,
+        currency: cached.currency ?? null,
         fromCache: true,
       });
     }
@@ -197,13 +219,56 @@ Deno.serve(async (req) => {
     const failed = settled.filter((s) => s === null).length;
     const series = settled.map((s) => s ?? []);
 
+    // ── Cada cuenta a la moneda de presentación, ANTES de sumarlas ──────────────────
+    // getAccountBalanceHistory devuelve el saldo en la moneda BASE de esa cuenta. Sumar
+    // euros con dólares da un número que no es dinero de ninguna moneda (ver la cabecera).
+    // Sin `wantCcy`, sin monedas declaradas, o con una sola moneda en juego, no se toca nada
+    // y el comportamiento es idéntico al de siempre.
+    let seriesCcys: (string | null)[] = accountIds.map(() => null);
+    if (usableRows.length) {
+      const byId = new Map<string, any>();
+      for (const a of usableRows) {
+        const id = a?.id ?? a?.account_id;
+        if (id) byId.set(String(id), a);
+      }
+      seriesCcys = accountIds.map((id) => {
+        const a = byId.get(String(id));
+        let c = a?.balance?.total?.currency ?? a?.balance?.currency ?? null;
+        if (c && typeof c === "object") c = c.code ?? c.iso_code ?? null;
+        return (typeof c === "string" && /^[A-Za-z]{3,5}$/.test(c)) ? c.toUpperCase() : null;
+      });
+    }
+    // Cuentas que aportan datos y declaran moneda distinta de la pedida.
+    const presentes = seriesCcys.filter((c, i) => !!c && series[i].length > 0) as string[];
+    const necesitaFx = !!wantCcy && presentes.some((c) => c !== wantCcy);
+    let noConvertibles = 0;
+    if (necesitaFx) {
+      const rates = await fxRatesFor(st, Array.from(new Set([wantCcy!, ...presentes])));
+      for (let i = 0; i < series.length; i++) {
+        const c = seriesCcys[i];
+        if (!series[i].length || !c || c === wantCcy) continue;
+        const r = Number(rates[c + wantCcy!]);
+        if (Number.isFinite(r) && r > 0) {
+          series[i] = series[i].map((p) => ({ date: p.date, value: p.value * r }));
+        } else {
+          // Sin cambio para esa moneda no se inventa uno: esa cuenta sale de la curva y la
+          // ausencia se declara igual que la de una cuenta que no respondió. Una curva corta
+          // y dicha es mejor que una curva que suma monedas distintas y calla.
+          console.warn(`[snaptrade-history] sin tipo de cambio ${c}->${wantCcy}: la cuenta queda fuera de la curva`);
+          series[i] = [];
+          noConvertibles++;
+        }
+      }
+    }
+
     const history = mergeSeries(series);
     const available = history.length > 1;   // un solo punto no dibuja una curva
     let reason: string | undefined;
     if (!available) reason = failed === accountIds.length ? "endpoint_disabled" : "empty";
     // Serie PARCIAL: hay curva, pero le falta al menos una cuenta → la suma está por
     // debajo del valor real de la cartera. Se avisa en vez de pintarla como completa.
-    const partial = available && failed > 0;
+    // Una cuenta descartada por falta de tipo de cambio cuenta igual: también falta.
+    const partial = available && (failed > 0 || noConvertibles > 0);
 
     // ── ¿De QUIÉN son las cuentas que faltan? ──────────────────────────────────────
     // Con `partial` a secas el cliente dice "Falta al menos una de tus cuentas en esta
@@ -253,10 +318,12 @@ Deno.serve(async (req) => {
     // `terminal` se guarda calculado, no se recalcula al leer la caché: `transient` sólo
     // se conoce en el momento de la llamada, y sin él la caché convertía un 429 de hace
     // horas en un "no insistas" permanente.
-    const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, partialBrokers, accounts: accountIds.length, history };
+    const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, partialBrokers,
+                      accounts: accountIds.length, currency: wantCcy, noConvertibles, history };
     await admin.from("profiles").update({ snaptrade_history: payload }).eq("id", userId);
 
-    return jsonResponse(req, { history, available, reason, terminal, partial, partialBrokers, accounts: accountIds.length });
+    return jsonResponse(req, { history, available, reason, terminal, partial, partialBrokers,
+                               accounts: accountIds.length, currency: wantCcy, noConvertibles });
   } catch (e: any) {
     // Even on unexpected failure, never break the chart — return placeholder state.
     const message = e?.message ?? String(e);

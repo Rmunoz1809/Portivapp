@@ -38770,7 +38770,13 @@ document.addEventListener('DOMContentLoaded', function(){
     // (generate() NO dibuja la reconstrucción Yahoo dentada estando pending) y mostramos el skeleton
     // de carga en la gráfica. Reintentamos con force hasta que llegue → curva y % reales del broker.
     var _force = !_snapHistoryForced; _snapHistoryForced = true;
-    return stCall('snaptrade-history', _force ? {force:true} : {}).then(function(j){
+    // La moneda en la que se está presentando la cartera (la que eligió snapMapHoldings).
+    // El servidor convierte cada cuenta a ella antes de sumarlas: sin esto, con una cuenta en
+    // euros y otra en dólares la curva era la suma cruda de las dos y no cuadraba con la
+    // cifra grande de la tarjeta, que sí está en una sola moneda.
+    var _hb = _force ? { force:true } : {};
+    try{ if(window._SNAP_CCY) _hb.currency = window._SNAP_CCY; }catch(e){}
+    return stCall('snaptrade-history', _hb).then(function(j){
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
         try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
@@ -38800,7 +38806,10 @@ document.addEventListener('DOMContentLoaded', function(){
         _perfNote(!j.partial ? ''
           : _pb.length
             ? 'Esta curva no incluye tu cuenta de Interactive Brokers: esa conexión no entrega el histórico de valor. No es un fallo temporal, es una limitación de la conexión con IBKR.'
-            : 'Falta al menos una de tus cuentas en esta curva: los valores históricos pueden salir por debajo de tu total actual.');
+            // Cuenta dejada fuera por no haber tipo de cambio para su moneda. Decir "falta una
+            // cuenta" a secas invita a reintentar; el motivo real es otro y tiene arreglo distinto.
+            : (j.noConvertibles ? 'Una de tus cuentas está en una moneda para la que no tenemos tipo de cambio, así que no entra en esta curva: los valores históricos salen por debajo de tu total actual.'
+            : 'Falta al menos una de tus cuentas en esta curva: los valores históricos pueden salir por debajo de tu total actual.'));
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
       } else if(j && (j.terminal || j.reason==='not_connected')){
         // F12 — Reintentar no puede cambiar nada. getAccountBalanceHistory es EXPERIMENTAL y
