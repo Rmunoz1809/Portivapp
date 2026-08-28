@@ -2841,19 +2841,57 @@ window._ensureChartJs = (function(){
   .pv-lock-card {
     display: flex; flex-direction: column; align-items: center;
     gap: 10px; padding: 18px 20px; text-align: center;
-    max-width: 320px;
+    width: 320px; max-width: 100%;
     background: rgba(255,255,255,.94);
     border: 1px solid var(--border, #e3e7ee);
     border-radius: 18px;
     box-shadow: 0 10px 34px rgba(4,22,44,.13);
   }
   .pv-lock-ico { width: 44px; height: 44px; border-radius: 50%; background: var(--blue-bg); display: flex; align-items: center; justify-content: center; }
-  .pv-lock-txt { font-size: 13px; font-weight: 700; color: var(--text); max-width: 260px; line-height: 1.4; }
+  /* Titular fijo del candado. Antes la tarjeta abría con el nombre de la feature y
+     remataba con "Se desbloquea con Portiv Pro" en gris: se leía como un pie de página.
+     Ahora manda el titular y la feature pasa a ser el subtítulo que lo justifica. */
+  .pv-lock-head { font-size: 17px; font-weight: 800; color: var(--text); letter-spacing: -.01em; line-height: 1.2; }
+  .pv-lock-txt { font-size: 12.5px; font-weight: 600; color: var(--text2); max-width: 262px; line-height: 1.45; }
+  /* El sub ya no repite "Se desbloquea con Portiv Pro" (lo dice el titular): queda para
+     los avisos de cuota ("Con Portiv Pro los análisis son ilimitados"). Vacío, no ocupa. */
   .pv-lock-sub { font-size: 11.5px; color: var(--text3); }
-  .pv-lock-btn { margin-top: 2px; height: 38px; padding: 0 18px; border: none; border-radius: 10px; background: var(--green-btn); color: #fff; font: 800 13px system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; cursor: pointer; }
+  .pv-lock-sub:empty { display: none; }
+  /* Lo que se desbloquea: alineado a la izquierda aunque la tarjeta sea centrada — una
+     lista centrada se lee como poesía, no como una lista de features. */
+  .pv-lock-perks {
+    list-style: none; margin: 2px 0 0; padding: 12px 0 0;
+    /* `align-self: stretch`, no `width: 100%`: la tarjeta es un flex column centrado y
+       se dimensiona por su contenido, así que un 100% se resolvía contra un ancho que
+       aún no existía y la dejaba en 139px de alto infinito. */
+    align-self: stretch;
+    border-top: 1px solid var(--border, #e3e7ee);
+    display: flex; flex-direction: column; gap: 7px; text-align: left;
+  }
+  .pv-lock-perks li {
+    position: relative; padding-left: 22px;
+    font-size: 12.5px; font-weight: 600; line-height: 1.35; color: var(--text2);
+  }
+  .pv-lock-perks li::before {
+    content: ''; position: absolute; left: 0; top: 1px;
+    width: 15px; height: 15px; border-radius: 50%;
+    background: var(--blue-bg) center/9px 9px no-repeat;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232563eb' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  }
+  .pv-lock-btn { margin-top: 4px; align-self: stretch; height: 42px; padding: 0 18px; border: none; border-radius: 12px; background: var(--green-btn); color: #fff; font: 800 13.5px system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; cursor: pointer; transition: opacity .18s ease; }
+  .pv-lock-btn:hover { opacity: .88; }
+  .pv-lock-foot { font-size: 11px; color: var(--text3); }
+  /* Candado que no cabe en su hueco (columnas cortas, tarjetas de una fila): la lista de
+     ventajas y el pie se retiran antes que dejar la tarjeta desbordada o cortada. Lo
+     decide _pvFitLockCards midiendo, no un breakpoint — el hueco depende de los datos. */
+  .pv-lock-card.pv-lock-tight .pv-lock-perks,
+  .pv-lock-card.pv-lock-tight .pv-lock-foot { display: none; }
   body.dark-theme .pv-lock-ov { background: linear-gradient(180deg, rgba(15,29,53,.18), rgba(15,29,53,.58)); }
   body.dark-theme .pv-lock-card { background: rgba(21,36,62,.94); border-color: rgba(255,255,255,.10); box-shadow: 0 10px 34px rgba(0,0,0,.42); }
-  body.dark-theme .pv-lock-txt { color: #fff; }
+  body.dark-theme .pv-lock-head { color: #fff; }
+  body.dark-theme .pv-lock-txt { color: rgba(255,255,255,.76); }
+  body.dark-theme .pv-lock-perks { border-top-color: rgba(255,255,255,.12); }
+  body.dark-theme .pv-lock-perks li { color: rgba(255,255,255,.82); }
 
   /* Variante a PANTALLA COMPLETA (chat). El candado normal envuelve una tarjeta;
      aquí envuelve una página entera que ya mide 100dvh, así que el wrapper tiene
@@ -2894,17 +2932,19 @@ window._ensureChartJs = (function(){
   }
   /* El mensaje se ancla al PRINCIPIO de la zona difuminada, no a su centro: la pila
      mide miles de píxeles y centrarlo lo dejaba fuera de pantalla.
-     `sticky` se deja puesto a propósito aunque hoy no se active — el ancestro de
-     scroll (#tab-analizar) no llega a desplazarse, así que la tarjeta se queda en su
-     sitio estático; si ese layout cambia, el candado acompañará al scroll sin tocar
-     nada más. */
+     Posición ESTÁTICA a propósito: con `sticky` la tarjeta se despegaba y perseguía
+     al usuario por toda la pantalla mientras bajaba por la pila. El candado se queda
+     donde empieza lo bloqueado y el scroll lo deja atrás, como cualquier otra
+     tarjeta de la página. */
   html.pv-free .pv-lock-stack .pv-lock-card {
-    position: sticky; top: max(96px, calc(50vh - 140px));
+    position: static;
     margin: 116px auto 0;
-    gap: 12px; padding: 22px 20px; max-width: 340px;
+    gap: 12px; padding: 22px 20px; width: 344px; max-width: calc(100% - 32px);
   }
   html.pv-free .pv-lock-stack .pv-lock-ico { width: 54px; height: 54px; }
-  html.pv-free .pv-lock-stack .pv-lock-txt { font-size: 15px; max-width: 280px; }
+  html.pv-free .pv-lock-stack .pv-lock-head { font-size: 19px; }
+  html.pv-free .pv-lock-stack .pv-lock-txt { font-size: 13.5px; max-width: 288px; }
+  html.pv-free .pv-lock-stack .pv-lock-perks li { font-size: 13px; }
   html.pv-free .pv-lock-stack .pv-lock-sub { font-size: 12.5px; }
   html.pv-free .pv-lock-stack .pv-lock-btn { height: 44px; padding: 0 24px; font-size: 14px; border-radius: 12px; }
 
@@ -2923,9 +2963,11 @@ window._ensureChartJs = (function(){
     background: linear-gradient(180deg, rgba(248,249,255,.20), rgba(248,249,255,.52));
     gap: 12px;
   }
-  html.pv-free .pv-lock-page .pv-lock-card { gap: 12px; padding: 24px 22px; max-width: 340px; }
+  html.pv-free .pv-lock-page .pv-lock-card { gap: 12px; padding: 24px 22px; width: 344px; max-width: calc(100% - 32px); }
   html.pv-free .pv-lock-page .pv-lock-ico { width: 56px; height: 56px; }
-  html.pv-free .pv-lock-page .pv-lock-txt { font-size: 16px; max-width: 280px; }
+  html.pv-free .pv-lock-page .pv-lock-head { font-size: 19px; }
+  html.pv-free .pv-lock-page .pv-lock-txt { font-size: 13.5px; max-width: 288px; }
+  html.pv-free .pv-lock-page .pv-lock-perks li { font-size: 13px; }
   html.pv-free .pv-lock-page .pv-lock-sub { font-size: 13px; }
   html.pv-free .pv-lock-page .pv-lock-btn { height: 46px; padding: 0 26px; font-size: 14.5px; border-radius: 12px; }
 
@@ -4310,9 +4352,17 @@ window._pvAwaitIAP = function(totalMs){
     <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
       <div class="pv-lock-card">
         <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+        <div class="pv-lock-head">Desbloquea Portiv Pro</div>
         <div class="pv-lock-txt" id="aiChatLockTxt">Pregúntale lo que quieras a <b>Portiv IA</b></div>
-        <div class="pv-lock-sub" id="aiChatLockSub">Se desbloquea con Portiv Pro</div>
+        <div class="pv-lock-sub" id="aiChatLockSub"></div>
+        <ul class="pv-lock-perks">
+          <li>Análisis completo de cada acción</li>
+          <li>Chat ilimitado con Portiv IA</li>
+          <li>Análisis profundo y rebalanceo</li>
+          <li>Noticias que mueven tu cartera</li>
+        </ul>
         <button class="pv-lock-btn" type="button">Ver planes</button>
+        <div class="pv-lock-foot">30 días gratis · Cancela cuando quieras</div>
       </div>
     </div>
   </div>
@@ -4645,9 +4695,17 @@ window._pvAwaitIAP = function(totalMs){
           <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
             <div class="pv-lock-card">
               <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+              <div class="pv-lock-head">Desbloquea Portiv Pro</div>
               <div class="pv-lock-txt">El desglose de cada activo de tu cartera</div>
-              <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+              <div class="pv-lock-sub"></div>
+              <ul class="pv-lock-perks">
+                <li>Análisis completo de cada acción</li>
+                <li>Chat ilimitado con Portiv IA</li>
+                <li>Análisis profundo y rebalanceo</li>
+                <li>Noticias que mueven tu cartera</li>
+              </ul>
               <button class="pv-lock-btn" type="button">Ver planes</button>
+              <div class="pv-lock-foot">30 días gratis · Cancela cuando quieras</div>
             </div>
           </div>
         </div>
@@ -4688,9 +4746,17 @@ window._pvAwaitIAP = function(totalMs){
       <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
         <div class="pv-lock-card">
           <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+          <div class="pv-lock-head">Desbloquea Portiv Pro</div>
           <div class="pv-lock-txt">El análisis profundo de tu portafolio: diagnóstico, rebalanceo y resultados</div>
-          <div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+          <div class="pv-lock-sub"></div>
+          <ul class="pv-lock-perks">
+            <li>Análisis completo de cada acción</li>
+            <li>Chat ilimitado con Portiv IA</li>
+            <li>Análisis profundo y rebalanceo</li>
+            <li>Noticias que mueven tu cartera</li>
+          </ul>
           <button class="pv-lock-btn" type="button">Ver planes</button>
+          <div class="pv-lock-foot">30 días gratis · Cancela cuando quieras</div>
         </div>
       </div>
     </div>
@@ -5166,9 +5232,17 @@ window._pvAwaitIAP = function(totalMs){
       <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
         <div class="pv-lock-card">
           <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
+          <div class="pv-lock-head">Desbloquea Portiv Pro</div>
           <div class="pv-lock-txt" id="pv-lock-txt">El análisis completo: foso, ventajas, finanzas, valoración y técnico</div>
-          <div class="pv-lock-sub" id="pv-lock-sub">Se desbloquea con Portiv Pro</div>
+          <div class="pv-lock-sub" id="pv-lock-sub"></div>
+          <ul class="pv-lock-perks">
+            <li>Análisis completo de cada acción</li>
+            <li>Chat ilimitado con Portiv IA</li>
+            <li>Análisis profundo y rebalanceo</li>
+            <li>Noticias que mueven tu cartera</li>
+          </ul>
           <button class="pv-lock-btn" type="button">Ver planes</button>
+          <div class="pv-lock-foot">30 días gratis · Cancela cuando quieras</div>
         </div>
       </div>
     </div>
@@ -7934,10 +8008,44 @@ function _pvLockOverlay(txt){
     + '<div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" '
     + 'stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
     + '<rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>'
+    + '<div class="pv-lock-head">Desbloquea Portiv Pro</div>'
     + '<div class="pv-lock-txt">' + txt + '</div>'
-    + '<div class="pv-lock-sub">Se desbloquea con Portiv Pro</div>'
-    + '<button class="pv-lock-btn" type="button">Ver planes</button></div></div>';
+    + '<ul class="pv-lock-perks">'
+    + '<li>Análisis completo de cada acción</li>'
+    + '<li>Chat ilimitado con Portiv IA</li>'
+    + '<li>Análisis profundo y rebalanceo</li>'
+    + '<li>Noticias que mueven tu cartera</li>'
+    + '</ul>'
+    + '<button class="pv-lock-btn" type="button">Ver planes</button>'
+    + '<div class="pv-lock-foot">30 días gratis · Cancela cuando quieras</div></div></div>';
 }
+
+// ¿Cabe la tarjeta del candado en el hueco que tapa? La lista de ventajas la hace alta
+// (~390px) y hay candados sobre columnas de 250px. Se mide y, si no cabe, se marca
+// .pv-lock-tight, que deja el candado en icono + titular + motivo + botón.
+function _pvFitLockCards(){
+  try {
+    document.querySelectorAll('.pv-lock-ov').forEach(function(ov){
+      var card = ov.querySelector(':scope > .pv-lock-card'); if (!card) return;
+      var host = ov.parentElement; if (!host) return;
+      var hueco = host.getBoundingClientRect().height;
+      if (!hueco) return;                       // pestaña oculta: no se mide nada útil
+      card.classList.remove('pv-lock-tight');
+      if (card.getBoundingClientRect().height > hueco - 16) card.classList.add('pv-lock-tight');
+    });
+  } catch(e){}
+}
+window._pvFitLockCards = _pvFitLockCards;
+(function(){
+  var t = null;
+  function pase(){ clearTimeout(t); t = setTimeout(_pvFitLockCards, 180); }
+  window.addEventListener('resize', pase);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', pase);
+  else pase();
+  // Los candados dinámicos llegan con el render, no con el DOM inicial.
+  setTimeout(_pvFitLockCards, 1200);
+  setTimeout(_pvFitLockCards, 3500);
+})();
 
 // Maqueta del "Análisis del asesor" para el estado bloqueado. Hace falta porque
 // aquí, a diferencia del chat y del broker, NO hay contenido real que difuminar:
@@ -21894,7 +22002,7 @@ function _stockApplyFreeGate(ticker){
       // reescribe con su variante (acción / ETF) enseguida, pero entre medias se quedaba
       // el aviso del límite sobre un análisis que sí está desbloqueado.
       if (t)   t.textContent = 'El análisis completo: foso, ventajas, finanzas, valoración y técnico';
-      if (sub) sub.textContent = 'Se desbloquea con Portiv Pro';
+      if (sub) sub.textContent = '';   // el titular ya dice "Desbloquea Portiv Pro"
     }
     return abierto;
   } catch(e){ return true; }
@@ -30089,7 +30197,7 @@ function _chatApplyFreeGate(){
         sub.textContent='Con Portiv Pro el chat es ilimitado';
       } else {
         t.innerHTML='Pregúntale lo que quieras a <b>Portiv IA</b>';
-        sub.textContent='Se desbloquea con Portiv Pro';
+        sub.textContent='';   // el titular ya dice "Desbloquea Portiv Pro"
       }
     }
   }catch(e){}
@@ -30238,7 +30346,7 @@ function _chatPersonalCtx(){
 function _chatMarketCtx(){
   try{
     const L=[];
-    const usd=v=>(v<0?'-$':'$')+Math.abs(Math.round(v||0)).toLocaleString('en-US');
+    const usd=v=>(v<0?'-':'')+_pvSym()+Math.abs(Math.round(v||0)).toLocaleString('en-US');
 
     // (a) Fecha ET + estado del mercado (helpers ya existentes; nunca `new Date()` a pelo)
     try{
@@ -35696,6 +35804,7 @@ document.addEventListener('DOMContentLoaded', function(){
       // cambios de entitlement, incluido el primero al arrancar.
       try { _chatApplyFreeGate(); } catch(e){}
       try { window._stockApplyFreeGate && window._stockApplyFreeGate(); } catch(e){}
+      try { window._pvFitLockCards && setTimeout(window._pvFitLockCards, 60); } catch(e){}
     } catch(e){}
   }
   window._pvApplyProClass = _pvApplyProClass;
