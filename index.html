@@ -2641,6 +2641,37 @@ window._ensureChartJs = (function(){
     cursor: pointer; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; transition: opacity .15s;
   }
   .pq-result-btn:hover { opacity: 0.9; }
+  /* Mini póster sobre el CTA: dice que conectar el portafolio es Portiv Pro ANTES de
+     que el usuario pulse y se encuentre el muro de golpe. */
+  .pq-pro-poster {
+    display: flex; gap: 10px; align-items: flex-start; text-align: left;
+    padding: 12px 14px; margin: 0 0 12px; border-radius: 14px;
+    background: var(--st-surface-cont, #e5eeff);
+    border: 1px solid rgba(4,22,44,.08);
+  }
+  .pq-pro-ico {
+    flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: #fff; color: var(--st-primary, #04162c);
+  }
+  .pq-pro-body { min-width: 0; }
+  .pq-pro-tag {
+    font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--st-primary, #04162c); margin-bottom: 2px;
+  }
+  .pq-pro-txt { font-size: 12.5px; font-weight: 600; line-height: 1.45; color: var(--st-on-surf-var, #5b6b7d); }
+  /* La salida gratuita deja de ser un enlace subrayado suelto y pasa a una caja: se ve
+     que es una opción de verdad y no una nota al pie, sin competir con el CTA oscuro. */
+  .pq-manual-box {
+    display: block; width: 100%; margin-top: 12px; text-align: left; cursor: pointer;
+    padding: 13px 14px; border-radius: 14px;
+    background: transparent; border: 1px solid var(--st-surface-cont, #e5eeff);
+    font-family: inherit; transition: border-color .15s, background .15s;
+  }
+  .pq-manual-box:hover { border-color: rgba(4,22,44,.22); background: rgba(4,22,44,.02); }
+  .pq-manual-box .pq-manual-h { display: block; font-size: 13.5px; font-weight: 800; color: var(--st-primary, #04162c); }
+  .pq-manual-box .pq-manual-s { display: block; font-size: 12px; font-weight: 600; line-height: 1.45; color: var(--st-on-surf-var, #5b6b7d); margin-top: 2px; }
+  .pq-manual-box .pq-manual-cta { display: block; font-size: 12.5px; font-weight: 800; color: var(--st-primary, #04162c); margin-top: 8px; }
   .pq-skip { display: block; margin: 14px auto 0; background: none; border: none; color: var(--st-on-surf-var); font-size: 13px; cursor: pointer; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; }
   .pq-skip:hover { color: var(--st-primary); text-decoration: underline; }
 
@@ -4716,16 +4747,16 @@ window._pvAwaitIAP = function(totalMs){
       </div>
     </div>
 
+    <!-- De la barra de KPIs hacia abajo TODO es Portiv Pro: retorno esperado, análisis
+         profundo, Portiv Intelligence, rebalanceo y EPS quedan bajo un único candado.
+         Se usa .pv-lock-stack (no .pv-lock a secas) porque la pila mide miles de píxeles
+         y esa variante ancla el mensaje arriba; un overlay centrado en `inset:0` dejaría
+         el candado a 1.500px de donde mira el usuario. -->
+    <div class="pv-lock pv-lock-stack" id="portDeepLockWrap">
+      <div class="pv-lock-body">
     <!-- Fila 4: KPI bar — rellenada por JS -->
     <div id="port-kpi-bar"></div>
 
-    <!-- De "Análisis Profundo del Portafolio" hacia abajo TODO es Portiv Pro: análisis
-         profundo, Portiv Intelligence, rebalanceo y EPS quedan bajo un único candado.
-         Se usa .pv-lock-stack (no .pv-lock a secas) porque la pila mide miles de píxeles
-         y esa variante ancla el mensaje arriba y lo lleva pegado al scroll; un overlay
-         centrado en `inset:0` dejaría el candado a 1.500px de donde mira el usuario. -->
-    <div class="pv-lock pv-lock-stack" id="portDeepLockWrap">
-      <div class="pv-lock-body">
     <div class="pda-card pa-fullrow">
       <h2 class="pda-h2">Análisis Profundo del Portafolio</h2>
       <div id="port-deep-analysis"></div>
@@ -35538,7 +35569,12 @@ document.addEventListener('DOMContentLoaded', function(){
             try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
             setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 700);
           }
-          // cancelado / no presentado → no hace nada; el usuario puede reintentar el botón.
+          else if (window._pvPaywallFromQuiz) {
+            // Cancelado con la X y el muro venía del cuestionario: la tarjeta del perfil
+            // sigue tapando la app. En web esto ya lo hace _pvClosePaywall; en nativo el
+            // SDK sólo devuelve el resultado, así que hay que cerrarla aquí.
+            try { window._pvClosePaywall(); } catch(e){}
+          }
         }).catch(function(){});
       } catch(e){}
     }
@@ -35568,6 +35604,7 @@ document.addEventListener('DOMContentLoaded', function(){
     document.body.style.overflow = 'hidden';
   };
   window._pvClosePaywall = function(){
+    window._pvPaywallFromQuiz = false;   // la marca es de un solo uso
     var o = document.getElementById('portivPaywall');
     if(o) o.classList.remove('open');
     // El quiz de perfil vive DEBAJO del paywall (z-index 12000 los dos). Al cerrar el
@@ -36762,9 +36799,20 @@ document.addEventListener('DOMContentLoaded', function(){
         <span class="pq-chip">${p.horizonLabel}</span>
       </div>
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
+      <div class="pq-pro-poster">
+        <span class="pq-pro-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></span>
+        <div class="pq-pro-body">
+          <div class="pq-pro-tag">Portiv Pro</div>
+          <div class="pq-pro-txt">Conectar tu portafolio, el análisis con IA y el chat van con la suscripción. Empiezas con 30 días gratis.</div>
+        </div>
+      </div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
-      <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>
-      <button type="button" id="pqManualEntry" style="display:block;width:100%;margin-top:10px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">Ingresar posiciones manualmente</button>`;
+      <button type="button" class="pq-manual-box" id="pqManualEntry">
+        <span class="pq-manual-h">¿Prefieres hacerlo a mano?</span>
+        <span class="pq-manual-s">Ingresa tus posiciones tú mismo, sin conectar el broker.</span>
+        <span class="pq-manual-cta">Ingresar posiciones manualmente →</span>
+      </button>
+      <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     // Las diapositivas de "cómo funciona" ya se vieron al iniciar sesión, antes
     // de las preguntas, así que aquí se va derecho al muro.
@@ -36786,6 +36834,23 @@ document.addEventListener('DOMContentLoaded', function(){
       _muro();
     };
     document.getElementById('pqFinish').onclick = _pqGoPaywall;
+    // El muro sale SOLO al terminar las preguntas, no únicamente al pulsar el CTA: el
+    // resultado queda pintado detrás y el precio se ve sin tener que buscarlo. El CTA
+    // sigue abriéndolo por si lo cierra y quiere volver.
+    // La marca dice de dónde viene el muro: al cerrarlo con la X hay que salir también
+    // de esta pantalla, o el usuario se queda mirando su perfil sin salida.
+    // Quien YA tiene acceso queda fuera del automático: para esa cuenta _pvShowPaywall
+    // no abre ningún muro, se va derecha a snapConnect() — y abrir la conexión del broker
+    // sola, sin que nadie haya pulsado nada, no es lo que se pidió. Su CTA sigue igual.
+    try {
+      var _yaTiene = (window._pvIsDemoAccount && window._pvIsDemoAccount())
+        || window._PV_IS_OWNER === true
+        || (window._pvSubActive && window._pvSubActive());
+      if (!_yaTiene) {
+        window._pvPaywallFromQuiz = true;
+        setTimeout(function(){ try { _pqGoPaywall(); } catch(e){} }, 450);
+      }
+    } catch(e){}
     // Aviso IBKR: informativo, independiente del CTA. No toca el flujo del paywall.
     try {
       var _ib = document.getElementById('pqIbkrNote');
