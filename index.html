@@ -4412,7 +4412,7 @@ window._pvAwaitIAP = function(totalMs){
     <div style="display:flex;gap:10px;align-items:center;">
       <div style="flex:1;position:relative;">
         <input id="wlInput" style="width:100%;box-sizing:border-box;background:#f4f6fb;border:1.5px solid #e8eaf0;border-radius:12px;padding:11px 16px;font-size:14px;font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#0F1D35;outline:none;transition:border-color .15s;"
-          type="text" placeholder="Busca ticker o nombre: TSLA, Netflix, AMD…" data-i18n-ph="news.searchPh"
+          type="text" placeholder="Busca ticker o nombre: TSLA, Netflix, AMD…" data-ph-sm="Ticker o nombre…" data-i18n-ph="news.searchPh"
           oninput="onWlInput(this.value)"
           onfocus="this.style.borderColor='#04162c'" onblur="this.style.borderColor='#e8eaf0'"
           onkeydown="if(event.key==='Enter')addWatchlistFromInput();if(event.key==='Escape')$('wlDropdown').style.display='none'">
@@ -4433,7 +4433,7 @@ window._pvAwaitIAP = function(totalMs){
     <div class="search-wrap">
       <svg class="research-input-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <input id="researchInput" class="research-input" type="text"
-        placeholder="Busca por ticker o nombre: Apple, TSLA, AppLovin..." data-i18n-ph="analysis.searchPh"
+        placeholder="Busca por ticker o nombre: Apple, TSLA, AppLovin..." data-ph-sm="Ticker o nombre…" data-i18n-ph="analysis.searchPh"
         oninput="onSearchInput(this.value)"
         onkeydown="onSearchKey(event)"
         onblur="setTimeout(closeDropdown,180)"
@@ -5177,6 +5177,12 @@ window._pvAwaitIAP = function(totalMs){
   .prof-name { font-size:22px; font-weight:700; color:var(--st-primary); font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; line-height:1.2; }
   .prof-email { font-size:13px; color:var(--text3); margin-top:2px; }
   .prof-plan-badge { display:inline-flex; align-items:center; gap:5px; background:#eff4ff; border:1px solid #c4d6f5; color:#04162c; border-radius:99px; font-size:11px; font-weight:700; padding:3px 10px; margin-top:6px; letter-spacing:.4px; text-transform:uppercase; }
+  /* Sólo una de las dos etiquetas se pinta, según el veredicto de suscripción vigente. */
+  .prof-plan-pro, .prof-plan-free { display:none; }
+  html.pv-pro  .prof-plan-pro  { display:inline; }
+  html.pv-free .prof-plan-free { display:inline; }
+  /* Gratuito: gris neutro, no el azul de "cuenta de pago". */
+  html.pv-free .prof-plan-badge { background:#f1f4f9; border-color:#e1e6ee; color:#5b6b7f; }
 
   /* Username field */
   .prof-field-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:20px; }
@@ -5987,9 +5993,15 @@ window._pvAwaitIAP = function(totalMs){
       <div class="prof-identity-info">
         <div class="prof-name" id="profDisplayName">Tu perfil</div>
         <div class="prof-email" id="profEmailDisplay"></div>
+        <!-- La insignia estaba escrita a mano como "PRO MEMBER": un usuario del plan
+             gratuito veía "PRO MEMBER" en su perfil mientras el resto de la app le
+             cerraba Portiv IA con el candado de Pro. Ahora la escribe el CSS a partir
+             de la clase que ya mantiene _pvApplyProClass en <html> (pv-pro / pv-free),
+             así que no hay un segundo sitio que actualizar ni repintado que disparar. -->
         <div class="prof-plan-badge">
           <span class="material-symbols-outlined" style="font-size:13px">hub</span>
-          PRO MEMBER
+          <span class="prof-plan-pro">PRO MEMBER</span>
+          <span class="prof-plan-free">PLAN GRATUITO</span>
         </div>
       </div>
     </div>
@@ -6319,6 +6331,9 @@ function _applyI18nDom(dict){
     const key = el.getAttribute('data-i18n-title');
     if (dict[key] != null) el.setAttribute('title', dict[key]);
   });
+  // Acaba de reescribir los placeholders largos: en pantalla estrecha hay que volver
+  // a poner la versión corta, o el texto nuevo se corta a media palabra otra vez.
+  try { if (window._pvSyncPlaceholders) window._pvSyncPlaceholders(); } catch(e){}
 }
 
 function changeLanguage(lang, opts){
@@ -12431,7 +12446,7 @@ function toggleReinvest(idx){
   const h = HOLDINGS[idx]; if (!h) return;
   h.reinvest = (h.reinvest === false);   // false→true, true/undefined→false
   try { savePortfolio(); } catch(e){}
-  try { renderTable(calcTotals()); } catch(e){ try { renderPortfolio(); } catch(_){} }
+  try { renderTable(calcTotals(), { force: true }); } catch(e){ try { renderPortfolio(); } catch(_){} }
 }
 
 // Fila de subtotal por grupo
@@ -12456,7 +12471,10 @@ function groupTotalHTML(label, mkt, cost, day, gl, prevClose) {
   </tr>`;
 }
 
-function renderTable(T) {
+// `opts.force` = este repintado lo pidió el usuario (abrir el cajón, cambiar de
+// Comprar a Vender, cambiar Por dinero/Por acciones, cerrar). Ver el candado
+// anti-tecleo más abajo: sin esta salida, esos cambios se tragaban enteros.
+function renderTable(T, opts) {
   const tbody = $('posRows');
   let html = '';
 
@@ -12512,12 +12530,31 @@ function renderTable(T) {
   // Solo se bloquea mientras el foco está DENTRO de la tabla (el usuario está tecleando);
   // los re-render disparados por el propio usuario (abrir el cajón, cambiar compra/venta)
   // no tienen foco en un input todavía y siguen pasando normalmente.
+  //
+  // BUG (dinero): el candado era incondicional, y `setMode`/`toggleDrawer` dejan el
+  // foco DENTRO del campo de importe a los 50 ms. O sea que desde el segundo toque en
+  // adelante el foco SIEMPRE estaba en un input de la tabla → tocar "Vender" cambiaba
+  // `activeDrawer.mode` a 'sell' pero NO repintaba el cajón: el botón seguía diciendo
+  // "Comprar NVDA" y al pulsarlo se ejecutaba una VENTA. Lo mismo entre "Por dinero" y
+  // "Por acciones". El candado sólo debe frenar el repintado AUTOMÁTICO (el tick de
+  // 30 s); los repintados que pide el propio usuario pasan con `force` y conservan a
+  // mano el importe tecleado, que es lo único que había que proteger.
   const _typing = (function(){
     try{
+      if (opts && opts.force) return false;
       const ae = document.activeElement;
       return !!(ae && tbody.contains(ae) && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName));
     }catch(e){ return false; }
   })();
+  // Importe tecleado y posición del cursor, para devolverlos tras un repintado forzado:
+  // cambiar de Comprar a Vender no debe borrar lo que el usuario ya había escrito.
+  let _keepAmt = null;
+  try{
+    const ae = document.activeElement;
+    if (!_typing && ae && tbody.contains(ae) && ae.id && ae.id.indexOf('amt-') === 0) {
+      _keepAmt = { id: ae.id, val: ae.value, start: ae.selectionStart, end: ae.selectionEnd };
+    }
+  }catch(e){}
   // Empty state. Un usuario recién registrado que NO conecta broker veía un dashboard
   // entero en ceros con la tabla vacía y ninguna ruta visible para empezar — eso es
   // "app incompleta" para un revisor (Guideline 2.1), que además no va a conectar una
@@ -12539,6 +12576,17 @@ function renderTable(T) {
     </td></tr>` + html;
   }
   if (!_typing) tbody.innerHTML = html;
+  if (_keepAmt) {
+    try{
+      const re = document.getElementById(_keepAmt.id);
+      if (re) {
+        re.value = _keepAmt.val;
+        re.focus();
+        try { re.setSelectionRange(_keepAmt.start, _keepAmt.end); } catch(e){}
+        if (typeof updatePreview === 'function') updatePreview(parseInt(_keepAmt.id.slice(4), 10));
+      }
+    }catch(e){}
+  }
 
   // ── Positions Total (footer) ──
   // FIX: día y día% desde la fuente única (_calcRealDayChange); total al centavo (round2),
@@ -12736,25 +12784,25 @@ function toggleDrawer(idx) {
     closeDrawer();
   } else {
     activeDrawer = { idx, mode: 'buy', orderType: 'money' };
-    renderTable(calcTotals());
+    renderTable(calcTotals(), { force: true });
     setTimeout(() => { const inp = document.getElementById(`amt-${idx}`); if(inp) inp.focus(); }, 50);
   }
 }
 
 function closeDrawer() {
   activeDrawer = null;
-  renderTable(calcTotals());
+  renderTable(calcTotals(), { force: true });
 }
 
 function setMode(idx, mode) {
   activeDrawer = { idx, mode, orderType: 'money' };
-  renderTable(calcTotals());
+  renderTable(calcTotals(), { force: true });
   setTimeout(() => { const inp = document.getElementById(`amt-${idx}`); if(inp) inp.focus(); }, 50);
 }
 
 function setOrderType(idx, type) {
   activeDrawer = { ...activeDrawer, idx, orderType: type };
-  renderTable(calcTotals());
+  renderTable(calcTotals(), { force: true });
   if (type !== 'all') {
     setTimeout(() => { const inp = document.getElementById(`amt-${idx}`); if(inp) inp.focus(); }, 50);
   }
@@ -13261,7 +13309,17 @@ function sellAsset(ticker, dollarAmount, priceOverride) {
   const glStr = realizedGL >= 0 ? `+${usd(realizedGL)}` : `-${usd(Math.abs(realizedGL))}`;
   showToast(`Vendiste ${shares.toFixed(4)} sh de ${ticker} · G/L: ${glStr}`, realizedGL >= 0 ? 'var(--green)' : 'var(--red)');
 
-  return { ok: true, message: `Venta ejecutada: ${shares.toFixed(4)} sh ${ticker}`, shares, realizedGL, newCash: CASH };
+  // Simetría con buyAsset: `shares` ya viene recortado a la posición existente, así que pedir
+  // $50.000 de una posición de $12.000 devolvía ok:true y "Venta ejecutada" sin decir en
+  // ningún sitio que sólo se vendieron $12.000. Quien llama —el cajón de trade y también el
+  // asistente de IA, que redacta la confirmación con este objeto— daba por hecho el importe
+  // pedido. Se declara el recorte igual que en la compra.
+  const _recortada = proceeds < amt - 0.01;
+  return { ok: true, truncated: _recortada, requested: amt, proceeds: proceeds,
+    message: _recortada
+      ? `Venta ejecutada por ${usd(proceeds)} (pediste ${usd(amt)}; era toda tu posición en ${ticker}): ${shares.toFixed(4)} sh`
+      : `Venta ejecutada: ${shares.toFixed(4)} sh ${ticker}`,
+    shares, realizedGL, newCash: CASH };
 }
 
 // ═══════════════════════════════════════════════════
@@ -36996,6 +37054,10 @@ document.addEventListener('DOMContentLoaded', function(){
 <style>
   /* Broker connect / status UI (Portiv navy: #04162c, blue #208AEF) */
   .snap-card{background:var(--surface,#fff);border:1px solid var(--border,#e3e7ee);border-radius:12px;padding:18px 18px 16px;margin-top:14px}
+  /* El contenido lo escribe _render() del módulo de SnapTrade, que necesita sesión. Si aún
+     no ha corrido (o el módulo falló), quedaba una tarjeta blanca vacía de 36 px flotando
+     encima de Ajustes, que se lee como un fallo de carga. Sin contenido no hay tarjeta. */
+  .snap-card:empty{display:none}
   .snap-card h3{margin:0 0 4px;font:600 15px/1.3 var(--font,system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif);color:var(--text,#0b1c30)}
   .snap-card p.snap-sub{margin:0 0 14px;font:400 12.5px/1.5 var(--font);color:var(--muted,#5b6b7f)}
   .snap-btn{display:inline-flex;align-items:center;gap:8px;justify-content:center;width:100%;
@@ -40161,5 +40223,40 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   .eps-card[onclick]:active, .sn-card[onclick]:active { transform: none; }
 }
 </style>
+
+<script>
+/* ── Placeholder según el ancho real del campo ───────────────────────────────
+   Los buscadores de Watchlist y Análisis llevan un placeholder con ejemplos
+   ("Busca ticker o nombre: TSLA, Netflix, AMD…") pensado para el escritorio. En
+   un iPhone ese texto no cabe y el navegador lo corta a media palabra —"Busca
+   ticker o nombre: TS"—, que se lee como un texto roto, no como una ayuda.
+   Los campos declaran su versión corta en data-ph-sm y aquí se elige una u otra
+   por ancho de ventana.
+
+   El largo NO se congela en la primera pasada: _applyI18nDom reescribe estos
+   mismos placeholders al cambiar de idioma, así que si alguien lo cambia por
+   debajo (un valor que no es ni el corto ni el largo que teníamos) se adopta
+   como el nuevo largo. Así el cambio de idioma sigue mandando y girar el
+   teléfono nunca resucita el texto del idioma anterior. */
+(function(){
+  function aplicar(){
+    try{
+      var corto = window.innerWidth < 560;
+      document.querySelectorAll('[data-ph-sm]').forEach(function(el){
+        var actual = el.getAttribute('placeholder') || '';
+        var sm = (typeof _L === 'function') ? _L(el.dataset.phSm, 'Ticker or name…') : el.dataset.phSm;
+        if (actual !== sm && actual !== el.dataset.phLg) el.dataset.phLg = actual;   // lo escribió el i18n
+        var txt = corto ? sm : (el.dataset.phLg || actual);
+        if (actual !== txt) el.setAttribute('placeholder', txt);
+      });
+    }catch(e){}
+  }
+  window._pvSyncPlaceholders = aplicar;
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', aplicar);
+  else aplicar();
+  window.addEventListener('resize', aplicar, { passive: true });
+  window.addEventListener('orientationchange', aplicar, { passive: true });
+})();
+</script>
 </body>
 </html>
