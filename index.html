@@ -2641,25 +2641,16 @@ window._ensureChartJs = (function(){
     cursor: pointer; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; transition: opacity .15s;
   }
   .pq-result-btn:hover { opacity: 0.9; }
-  /* Mini póster sobre el CTA: dice que conectar el portafolio es Portiv Pro ANTES de
-     que el usuario pulse y se encuentre el muro de golpe. */
-  .pq-pro-poster {
-    display: flex; gap: 10px; align-items: flex-start; text-align: left;
-    padding: 12px 14px; margin: 0 0 12px; border-radius: 14px;
-    background: var(--st-surface-cont, #e5eeff);
-    border: 1px solid rgba(4,22,44,.08);
+  /* Etiqueta pequeña pegada a la esquina del CTA: marca que conectar el portafolio es
+     Portiv Pro sin robarle sitio al botón. No es un bloque informativo — eso empujaba
+     el CTA hacia abajo y en pantallas cortas lo dejaba fuera. */
+  .pq-pro-row { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+  .pq-pro-badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 9px; border-radius: 999px;
+    background: var(--st-surface-cont, #e5eeff); color: var(--st-primary, #04162c);
+    font-size: 10.5px; font-weight: 800; letter-spacing: .04em; line-height: 1;
   }
-  .pq-pro-ico {
-    flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    background: #fff; color: var(--st-primary, #04162c);
-  }
-  .pq-pro-body { min-width: 0; }
-  .pq-pro-tag {
-    font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
-    color: var(--st-primary, #04162c); margin-bottom: 2px;
-  }
-  .pq-pro-txt { font-size: 12.5px; font-weight: 600; line-height: 1.45; color: var(--st-on-surf-var, #5b6b7d); }
   /* La salida gratuita deja de ser un enlace subrayado suelto y pasa a una caja: se ve
      que es una opción de verdad y no una nota al pie, sin competir con el CTA oscuro. */
   .pq-manual-box {
@@ -2688,14 +2679,10 @@ window._ensureChartJs = (function(){
      visibility en vez de display para que el hueco esté reservado desde el
      primer frame: si apareciera de golpe empujaría el contenido y la tarjeta
      daría un salto justo cuando el usuario está leyendo su perfil. */
-  #pqManualEntry {
-    opacity: 0; visibility: hidden;
-    animation: pqManualIn .45s ease 3s forwards;
-  }
-  @keyframes pqManualIn {
-    from { opacity: 0; visibility: hidden; }
-    to   { opacity: 1; visibility: visible; }
-  }
+  /* Visible desde el primer frame. El retardo tenía sentido cuando el resultado se leía
+     en calma; ahora el muro tapa la pantalla al instante y, al cerrarlo, la caja seguía
+     invisible tres segundos — se leía como que el botón no existe. */
+  #pqManualEntry { opacity: 1; visibility: visible; }
 
   /* ══ Móvil: cada paso debe caber completo en pantalla, sin scroll ══ */
   @media (max-width: 600px){
@@ -4715,31 +4702,20 @@ window._pvAwaitIAP = function(totalMs){
       <div id="port-expected-return"></div>
     </div>
 
+    <!-- De "Detalle de Activos" hacia abajo TODO es Portiv Pro: desglose por activo,
+         pros y contras, KPIs, análisis profundo, Portiv Intelligence, rebalanceo y EPS
+         quedan bajo UN SOLO candado. Antes esta fila llevaba el suyo propio y en pantalla
+         se veían dos tarjetas de "Desbloquea Portiv Pro" a la vez, una encima de otra.
+         Se usa .pv-lock-stack (no .pv-lock a secas) porque la pila mide miles de píxeles
+         y esa variante ancla el mensaje arriba; un overlay centrado en `inset:0` dejaría
+         el candado a 1.500px de donde mira el usuario. -->
+    <div class="pv-lock pv-lock-stack" id="portDeepLockWrap">
+      <div class="pv-lock-body">
     <!-- Fila 2: Detalle de Activos + Pros/Contras — dos columnas simétricas -->
     <div class="pa-top-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;align-items:start">
       <div class="pa-asset-detail-col">
         <div class="pa-label" style="margin-bottom:12px">Detalle de Activos</div>
-        <!-- Candado propio, no el de la pila: "Pros y Contras" va bloqueado a su lado y
-             una fila con una columna nítida y la otra difuminada queda coja. -->
-        <div class="pv-lock">
-          <div class="pa-asset-card"><div id="port-asset-detail"></div></div>
-          <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
-            <div class="pv-lock-card">
-              <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
-              <div class="pv-lock-head">Desbloquea Portiv Pro</div>
-              <div class="pv-lock-txt">El desglose de cada activo de tu cartera</div>
-              <div class="pv-lock-sub"></div>
-              <ul class="pv-lock-perks">
-                <li>Análisis completo de cada acción</li>
-                <li>Chat ilimitado con Portiv IA</li>
-                <li>Análisis profundo y rebalanceo</li>
-                <li>Noticias que mueven tu cartera</li>
-              </ul>
-              <button class="pv-lock-btn" type="button">Ver planes</button>
-              <div class="pv-lock-foot">30 días gratis · Cancela cuando quieras</div>
-            </div>
-          </div>
-        </div>
+        <div class="pa-asset-card"><div id="port-asset-detail"></div></div>
       </div>
       <div>
         <div class="pa-label" style="margin-bottom:12px">Pros y Contras</div>
@@ -4747,13 +4723,6 @@ window._pvAwaitIAP = function(totalMs){
       </div>
     </div>
 
-    <!-- De la barra de KPIs hacia abajo TODO es Portiv Pro: retorno esperado, análisis
-         profundo, Portiv Intelligence, rebalanceo y EPS quedan bajo un único candado.
-         Se usa .pv-lock-stack (no .pv-lock a secas) porque la pila mide miles de píxeles
-         y esa variante ancla el mensaje arriba; un overlay centrado en `inset:0` dejaría
-         el candado a 1.500px de donde mira el usuario. -->
-    <div class="pv-lock pv-lock-stack" id="portDeepLockWrap">
-      <div class="pv-lock-body">
     <!-- Fila 4: KPI bar — rellenada por JS -->
     <div id="port-kpi-bar"></div>
 
@@ -4778,7 +4747,7 @@ window._pvAwaitIAP = function(totalMs){
         <div class="pv-lock-card">
           <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>
           <div class="pv-lock-head">Desbloquea Portiv Pro</div>
-          <div class="pv-lock-txt">El análisis profundo de tu portafolio: diagnóstico, rebalanceo y resultados</div>
+          <div class="pv-lock-txt">Tu portafolio analizado a fondo: cada activo, diagnóstico, rebalanceo y resultados</div>
           <div class="pv-lock-sub"></div>
           <ul class="pv-lock-perks">
             <li>Análisis completo de cada acción</li>
@@ -13190,6 +13159,21 @@ function _posAvatar(ticker) {
 }
 
 // Una fila de posición (incluye su drawer de Trade)
+// El símbolo con el que se puede pedir un análisis sin acabar leyendo el de otra empresa.
+// Con sufijo de bolsa ('AIR' + '.PA') el buscador da con el valor correcto. Sin sufijo y
+// cotizando fuera de EE. UU., el mismo símbolo es OTRA compañía allí: entonces no hay
+// búsqueda honesta que hacer y se devuelve null en vez de abrir la equivocada.
+function _pvSearchSym(h){
+  try{
+    const t = String((h && h.ticker) || '').toUpperCase();
+    if (!t) return null;
+    const sfx = (h && h.sfx) ? String(h.sfx) : '';
+    if (sfx) return t.endsWith(sfx) ? t : (t + sfx);
+    const src = (h && h.srcCcy) ? String(h.srcCcy).toUpperCase() : '';
+    if (src && src !== 'USD') return null;
+    return t;
+  }catch(e){ return null; }
+}
 function posRowHTML(h, idx, c, T) {
   // FIX: priceChg y día% derivan del MISMO prevClose que calcH → $ y % coherentes en la fila.
   const priceChg  = h.price - c.prevClose;
@@ -13211,7 +13195,9 @@ function posRowHTML(h, idx, c, T) {
     <td><div class="td-inner"><div class="sym-cell" style="display:flex;align-items:center;gap:10px">
       ${avatar}
       <div style="min-width:0">
-        <div class="sym sym-link" onclick="quickSearch('${h.ticker}')" title="Analizar ${h.ticker}">${h.ticker}</div>
+        ${(() => { const _q = _pvSearchSym(h); return _q
+          ? `<div class="sym sym-link" onclick="quickSearch('${_q}')" title="Analizar ${_q}">${h.ticker}</div>`
+          : `<div class="sym" style="cursor:help" title="${h.ticker} cotiza fuera de EE. UU. y tu bróker no nos dice en qué bolsa: buscarlo abriría la empresa estadounidense que usa ese mismo símbolo.">${h.ticker}</div>`; })()}
         <div class="sym-sub">${pvEsc(h.name)}</div>
       </div>
     </div></div></td>
@@ -31040,6 +31026,8 @@ function aiPortAddRow(p){
   // pierde entre la importación y HOLDINGS. Sin marca (ruta de la foto) no se escribe nada.
   if (p.ccy) tr.dataset.ccy = String(p.ccy);
   if (p.noLive) tr.dataset.noLive = '1';
+  if (p.sfx) tr.dataset.sfx = String(p.sfx);
+  if (p.srcCcy) tr.dataset.srcCcy = String(p.srcCcy);
   // FIX 5 (cont.) — El selector solo ofrecía Stock/ETF, así que un 'fund'/'crypto'/'bond' que sí
   // clasificó snapMapHoldings volvía a colapsar a 'stock' al leer la fila. Se amplían las opciones.
   const _TY_OPTS = [['stock','Stock'],['etf','ETF'],['fund','Fondo'],['crypto','Cripto'],['bond','Bono']];
@@ -31072,6 +31060,8 @@ function _aiReadRows(){
       reinvest:  g('.ai-r') ? (g('.ai-r').value !== 'no') : true,
       ccy:       tr.dataset.ccy || null,
       noLive:    tr.dataset.noLive === '1',
+      sfx:       tr.dataset.sfx || null,
+      srcCcy:    tr.dataset.srcCcy || null,
     };
   }).filter(p => p.ticker);
 }
@@ -32693,6 +32683,7 @@ function aiPortImportData(data){
              // Moneda de la fila y veto al feed en vivo (los pone snapMapHoldings). Por la
              // ruta de la foto llegan undefined y todo se comporta igual que siempre.
              ccy: p.currency || null, noLive: p.no_live === true,
+             sfx: p.sfx || null, srcCcy: p.src_ccy || null,
              needsReview: !!p._needsReview, reasons: p._reviewReasons || [], confidence: _aiNum(p.confidence) };
   });
 
@@ -32717,7 +32708,7 @@ function aiPortImportData(data){
     // FIX 5 (cont.) — `type` se perdía aquí: aiPortAddRow caía a _aiIsETF(ticker) y la clasificación
     // real que trae el broker (et/mf/oef/cef/crypto) nunca llegaba a la fila ni a HOLDINGS.
     aiPortAddRow({ ticker: p.ticker, type: p.type, shares: p.shares ?? '', price: p.price != null ? +p.price.toFixed(4) : '', cost_basis: p.cb != null ? +p.cb.toFixed(2) : '', day: p.dayChgPct ?? '', reinvest: p.reinvest,
-      ccy: p.ccy, noLive: p.noLive,
+      ccy: p.ccy, noLive: p.noLive, sfx: p.sfx, srcCcy: p.srcCcy,
       needsReview: p.needsReview, reasons: p.reasons, confidence: p.confidence });
   });
   aiPortRecalc();
@@ -32803,7 +32794,7 @@ function renderAIPortEditor(){
     const v = _periodOverridePct(k); el.value = (v != null) ? v : '';
   });
   const tbody = document.getElementById('aiPosRows'); tbody.innerHTML = '';
-  HOLDINGS.forEach(h => aiPortAddRow({ ticker: h.ticker, type: h.type, shares: h.qty, price: h.price, cost_basis: h.costBasis, day: h.dayChgPct, reinvest: h.reinvest, ccy: h.ccy, noLive: h.noLive }));
+  HOLDINGS.forEach(h => aiPortAddRow({ ticker: h.ticker, type: h.type, shares: h.qty, price: h.price, cost_basis: h.costBasis, day: h.dayChgPct, reinvest: h.reinvest, ccy: h.ccy, noLive: h.noLive, sfx: h.sfx, srcCcy: h.srcCcy }));
   if (!HOLDINGS.length) aiPortAddRow();
   aiPortRecalc();
 }
@@ -32977,7 +32968,8 @@ async function aiPortApply(){
       _byTicker[p.ticker] = { ticker: p.ticker, name: oldNames[p.ticker] || p.ticker, type: p.type,
         qty: p.qty, price: p.price, dayChgPct: p.dayChgPct || 0,
         costBasis: cost, reinvest: p.reinvest !== false,
-        ...(p.ccy ? { ccy: p.ccy } : {}), ...(p.noLive ? { noLive: true } : {}) };
+        ...(p.ccy ? { ccy: p.ccy } : {}), ...(p.noLive ? { noLive: true } : {}),
+        ...(p.sfx ? { sfx: p.sfx } : {}), ...(p.srcCcy ? { srcCcy: p.srcCcy } : {}) };
       HOLDINGS.push(_byTicker[p.ticker]);
       return;
     }
@@ -35569,12 +35561,9 @@ document.addEventListener('DOMContentLoaded', function(){
             try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
             setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 700);
           }
-          else if (window._pvPaywallFromQuiz) {
-            // Cancelado con la X y el muro venía del cuestionario: la tarjeta del perfil
-            // sigue tapando la app. En web esto ya lo hace _pvClosePaywall; en nativo el
-            // SDK sólo devuelve el resultado, así que hay que cerrarla aquí.
-            try { window._pvClosePaywall(); } catch(e){}
-          }
+          // Cancelado / no presentado → no se toca nada. Si el muro venía del
+          // cuestionario, la tarjeta del perfil sigue debajo y es justo donde tiene que
+          // quedarse el usuario: con su CTA y con la entrada manual a mano.
         }).catch(function(){});
       } catch(e){}
     }
@@ -35604,9 +35593,17 @@ document.addEventListener('DOMContentLoaded', function(){
     document.body.style.overflow = 'hidden';
   };
   window._pvClosePaywall = function(){
-    window._pvPaywallFromQuiz = false;   // la marca es de un solo uso
     var o = document.getElementById('portivPaywall');
     if(o) o.classList.remove('open');
+    // Muro abierto al terminar el cuestionario: cerrarlo con la X devuelve a la tarjeta
+    // del perfil, NO al interior de la app. Ahí están el CTA (que vuelve a abrir el muro)
+    // y la entrada manual; entrar a la app sin portafolio ni suscripción no es una salida,
+    // es un callejón. Por eso tampoco se reanuda aquí el muro de suscripción: sigue
+    // diferido mientras el cuestionario está abierto, y _closeQuiz lo retoma al salir.
+    if (window._pvPaywallFromQuiz) {
+      try { document.body.style.overflow = 'hidden'; } catch(e){}   // el quiz sigue abierto
+      return;
+    }
     // El quiz de perfil vive DEBAJO del paywall (z-index 12000 los dos). Al cerrar el
     // paywall se hacía showTab('portfolio') pero el quiz seguía tapando la pantalla:
     // el usuario se quedaba mirando la tarjeta del perfil sin salida. Mismo motivo que
@@ -35719,6 +35716,10 @@ document.addEventListener('DOMContentLoaded', function(){
     }
   };
   window._pvConfirmTrial = function(){
+    // Pagado: la marca del cuestionario muere aquí. Este camino cierra #pqOverlay a mano
+    // (no pasa por _closeQuiz), así que sin esta línea la marca sobreviviría al quiz y el
+    // siguiente cierre de muro creería que hay un cuestionario abierto debajo.
+    window._pvPaywallFromQuiz = false;
     // iOS: sin checkout web (Paddle). Cierra el paywall y arranca la conexión del broker.
     // La suscripción real se gestionará vía IAP nativo (RevenueCat/StoreKit).
     var o = document.getElementById('portivPaywall');
@@ -36799,13 +36800,7 @@ document.addEventListener('DOMContentLoaded', function(){
         <span class="pq-chip">${p.horizonLabel}</span>
       </div>
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
-      <div class="pq-pro-poster">
-        <span class="pq-pro-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></span>
-        <div class="pq-pro-body">
-          <div class="pq-pro-tag">Portiv Pro</div>
-          <div class="pq-pro-txt">Conectar tu portafolio, el análisis con IA y el chat van con la suscripción. Empiezas con 30 días gratis.</div>
-        </div>
-      </div>
+      <div class="pq-pro-row"><span class="pq-pro-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>Portiv Pro</span></div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
       <button type="button" class="pq-manual-box" id="pqManualEntry">
         <span class="pq-manual-h">¿Prefieres hacerlo a mano?</span>
@@ -36816,11 +36811,12 @@ document.addEventListener('DOMContentLoaded', function(){
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     // Las diapositivas de "cómo funciona" ya se vieron al iniciar sesión, antes
     // de las preguntas, así que aquí se va derecho al muro.
+    const _pqMuro = ()=>{
+      try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
+      try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
+    };
     const _pqGoPaywall = ()=>{
-      const _muro = ()=>{
-        try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
-        try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
-      };
+      const _muro = _pqMuro;
       // El permiso de IA se pide AQUÍ: una sola vez, con las preguntas ya
       // contestadas y antes del muro. Queda guardado y no se vuelve a mostrar —
       // el gate perezoso de _aiFetch sigue existiendo sólo como red para quien
@@ -36848,7 +36844,11 @@ document.addEventListener('DOMContentLoaded', function(){
         || (window._pvSubActive && window._pvSubActive());
       if (!_yaTiene) {
         window._pvPaywallFromQuiz = true;
-        setTimeout(function(){ try { _pqGoPaywall(); } catch(e){} }, 450);
+        // Directo al muro, sin espera y sin el permiso de IA por delante: ese modal se
+        // colaba entre las preguntas y el precio y el muro ya no salía "de una". El
+        // permiso se sigue pidiendo por el gate perezoso de _aiFetch, en el primer uso
+        // real de la IA, y por el CTA (que conserva el camino de siempre).
+        _pqMuro();
       }
     } catch(e){}
     // Aviso IBKR: informativo, independiente del CTA. No toca el flujo del paywall.
@@ -36996,6 +36996,7 @@ document.addEventListener('DOMContentLoaded', function(){
     ov.classList.add('open'); _renderStep();
   }
   function _closeQuiz(){
+    window._pvPaywallFromQuiz = false;   // fuera del cuestionario, el muro vuelve a ser normal
     document.getElementById('pqOverlay').classList.remove('open');
     // El muro de suscripción se difiere mientras el quiz está abierto: al cerrarlo hay
     // que volver a evaluar, o alguien sin suscripción se queda dentro de la app.
@@ -38506,8 +38507,11 @@ document.addEventListener('DOMContentLoaded', function(){
     if (s && typeof s === 'object'){
       var inner = (s.symbol != null ? s.symbol : s.universal_symbol);
       if (typeof inner === 'string'){
-        // Envoltorio con el ticker en cadena: conserva type/currency del envoltorio.
-        return { symbol: inner, raw_symbol: s.raw_symbol, type: s.type, currency: s.currency };
+        // Envoltorio con el ticker en cadena: conserva type/currency Y la bolsa del
+        // envoltorio. Sin `exchange` no hay forma de saber en qué plaza cotiza, y dos
+        // empresas distintas con el mismo símbolo acaban siendo la misma fila.
+        return { symbol: inner, raw_symbol: s.raw_symbol, type: s.type,
+                 currency: s.currency, exchange: s.exchange };
       }
       if (inner && typeof inner === 'object'){
         // El objeto interno a veces no trae currency; el externo sí.
@@ -38526,6 +38530,21 @@ document.addEventListener('DOMContentLoaded', function(){
     if (typeof t !== 'string') t = '';
     if (!t && p) t = String((p.ticker || p.description || '') || '');
     return t.toUpperCase().trim();
+  }
+  // La BOLSA del símbolo. SnapTrade la entrega en `exchange` con un `suffix` ya en formato
+  // Yahoo ('.PA' para París, '.TO' para Toronto, vacío para las plazas de EE. UU.). Sin él,
+  // 'AIR' es Airbus en París y AAR Corp en Nueva York y no había forma de distinguirlas:
+  // el análisis abría la empresa equivocada con el nombre y las cifras de otra.
+  function _snapExchange(so){
+    try{
+      var e = so && so.exchange;
+      if(!e || typeof e !== 'object') return null;
+      var sfx = (typeof e.suffix === 'string') ? e.suffix.trim() : '';
+      if(sfx && sfx.charAt(0) !== '.') sfx = '.' + sfx;
+      var code = (typeof e.code === 'string' && e.code) ? e.code.toUpperCase()
+               : (typeof e.mic_code === 'string' && e.mic_code) ? e.mic_code.toUpperCase() : '';
+      return (sfx || code) ? { code: code, suffix: sfx } : null;
+    }catch(err){ return null; }
   }
   function _ccyOf(o){
     try{
@@ -38654,8 +38673,10 @@ document.addEventListener('DOMContentLoaded', function(){
         // sin resolver y la posición se pinta sin rendimiento — que es la verdad.
         var avgRaw = (p.average_purchase_price!=null?p.average_purchase_price:p.avg_cost);
         var avg    = (avgRaw==null || avgRaw==='') ? null : (_n(avgRaw) || null);
+        var _ex = _snapExchange(so);
         var row = { ticker:ticker, shares:shares, current_price:price, avg_cost:avg,
-                    market_value:mv, day_change_pct:0, type: _snapAssetType(so, p), currency: ccy };
+                    market_value:mv, day_change_pct:0, type: _snapAssetType(so, p), currency: ccy,
+                    _sfx: (_ex && _ex.suffix) || '', _exch: (_ex && _ex.code) || '' };
         // Se aparta, no se decide todavía: sólo es dinero ya contado en el efectivo si el
         // efectivo de SU moneda da para cubrirlo (ver el bloque de confirmación, abajo).
         if(p.cash_equivalent === true && mv){ row._acct = _ai; _ce.push(row); return; }
@@ -38787,13 +38808,16 @@ document.addEventListener('DOMContentLoaded', function(){
       // York, y fundirlas sumaba 100 acciones de una con 50 de la otra en una sola fila
       // con un único precio. En una cartera de una sola divisa la clave es equivalente a
       // la de siempre, así que el comportamiento normal no cambia.
-      var _aggKey = function(p){ return p.ticker + '\u0000' + (p._fxFrom || p.currency || ''); };
+      var _aggKey = function(p){
+        return p.ticker + '\u0000' + (p._fxFrom || p.currency || '') + '\u0000' + (p._sfx || '');
+      };
       rows.forEach(function(p){
         var _k = _aggKey(p);
         var a = by[_k];
         if(!a){ a = by[_k] = { ticker:p.ticker, shares:0, current_price:p.current_price, avg_cost:null,
                                      market_value:0, day_change_pct:0, type:p.type, currency:p.currency,
                                      _fxFrom:p._fxFrom||null, _fxUnresolved:!!p._fxUnresolved,
+                                     _sfx:p._sfx||'', _exch:p._exch||'',
                                      _costSum:0, _costShares:0 };
                 order.push(_k); }
         a.shares       += p.shares;
@@ -38815,7 +38839,15 @@ document.addEventListener('DOMContentLoaded', function(){
       order.forEach(function(k){ var t=by[k].ticker; _seen[t]=(_seen[t]||0)+1; });
       return order.map(function(k){
         var a=by[k];
-        if(_seen[a.ticker] > 1 && a._fxFrom) a.ticker = a.ticker + '.' + a._fxFrom;
+        if(_seen[a.ticker] > 1){
+          // Con la bolsa que da SnapTrade sale el nombre REAL del valor ('AIR.PA'), que
+          // además es el que entiende el buscador. Una plaza de EE. UU. declara sufijo VACÍO
+          // y se queda con el símbolo pelado: es suyo. Sólo cuando no hay bolsa ninguna se
+          // recurre a la moneda de origen, que al menos separa las dos filas.
+          var _d = a._sfx || '';
+          if(!_d && !a._exch && a._fxFrom) _d = '.' + a._fxFrom;
+          if(_d && a.ticker.slice(-_d.length) !== _d) a.ticker = a.ticker + _d;
+        }
         // Con el MISMO ticker largo en una cuenta y CORTO en otra, _costShares puede quedar
         // pegado a cero: `>0` lo dejaba pasar y _costSum/_costShares explotaba a Infinity o a
         // un coste absurdo, con la comparación de cobertura satisfecha porque `shares` también
@@ -38839,6 +38871,11 @@ document.addEventListener('DOMContentLoaded', function(){
         // cotización de Yahoo llega en dólares y aquí todo está en la moneda de
         // presentación. En esos casos manda el precio del broker, que además es el correcto.
         a.no_live = (a.currency && a.currency !== 'USD') || !!a._fxFrom || !!a._fxUnresolved;
+        // La moneda de ORIGEN es la que dice en qué plaza cotiza el valor; `currency` ya es la
+        // de presentación y no distingue un AAPL de Nueva York de un Airbus de París.
+        a.src_ccy = a._fxFrom || a.currency || null;
+        a.sfx = a._sfx || null;
+        delete a._sfx; delete a._exch;
         return a;
       });
     })(positions);
