@@ -242,6 +242,12 @@ Deno.serve(async (req) => {
     const presentes = seriesCcys.filter((c, i) => !!c && series[i].length > 0) as string[];
     const necesitaFx = !!wantCcy && presentes.some((c) => c !== wantCcy);
     let noConvertibles = 0;
+    // Cuántas cuentas se reexpresaron. No hay serie HISTÓRICA de tipos de cambio: se aplica
+    // el cambio spot de hoy a todos los puntos, así que la curva mezcla el movimiento del
+    // mercado con el de la divisa a un cambio que en su día no era ése. Es lo mejor que se
+    // puede hacer con lo que hay, pero el usuario tiene que saberlo antes de sacar
+    // conclusiones de la pendiente.
+    let reexpresadas = 0;
     if (necesitaFx) {
       const rates = await fxRatesFor(st, Array.from(new Set([wantCcy!, ...presentes])));
       for (let i = 0; i < series.length; i++) {
@@ -250,6 +256,7 @@ Deno.serve(async (req) => {
         const r = Number(rates[c + wantCcy!]);
         if (Number.isFinite(r) && r > 0) {
           series[i] = series[i].map((p) => ({ date: p.date, value: p.value * r }));
+          reexpresadas++;
         } else {
           // Sin cambio para esa moneda no se inventa uno: esa cuenta sale de la curva y la
           // ausencia se declara igual que la de una cuenta que no respondió. Una curva corta
@@ -318,12 +325,13 @@ Deno.serve(async (req) => {
     // `terminal` se guarda calculado, no se recalcula al leer la caché: `transient` sólo
     // se conoce en el momento de la llamada, y sin él la caché convertía un 429 de hace
     // horas en un "no insistas" permanente.
+    const fxSpot = reexpresadas > 0;
     const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, partialBrokers,
-                      accounts: accountIds.length, currency: wantCcy, noConvertibles, history };
+                      accounts: accountIds.length, currency: wantCcy, noConvertibles, fxSpot, history };
     await admin.from("profiles").update({ snaptrade_history: payload }).eq("id", userId);
 
     return jsonResponse(req, { history, available, reason, terminal, partial, partialBrokers,
-                               accounts: accountIds.length, currency: wantCcy, noConvertibles });
+                               accounts: accountIds.length, currency: wantCcy, noConvertibles, fxSpot });
   } catch (e: any) {
     // Even on unexpected failure, never break the chart — return placeholder state.
     const message = e?.message ?? String(e);

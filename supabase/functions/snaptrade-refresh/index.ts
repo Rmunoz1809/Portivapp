@@ -201,7 +201,11 @@ Deno.serve(async (req) => {
         // cliente todo lo específico de IBKR hasta la siguiente lectura viva. Las
         // `institutions` sí exigirían una llamada a SnapTrade, así que NO se recalculan
         // aquí: el cliente conserva las últimas que recibió (ver snapRefresh).
-        brokerSlugs: await ibkrSlug(true),
+        // Omitir la clave cuando el modo lazy no sabe (isolate frío): el cliente aplica
+        // `hasOwnProperty` y conserva los últimos slugs buenos. Mandarla vacía se los
+        // borraba y _snapIsIbkr() quedaba en false durante la hora que dura la caché.
+        ...(await (async () => { const bs = await ibkrSlug(true);
+            return bs.ibkrAll.length ? { brokerSlugs: bs } : {}; })()),
         // Los tipos de cambio viajan TAMBIÉN con la caché: son de la tabla del isolate, no
         // cuestan una llamada, y sin ellos el cliente pasaría 60 minutos (lo que dura la
         // caché) sin poder dar un total único en una cartera multidivisa — que es justo el
@@ -616,12 +620,17 @@ Deno.serve(async (req) => {
         const price = Number(r?.price ?? 0);
         // Forma que snapMapHoldings ya espera para las opciones (units/price numéricos; el
         // multiplicador de 100 del contrato lo aplica el cliente, como hasta ahora).
-        if (kind === "option") opts.push({ symbol: inst?.symbol ?? null, units, price });
+        // La divisa viaja con la opción: sin ella, en una cuenta IBKR base EUR con opciones
+        // en USD el cliente descontaba del total la cifra en dólares como si fueran euros.
+        const ccy = (typeof r?.currency === "string" && r.currency)
+          ? r.currency
+          : (typeof r?.currency?.code === "string" ? r.currency.code : null);
+        if (kind === "option") opts.push({ symbol: inst?.symbol ?? null, units, price, currency: ccy });
         // Del resto se declara sólo lo que SnapTrade dice, sin derivar ninguna valoración:
         // el notional de un futuro no es lo que aporta a tu patrimonio, y no vamos a inventar
         // una cifra para restarla del total.
         else if (OTHER_KINDS.has(kind)) {
-          others.push({ kind, symbol: inst?.symbol ?? null, units, price });
+          others.push({ kind, symbol: inst?.symbol ?? null, units, price, currency: ccy });
         }
       }
       return { opts, others };
@@ -649,7 +658,13 @@ Deno.serve(async (req) => {
         // fallback marcan la cuenta como ROTA: esto es declarativo, no alimenta la cartera.
         try { optionPositions = (await (st as any).options.listOptionHoldings({ ...sid, accountId })).data ?? []; } catch { /* optional */ }
       }
-      const total = a?.balance?.total?.amount ?? a?.balance?.total ?? null;
+      // `amount` es OPCIONAL en el SDK: `{ currency: "EUR" }` sin importe es una respuesta
+      // válida. El `??` en cadena devolvía entonces el OBJETO, el cliente lo sumaba como
+      // total declarado (NaN) y esa cuenta desaparecía del patrimonio. Sólo pasa un número.
+      const rawTotal = a?.balance?.total;
+      const totalAmt = (rawTotal && typeof rawTotal === "object") ? rawTotal.amount : rawTotal;
+      const totalNum = Number(totalAmt);
+      const total = (totalAmt != null && Number.isFinite(totalNum)) ? totalNum : null;
       // La divisa del total se descartaba. En una cuenta multidivisa —IBKR siempre lo es—
       // ese número está en la moneda BASE de la cuenta, y sin saber cuál es el cliente no
       // podía ni compararlo con la suma de las posiciones ni convertirlo: lo trataba como si

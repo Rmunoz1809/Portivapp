@@ -182,22 +182,6 @@ Deno.serve(async (req) => {
     //   conexión deshabilitada → portal en modo `reconnect` (el único que la arregla).
     //   conexión sana          → no se abre nada: se responde alreadyConnected.
     const mode = typeof body?.mode === "string" ? body.mode : "";
-    let conns: any[] = [];
-    if (mode !== "add") {
-      try {
-        conns = ((await st.connections.listBrokerageAuthorizations({
-          userId: snapUserId!, userSecret: userSecret!,
-        })).data as any[]) ?? [];
-      } catch (e: any) {
-        console.warn("[snaptrade-connect] no se pudo listar conexiones:", _detail(e).slice(0, 200));
-      }
-    }
-    // El cliente puede pedir una conexión CONCRETA ("Reconectar Fidelity" cuando hay dos
-    // brokers caídos). Sin esto, find() cogía siempre la primera de la lista: el usuario
-    // arreglaba esa y no tenía ninguna forma de llegar a la otra —el botón repetía el mismo
-    // broker una y otra vez—. El id se valida contra SU propia lista y sólo vale si esa
-    // conexión está de verdad deshabilitada: uno de fuera no abre nada.
-    const askedId = typeof body?.connectionId === "string" ? body.connectionId : "";
     // Alias de broker → slug (ver BROKER_ALIASES arriba). Sin `broker` en el cuerpo, todo
     // sigue exactamente igual que antes: portal con su pantalla de selección.
     const brokerAlias = typeof body?.broker === "string" ? body.broker.trim().toLowerCase() : "";
@@ -215,12 +199,43 @@ Deno.serve(async (req) => {
         return jsonResponse(req, { error: "broker_not_configured" }, 503);
       }
     }
-    const disabledConn =
-      (askedId ? conns.find((c: any) => c?.id === askedId && c?.disabled === true) : null) ??
-      conns.find((c: any) => c?.disabled === true && c?.id) ?? null;
-    const liveConn = conns.find((c: any) => c && c.disabled !== true && c.id) ?? null;
+    // Listar cuesta una llamada a SnapTrade, así que sólo se hace cuando puede cambiar la
+    // decisión. El botón de Interactive Brokers manda SIEMPRE mode 'add', y con `add` no se
+    // miraba nada: una conexión de IBKR dormida no se arreglaba jamás —el portal la mandaba
+    // a dar de alta un duplicado que el broker rechaza— y encima se pagaba otra conexión.
+    let conns: any[] = [];
+    if (mode !== "add" || brokerSlug) {
+      try {
+        conns = ((await st.connections.listBrokerageAuthorizations({
+          userId: snapUserId!, userSecret: userSecret!,
+        })).data as any[]) ?? [];
+      } catch (e: any) {
+        console.warn("[snaptrade-connect] no se pudo listar conexiones:", _detail(e).slice(0, 200));
+      }
+    }
+    // En modo 'add' sólo cuentan las conexiones DEL MISMO broker que se pide: "añade IBKR"
+    // no puede contestar "ya tienes Schwab conectado".
+    const _slugOf = (c: any) =>
+      String(c?.brokerage?.slug ?? c?.brokerage?.id ?? c?.brokerage?.name ?? "").toUpperCase();
+    const scope: any[] = (mode === "add" && brokerSlug)
+      ? conns.filter((c: any) => _slugOf(c) === brokerSlug!.toUpperCase())
+      : conns;
+    // El cliente puede pedir una conexión CONCRETA ("Reconectar Fidelity" cuando hay dos
+    // brokers caídos). Sin esto, find() cogía siempre la primera de la lista: el usuario
+    // arreglaba esa y no tenía ninguna forma de llegar a la otra —el botón repetía el mismo
+    // broker una y otra vez—. El id se valida contra SU propia lista y sólo vale si esa
+    // conexión está de verdad deshabilitada: uno de fuera no abre nada.
+    const askedId = typeof body?.connectionId === "string" ? body.connectionId : "";
+    // Si el cliente nombra una conexión, es ESA o ninguna: caer al find genérico abría el
+    // portal de otra conexión distinta y reapuntaba el perfil del usuario a ella. Cuando el
+    // id ya no existe o ya está sana, se sigue por los caminos de abajo (alreadyConnected o
+    // alta normal), que es lo correcto, en vez de arreglar la que no era.
+    const disabledConn = askedId
+      ? (scope.find((c: any) => c?.id === askedId && c?.disabled === true) ?? null)
+      : (scope.find((c: any) => c?.disabled === true && c?.id) ?? null);
+    const liveConn = scope.find((c: any) => c && c.disabled !== true && c.id) ?? null;
 
-    if (mode !== "add" && !disabledConn && liveConn) {
+    if (!disabledConn && liveConn) {
       // Ya hay broker enlazado y sano. Mandarlo al portal no arregla nada; lo que quiere
       // es ver sus datos al día, y de eso se encarga snaptrade-refresh con force.
       await admin
