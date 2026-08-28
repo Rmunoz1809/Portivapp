@@ -20265,27 +20265,36 @@ let _alpacaDead = false;   // 500/403 del proxy (secrets mal puestas) → dejamo
 
 async function _alpacaFetch(path, timeoutMs = 12000){
   if (_alpacaDead || !_fhSupabaseOn()) return null;
-  // alpaca-proxy ahora exige JWT de USUARIO. Antes mandábamos la anon key, que va en el
-  // bundle público y por tanto no autenticaba nada: la función quedaba abierta a
-  // cualquiera con la URL, gastando nuestra cuota de Alpaca.
+  // Credencial: JWT del usuario si hay sesión, si no la anon key.
   let _tok = null;
   try { _tok = await _pvAccessToken(); } catch(e){}
-  // Sin sesión no hay velas — pero NO se marca muerto: en cuanto el usuario entre, el
-  // siguiente render de gráfica vuelve a intentarlo.
-  if (!_tok) return null;
+  // SIN SESIÓN TAMBIÉN HAY VELAS. Portiv se usa sin cuenta (cartera de ejemplo en la web,
+  // primer arranque de la app) y ahí también se dibujan gráficas. Mientras esto exigía un
+  // JWT de usuario, TODA petición de velas se cortaba aquí en silencio: la reconstrucción
+  // intradía nunca se completaba y la gráfica 1D caía siempre al plan B de snapshots
+  // locales — que sólo tiene puntos desde que el usuario abrió el app. De ahí la curva que
+  // arrancaba a media tarde en vez de en la campana.
+  // El proxy acepta la anon key SOLO para /v2/stocks/bars, con tope de símbolos y
+  // presupuesto de llamadas upstream por IP (ver supabase/functions/alpaca-proxy).
+  const _auth = _tok || FH_PROXY_ANON;
+  if (!_auth) return null;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const r = await fetch(`${ALPACA_PROXY}?path=${encodeURIComponent(path)}`, {
       signal: ctrl.signal,
-      headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + _tok },
+      headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + _auth },
     });
     // 401 = token vencido a mitad de sesión. Transitorio: se recupera solo cuando
     // supabase-js refresca el token, así que NO se marca muerto.
     if (r.status === 401) return null;
     // 500 = secrets ausentes, 404 = función sin desplegar. No tiene sentido reintentar
     // en cada gráfica durante toda la sesión.
-    if (r.status === 500 || r.status === 404 || r.status === 403) { _alpacaDead = true; return null; }
+    // 403 SÓLO mata la fuente si veníamos con sesión: sin ella significa "este endpoint
+    // pide cuenta" (el proxy recorta el tier anon a /v2/stocks/bars), y las velas —que sí
+    // están permitidas— deben seguir pidiéndose.
+    if (r.status === 500 || r.status === 404 || (r.status === 403 && _tok)) { _alpacaDead = true; return null; }
+    if (r.status === 403 || r.status === 429) return null;
     if (!r.ok) return null;
     return await r.json();
   } catch(e) { return null; }

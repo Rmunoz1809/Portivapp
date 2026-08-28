@@ -35,9 +35,16 @@ supabase link --project-ref zblhifszlhdgkhnymwjh   # if link is lost
 ```
 
 ### 1. Secrets
+
+> ⚠ Los valores de abajo son **plantillas**. Comprobado el 2026-08-28: el
+> `SNAPTRADE_CLIENT_ID` desplegado NO es `RAFAEL-MUNOZ-TEST-MFSJO` (ese era el
+> del proyecto de pruebas y este documento se quedó atrás). El valor bueno está
+> en el dashboard de SnapTrade → Settings → API keys, y aquí no se versiona.
+> Para saber qué secretos existen hoy, sin verlos: `supabase secrets list`.
+
 ```bash
-supabase secrets set SNAPTRADE_CLIENT_ID=RAFAEL-MUNOZ-TEST-MFSJO
-supabase secrets set SNAPTRADE_CONSUMER_KEY=<your consumer key>   # <-- I still need this value
+supabase secrets set SNAPTRADE_CLIENT_ID=<client id del dashboard de SnapTrade>
+supabase secrets set SNAPTRADE_CONSUMER_KEY=<consumer key del dashboard>
 # optional but recommended:
 supabase secrets set SNAPTRADE_WEBHOOK_SECRET=<random>            # verify webhook posts
 supabase secrets set SNAPTRADE_CRON_SECRET=<random>              # verify cron posts
