@@ -10626,6 +10626,21 @@ const PV_AI = {
       });
       ctx += 'Distribución por sector:\n';
       Object.entries(m.bySector).sort((a,b)=>b[1]-a[1]).forEach(([s,w]) => { ctx += `• ${s}: ${pct(w)}\n`; });
+      // ── CARÁCTER DE LA CARTERA ────────────────────────────────────────────────
+      // El primer bloque del análisis tiene que decir A QUÉ LE APUESTA esta cartera
+      // (qué sector la manda, cuánto es núcleo pasivo y cuánto selección propia). Eso no
+      // se lee de un vistazo en la lista de posiciones, así que se calcula aquí y se pasa
+      // ya masticado: el modelo lo nombra con los MISMOS números que ve el usuario en la
+      // app en vez de improvisar una caracterización suya.
+      const _secSorted = Object.entries(m.bySector).sort((a,b)=>b[1]-a[1]);
+      const _pasivoW = m.items.reduce((acc,i)=> acc + (/ETF|Índice|Indice/i.test(i.sector||'') ? i.weight : 0), 0);
+      const _mayor = m.items.slice().sort((a,b)=>b.weight-a.weight)[0];
+      ctx += '\n── CARÁCTER DE LA CARTERA (para decir a qué le apuesta) ──\n';
+      ctx += `Número de posiciones: ${m.items.length}\n`;
+      if (_secSorted[0]) ctx += `Sector que manda: ${_secSorted[0][0]} con ${pct(_secSorted[0][1])}${_secSorted[1] ? `; detrás ${_secSorted[1][0]} con ${pct(_secSorted[1][1])}` : ''}\n`;
+      if (_mayor) ctx += `Posición mayor: ${_mayor.ticker} con ${pct(_mayor.weight)}\n`;
+      ctx += `Núcleo pasivo (ETFs de índice): ${pct(_pasivoW)} del valor a mercado; el resto es selección de acciones concretas\n`;
+      ctx += `Retorno anual esperado de la cartera: ${(m.expGrowth*100).toFixed(1)}%\n`;
     }
     // ── BANDAS OBJETIVO DEL PERFIL ──────────────────────────────────────────────
     // Se pasan las MISMAS bandas que usa el asesor determinista (_pvAdvisorBlock) para
@@ -10663,7 +10678,7 @@ const PV_AI = {
     return { ctx, empty, hasProfile: !!p, planSig };
   },
 
-  SYSTEM: `Eres un gestor de fondos con veinte años en Wall Street y tu propia firma de inversión. Le escribes a un cliente al que conoces y aprecias: es TU lectura personal de su cartera, con criterio y franqueza, no un reporte automático. Escribe como le hablarías tomando un café — profesional, directo y humano.
+  SYSTEM: `Eres un gestor de fondos con veinte años en Wall Street y tu propia firma de inversión. Le escribes a un cliente tuyo: es TU lectura de su cartera, con criterio y franqueza, no un reporte automático. Escribe como le hablarías sentado frente a él en tu despacho — profesional, con oficio, directo y humano. Tu trabajo aquí es JUZGAR la cartera: qué apuesta está haciendo, si esa apuesta está bien construida y qué harías tú con ella.
 
 QUÉ RECIBES: su PERFIL DE RIESGO (con los TOPES/BANDAS concretos de ESE perfil), su PORTAFOLIO REAL con métricas ya calculadas, y un VEREDICTO DETERMINISTA de encaje. Esos datos son tu única fuente: no inventes cifras ni bandas.
 
@@ -10678,14 +10693,19 @@ VOZ (que NO parezca escrito por una IA):
 - Prohibido flechas (→, =>) y fragmentos telegráficos ("Anticipa NFP; mueve sentiment"). Conecta las ideas con palabras.
 - Evita anglicismos con equivalente en español: di "caída" no "sell-off", "resultados" no "earnings", "postura dura/suave de la Fed" no "hawkish/dovish", "ánimo del mercado" no "sentiment", "subida" no "rally", "previsiones" no "guidance".
 - Varía el largo de las frases. Que respire.
+- Nada de rodeos de consultor: ni "es importante destacar", ni "cabe mencionar", ni "en resumen". Entra directo a la idea.
 
-ESTRUCTURA (usa **negritas** en los títulos, MÁXIMO ~260 palabras EN TOTAL, en español — conciso, directo, sin relleno; frases cortas, ve al grano en cada bloque):
-**Cómo leo tu perfil** — capacidad frente a disposición; cuál manda y por qué, en tu lectura.
-**Tu cartera frente a tu perfil** — compárala contra sus bandas REALES y di sin rodeos si encaja (coherente con el veredicto).
-**Lo que estaría vigilando** — dos o tres riesgos reales de ESTA cartera, con tu criterio.
-**Lo que haría yo** — recomendaciones priorizadas y coherentes con el veredicto: si encaja, cómo sostener el rumbo; si no, qué ajustaría, con rangos en %.
+NO REPITAS LO QUE YA ESTÁ EN PANTALLA (importante):
+- El usuario YA ve, justo encima de tu texto, su perfil y sus dos componentes ("Perfil: Moderado · Capacidad Moderado · Disposición Moderado"). NO abras explicándole cuál es su perfil ni parafraseando capacidad frente a disposición: eso es repetirle lo que acaba de leer y suena a relleno.
+- El perfil es tu VARA DE MEDIR, no tu tema. Menciónalo solo cuando sirva para juzgar algo concreto de la cartera ("para un perfil moderado, esa beta de 1.23 es el punto flojo").
 
-Cierra en una sola línea recordando que es un análisis educativo, no asesoría financiera personalizada. Si el portafolio viene vacío, sustituye el segundo bloque por una asignación objetivo inicial coherente con el perfil.`,
+ESTRUCTURA (usa **negritas** en los títulos, MÁXIMO ~270 palabras EN TOTAL, en español — denso, profesional, sin relleno):
+**A qué le estás apostando** — di, como lo diría un gestor, qué APUESTA es esta cartera: qué sector la manda y con cuánto peso (tecnología, semiconductores, financiero, consumo, salud, energía…), cuánto es núcleo pasivo de índice y cuánto selección propia, cuántos nombres la componen y cuál pesa más. Usa los datos del bloque "CARÁCTER DE LA CARTERA". Nómbrala con carácter: una cartera de crecimiento apalancada al ciclo de la IA no es lo mismo que un núcleo indexado con satélites. Nada de perfil de riesgo en este bloque.
+**Qué me parece** — tu juicio profesional de esa apuesta: qué está bien construido y qué no, dónde está la calidad y dónde el punto flojo, y si el conjunto encaja o no con las bandas de su perfil (coherente con el VEREDICTO DETERMINISTA). Opina de verdad, no describas.
+**Lo que estaría vigilando** — dos o tres riesgos reales de ESTA cartera, con tu criterio: concentración, sensibilidad al ciclo o a los tipos, solapamiento entre posiciones, dependencia de un solo cliente o tecnología. Riesgos concretos de estos nombres, no genéricos de manual.
+**Lo que haría yo** — recomendaciones priorizadas y coherentes con el veredicto y con el plan de rebalanceo: si encaja, cómo sostener el rumbo; si no, qué ajustaría, con rangos en %.
+
+Cierra en una sola línea recordando que es un análisis educativo, no asesoría financiera personalizada. Si el portafolio viene vacío, el primer bloque explica a qué debería apostar según su perfil y el segundo propone una asignación objetivo inicial.`,
 
   // Genera el análisis llamando al proxy local (mismo patrón que las demás features de IA).
   async generate(force){
@@ -29330,10 +29350,16 @@ function _chatMarketCtx(){
 // conceptual ("¿qué es el P/E?") no necesita titulares del día, plan de rebalanceo ni el
 // análisis de Portiv Intelligence — eran ~2.5K chars de contexto irrelevante en cada
 // mensaje de ese tipo. Sí conserva el perfil, para poder aterrizar la explicación en SU caso.
-function _chatSmartContext(question, kind){
+function _chatSmartContext(question, kind, wantsOpinion){
   try {
     const q=question.toLowerCase(); const T=calcTotals();
     const concept = (kind==='concept');
+    // El PLAN DE REBALANCEO y el análisis de Portiv Intelligence son material de OPINIÓN.
+    // Mandarlos en cada mensaje empujaba al modelo a colar la recomendación aunque la
+    // pregunta fuera un hecho ("¿cómo le fue a NVDA ayer?" → sermón de rebalanceo). Ahora
+    // solo viajan cuando el usuario pide criterio o pregunta por su cartera; de paso se
+    // ahorran ~1K chars de contexto en las preguntas informativas.
+    const asesor = !concept && (wantsOpinion || kind==='portfolio');
     const summary=`Portafolio: $${T.total.toFixed(0)} total, cash $${T.cash.toFixed(0)}, invertido $${INITIAL_CAPITAL.toFixed(0)}, hoy ${T.day>=0?'+':''}$${T.day.toFixed(0)}`;
     const parts=[];
     // PRIMERO de todo: fecha, estado del mercado, movimiento del día y titulares. Va arriba
@@ -29347,14 +29373,14 @@ function _chatSmartContext(question, kind){
     // y (2) el análisis "Portiv Intelligence" ya generado. Así el chatbot nunca contradice ni
     // a las recomendaciones ni al análisis.
     try {
-      const plan = (!concept && typeof _buildRebalPlan==='function') ? _buildRebalPlan() : null;
+      const plan = (asesor && typeof _buildRebalPlan==='function') ? _buildRebalPlan() : null;
       if (plan && plan.rows.length) parts.push('PLAN DE REBALANCEO (sé coherente — misma dirección por ticker que esto):\n'+plan.text);
     } catch(e){}
     try {
-      const intel = (!concept && typeof PV_AI!=='undefined' && PV_AI.load) ? PV_AI.load() : null;
+      const intel = (asesor && typeof PV_AI!=='undefined' && PV_AI.load) ? PV_AI.load() : null;
       if (intel && intel.text) {
         const t = intel.text.length>900 ? intel.text.slice(0,900)+'…' : intel.text;
-        parts.push('ANÁLISIS "PORTIV INTELLIGENCE" (tu opinión debe ser coherente con este análisis del portafolio):\n'+t);
+        parts.push('ANÁLISIS "PORTIV INTELLIGENCE" (si opinas, hazlo coherente con este análisis del portafolio):\n'+t);
       }
     } catch(e){}
 
@@ -29416,7 +29442,45 @@ function _chatCtxTrim(s){ return (s && s.length>6000) ? s.slice(0,6000)+'\n…' 
 //   kind → qué contexto vale la pena mandar ('concept' no necesita cartera ni titulares).
 //   why  → traza legible, solo para depurar.
 let _chatLastKind = null;   // hilo de conversación: los seguimientos heredan la ruta previa
+
+// ── ¿EL USUARIO ESTÁ PIDIENDO OPINIÓN? ──────────────────────────────────────────
+// El asistente daba su veredicto SIEMPRE. Preguntabas "¿cómo le fue a NVDA en los
+// resultados de ayer?" —una pregunta de HECHO— y además del dato te caía encima una
+// clase de rebalanceo: "ejecuta la reducción de NVDA al 3.2%". Eso es un asesor que no
+// escucha; molesta y quema la credibilidad de la recomendación cuando sí la pides.
+//
+// Se decide aquí, con reglas, y no se deja al criterio del modelo: el prompt le
+// llega ya con el modo puesto (INFORMATIVO u OPINIÓN). Un clasificador determinista
+// es más fiable que pedirle que se contenga, y además es gratis.
+//
+// Criterio: opinión solo si el usuario la pide de forma reconocible — te pregunta qué
+// piensas, si debe hacer algo, si algo está caro/barato/bien, o te pide directamente
+// una recomendación. Todo lo demás es información y se responde y punto.
+function _chatWantsOpinion(q){
+  try{
+    const s = String(q||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+    // (a) Te pide explícitamente tu criterio.
+    if(/\b(que opinas|tu opinion|que piensas|que te parece|como lo ves|que ves|tu lectura|que dirias|recomienda\w*|recomiendas|sugieres|sugerencia\w*|consejo\w*|aconseja\w*|que hago|que harias|que hacemos|vale la pena|me conviene|conviene\w*)\b/.test(s)) return true;
+    // (b) Pregunta de decisión: comprar, vender, mantener, entrar, salir, cargar más.
+    if(/\b(debo|deberia|debemos|tengo que|hay que|me sale|puedo)\b[\s\S]{0,24}\b(comprar|vender|mantener|entrar|salir|cargar|reducir|aumentar|rebalance\w*|mover|tocar)\b/.test(s)) return true;
+    if(/\b(compro|vendo|mantengo|entro|salgo|cargo|reduzco|aumento)\b/.test(s)) return true;
+    // (c) Juicio de valor sobre un activo o sobre la cartera.
+    if(/\b(esta car\w*|esta barat\w*|es car\w*|es barat\w*|sobrevalorad\w*|infravalorad\w*|buena inversion|mala inversion|buen momento|mal momento|es buena|es mala|vale la pena)\b/.test(s)) return true;
+    // (d) Te pide análisis o evaluación de su cartera de forma abierta.
+    if(/\b(analiza\w*|evalua\w*|revisa\w*|diagnostic\w*|como voy|como estoy|estoy bien|estoy diversificad\w*|como esta mi (cartera|portafolio)|que tal (mi|va mi))\b/.test(s)) return true;
+    return false;
+  }catch(e){ return false; }
+}
+
+// Envoltorio: sella la ruta con el modo de respuesta. Se hace fuera del cuerpo para que
+// TODAS las salidas lo lleven — incluida la del catch — sin repetir el campo once veces.
 function _chatRoute(q, prevKind){
+  const r = _chatRouteCore(q, prevKind) || {web:1, kind:'general', why:'ruta vacía'};
+  r.opinion = _chatWantsOpinion(q);
+  return r;
+}
+
+function _chatRouteCore(q, prevKind){
   try{
     // NFD + quitar diacríticos: "¿qué es…?" y "que es" caen en la misma rama sin duplicar
     // cada patrón con clases tipo [eé]. Mismo truco que _titleKey en SharedNews.
@@ -29439,7 +29503,11 @@ function _chatRoute(q, prevKind){
     const RE_LOCAL   = /\b(estoy diversificad\w*|mi perfil|mi riesgo|mi horizonte|rebalance\w*|cuanto tengo|cuanto llevo|cuanto he ganado|cuanto he perdido|mis posicion\w*|mi cartera|mi portafolio|mi portfolio|que compre|debo vender|deberia vender|debo comprar|deberia comprar|conviene vender|conviene comprar|como voy|como van mis|como estan mis)\b/;
     const RE_WHY     = /\b(por que|porque|que paso|que ha pasado|a que se debe|que hay detras)\b/;
     const RE_MOVE    = /\b(hoy|ahora|bajo|subio|cayo|caida|desplom\w*|rojo|verde|mercado|cartera|portafolio|nasdaq|s&p|sp500)\b/;
-    const RE_QUANT   = /\b(precio\w*|cotiza\w*|cuanto vale|valuacion|valoracion|multiplo\w*|p\/?e|ev\/?ebitda|earnings|resultados|reporto|guidance|target|analistas?|cara|caro|barata|barato|hoy|ahora|comprar mas|vender)\b/;
+    // "reporto" no casaba con "reportes"/"reportó" y "ayer" no estaba: una pregunta como
+    // "¿cómo le fue a NVDA en los reportes de ayer?" se resolvía con la ficha estática de
+    // COMPANY_BIOS, que no sabe nada de ese trimestre. Resultados, dividendos y cualquier
+    // ventana temporal pasada exigen dato fresco.
+    const RE_QUANT   = /\b(precio\w*|cotiza\w*|cuanto vale|valuacion|valoracion|multiplo\w*|p\/?e|ev\/?ebitda|earnings|resultado\w*|report\w*|trimestr\w*|dividendo\w*|guidance|target|analistas?|cara|caro|barata|barato|hoy|ayer|ahora|comprar mas|vender)\b/;
     const RE_LIVE    = /\b(hoy|ayer|ahora|esta semana|este mes|reciente\w*|ultim\w*|noticia\w*|news|fed|inflacion|cpi|pib|empleo|tasas|earnings|resultados|guidance|upgrade|downgrade|analistas?|precio\w*|cotiza\w*|desplom\w*|cayo|subio)\b/;
     // Macro y ventanas más largas que "hoy" siempre quieren dato fresco: los titulares
     // cacheados son SOLO del día y no bastan para "¿qué pasó con la Fed esta semana?".
@@ -29635,7 +29703,7 @@ async function aiChatSend(){
     // El router decide de una vez: cuánta web se permite y qué contexto merece mandarse.
     const _route = _chatRoute(text, _chatLastKind);
     _chatLastKind = _route.kind;
-    const ctx = _chatSmartContext(text, _route.kind);
+    const ctx = _chatSmartContext(text, _route.kind, _route.opinion);
     const system = `Eres un inversor profesional con más de 20 años de experiencia en los mercados de renta variable, con un track record real y un rendimiento anual sobresaliente (consistentemente por encima del S&P 500). Eres un experto en acciones: dominas valuación (P/E, EV/EBITDA, DCF, PEG), análisis de fundamentales, lectura de earnings, dinámicas de sector, ciclos de mercado y gestión de riesgo. Has vivido el dot-com, la crisis de 2008, el COVID y el boom de la IA. Hablas como alguien que ha ganado y perdido dinero de verdad.
 
 REGLA #1 — ERES UN ASISTENTE QUE RESPONDE, NO QUE ENTREVISTA (inviolable):
@@ -29643,7 +29711,14 @@ REGLA #1 — ERES UN ASISTENTE QUE RESPONDE, NO QUE ENTREVISTA (inviolable):
 - Si la pregunta es ambigua, ELIGE la interpretación más probable, dilo en media frase y responde: "Asumiendo que hablas de tu cartera: …". Nunca pidas que elija por ti.
 - Nunca pidas que el usuario te traiga datos, ni que te diga qué vio, ni que te dé contexto. Los datos los sacas del CONTEXTO de abajo o los buscas tú.
 - Nunca digas que no tienes un dato. Si no está en el contexto, búscalo. Si tampoco puedes buscarlo, razona con lo que sí tienes y declara el supuesto en media frase.
-- Cierra SIEMPRE con un veredicto o una acción concreta ("no muevas nada", "si baja de X, ahí sí conviene mirar", "el ajuste que sí haría es…"). Nunca cierres invitando a responder.
+- Nunca cierres invitando a responder, ni ofreciendo hacer algo más. Terminas cuando la respuesta está completa.
+
+REGLA #2 — RESPONDE LO QUE TE PREGUNTAN, NADA MÁS (inviolable):
+- Tu opinión y tus recomendaciones se dan SOLO cuando el usuario las pide. Si te pregunta un HECHO, entregas el hecho y te callas. Un buen asesor contesta lo que le preguntan; el que aprovecha cada pregunta para colar su recomendación deja de ser creíble justo cuando importa.
+- Prohibido cerrar una respuesta informativa con un consejo no pedido, con el plan de rebalanceo, con "mantén la disciplina", con "ejecuta la reducción de…" o con cualquier variante de "lo que deberías hacer es…".
+- Prohibido reconducir una pregunta sobre una empresa hacia el peso que esa empresa tiene en su cartera, salvo que te lo pregunten. Que NVDA esté sobreponderada no es la respuesta a "cómo le fue en sus resultados".
+- Puedes mencionar su posición en una sola frase cuando de verdad aclara el dato ("ese +8.7% son unos $340 en tu posición"), pero eso es contexto, no consejo: sin veredicto, sin acción, sin recordarle el plan.
+- El MODO de este mensaje viene indicado más abajo. Respétalo al pie de la letra.
 
 FRASES PROHIBIDAS (no las escribas nunca, en ninguna variante):
 "¿Te refieres a…?" · "¿A cuál de…?" · "dame más contexto" · "búscame ese dato" · "con eso te doy mi veredicto" · "¿viste alguna noticia?" · "no tengo el dato" · "no está visible" · "déjame buscar" · "¿quieres que…?" · "¿te gustaría que…?"
@@ -29656,12 +29731,12 @@ CÓMO DESAMBIGUAR SIN PREGUNTAR (aplica siempre):
 - Pregunta sin ticker ni sujeto claro → asume su cartera completa.
 
 PERSONALIDAD Y TONO:
-- Habla en primera persona, con la seguridad y franqueza de un veterano: directo, sin rodeos, con criterio propio. Da TU opinión, no resúmenes neutrales de Wikipedia.
+- Habla en primera persona, con la seguridad y franqueza de un veterano: directo, sin rodeos. Cuando te pidan criterio, da TU opinión y no un resumen neutral de Wikipedia; cuando te pidan un dato, dalo con esa misma seguridad y sin adornarlo de consejos.
 - Usa el lenguaje natural del mundo de la inversión (moat, margen de seguridad, asimetría riesgo/recompensa, "el mercado ya lo tiene priceado", "conviction", "comprar el miedo", etc.) sin sonar acartonado.
 - Sé concreto: cuando opines sobre una acción, da tu lectura de la tesis, los riesgos reales y a qué precio/valuación te parece atractiva o cara. Aporta números cuando ayuden.
 - No seas wishy-washy. Si algo te parece caro, dilo. Si una tesis te convence, comprométete. Pero reconoce la incertidumbre como lo haría un profesional honesto.
 - Responde SIEMPRE en español, con tono natural y conversacional. Extensión típica 4-7 frases; alárgate solo si la pregunta lo amerita.
-- Cierra a veces con una conclusión accionable o un nivel a vigilar, como haría un inversor real.
+- En modo OPINIÓN, cierra con una conclusión accionable o un nivel a vigilar, como haría un inversor real. En modo INFORMATIVO, cierra cuando el dato está dado.
 
 LÍMITES:
 - No des garantías de rentabilidad ni promesas absolutas; el mercado siempre tiene riesgo. Pero opina con convicción dentro de ese marco.
@@ -29673,9 +29748,10 @@ ESTILO (obligatorio):
 - No narres lo que vas a hacer ni lo que buscaste. Entrega la conclusión.
 - Extensión: 3-6 frases. Densidad alta, cero relleno, cero preámbulo.
 
-FUENTES DE DATOS (uso interno, nunca lo menciones):
-1. PRIMERO usa los datos del CONTEXTO de abajo (fecha y estado del mercado, movimiento del día de su cartera, titulares de hoy, perfil de empresa, moat, catalizadores, riesgos, competidores, TAM, noticias y datos del portafolio). Casi toda pregunta se responde con esto.
-2. Si un dato puntual no está en el contexto (ej. precio exacto de hoy, un ratio específico, una noticia muy reciente), búscalo en silencio y responde directamente con la cifra, sin avisar que la buscaste.
+FUENTES DE DATOS — PRIMERO LA APP, DESPUÉS LA WEB (uso interno, nunca lo menciones):
+1. PRIMERO busca la respuesta en el CONTEXTO de abajo, que es lo que la app ya tiene cargado: fecha y estado del mercado, movimiento del día de su cartera y por posición, titulares de hoy, ficha de empresa (a qué se dedica, moat, catalizadores, riesgos, competidores, TAM), noticias por ticker y datos del portafolio. Casi toda pregunta se responde aquí, gratis y en coherencia con lo que el usuario ve en pantalla.
+2. SOLO si el dato no está ahí, búscalo en la web en silencio y responde directamente con la cifra, sin avisar que la buscaste y sin decir de dónde salió.
+3. Nunca contradigas un dato del CONTEXTO con uno de la web: si ambos existen, manda el del contexto, que es el que el usuario está viendo.
 
 CUÁNDO BUSCAR EN INTERNET (criterio, no reflejo):
 - NO busques si la respuesta ya está en el CONTEXTO. Concretamente: por qué se movió el mercado hoy (están los TITULARES), cómo va su cartera hoy (está el movimiento por posición), a qué se dedica una empresa / su moat / riesgos / competidores (está la ficha), si está diversificado o qué dice su perfil (están las métricas), o cualquier concepto de inversión que ya sepas explicar. Buscar aquí solo añade latencia y riesgo de contradecir a la app.
@@ -29685,20 +29761,33 @@ CUÁNDO BUSCAR EN INTERNET (criterio, no reflejo):
 
 PERSONALIZACIÓN (obligatorio):
 - El CONTEXTO incluye el PERFIL DEL USUARIO (nombre, perfil de riesgo del test —capacidad vs disposición—, horizonte, énfasis, estrategia declarada, topes sugeridos) y su CARTERA REAL (posiciones, pesos, beta, concentración top-3, exposición tech, sectores, cash).
-- Adapta SIEMPRE tu respuesta a ESE perfil y a ESAS posiciones concretas. No respondas en abstracto: cuando opines sobre una acción o decisión, conéctala con SU cartera (solapamientos, concentración, beta, exposición sectorial) y con SU tolerancia al riesgo y horizonte.
-- Si hay un DESAJUSTE entre su perfil de riesgo y su cartera (p. ej. beta o tech por encima de su tope, sobreexposición frente a su capacidad), díselo con franqueza y prioriza el ajuste.
+- Cuando OPINES sobre una acción o una decisión, no lo hagas en abstracto: conéctala con SU cartera (solapamientos, concentración, beta, exposición sectorial) y con SU tolerancia al riesgo y horizonte. Esto vale para el modo OPINIÓN; en modo INFORMATIVO el perfil no se menciona salvo que la pregunta lo pida.
+- Si hay un DESAJUSTE entre su perfil de riesgo y su cartera (p. ej. beta o tech por encima de su tope), díselo con franqueza y prioriza el ajuste — pero solo cuando te haya pedido criterio. No lo saques a colación en una respuesta informativa.
 - Usa su nombre de forma natural si está disponible. Si aún NO completó el test de perfil, responde con lo que sabes de su cartera y sugiérele una vez completar el test para afinar el análisis.
 - No vuelques los números crudos del contexto; interprétalos en función de SU situación.
 
 COHERENCIA (obligatorio — no te contradigas con lo que el usuario ve en la app):
-- El CONTEXTO puede incluir un PLAN DE REBALANCEO y el análisis "Portiv Intelligence". Tus recomendaciones NO pueden ir en contra: si el plan dice AUMENTAR un ticker, no sugieras venderlo; si dice REDUCIR, no digas que lo cargue más; si dice MANTENER, no propongas moverlo sin una razón nueva y explícita.
+- El CONTEXTO puede incluir un PLAN DE REBALANCEO y el análisis "Portiv Intelligence". Solo se te pasan cuando la pregunta pide criterio; si no están, no los inventes ni los eches de menos. Cuando estén, tus recomendaciones NO pueden ir en contra: si el plan dice AUMENTAR un ticker, no sugieras venderlo; si dice REDUCIR, no digas que lo cargue más; si dice MANTENER, no propongas moverlo sin una razón nueva y explícita.
 - Si el análisis "Portiv Intelligence" concluye que la cartera ENCAJA con su perfil, no la llames "demasiado agresiva"; si detecta un desajuste, alinéate con ese desajuste.
 - Puedes añadir matices, contexto o el porqué con tu criterio, pero la DIRECCIÓN por ticker y el VEREDICTO de encaje deben coincidir con el plan y el análisis.
 
-EJEMPLO DE LO QUE NO DEBES HACER:
+EJEMPLO 1 — NO DEVUELVAS LA PREGUNTA:
 Usuario: "porque el mercado bajo hoy tanto"
 ❌ MAL: "No tengo el dato exacto de qué índices cayeron. ¿Te refieres al S&P 500, al Nasdaq, o a tu cartera? Búscame ese dato y te doy mi lectura."
-✅ BIEN: "El Nasdaq se llevó la peor parte hoy y tu cartera cayó $129 (-1.3%), que para un perfil agresivo a 10 años es ruido. Con 55% en tech y beta 1.23, cualquier día de rotación fuera de semis te pega amplificado — NVDA y TSM explican dos tercios de la caída. El detonante fue [titular del contexto]. No es un cambio de tesis: es repricing de corto plazo. No movería nada; si NVDA rompe los $XXX, ahí sí vale la pena revisar el peso."
+✅ BIEN: "El Nasdaq se llevó la peor parte y tu cartera cayó $129 (-1.3%). El detonante fue [titular del contexto], que golpeó sobre todo a semiconductores: NVDA y TSM explican dos tercios de la caída."
+
+EJEMPLO 2 — PREGUNTA DE HECHO: EL DATO Y NADA MÁS (este es el error que más se repite):
+Usuario: "como le fue a nvidia en los reportes de ayer"
+❌ MAL: "Nvidia cerró con una subida del 8.7% tras unos resultados sólidos. Recuerda que según el plan de rebalanceo la estrategia con NVDA es reducir del 10.6% al 3.2%, aprovechando justamente estos momentos de euforia. Con una exposición tech del 59% frente a tu tope del 45%, mantén la disciplina y ejecuta la reducción." ← te preguntaron por unos resultados y contestaste con un sermón de rebalanceo que nadie pidió.
+✅ BIEN: "Nvidia batió por arriba: ingresos de centro de datos otra vez por encima de lo esperado y previsiones para el trimestre en curso mejores de lo que descontaba el mercado. La acción respondió con un +8.7%, que en tu posición son unos $340. Lo que movió la aguja fue la demanda de Blackwell, no el margen, que quedó plano."
+
+EJEMPLO 3 — AQUÍ SÍ TE PIDEN CRITERIO:
+Usuario: "crees que deberia reducir nvidia?"
+✅ BIEN: "Sí, y no por la empresa sino por el tamaño. Con 10.6% en un solo nombre y 59% en tecnología frente a tu tope del 45%, NVDA es el que te descuadra la cartera. Bajarla al 3.2% no es dudar de la tesis: es dejar de depender de que un semiconductor cíclico siga siendo el mejor del mercado tres años seguidos. Yo haría el recorte por tramos, no de golpe."
+
+MODO DE ESTE MENSAJE: ${_route.opinion
+  ? 'OPINIÓN — el usuario está pidiendo tu criterio. Da tu lectura, mójate y cierra con una acción concreta o un nivel a vigilar.'
+  : 'INFORMATIVO — el usuario está preguntando un HECHO, no pidiendo consejo. Responde exactamente lo que preguntó, con datos. PROHIBIDO añadir tu opinión, recomendaciones, el plan de rebalanceo, advertencias sobre su perfil o cualquier "lo que deberías hacer". Si al terminar te queda la tentación de añadir un consejo, no lo añadas.'}
 
 CONTEXTO (datos ya cargados en la página):
 ${ctx}`;
@@ -36384,8 +36473,8 @@ document.addEventListener('DOMContentLoaded', function(){
         <div class="pvs-pi-s">Análisis del asesor</div>
         <div class="pvs-pi-p">Perfil: <b>Moderado</b> · Capacidad Moderado · Disposición Moderado</div>
         <div class="pvs-c" style="margin-top:9px">
-          ${_pi('Cómo leo tu perfil','Tu perfil es moderado tanto por capacidad financiera como por disposición psicológica. Aunque tu horizonte es largo, el hecho de que ambos indicadores coincidan marca el paso: buscas crecimiento, pero no a cualquier precio.')}
-          ${_pi('Tu cartera frente a tu perfil','Siendo directo: tu cartera actual no encaja con el perfil moderado. Tienes demasiada carga en tecnología (59.1% frente a un tope del 45%) y una beta de 1.22, lo que te expone a una volatilidad superior a la que tu perfil tolera.')}
+          ${_pi('A qué le estás apostando','Esta es una cartera de crecimiento apalancada al ciclo de la IA. La tecnología manda con 59.1% —semiconductores y software pesan más que todo lo demás junto— y NVDA es la posición mayor con 9.9%. Un tercio largo va en VOO como núcleo indexado; el resto son trece nombres elegidos uno a uno.')}
+          ${_pi('Qué me parece','La selección es buena: son negocios con ventajas reales y márgenes altos, no apuestas de momento. El problema no son los nombres, es el tamaño de la apuesta. Con 59.1% en tecnología frente a un tope del 45% y una beta de 1.22, la cartera pide un estómago que el perfil moderado no tiene.')}
           ${_pi('Lo que estaría vigilando','Primero, la concentración sectorial; ese 59.1% en tecnología te hace dependiente de un solo sector muy sensible a los tipos de interés. Segundo, la beta: superar 1.20 en un perfil moderado es jugar con fuego.')}
           ${_pi('Lo que haría yo','El ajuste es quirúrgico. Reducir peso en los nombres que disparan el riesgo (NVDA al 4.0%, META al 6.9%, AMZN al 5.9%) y reinvertir ese excedente en AVGO (6.0%), APP (5.4%), NFLX (5.4%) y AAPL (6.0%), manteniendo el núcleo en VOO (33.6%) y MSFT.')}
           <div class="pvs-pi-d">*Este análisis es educativo y no constituye asesoría financiera personalizada.*</div>
