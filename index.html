@@ -2862,13 +2862,14 @@ window._ensureChartJs = (function(){
   .pv-lock-card {
     display: flex; flex-direction: column; align-items: center;
     gap: 0; padding: 22px; text-align: center;
-    width: 324px; max-width: 100%; max-height: 100%;
+    width: 324px; max-width: 100%; max-height: 100%; overflow: hidden;
     background: rgba(255,255,255,.96);
     border: 1px solid var(--border, #e3e7ee);
     border-radius: 20px;
     box-shadow: 0 12px 38px rgba(4,22,44,.14);
   }
-  .pv-lock-ico { flex: 0 0 auto; width: 46px; height: 46px; margin-bottom: 14px; border-radius: 50%; background: var(--blue-bg); display: flex; align-items: center; justify-content: center; }
+  .pv-lock-card > * { flex: 0 0 auto; }
+  .pv-lock-ico { width: 46px; height: 46px; margin-bottom: 14px; border-radius: 50%; background: var(--blue-bg); display: flex; align-items: center; justify-content: center; }
   /* Titular fijo del candado. Antes la tarjeta abría con el nombre de la feature y
      remataba con "Se desbloquea con Portiv Pro" en gris: se leía como un pie de página.
      Ahora manda el titular y la feature pasa a ser el subtítulo que lo justifica. */
@@ -2885,7 +2886,7 @@ window._ensureChartJs = (function(){
     /* `align-self: stretch`, no `width: 100%`: la tarjeta es un flex column centrado y
        se dimensiona por su contenido, así que un 100% se resolvía contra un ancho que
        aún no existía y la dejaba en 139px de alto infinito. */
-    align-self: stretch; min-height: 0;
+    align-self: stretch;
     border-top: 1px solid var(--border, #e3e7ee);
     display: flex; flex-direction: column; gap: 9px; text-align: left;
   }
@@ -2918,6 +2919,16 @@ window._ensureChartJs = (function(){
   .pv-lock-card.pv-lock-tight .pv-lock-perks,
   .pv-lock-card.pv-lock-tight .pv-lock-foot { display: none; }
   .pv-lock-card.pv-lock-tight .pv-lock-btn { margin-top: 16px; }
+  /* Hueco tan corto que ni siquiera la versión estrecha entra (columnas de una sola fila).
+     Antes de recortar la tarjeta —y con ella el botón, que es lo único que hace algo— se
+     retira el motivo y se encoge el icono. Titular y botón sobreviven siempre. */
+  .pv-lock-card.pv-lock-mini { padding: 18px; }
+  .pv-lock-card.pv-lock-mini .pv-lock-txt,
+  .pv-lock-card.pv-lock-mini .pv-lock-sub { display: none; }
+  .pv-lock-card.pv-lock-mini .pv-lock-ico { width: 36px; height: 36px; margin-bottom: 10px; }
+  .pv-lock-card.pv-lock-mini .pv-lock-ico svg { width: 18px; height: 18px; }
+  .pv-lock-card.pv-lock-mini .pv-lock-head { font-size: 15.5px; }
+  .pv-lock-card.pv-lock-mini .pv-lock-btn { margin-top: 14px; height: 40px; }
   body.dark-theme .pv-lock-ov { background: linear-gradient(180deg, rgba(15,29,53,.18), rgba(15,29,53,.58)); }
   body.dark-theme .pv-lock-card { background: rgba(21,36,62,.94); border-color: rgba(255,255,255,.10); box-shadow: 0 10px 34px rgba(0,0,0,.42); }
   body.dark-theme .pv-lock-head { color: #fff; }
@@ -2990,6 +3001,14 @@ window._ensureChartJs = (function(){
   html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > .rbl-card { max-height: none; overflow: visible; }
   .pv-lock-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .pv-lock-page > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
+  /* El LAYOUT del envoltorio del chat no puede colgar de .pv-lock-page: esa clase la
+     QUITA _chatApplyFreeGate en cuanto queda cupo, y con ella se iba el height:100% del
+     contenedor. En iPad, donde .ai-chat-page mide 100% (y no un calc en dvh como en
+     móvil), el 100% se resolvía contra un padre de alto automático y la pantalla se
+     encogía al alto de su contenido: el compositor quedaba flotando a media pantalla con
+     un vacío debajo. El alto es del contenedor siempre, esté o no puesto el candado. */
+  #aiChatLockWrap { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+  #aiChatLockWrap > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
   html.pv-free .pv-lock-page > :not(.pv-lock-ov) { filter: blur(8px) saturate(.68); opacity: .78; }
   html.pv-free .pv-lock-page .pv-lock-ov {
     background: linear-gradient(180deg, rgba(248,249,255,.20), rgba(248,249,255,.52));
@@ -8045,7 +8064,18 @@ function _pvFitLockCards(){
       var hueco = host.getBoundingClientRect().height;
       if (!hueco) return;                       // pestaña oculta: no se mide nada útil
       card.classList.remove('pv-lock-tight');
-      if (card.getBoundingClientRect().height > hueco - 16) card.classList.add('pv-lock-tight');
+      // scrollHeight, no getBoundingClientRect(): la tarjeta lleva `max-height: 100%`, así
+      // que su alto RENDERIZADO nunca supera al del hueco y la comparación con el borde
+      // salía siempre falsa — el modo estrecho no se activaba jamás y la tarjeta se
+      // quedaba recortada. scrollHeight sí devuelve lo que el contenido pide de verdad.
+      card.classList.remove('pv-lock-mini');
+      var pide = function(){ return Math.max(card.scrollHeight, card.getBoundingClientRect().height); };
+      if (pide() > hueco - 16){
+        card.classList.add('pv-lock-tight');
+        // Segundo escalón: hay huecos donde ni la versión estrecha entra y el recorte se
+        // comía el botón. Se mide otra vez antes de decidirlo.
+        if (pide() > hueco - 16) card.classList.add('pv-lock-mini');
+      }
     });
   } catch(e){}
 }
