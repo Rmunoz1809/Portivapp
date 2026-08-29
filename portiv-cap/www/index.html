@@ -8065,6 +8065,12 @@ window._pvRepaintLocked = function(){
     const el = document.getElementById('r-analysis');
     if (el && el._pvA && typeof _renderQualAnalysis === 'function') _renderQualAnalysis(el._pvA, el);
   } catch(e){}
+  // Rebalanceo y fortalezas/riesgos: al caducar la suscripción quedaban pintados de verdad
+  // bajo el velo hasta el siguiente render. Se repintan como maqueta en el acto.
+  try {
+    if (typeof renderDeepPortfolioAnalysis === 'function' && typeof calcTotals === 'function')
+      renderDeepPortfolioAnalysis(calcTotals());
+  } catch(e){}
 };
 
 function _pvLockOverlay(txt){
@@ -11485,10 +11491,29 @@ function renderDeepPortfolioAnalysis(T) {
   // → idénticos a los que ven Portiv Intelligence y el chatbot. La tabla solo añade estilo.
   // Ya no se pide nota a la IA: el motor determinista siempre responde y su explicación
   // corresponde exactamente al número de la fila (la nota de IA podía decir otra cosa).
-  const _plan = _buildRebalPlan(m);
+  // ── PLAN GRATIS: detrás del difuminado NO va el análisis real ───────────────────────
+  // El bloque de rebalanceo y el de fortalezas/riesgos son de pago. Se pintaban COMPLETOS
+  // —con tus tickers, tus pesos objetivo y el dinero a mover— y encima se les ponía el
+  // velo: el trabajo se hacía igual para quien no lo iba a ver, y el contenido de pago
+  // viajaba entero en el DOM, donde quitar un `filter: blur()` lo deja a la vista.
+  // Ahora, sin suscripción, se calcula lo justo para el resto de la pestaña y estos dos
+  // bloques se pintan como MAQUETA (las mismas barras grises del análisis del asesor):
+  // conservan la forma y la altura, no afirman nada y no hay nada real que destapar.
+  const _rblFree = (typeof _pvLocked === 'function') && _pvLocked();
+  const _skBar   = w => '<div class="pv-sk-bar" style="width:' + w + '%"></div>';
+  const _skPara  = ws => '<div class="pv-sk-p">' + ws.map(_skBar).join('') + '</div>';
+  const _plan = _rblFree ? { rows: [] } : _buildRebalPlan(m);
   const _planByTk = {}; _plan.rows.forEach(r => { _planByTk[r.ticker] = r; });
   const _actionStyle = { MANTENER:{cls:'gray',icon:'remove'}, AUMENTAR:{cls:'green',icon:'arrow_upward'}, REDUCIR:{cls:'red',icon:'arrow_downward'} };
-  const recRows = m.items.map(i => {
+  // Una fila de maqueta por posición: misma altura de tabla, ni un dato dentro.
+  const _skRows = _rblFree ? m.items.map(() => `
+      <tr>
+        <td>${_skPara([64])}${_skPara([38])}</td>
+        <td>${_skPara([72])}</td>
+        <td>${_skPara([80])}</td>
+        <td>${_skPara([100, 86])}</td>
+      </tr>`).join('') : '';
+  const recRows = _rblFree ? '' : m.items.map(i => {
     const noteEntry = (typeof REBAL_NOTES !== 'undefined') ? REBAL_NOTES[i.ticker] : null;
     const pr = _planByTk[i.ticker] || { cur:i.weight, sug:i.weight, action:'MANTENER' };
     const sug = pr.sug;
@@ -11574,14 +11599,14 @@ function renderDeepPortfolioAnalysis(T) {
         <strong>el precio</strong>. Vender posiciones ganadoras
         puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
       </div>
-      ${_rblFreshHTML}
+      ${_rblFree ? '' : _rblFreshHTML}
       <div class="rbl-card">
         <table class="rbl-table">
           <thead><tr><th>Activo</th><th>Acción</th><th>Rebalanceo</th><th>Análisis</th></tr></thead>
-          <tbody>${recRows}</tbody>
+          <tbody>${_rblFree ? _skRows : recRows}</tbody>
         </table>
       </div>
-      ${(typeof _pvxSuggestHTML === 'function') ? _pvxSuggestHTML(m, T) : ''}
+      ${(!_rblFree && typeof _pvxSuggestHTML === 'function') ? _pvxSuggestHTML(m, T) : ''}
       ${(typeof _pvLockOverlay === 'function') ? _pvLockOverlay('Qué comprar, qué recortar y cuánto, posición por posición') : ''}
     </div>
     <div class="rbl-sub" style="margin-top:12px">
@@ -11644,11 +11669,13 @@ function renderDeepPortfolioAnalysis(T) {
     <div class="pa-prosbox">
       <div class="pa-care strengths">
         <div class="pa-care-title"><span class="material-symbols-outlined">trending_up</span>Fortalezas</div>
-        <ul>${pros.map(p=>`<li>${p}</li>`).join('')}</ul>
+        ${_rblFree ? (_skPara([100,88]) + _skPara([96,64]) + _skPara([100,72]))
+                   : `<ul>${pros.map(p=>`<li>${p}</li>`).join('')}</ul>`}
       </div>
       <div class="pa-care risks">
         <div class="pa-care-title"><span class="material-symbols-outlined">warning_amber</span>Riesgos</div>
-        <ul>${cons.map(c=>`<li>${c}</li>`).join('')}</ul>
+        ${_rblFree ? (_skPara([100,92]) + _skPara([84,58]) + _skPara([100,76]))
+                   : `<ul>${cons.map(c=>`<li>${c}</li>`).join('')}</ul>`}
       </div>
     </div>
     ${(typeof _pvLockOverlay === 'function') ? _pvLockOverlay('Las fortalezas y los riesgos concretos de tu cartera') : ''}
@@ -17441,7 +17468,14 @@ const PORTIV_CHART = {
       arr.sort((a,b)=>a.date.localeCompare(b.date));
       arr=arr.slice(-this.MAX_DAILY);
       localStorage.setItem(this.DAILY_KEY,JSON.stringify(arr));
-    }catch(e){}
+    }catch(e){
+      // Mismo motivo que en `_saveDailyPoint`: si esto falla en silencio, la serie deja de
+      // crecer y el usuario ve una gráfica que no avanza sin ningún aviso.
+      if (!window._pvDailySaveWarned) {
+        window._pvDailySaveWarned = true;
+        try { if (typeof reportQuiet === 'function') reportQuiet('Serie diaria · guardar', e); } catch(_){}
+      }
+    }
   },
   // Lee historial diario filtrado por fecha de inicio.
   loadDaily(fromISO){
@@ -18349,6 +18383,9 @@ function _loadDailyHistory() {
 
 // Guarda un punto {date, value} en localStorage (deduplicado por fecha)
 function _saveDailyPoint(dateISO, value) {
+  // Un valor no finito escribía `null` en el JSON y el punto de ese día se perdía en la
+  // siguiente lectura (el filtro lo descarta). Se corta antes de tocar el almacén.
+  if (typeof value !== 'number' || !isFinite(value) || value <= 0) return;
   try {
     const arr = _loadDailyHistory();
     const idx = arr.findIndex(p => p.date === dateISO);
@@ -18356,7 +18393,16 @@ function _saveDailyPoint(dateISO, value) {
     else { arr.push({ date: dateISO, value }); }
     arr.sort((a,b) => a.date.localeCompare(b.date));
     localStorage.setItem(_DAILY_LS_KEY, JSON.stringify(arr));
-  } catch(e) {}
+  } catch(e) {
+    // Antes esto se tragaba en silencio. Si el almacén está lleno (QuotaExceeded) el
+    // historial deja de crecer y la gráfica se congela en el último día guardado SIN que
+    // nadie se entere: el síntoma es justo "no salen las fechas". Se avisa una sola vez
+    // por sesión — es un fallo de guardado, no algo que el usuario deba poder repetir.
+    if (!window._pvDailySaveWarned) {
+      window._pvDailySaveWarned = true;
+      try { if (typeof reportQuiet === 'function') reportQuiet('Historial diario · guardar', e); } catch(_){}
+    }
+  }
 }
 
 // Extiende PERF_MASTER con el historial guardado + actualiza el último punto al total en vivo
@@ -34307,11 +34353,40 @@ if (document.readyState === 'loading') {
     } catch(e){}
     return out;
   }
+  // ── SERIES DE VALOR: se FUSIONAN, nunca se sobrescriben ────────────────────────────
+  // `portiv_daily_history_v1` y `portiv_daily_v2` son ACUMULATIVOS: cada punto es un día en
+  // que la app estuvo abierta, y cada dispositivo tiene los suyos. Restaurar el bundle con
+  // un `setItem` plano PISABA el historial local con la copia de la nube: los días que solo
+  // estaban en este dispositivo desaparecían, y en el siguiente push la versión corta subía
+  // y la pérdida se volvía permanente para la cuenta. Por eso la gráfica arrancaba "hace tres
+  // días" en cuentas con semanas de uso.
+  // Se fusiona por FECHA: la unión de las dos copias, nunca menos. No se inventa ningún día —
+  // un día sin dato sigue sin dato; sólo se deja de borrar lo que sí se midió.
+  var _PV_DATED_MERGE = { 'portiv_daily_history_v1': 1, 'portiv_daily_v2': 1 };
+  function _pvMergeDatedSeries(localStr, remoteStr, max){
+    function parse(s){ try { var a = JSON.parse(s || '[]'); return Array.isArray(a) ? a : []; } catch(e){ return []; } }
+    function ok(p){ return p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && typeof p.value === 'number' && isFinite(p.value) && p.value > 0; }
+    var out = {};
+    // Primero la nube, después lo local: ante la MISMA fecha manda el dato de este
+    // dispositivo (es el que se está escribiendo en vivo hoy) y así no oscila entre sesiones.
+    parse(remoteStr).forEach(function(p){ if (ok(p)) out[p.date] = +p.value; });
+    parse(localStr).forEach(function(p){ if (ok(p)) out[p.date] = +p.value; });
+    var arr = Object.keys(out).sort().map(function(d){ return { date: d, value: out[d] }; });
+    if (max && arr.length > max) arr = arr.slice(-max);
+    return JSON.stringify(arr);
+  }
+  window._pvMergeDatedSeries = _pvMergeDatedSeries;
   function _appBundleRestore(b){
     if (!b || typeof b !== 'object') return;
     try {
       Object.keys(b).forEach(function(k){
-        if (_appKeyShouldSync(k) && typeof b[k] === 'string') { try { localStorage.setItem(k, b[k]); } catch(e){} }
+        if (!_appKeyShouldSync(k) || typeof b[k] !== 'string') return;
+        if (_PV_DATED_MERGE[k]) {
+          try { localStorage.setItem(k, _pvMergeDatedSeries(localStorage.getItem(k), b[k], 760)); }
+          catch(e){ try { localStorage.setItem(k, b[k]); } catch(_){} }
+          return;
+        }
+        try { localStorage.setItem(k, b[k]); } catch(e){}
       });
       // El perfil del usuario actual también como pv_profile_local (lo lee getInvestorProfile).
       var uidKey = 'pv_profile_' + (window.__pvUserId || 'local');
