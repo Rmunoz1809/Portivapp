@@ -299,6 +299,18 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
      el layout móvil. `user-scalable=no` sí es seguro: sólo bloquea el pinch del usuario,
      no toca la escala calculada. */
   var FIXED   = 'width=' + IPAD_MIN_W + ', user-scalable=no, viewport-fit=cover';
+  /* APAISADO: mismo remedio que el vertical, al revés. En vertical el ancho real (744-834)
+     se queda CORTO y se fija a 1024. En apaisado sobra al contrario: el ancho real (1133 del
+     mini, 1180 del Air 11) es tan pequeño en pulgadas que la tipografía y el nav de un layout
+     pensado para 1366 salen enormes — "todo con mucho zoom". Fijando el viewport a 1366 se
+     escala la página entera (en un Air 11, 1366 lógicos sobre 1180 físicos ≈ 0,86): mismo
+     diseño, misma proporción entre todos los elementos, 14% menos de tamaño aparente.
+     El 13" ya mide 1366 apaisado, así que no se toca y los dos modelos acaban idénticos.
+     Idempotente igual que el vertical: fijado, realW() devuelve el ancho FÍSICO otra vez
+     (clientWidth 1366 × escala 0,86 ≈ 1180) y sigue cayendo en [LAND_MIN, LAND_W). */
+  var LAND_MIN = 1100;   // desde aquí es apaisado a pantalla completa, no Split View
+  var LAND_W   = 1366;   // ancho lógico común del apaisado
+  var LAND    = 'width=' + LAND_W + ', user-scalable=no, viewport-fit=cover';
   var ua = navigator.userAgent || '';
   /* iPhone/iPod fuera: su UA también dice "like Mac OS X" y colaría por la rama del Mac
      táctil. (No cambiaría el layout — nunca superan 899 px — pero sí marcaría la clase.) */
@@ -313,7 +325,9 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
   }
   function apply() {
     var w = realW();
-    var want = (w >= SPLIT_MIN && w < IPAD_MIN_W) ? FIXED : DESKTOP;
+    var want = DESKTOP;
+    if (w >= SPLIT_MIN && w < IPAD_MIN_W) want = FIXED;        // vertical: agrandar a 1024
+    else if (w >= LAND_MIN && w < LAND_W)  want = LAND;        // apaisado: encoger a 1366
     if (m.getAttribute('content') !== want) m.setAttribute('content', want);
   }
   apply();
@@ -3859,6 +3873,26 @@ html.pv-ipad body.pv-kb-open #tab-aianalyst {
   height: var(--vvh, 100dvh) !important; z-index: 900 !important;
 }
 html.pv-ipad body.pv-kb-open { overflow: hidden !important; }
+
+/* ── iPad APAISADO: nav y topbar más bajos ──
+   El apaisado tiene el ancho de sobra y la ALTURA justa (≈950 lógicos frente a los ≈1450
+   del vertical). Un nav de 72px se comía el 10% de la pantalla y era lo primero que se
+   leía como "demasiado grande". El escalado del viewport a 1366 encoge todo por igual;
+   esto además le quita altura sólo a las dos barras, que es donde sobraba.
+   El corte por ALTO, no por ancho: apaisado va de 897 (mini) a 1024 (13"), vertical
+   arranca en 1376. Ninguna orientación de ningún iPad cae en el lado equivocado. */
+@media (max-height: 1100px){
+  /* Las medidas están pensadas para lo que se ve DESPUÉS del escalado del viewport
+     (×0,86 en un Air 11): 60 lógicos ≈ 52 físicos, justo el alto de una tab bar de iOS. */
+  html.pv-ipad { --pv-ipad-nav-h: 60px; }
+  html.pv-ipad .bottom-tab {
+    padding: 6px 6px; gap: 3px; font-size: 11.5px !important;
+  }
+  html.pv-ipad .bottom-tab svg { width: 23px !important; height: 23px !important; }
+  html.pv-ipad .m-topbar { padding: calc(env(safe-area-inset-top, 0px) + 8px) 24px 8px; }
+  html.pv-ipad .m-tb-name { font-size: 17.5px; }
+  html.pv-ipad .m-tb-btn { min-width: 38px; min-height: 38px; padding: 5px; }
+}
 
 /* ── Panel "Revisión de importación" ──
    Se crea desde JS con estilo inline (bottom:16px; right:16px; z-index:9999), pensado para
