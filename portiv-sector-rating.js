@@ -914,17 +914,29 @@ function sectorMoatDims(ticker, info, moatObj, bullets) {
 
 // Títulos por sector: la misma sección no se llama igual en banca que en biotech.
 const _TITULOS = {
-  BANCO:           { datos:'Valoración y capital',        salud:'Solidez del balance' },
-  SEGUROS:         { datos:'Valoración y capital',        salud:'Solidez del balance' },
-  GESTOR_ACTIVOS:  { datos:'Valoración y capital',        salud:'Solidez del balance' },
-  REIT:            { datos:'Valoración y flujo de caja',  salud:'Deuda y cobertura del dividendo' },
-  UTILITY:         { datos:'Valoración y dividendo',      salud:'Deuda y cobertura del dividendo' },
-  BIOTECH_CLINICO: { datos:'Valoración',                  salud:'Caja y capacidad de aguante' },
-  TRANSPORTE:      { datos:'Valoración con deuda',        salud:'Deuda, flota y cobertura' },
-  ENERGIA_EP:      { datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex' },
-  ENERGIA_INTEGRADA:{ datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex' },
-  RETAIL:          { datos:'Valoración',                  salud:'Deuda, inventario y liquidez' },
+  BANCO:           { datos:'Valoración y capital',        salud:'Solidez del balance',
+                     rent:'Retorno sobre el capital',     crec:'Crecimiento del balance y del beneficio' },
+  SEGUROS:         { datos:'Valoración y capital',        salud:'Solidez del balance',
+                     rent:'Retorno sobre el capital',     crec:'Crecimiento del balance y del beneficio' },
+  GESTOR_ACTIVOS:  { datos:'Valoración y capital',        salud:'Solidez del balance',
+                     rent:'Retorno sobre el capital',     crec:'Crecimiento de activos y comisiones' },
+  REIT:            { datos:'Valoración y flujo de caja',  salud:'Deuda y cobertura del dividendo',
+                     rent:'Rendimiento de los inmuebles', crec:'Crecimiento del dividendo y de las rentas' },
+  UTILITY:         { datos:'Valoración y dividendo',      salud:'Deuda y cobertura del dividendo',
+                     rent:'Retorno sobre el capital invertido', crec:'Crecimiento regulado y plan de inversión' },
+  BIOTECH_CLINICO: { datos:'Múltiplos de valoración',     salud:'Caja y capacidad de aguante',
+                     rent:'Rentabilidad',                 crec:'Avance del negocio' },
+  TRANSPORTE:      { datos:'Valoración con deuda',        salud:'Deuda, flota y cobertura',
+                     rent:'Eficiencia operativa y ciclo', crec:'Crecimiento del tráfico y del beneficio' },
+  ENERGIA_EP:      { datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex',
+                     rent:'Retorno sobre el capital y ciclo', crec:'Crecimiento y reinversión' },
+  ENERGIA_INTEGRADA:{ datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex',
+                     rent:'Retorno sobre el capital y ciclo', crec:'Crecimiento y reinversión' },
+  RETAIL:          { datos:'Múltiplos de valoración',     salud:'Deuda, inventario y liquidez',
+                     rent:'Eficiencia operativa',         crec:'Crecimiento de ventas y beneficio' },
 };
+// Títulos por defecto de los pilares que antes no se pintaban.
+const _TITULOS_PILAR = { rent:'Rentabilidad', crec:'Crecimiento', merc:'Mercado y consenso' };
 
 // Cómo se escribe cada métrica: porcentaje, veces, o número a secas.
 function _fmtMetrica(clave, v) {
@@ -932,11 +944,18 @@ function _fmtMetrica(clave, v) {
   const VECES = /^(pe|ps|pb|ptbv|ev|peg|pFlujo|pFcf|rot|cobInteres|ciclo)/;
   const DINERO = /^(flujoCajaAccion|ingresoEmpleado|utilidadEmpleado)$/;
   const MESES = /^runwayMeses$/;
+  // El dinero iba en 'es-ES' y los porcentajes y múltiplos en toFixed: en la misma pantalla
+  // convivían "$455.761" (punto de millares) y "15.4%" (punto decimal), y "$18,82" junto a
+  // "2.80×". El resto de la app escribe $918.8B y $357.62, así que el separador es el de EE. UU.
+  const NUM = (x, dec) => x.toLocaleString('en-US', { maximumFractionDigits: dec, minimumFractionDigits: 0 });
   if (MESES.test(clave)) return Math.round(v) + ' meses';
-  if (DINERO.test(clave)) return (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('es-ES', { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 });
+  // El consenso viene ya en escala 0-10 y no tiene mediana de sector con la que compararlo:
+  // sin la escala al lado, un "5.2" pelado no dice nada.
+  if (clave === 'consenso') return v.toFixed(1) + ' / 10';
+  if (DINERO.test(clave)) return (v < 0 ? '−$' : '$') + NUM(Math.abs(v), Math.abs(v) >= 100 ? 0 : 2);
   if (PCT.test(clave)) return (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)) + '%';
   if (VECES.test(clave)) return v.toFixed(v < 10 ? 2 : 1) + '×';
-  if (Math.abs(v) >= 1000) return v.toLocaleString('es-ES', { maximumFractionDigits: 0 });
+  if (Math.abs(v) >= 1000) return NUM(v, 0);
   return v.toFixed(2);
 }
 
@@ -1068,10 +1087,16 @@ function sectorSections(ticker, info) {
     .sort((a, b) => (prof.m[b[0]][1] - prof.m[a[0]][1]))     // primero lo que más pesa en el sector
     .map(([k]) => ({ k, d: _CAT[k], det: r.detalle[k] }));
 
+  // La mediana que se enseña tiene que decir de DÓNDE sale. Cuando el sector no tiene bastantes
+  // empresas calibradas, `_ancla` cae al grupo afín o al mercado entero; presentar ese número
+  // como "la mediana del sector" sería mentir sobre con qué se está comparando la empresa.
+  const _medianaTxt = (a, k) => !a ? '' : 'mediana ' + _fmtMetrica(k, a.v[1]) +
+    (a.origen === 'sector' ? '' : a.origen === 'hermano' ? ' (de su grupo afín)' : ' (del mercado)');
+
   // ── Datos financieros: el pilar de valoración de este sector ──
   const datos = filas('valo').map(({ k, d, det }) => {
     const a = _ancla(r.perfilId, d.campo || k);
-    const med = a ? ` · mediana ${_fmtMetrica(k, a.v[1])}` : '';
+    const med = a ? ` · ${_medianaTxt(a, k)}` : '';
     return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
              v: _fmtMetrica(k, det.v),
              s: _lectura(det.nota) + med };
@@ -1082,7 +1107,7 @@ function sectorSections(ticker, info) {
   const health = filas('soli').map(({ k, d, det }) => {
     const a = _ancla(r.perfilId, d.campo || k);
     return { kk: d.lbl, vv: _fmtMetrica(k, det.v),
-             dd: _lectura(det.nota) + (a ? ` (mediana ${_fmtMetrica(k, a.v[1])})` : ''),
+             dd: _lectura(det.nota) + (a ? ` (${_medianaTxt(a, k)})` : ''),
              tone: TONO(det.nota) };
   });
 
@@ -1096,13 +1121,13 @@ function sectorSections(ticker, info) {
   // aquí hace que las dos secciones digan lo mismo con las mismas palabras.
   const yaEnFoso = new Set(Object.entries(prof.m).filter(([, [p]]) => p === 'rent').map(([k]) => k));
   const pros = todas.filter(x => x.det.nota >= 6.8 && !yaEnFoso.has(x.k))
-                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 5).map(frase).filter(Boolean);
+                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 8).map(frase).filter(Boolean);
   // Si al quitarlas no queda nada positivo que decir, se admiten las de rentabilidad
   // antes que enseñar una sección vacía.
   if (!pros.length) pros.push(...todas.filter(x => x.det.nota >= 6.8)
     .sort((a, b) => b.det.nota - a.det.nota).slice(0, 3).map(frase).filter(Boolean));
   const riesgos = todas.filter(x => x.det.nota <= 3.6)
-                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 5).map(frase).filter(Boolean);
+                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 8).map(frase).filter(Boolean);
 
   // ── Valoración: el pilar de valoración ya está calculado contra el sector ──
   const val = r.pilares.valoracion;
@@ -1116,7 +1141,49 @@ function sectorSections(ticker, info) {
   if (baratas.length) valText += ` Cotiza con descuento en ${baratas.join(' y ')}.`;
 
   const t = _TITULOS[r.perfilId] || {};
-  return { datos, health, pros, riesgos, valText, valLabel,
+
+  // ── Todos los pilares se ven, no solo valoración y solidez ──────────────────────
+  // Antes solo se pintaban 'valo' y 'soli'. En JPMorgan eso dejaba 9 de las 16 métricas que
+  // el motor SÍ calcula fuera de la pantalla: rentabilidad, crecimiento y mercado enteros se
+  // calificaban, movían la nota y no había forma de verlos. Cada pilar sale ahora con sus
+  // filas, ordenadas por lo que más pesa en ESE sector.
+  const _fila = ({ k, d, det }) => {
+    const a = _ancla(r.perfilId, d.campo || k);
+    return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
+             v: _fmtMetrica(k, det.v),
+             s: _lectura(det.nota) + (a ? ` · ${_medianaTxt(a, k)}` : ''),
+             tone: TONO(det.nota) };
+  };
+  const bloques = ['rent', 'crec', 'merc']
+    .map(p => ({ id: p, titulo: t[p] || _TITULOS_PILAR[p], filas: filas(p).map(_fila) }))
+    .filter(b => b.filas.length);
+
+  // ── Otros datos publicados ──────────────────────────────────────────────────────
+  // Lo que el proveedor sí da para esta empresa y el modelo de su sector no puntúa. No entra
+  // en la nota —el modelo del sector decide qué la mueve— pero se enseña con su mediana para
+  // no esconder nada de lo que hay. Sin ancla del sector no se muestra: un número suelto sin
+  // con qué compararlo no es un dato, es ruido.
+  const otros = [];
+  for (const k of Object.keys(_CAT)) {
+    if (prof.m[k]) continue;
+    const d = _CAT[k];
+    if (d.escalaFija) continue;
+    let x = null;
+    try { x = d.deriva ? d.deriva(info) : _leer(info, d.campo); } catch (e) { x = null; }
+    if (typeof x !== 'number' || !isFinite(x)) continue;
+    const a = _ancla(r.perfilId, d.campo || k);
+    if (!a) continue;
+    const n = _anchorScore(x, a.v, d.dir);
+    otros.push({ l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
+                 v: _fmtMetrica(k, x),
+                 s: (n == null ? '' : _lectura(n) + ' · ') + _medianaTxt(a, k),
+                 tone: n == null ? 'mid' : TONO(n),
+                 _d: n == null ? 0 : Math.abs(n - 5.5) });
+  }
+  // Primero lo que más se separa de sus pares: en un bloque largo, lo llamativo arriba.
+  otros.sort((x, y) => y._d - x._d);
+
+  return { datos, health, pros, riesgos, valText, valLabel, bloques, otros,
            tituloDatos: t.datos || 'Datos financieros',
            tituloSalud: t.salud || 'Salud financiera',
            perfil: r.perfil, perfilId: r.perfilId, percentil: r.percentil };

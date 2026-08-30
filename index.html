@@ -5049,6 +5049,14 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-sbox .v{font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
       .pvx .px-empty{font-size:13px;color:var(--px-muted);line-height:1.6;margin:0}
       .pvx .px-intro{margin:-6px 0 0;color:var(--px-muted);font-size:13px}
+      /* "Otros datos publicados": son 25-40 filas de referencia. Plegadas para que no
+         entierren las secciones narrativas que van debajo, pero a un clic de distancia. */
+      .pvx .px-otros>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px}
+      .pvx .px-otros>summary::-webkit-details-marker{display:none}
+      .pvx .px-otros>summary .px-sec-title{margin:0;flex:0 1 auto}
+      .pvx .px-otros-n{font-size:12px;color:var(--px-muted);white-space:nowrap}
+      .pvx .px-otros>summary::after{content:"⌄";margin-left:auto;font-size:18px;line-height:1;color:var(--px-muted);transform:translateY(-4px);transition:transform .18s ease}
+      .pvx .px-otros[open]>summary::after{transform:translateY(2px) rotate(180deg)}
       .pvx .px-hint{font-size:12px;color:var(--px-muted);margin-top:12px;line-height:1.55}
       .pvx .px-hint b{color:var(--px-green-text);font-weight:600}
       /* ① Crecimiento reciente */
@@ -8661,17 +8669,29 @@ function sectorMoatDims(ticker, info, moatObj, bullets) {
 
 // Títulos por sector: la misma sección no se llama igual en banca que en biotech.
 const _TITULOS = {
-  BANCO:           { datos:'Valoración y capital',        salud:'Solidez del balance' },
-  SEGUROS:         { datos:'Valoración y capital',        salud:'Solidez del balance' },
-  GESTOR_ACTIVOS:  { datos:'Valoración y capital',        salud:'Solidez del balance' },
-  REIT:            { datos:'Valoración y flujo de caja',  salud:'Deuda y cobertura del dividendo' },
-  UTILITY:         { datos:'Valoración y dividendo',      salud:'Deuda y cobertura del dividendo' },
-  BIOTECH_CLINICO: { datos:'Valoración',                  salud:'Caja y capacidad de aguante' },
-  TRANSPORTE:      { datos:'Valoración con deuda',        salud:'Deuda, flota y cobertura' },
-  ENERGIA_EP:      { datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex' },
-  ENERGIA_INTEGRADA:{ datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex' },
-  RETAIL:          { datos:'Valoración',                  salud:'Deuda, inventario y liquidez' },
+  BANCO:           { datos:'Valoración y capital',        salud:'Solidez del balance',
+                     rent:'Retorno sobre el capital',     crec:'Crecimiento del balance y del beneficio' },
+  SEGUROS:         { datos:'Valoración y capital',        salud:'Solidez del balance',
+                     rent:'Retorno sobre el capital',     crec:'Crecimiento del balance y del beneficio' },
+  GESTOR_ACTIVOS:  { datos:'Valoración y capital',        salud:'Solidez del balance',
+                     rent:'Retorno sobre el capital',     crec:'Crecimiento de activos y comisiones' },
+  REIT:            { datos:'Valoración y flujo de caja',  salud:'Deuda y cobertura del dividendo',
+                     rent:'Rendimiento de los inmuebles', crec:'Crecimiento del dividendo y de las rentas' },
+  UTILITY:         { datos:'Valoración y dividendo',      salud:'Deuda y cobertura del dividendo',
+                     rent:'Retorno sobre el capital invertido', crec:'Crecimiento regulado y plan de inversión' },
+  BIOTECH_CLINICO: { datos:'Múltiplos de valoración',     salud:'Caja y capacidad de aguante',
+                     rent:'Rentabilidad',                 crec:'Avance del negocio' },
+  TRANSPORTE:      { datos:'Valoración con deuda',        salud:'Deuda, flota y cobertura',
+                     rent:'Eficiencia operativa y ciclo', crec:'Crecimiento del tráfico y del beneficio' },
+  ENERGIA_EP:      { datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex',
+                     rent:'Retorno sobre el capital y ciclo', crec:'Crecimiento y reinversión' },
+  ENERGIA_INTEGRADA:{ datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex',
+                     rent:'Retorno sobre el capital y ciclo', crec:'Crecimiento y reinversión' },
+  RETAIL:          { datos:'Múltiplos de valoración',     salud:'Deuda, inventario y liquidez',
+                     rent:'Eficiencia operativa',         crec:'Crecimiento de ventas y beneficio' },
 };
+// Títulos por defecto de los pilares que antes no se pintaban.
+const _TITULOS_PILAR = { rent:'Rentabilidad', crec:'Crecimiento', merc:'Mercado y consenso' };
 
 // Cómo se escribe cada métrica: porcentaje, veces, o número a secas.
 function _fmtMetrica(clave, v) {
@@ -8679,11 +8699,18 @@ function _fmtMetrica(clave, v) {
   const VECES = /^(pe|ps|pb|ptbv|ev|peg|pFlujo|pFcf|rot|cobInteres|ciclo)/;
   const DINERO = /^(flujoCajaAccion|ingresoEmpleado|utilidadEmpleado)$/;
   const MESES = /^runwayMeses$/;
+  // El dinero iba en 'es-ES' y los porcentajes y múltiplos en toFixed: en la misma pantalla
+  // convivían "$455.761" (punto de millares) y "15.4%" (punto decimal), y "$18,82" junto a
+  // "2.80×". El resto de la app escribe $918.8B y $357.62, así que el separador es el de EE. UU.
+  const NUM = (x, dec) => x.toLocaleString('en-US', { maximumFractionDigits: dec, minimumFractionDigits: 0 });
   if (MESES.test(clave)) return Math.round(v) + ' meses';
-  if (DINERO.test(clave)) return (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('es-ES', { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 });
+  // El consenso viene ya en escala 0-10 y no tiene mediana de sector con la que compararlo:
+  // sin la escala al lado, un "5.2" pelado no dice nada.
+  if (clave === 'consenso') return v.toFixed(1) + ' / 10';
+  if (DINERO.test(clave)) return (v < 0 ? '−$' : '$') + NUM(Math.abs(v), Math.abs(v) >= 100 ? 0 : 2);
   if (PCT.test(clave)) return (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)) + '%';
   if (VECES.test(clave)) return v.toFixed(v < 10 ? 2 : 1) + '×';
-  if (Math.abs(v) >= 1000) return v.toLocaleString('es-ES', { maximumFractionDigits: 0 });
+  if (Math.abs(v) >= 1000) return NUM(v, 0);
   return v.toFixed(2);
 }
 
@@ -8815,10 +8842,16 @@ function sectorSections(ticker, info) {
     .sort((a, b) => (prof.m[b[0]][1] - prof.m[a[0]][1]))     // primero lo que más pesa en el sector
     .map(([k]) => ({ k, d: _CAT[k], det: r.detalle[k] }));
 
+  // La mediana que se enseña tiene que decir de DÓNDE sale. Cuando el sector no tiene bastantes
+  // empresas calibradas, `_ancla` cae al grupo afín o al mercado entero; presentar ese número
+  // como "la mediana del sector" sería mentir sobre con qué se está comparando la empresa.
+  const _medianaTxt = (a, k) => !a ? '' : 'mediana ' + _fmtMetrica(k, a.v[1]) +
+    (a.origen === 'sector' ? '' : a.origen === 'hermano' ? ' (de su grupo afín)' : ' (del mercado)');
+
   // ── Datos financieros: el pilar de valoración de este sector ──
   const datos = filas('valo').map(({ k, d, det }) => {
     const a = _ancla(r.perfilId, d.campo || k);
-    const med = a ? ` · mediana ${_fmtMetrica(k, a.v[1])}` : '';
+    const med = a ? ` · ${_medianaTxt(a, k)}` : '';
     return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
              v: _fmtMetrica(k, det.v),
              s: _lectura(det.nota) + med };
@@ -8829,7 +8862,7 @@ function sectorSections(ticker, info) {
   const health = filas('soli').map(({ k, d, det }) => {
     const a = _ancla(r.perfilId, d.campo || k);
     return { kk: d.lbl, vv: _fmtMetrica(k, det.v),
-             dd: _lectura(det.nota) + (a ? ` (mediana ${_fmtMetrica(k, a.v[1])})` : ''),
+             dd: _lectura(det.nota) + (a ? ` (${_medianaTxt(a, k)})` : ''),
              tone: TONO(det.nota) };
   });
 
@@ -8843,13 +8876,13 @@ function sectorSections(ticker, info) {
   // aquí hace que las dos secciones digan lo mismo con las mismas palabras.
   const yaEnFoso = new Set(Object.entries(prof.m).filter(([, [p]]) => p === 'rent').map(([k]) => k));
   const pros = todas.filter(x => x.det.nota >= 6.8 && !yaEnFoso.has(x.k))
-                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 5).map(frase).filter(Boolean);
+                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 8).map(frase).filter(Boolean);
   // Si al quitarlas no queda nada positivo que decir, se admiten las de rentabilidad
   // antes que enseñar una sección vacía.
   if (!pros.length) pros.push(...todas.filter(x => x.det.nota >= 6.8)
     .sort((a, b) => b.det.nota - a.det.nota).slice(0, 3).map(frase).filter(Boolean));
   const riesgos = todas.filter(x => x.det.nota <= 3.6)
-                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 5).map(frase).filter(Boolean);
+                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 8).map(frase).filter(Boolean);
 
   // ── Valoración: el pilar de valoración ya está calculado contra el sector ──
   const val = r.pilares.valoracion;
@@ -8863,7 +8896,49 @@ function sectorSections(ticker, info) {
   if (baratas.length) valText += ` Cotiza con descuento en ${baratas.join(' y ')}.`;
 
   const t = _TITULOS[r.perfilId] || {};
-  return { datos, health, pros, riesgos, valText, valLabel,
+
+  // ── Todos los pilares se ven, no solo valoración y solidez ──────────────────────
+  // Antes solo se pintaban 'valo' y 'soli'. En JPMorgan eso dejaba 9 de las 16 métricas que
+  // el motor SÍ calcula fuera de la pantalla: rentabilidad, crecimiento y mercado enteros se
+  // calificaban, movían la nota y no había forma de verlos. Cada pilar sale ahora con sus
+  // filas, ordenadas por lo que más pesa en ESE sector.
+  const _fila = ({ k, d, det }) => {
+    const a = _ancla(r.perfilId, d.campo || k);
+    return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
+             v: _fmtMetrica(k, det.v),
+             s: _lectura(det.nota) + (a ? ` · ${_medianaTxt(a, k)}` : ''),
+             tone: TONO(det.nota) };
+  };
+  const bloques = ['rent', 'crec', 'merc']
+    .map(p => ({ id: p, titulo: t[p] || _TITULOS_PILAR[p], filas: filas(p).map(_fila) }))
+    .filter(b => b.filas.length);
+
+  // ── Otros datos publicados ──────────────────────────────────────────────────────
+  // Lo que el proveedor sí da para esta empresa y el modelo de su sector no puntúa. No entra
+  // en la nota —el modelo del sector decide qué la mueve— pero se enseña con su mediana para
+  // no esconder nada de lo que hay. Sin ancla del sector no se muestra: un número suelto sin
+  // con qué compararlo no es un dato, es ruido.
+  const otros = [];
+  for (const k of Object.keys(_CAT)) {
+    if (prof.m[k]) continue;
+    const d = _CAT[k];
+    if (d.escalaFija) continue;
+    let x = null;
+    try { x = d.deriva ? d.deriva(info) : _leer(info, d.campo); } catch (e) { x = null; }
+    if (typeof x !== 'number' || !isFinite(x)) continue;
+    const a = _ancla(r.perfilId, d.campo || k);
+    if (!a) continue;
+    const n = _anchorScore(x, a.v, d.dir);
+    otros.push({ l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
+                 v: _fmtMetrica(k, x),
+                 s: (n == null ? '' : _lectura(n) + ' · ') + _medianaTxt(a, k),
+                 tone: n == null ? 'mid' : TONO(n),
+                 _d: n == null ? 0 : Math.abs(n - 5.5) });
+  }
+  // Primero lo que más se separa de sus pares: en un bloque largo, lo llamativo arriba.
+  otros.sort((x, y) => y._d - x._d);
+
+  return { datos, health, pros, riesgos, valText, valLabel, bloques, otros,
            tituloDatos: t.datos || 'Datos financieros',
            tituloSalud: t.salud || 'Salud financiera',
            perfil: r.perfil, perfilId: r.perfilId, percentil: r.percentil };
@@ -25173,6 +25248,10 @@ function _buildQualAnalysis(ticker, info){
            health_sector:(_sx && _sx.health && _sx.health.length) ? _sx.health : null,
            tituloDatos: (_sx && _sx.tituloDatos) || 'Datos financieros',
            tituloSalud: (_sx && _sx.tituloSalud) || 'Salud financiera',
+           // Rentabilidad, crecimiento y mercado: los pilares que el motor calificaba y la
+           // pantalla no enseñaba. Y `otros`, lo publicado que el modelo del sector no puntúa.
+           bloques_sector: (_sx && _sx.bloques && _sx.bloques.length) ? _sx.bloques : null,
+           otros_sector:   (_sx && _sx.otros   && _sx.otros.length)   ? _sx.otros   : null,
            // Métricas propias (para la fila de la empresa en la comparación con competidores) + flag ETF.
            selfMetrics:{ pe:(typeof pe==='number')?pe:null, revG:(revG!=null)?revG*100:null, netM:(pm!=null)?pm*100:null, roe:(roe!=null)?roe*100:null },
            sector:(info&&info.sector)||'', industry:(info&&info.industry)||'',   // → clasificación de peers (wlNiche)
@@ -25870,6 +25949,30 @@ function _renderQualAnalysis(a, el){
       <p class="px-intro">${(a.health_sector && a.health_sector.length) ? 'Lo que sostiene o hunde a una empresa de este sector, medido contra sus pares directos.' : '¿La empresa genera efectivo de verdad y aguanta sus deudas? Esto separa un buen negocio de uno frágil.'}</p>
       ${hh ? `<div class="px-hgrid" style="margin-top:16px">${hh.map(x=>`<div class="px-hbox"><div class="kk">${esc(x.kk)}</div><div class="vv">${esc(x.vv)}</div><div class="dd ${x.tone}">${esc(x.dd)}</div></div>`).join('')}</div>`
           : `<div style="margin-top:14px">${empty('El proveedor no publica márgenes, caja libre ni apalancamiento para esta empresa todavía.')}</div>`}</div>`;
+  }
+
+  // 6b) LOS DEMÁS PILARES DEL SECTOR (rentabilidad, crecimiento, mercado). El motor ya los
+  //     calificaba y pesaban en la nota, pero solo se pintaban valoración y solidez: en un banco
+  //     eso escondía 9 de las 16 métricas con las que se le estaba juzgando. Mismo formato de
+  //     fila que "Datos financieros": valor, lectura contra sus pares y mediana del sector.
+  if (a.bloques_sector) {
+    for (const b of a.bloques_sector) {
+      h += `<div class="px-card">${stitle(b.titulo)}
+        ${b.filas.map(d=>`<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">lectura: <b>${esc(d.s)}</b></span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`).join('')}
+        <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero.</div></div>`;
+    }
+  }
+
+  // 6c) OTROS DATOS PUBLICADOS. Todo lo que el proveedor da para esta empresa y el modelo de su
+  //     sector NO puntúa. Se enseña con su mediana para no esconder nada; se dice explícitamente
+  //     que no mueve la nota, porque quién decide qué la mueve es el modelo del sector.
+  if (a.otros_sector) {
+    h += `<div class="px-card"><details class="px-otros">
+      <summary>${stitle('Otros datos publicados')}<span class="px-otros-n">${a.otros_sector.length} métricas</span></summary>
+      <p class="px-intro">Lo demás que el proveedor publica de esta empresa, con la mediana de sus pares al lado. Ordenado por lo que más se separa del sector.</p>
+      <div style="margin-top:14px">${a.otros_sector.map(d=>`<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">${esc(d.s)}</span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`).join('')}</div>
+      <div class="px-hint">Estas métricas NO entran en la nota: el modelo de cada sector decide cuáles la mueven. Están aquí para que puedas verlas todas.</div>
+    </details></div>`;
   }
 
   // 7a) CRECIMIENTO RECIENTE — EPS reportado por trimestre + beat/miss + YoY real (datos reales).
@@ -27054,7 +27157,7 @@ function _pvtEngancharResize(tk, canvas){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v7';   // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
+const _QUAL_LS  = 'portiv_qual_analysis_v8';   // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
 // ── Purga del análisis viejo de TODAS las acciones ─────────────────────────
 // Antes se listaban a mano las versiones a borrar y la lista se quedó atrás: portiv_stock_narrative_v2,
@@ -27062,7 +27165,7 @@ const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación po
 // dispositivo con el análisis viejo de TODAS las empresas, ocupando cuota sin que nadie los leyera.
 // Ahora se declara la versión VIVA de cada caché de análisis y se borra cualquier OTRA versión del
 // mismo prefijo — las de hoy y las que vengan. La caché compartida de la nube (qbio:) no vive aquí.
-const _ANALISIS_VIVOS = ['portiv_qual_analysis_v7','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
+const _ANALISIS_VIVOS = ['portiv_qual_analysis_v8','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
                          'portiv_research_snapshot_v3','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
                          'portiv_info_cache_v2','portiv_peer_metric_v1'];
 (function _pvPurgaAnalisisViejo(){
