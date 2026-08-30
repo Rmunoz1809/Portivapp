@@ -1,344 +1,427 @@
 /* ════════════════════════════════════════════════════════════════════════════
-   PORTIV · MOTOR DE EVALUACIÓN SECTORIAL v1.0
+   PORTIV · MOTOR DE EVALUACIÓN SECTORIAL v2.0
    ────────────────────────────────────────────────────────────────────────────
-   Reemplaza el scoring de umbrales absolutos (_computeGeneralRating) por un
-   modelo que puntúa cada métrica CONTRA LA DISTRIBUCIÓN DE SU PROPIO SECTOR.
+   Cambio respecto a la v1: cada sector tiene AHORA SU PROPIA LISTA DE MÉTRICAS,
+   no solo sus propios umbrales. En la v1 a un banco se le medía con las mismas
+   26 métricas genéricas que a una tecnológica (margen bruto, current ratio,
+   deuda/capital…) y lo único sectorial eran los cortes. Aquí un banco se evalúa
+   por precio/valor contable tangible, ROE de 5 años y crecimiento del book
+   value; un REIT por cobertura del dividendo y precio/flujo de caja; una
+   biotech por meses de caja. Las métricas que no dicen nada de un sector no
+   se apagan: directamente no forman parte de su modelo.
 
-   Devuelve DOS números:
+   Las anclas [p10..p90] NO están escritas a mano: se miden sobre el universo
+   real con scripts/calibrar-anclas.mjs y viven en portiv-anclas-sectoriales.json.
+   Cualquiera reejecuta ese script y obtiene los mismos números.
+
+   Devuelve:
      · nota      1.0–10.0  → qué tan buena es la empresa como inversión
-                             (normalizada por sector → comparable entre sectores)
      · percentil 0–100     → qué tan buena es DENTRO de su sector
-
-   Anclas sectoriales calibradas con Damodaran (NYU Stern), datos US enero 2026.
    ════════════════════════════════════════════════════════════════════════════ */
 
-// ── 1. ANCLAS BASE (mercado completo, 5.994 empresas US) ────────────────────
-// Formato: clave: [p25, mediana, p75].  Cada perfil sectorial sobrescribe
-// SOLO lo que difiere del mercado. Así la tabla se mantiene legible.
-const _MKT = {
-  grossMargins:       [0.24, 0.37, 0.55],
-  profitMargins:      [0.01, 0.08, 0.19],
-  operatingMargins:   [0.04, 0.13, 0.25],
-  returnOnEquity:     [0.05, 0.14, 0.26],
-  returnOnCapital:    [0.03, 0.10, 0.20],
-  returnOnAssets:     [0.02, 0.055, 0.11],
-  revenueGrowth:      [-0.01, 0.06, 0.17],
-  earningsGrowth:     [-0.08, 0.08, 0.25],
-  forwardPE:          [13, 22, 34],
-  trailingPE:         [15, 26, 42],
-  pegRatio:           [0.9, 1.8, 3.2],
-  enterpriseToEbitda: [9, 16, 25],
-  priceToSales:       [0.9, 2.5, 6.0],
-  priceToBook:        [1.2, 2.8, 6.0],
-  debtToEquity:       [0.25, 0.75, 1.70],
-  currentRatio:       [1.0, 1.6, 2.6],
-  fcfYield:           [0.005, 0.030, 0.058],   // derivada: freeCashflow / marketCap
-  fcfMargin:          [0.01, 0.07, 0.16],      // derivada: freeCashflow / ingresos
-  dividendYield:      [0.000, 0.012, 0.028],
+// ── 0. LECTURA DE MÉTRICAS ──────────────────────────────────────────────────
+// El motor lee de `info.__m`, el objeto `metric` crudo de Finnhub (112–130
+// campos), en SUS unidades: los porcentajes vienen 0-100 (roeTTM = 17.81 son
+// 17,81%) y los múltiplos en veces. Las anclas se miden en esas mismas unidades,
+// así que no hay conversión en ningún punto y no hay dónde equivocarse de escala.
+//
+// Cuando `__m` no está (llamadas viejas que pasan el `info` ya normalizado de la
+// app, o la sonda de calibración), se cae a los campos equivalentes multiplicando
+// por 100 los que la app dividió.
+const _ALIAS = {
+  peTTM:'trailingPE', forwardPE:'forwardPE', pegTTM:'pegRatio',
+  evEbitdaTTM:'enterpriseToEbitda', psTTM:'priceToSales', pbQuarterly:'priceToBook',
+  pbAnnual:'priceToBook', beta:'beta', marketCapitalization:null,
+  roeTTM:['returnOnEquity',100], roaTTM:['returnOnAssets',100], roiTTM:['returnOnCapital',100],
+  netProfitMarginTTM:['profitMargins',100], grossMarginTTM:['grossMargins',100],
+  operatingMarginTTM:['operatingMargins',100],
+  revenueGrowthTTMYoy:['revenueGrowth',100], epsGrowthTTMYoy:['earningsGrowth',100],
+  revenueGrowthQuarterlyYoy:['revenueGrowthQ',100],
+  currentDividendYieldTTM:['dividendYield',100],
+  'totalDebt/totalEquityQuarterly':'debtToEquity', 'totalDebt/totalEquityAnnual':'debtToEquity',
+  currentRatioQuarterly:'currentRatio', currentRatioAnnual:'currentRatio',
+  '52WeekHigh':'fiftyTwoWeekHigh',
 };
 
-// ── 2. PILARES ──────────────────────────────────────────────────────────────
-// P1 rentabilidad · P2 crecimiento · P3 solidez · P4 valoración · P5 mercado
-// Cada métrica: [pilar, dirección(+1 mejor alto / -1 mejor bajo), peso]
-const _METRIC_DEF = {
-  grossMargins:       ['rent', +1, 0.8],
-  operatingMargins:   ['rent', +1, 1.2],
-  profitMargins:      ['rent', +1, 1.0],
-  returnOnEquity:     ['rent', +1, 1.2],
-  returnOnCapital:    ['rent', +1, 1.1],
+function _leer(info, campo) {
+  if (!info) return null;
+  const m = info.__m;
+  if (m) { const v = m[campo]; if (typeof v === 'number' && isFinite(v)) return v; }
+  const a = _ALIAS[campo];
+  if (a) {
+    const [k, esc] = Array.isArray(a) ? a : [a, 1];
+    if (k) { const v = info[k]; if (typeof v === 'number' && isFinite(v)) return v * esc; }
+  }
+  return null;
+}
 
-  revenueGrowth:      ['crec', +1, 1.4],
-  earningsGrowth:     ['crec', +1, 1.0],
-  revenueGrowthQ:     ['crec', +1, 0.7],   // usa anclas de revenueGrowth
-  epsAccel:           ['crec', +1, 0.6],   // derivada: 1 - forwardPE/trailingPE
+// ── 1. CATÁLOGO DE MÉTRICAS ─────────────────────────────────────────────────
+// Qué es cada métrica y cómo se obtiene. Sin pilar ni peso: eso lo decide cada
+// sector, porque la misma métrica no pesa igual en una utility que en una biotech.
+//   campo  → nombre del campo en /stock/metric
+//   deriva → función (info) → número, para las que hay que calcular
+//   dir    → +1 mejor cuanto más alto · −1 mejor cuanto más bajo
+//   lbl    → etiqueta para el usuario
+//   prox   → si es una APROXIMACIÓN, qué está sustituyendo (va en la UI y en el
+//            prompt de IA para no presentar un proxy como si fuera el dato real)
+const _CAT = {
+  // ── Rentabilidad y eficiencia ──
+  roe5Y:            { campo:'roe5Y',              dir:+1, lbl:'ROE (media 5 años)' },
+  roeTTM:           { campo:'roeTTM',             dir:+1, lbl:'ROE' },
+  roa5Y:            { campo:'roa5Y',              dir:+1, lbl:'ROA (media 5 años)' },
+  roaTTM:           { campo:'roaTTM',             dir:+1, lbl:'ROA' },
+  roi5Y:            { campo:'roi5Y',              dir:+1, lbl:'Retorno sobre el capital (5 años)' },
+  roiTTM:           { campo:'roiTTM',             dir:+1, lbl:'Retorno sobre el capital' },
+  margenNeto5Y:     { campo:'netProfitMargin5Y',  dir:+1, lbl:'Margen neto (media 5 años)' },
+  margenNetoTTM:    { campo:'netProfitMarginTTM', dir:+1, lbl:'Margen neto' },
+  margenOper5Y:     { campo:'operatingMargin5Y',  dir:+1, lbl:'Margen operativo (media 5 años)' },
+  margenOperTTM:    { campo:'operatingMarginTTM', dir:+1, lbl:'Margen operativo' },
+  margenBrutoTTM:   { campo:'grossMarginTTM',     dir:+1, lbl:'Margen bruto' },
+  margenPreTax5Y:   { campo:'pretaxMargin5Y',     dir:+1, lbl:'Margen antes de impuestos (5 años)' },
+  rotActivos:       { campo:'assetTurnoverTTM',   dir:+1, lbl:'Rotación de activos' },
+  rotInventario:    { campo:'inventoryTurnoverTTM', dir:+1, lbl:'Rotación de inventario' },
+  rotCobros:        { campo:'receivablesTurnoverTTM', dir:+1, lbl:'Rotación de cobros' },
+  ingresoEmpleado:  { campo:'revenueEmployeeAnnual', dir:+1, lbl:'Ingreso por empleado',
+                      prox:'índice de eficiencia' },
+  utilidadEmpleado: { campo:'netIncomeEmployeeAnnual', dir:+1, lbl:'Utilidad por empleado',
+                      prox:'índice de eficiencia' },
 
-  returnOnAssets:     ['soli', +1, 0.9],
-  debtToEquity:       ['soli', -1, 1.2],
-  currentRatio:       ['soli', +1, 0.7],
-  fcfMargin:          ['soli', +1, 1.1],
-  fcfPositive:        ['soli', +1, 0.8],   // binaria
+  // ── Crecimiento ──
+  crecIngr5Y:       { campo:'revenueGrowth5Y',    dir:+1, lbl:'Crecimiento de ingresos (5 años)' },
+  crecIngr3Y:       { campo:'revenueGrowth3Y',    dir:+1, lbl:'Crecimiento de ingresos (3 años)' },
+  crecIngrTTM:      { campo:'revenueGrowthTTMYoy', dir:+1, lbl:'Crecimiento de ingresos (12 meses)' },
+  crecIngrQ:        { campo:'revenueGrowthQuarterlyYoy', dir:+1, lbl:'Crecimiento de ingresos (trimestre)' },
+  crecEps5Y:        { campo:'epsGrowth5Y',        dir:+1, lbl:'Crecimiento del EPS (5 años)' },
+  crecEps3Y:        { campo:'epsGrowth3Y',        dir:+1, lbl:'Crecimiento del EPS (3 años)' },
+  crecEpsTTM:       { campo:'epsGrowthTTMYoy',    dir:+1, lbl:'Crecimiento del EPS (12 meses)' },
+  crecBookValue5Y:  { campo:'bookValueShareGrowth5Y', dir:+1, lbl:'Crecimiento del valor contable (5 años)' },
+  crecTBV5Y:        { campo:'tbvCagr5Y',          dir:+1, lbl:'Crecimiento del valor tangible (5 años)' },
+  crecEbitda5Y:     { campo:'ebitdaCagr5Y',       dir:+1, lbl:'Crecimiento del EBITDA (5 años)' },
+  crecDividendo5Y:  { campo:'dividendGrowthRate5Y', dir:+1, lbl:'Crecimiento del dividendo (5 años)' },
+  crecMargen5Y:     { campo:'netMarginGrowth5Y',  dir:+1, lbl:'Mejora del margen (5 años)' },
 
-  forwardPE:          ['valo', -1, 1.3],
-  trailingPE:         ['valo', -1, 0.6],
-  pegRatio:           ['valo', -1, 0.9],
-  enterpriseToEbitda: ['valo', -1, 1.1],
-  priceToSales:       ['valo', -1, 0.6],
-  priceToBook:        ['valo', -1, 0.4],
-  fcfYield:           ['valo', +1, 1.0],
-  dividendYield:      ['valo', +1, 0.3],
+  // ── Solidez ──
+  deudaLPCapital:   { campo:'longTermDebt/equityQuarterly', dir:-1, lbl:'Deuda a largo plazo / capital' },
+  deudaTotalCapital:{ campo:'totalDebt/totalEquityQuarterly', dir:-1, lbl:'Deuda total / capital' },
+  liquidezCorriente:{ campo:'currentRatioQuarterly', dir:+1, lbl:'Razón corriente' },
+  liquidezRapida:   { campo:'quickRatioQuarterly', dir:+1, lbl:'Razón rápida' },
+  cobInteres:       { campo:'netInterestCoverageTTM', dir:+1, lbl:'Cobertura de intereses' },
+  payout:           { campo:'payoutRatioTTM',     dir:-1, lbl:'Payout del dividendo' },
+  flujoCajaAccion:  { campo:'cashFlowPerShareTTM', dir:+1, lbl:'Flujo de caja por acción' },
+  capexCagr5Y:      { campo:'capexCagr5Y',        dir:-1, lbl:'Crecimiento del capex (5 años)' },
+  volatilidad:      { campo:'3MonthADReturnStd',  dir:-1, lbl:'Volatilidad (3 meses)' },
 
-  consenso:           ['merc', +1, 1.4],   // derivada de recommendationMean × nº analistas
-  upside:             ['merc', +1, 0.8],   // targetMeanPrice / precio - 1
-  pos52w:             ['merc', +1, 0.7],   // precio / máximo 52 semanas
+  // ── Valoración ──
+  peAdelantado:     { campo:'forwardPE',          dir:-1, lbl:'P/E adelantado' },
+  peTTM:            { campo:'peTTM',              dir:-1, lbl:'P/E' },
+  peNormalizado:    { campo:'peNormalizedAnnual', dir:-1, lbl:'P/E normalizado' },
+  peg:              { campo:'pegTTM',             dir:-1, lbl:'PEG' },
+  evEbitda:         { campo:'evEbitdaTTM',        dir:-1, lbl:'EV / EBITDA' },
+  evIngresos:       { campo:'evRevenueTTM',       dir:-1, lbl:'EV / Ingresos' },
+  evFcf:            { campo:'currentEv/freeCashFlowTTM', dir:-1, lbl:'EV / Flujo de caja libre' },
+  ps:               { campo:'psTTM',              dir:-1, lbl:'Precio / Ventas' },
+  pb:               { campo:'pbQuarterly',        dir:-1, lbl:'Precio / Valor contable' },
+  ptbv:             { campo:'ptbvQuarterly',      dir:-1, lbl:'Precio / Valor contable tangible' },
+  pFlujoCaja:       { campo:'pcfShareTTM',        dir:-1, lbl:'Precio / Flujo de caja',
+                      prox:'P/FFO' },
+  pFcf:             { campo:'pfcfShareTTM',       dir:-1, lbl:'Precio / Flujo de caja libre' },
+  dividendo:        { campo:'currentDividendYieldTTM', dir:+1, lbl:'Rentabilidad por dividendo' },
+
+  // ── Mercado ──
+  fuerzaRel13s:     { campo:'priceRelativeToS&P50013Week', dir:+1, lbl:'Frente al S&P 500 (13 semanas)' },
+  fuerzaRel26s:     { campo:'priceRelativeToS&P50026Week', dir:+1, lbl:'Frente al S&P 500 (26 semanas)' },
+  fuerzaRel52s:     { campo:'priceRelativeToS&P50052Week', dir:+1, lbl:'Frente al S&P 500 (52 semanas)' },
+
+  // ── Derivadas ──
+  // Posición en el ciclo: margen de hoy contra su propia media de 5 años. Un
+  // margen muy por encima de su media no es excelencia, es pico de ciclo — y el
+  // dato lo dice sin que nadie tenga que decidir a mano cuándo hay pico.
+  cicloMargen: { dir:-1, lbl:'Margen frente a su media de 5 años',
+    deriva: i => { const a = _leer(i,'operatingMarginTTM'), b = _leer(i,'operatingMargin5Y');
+                   return (a != null && b != null && Math.abs(b) > 1) ? a / b : null; } },
+
+  // Meses de caja: la métrica que define a una biotech sin ingresos. Solo tiene
+  // sentido si la empresa QUEMA caja; si la genera, no hay runway que medir.
+  runwayMeses: { dir:+1, lbl:'Meses de caja', prox:'runway',
+    deriva: i => { const caja = _leer(i,'cashPerSharePerShareQuarterly'),
+                         flujo = _leer(i,'cashFlowPerShareTTM');
+                   if (caja == null || flujo == null || flujo >= 0) return null;
+                   return Math.min(120, caja / (Math.abs(flujo) / 12)); } },
+
+  // Payout sobre FLUJO DE CAJA, no sobre utilidad. El payoutRatio de Finnhub divide el
+  // dividendo entre el EPS, y en un REIT el EPS está aplastado por la depreciación
+  // contable de inmuebles que en realidad se revalorizan: Realty Income sale al 236%
+  // de payout cuando sobre su flujo de caja está en torno al 77%. Con este cociente la
+  // pregunta vuelve a ser la de verdad: ¿el negocio genera la caja que reparte?
+  payoutFlujo: { dir:-1, lbl:'Payout sobre flujo de caja', prox:'payout sobre FFO',
+    deriva: i => { const div = _leer(i,'dividendPerShareTTM'), cf = _leer(i,'cashFlowPerShareTTM');
+                   return (div != null && cf != null && cf > 0.01) ? 100 * div / cf : null; } },
+
+  // Consenso de analistas, ponderado por cuántos cubren la empresa: una sola
+  // opinión no vale lo que treinta.
+  consenso: { dir:+1, lbl:'Consenso de analistas', escalaFija:true,
+    deriva: i => { const rm = i?.recommendationMean, n = i?.numberOfAnalystOpinions || 0;
+                   if (typeof rm !== 'number' || !isFinite(rm)) return null;
+                   const bruto = Math.max(0.5, Math.min(9.8, 11.2 - 2.6 * rm));
+                   const conf = n >= 30 ? 1 : n >= 20 ? 0.9 : n >= 12 ? 0.75 : n >= 5 ? 0.55 : 0.3;
+                   return 5 + (bruto - 5) * conf; } },
 };
 
-// ── 3. PERFILES SECTORIALES ─────────────────────────────────────────────────
-//  w    → pesos de los 5 pilares (suman 100)
-//  a    → anclas que difieren del mercado
-//  off  → métricas que NO aplican en este sector (se ignoran, no penalizan)
-//  mw   → ajustes de peso de métricas concretas dentro de su pilar
-//  cap  → techo estructural de la nota (economía del sector)
-//  cyc  → sector cíclico → activa el ajuste de pico/fondo de ciclo
-const _SECTOR_PROFILES = {
+// ── 2. MODELOS SECTORIALES ──────────────────────────────────────────────────
+//  w   → peso de cada pilar (suman 100)
+//  m   → LAS MÉTRICAS DE ESTE SECTOR: clave del catálogo → [pilar, peso]
+//  cap → techo estructural de la nota (economía del sector)
+//  cyc → sector cíclico
+//
+// Ocho sectores tienen modelo propio porque son donde una vara genérica se
+// equivoca más. El resto usa _GEN, que también mejoró: promedios de 5 años en
+// vez de fotos TTM, crecimiento plurianual y fuerza relativa contra el S&P.
 
-  SEMI: { label:'Semiconductores', cap:9.6, cyc:true,
-    w:{rent:25, crec:30, soli:12, valo:18, merc:15},
-    a:{ grossMargins:[0.35,0.59,0.72], profitMargins:[0.08,0.28,0.42],
-        operatingMargins:[0.12,0.34,0.48], returnOnEquity:[0.08,0.26,0.42],
-        returnOnCapital:[0.05,0.18,0.32], revenueGrowth:[-0.05,0.15,0.42],
-        earningsGrowth:[-0.10,0.22,0.60], forwardPE:[24,35,52],
-        enterpriseToEbitda:[16,28,45], priceToSales:[4,8,15], priceToBook:[3,7,14],
-        debtToEquity:[0.10,0.35,0.75], currentRatio:[1.5,2.6,4.0],
-        fcfYield:[0.005,0.025,0.045], fcfMargin:[0.03,0.18,0.32] } },
+// Modelo genérico. Sirve para cualquier empresa que venda algo y tenga utilidades.
+const _GEN = {
+  margenOper5Y:['rent',1.2], margenNeto5Y:['rent',1.0], margenBrutoTTM:['rent',0.7],
+  roe5Y:['rent',1.1], roi5Y:['rent',1.1],
+  crecIngr3Y:['crec',1.3], crecEps3Y:['crec',1.0], crecIngrTTM:['crec',0.6], crecIngrQ:['crec',0.5],
+  roa5Y:['soli',0.8], deudaTotalCapital:['soli',1.1], liquidezCorriente:['soli',0.7],
+  cobInteres:['soli',0.9], flujoCajaAccion:['soli',0.8],
+  peAdelantado:['valo',1.3], peTTM:['valo',0.5], peg:['valo',0.8], evEbitda:['valo',1.1],
+  ps:['valo',0.5], pb:['valo',0.4], pFcf:['valo',0.9], dividendo:['valo',0.3],
+  consenso:['merc',1.3], fuerzaRel26s:['merc',0.9], fuerzaRel52s:['merc',0.6],
+};
+const _W_GEN = { rent:26, crec:22, soli:18, valo:24, merc:10 };
+const _g = (label, cap, extra) => Object.assign({ label, cap, w:_W_GEN, m:_GEN }, extra || {});
 
-  SEMI_EQUIP: { label:'Equipos de semiconductores', cap:9.4, cyc:true,
-    w:{rent:27, crec:26, soli:13, valo:19, merc:15},
-    a:{ grossMargins:[0.38,0.46,0.55], profitMargins:[0.12,0.21,0.30],
-        operatingMargins:[0.16,0.28,0.36], returnOnEquity:[0.15,0.30,0.45],
-        returnOnCapital:[0.08,0.20,0.30], revenueGrowth:[-0.08,0.10,0.30],
-        forwardPE:[22,32,45], enterpriseToEbitda:[15,23,33],
-        debtToEquity:[0.10,0.40,0.85], fcfMargin:[0.08,0.18,0.28] } },
+// Las tres métricas que el genérico añade a los sectores cíclicos: dónde está el
+// margen respecto a su propia media, para no premiar un pico como si fuera calidad.
+const _GEN_CIC = Object.assign({}, _GEN, { cicloMargen:['rent',0.7] });
+const _gc = (label, cap) => ({ label, cap, cyc:true, w:_W_GEN, m:_GEN_CIC });
 
-  SOFTWARE: { label:'Software', cap:9.6,
-    w:{rent:25, crec:32, soli:10, valo:18, merc:15},
-    a:{ grossMargins:[0.60,0.72,0.82], profitMargins:[0.02,0.20,0.34],
-        operatingMargins:[0.05,0.28,0.42], returnOnEquity:[0.05,0.22,0.40],
-        returnOnCapital:[0.04,0.14,0.26], revenueGrowth:[0.05,0.13,0.25],
-        forwardPE:[22,32,45], enterpriseToEbitda:[15,23,34], priceToSales:[4,7,12],
-        priceToBook:[3,7,15], debtToEquity:[0.10,0.45,1.00],
-        fcfYield:[0.015,0.032,0.055], fcfMargin:[0.08,0.22,0.34] },
-    mw:{ priceToBook:0.15 } },     // el book value no dice nada de un intangible
+const _SECTOR_MODELS = {
 
-  SAAS_GROWTH: { label:'SaaS · alto crecimiento', cap:9.3,
-    w:{rent:18, crec:38, soli:14, valo:15, merc:15},
-    a:{ grossMargins:[0.55,0.70,0.80], profitMargins:[-0.20,0.02,0.15],
-        operatingMargins:[-0.10,0.08,0.22], returnOnEquity:[-0.15,0.03,0.18],
-        returnOnCapital:[-0.06,0.03,0.12], revenueGrowth:[0.12,0.22,0.38],
-        forwardPE:[35,60,95], priceToSales:[5,10,18],
-        fcfYield:[0.000,0.018,0.035], fcfMargin:[-0.05,0.10,0.24],
-        currentRatio:[1.4,2.4,4.0] },
-    off:['trailingPE','pegRatio','priceToBook'],
-    mw:{ fcfMargin:1.6, currentRatio:1.2 } },   // el runway manda
+  // ═══ MODELOS PROPIOS ══════════════════════════════════════════════════════
 
-  INTERNET_PLAT: { label:'Plataformas de internet', cap:9.6,
-    w:{rent:27, crec:27, soli:11, valo:20, merc:15},
-    a:{ grossMargins:[0.45,0.58,0.72], profitMargins:[0.10,0.22,0.32],
-        operatingMargins:[0.14,0.28,0.40], returnOnEquity:[0.12,0.25,0.38],
-        returnOnCapital:[0.08,0.18,0.28], revenueGrowth:[0.05,0.13,0.24],
-        forwardPE:[17,26,36], enterpriseToEbitda:[11,17,24], priceToSales:[3,6,10],
-        debtToEquity:[0.10,0.35,0.75], fcfYield:[0.020,0.035,0.055],
-        fcfMargin:[0.10,0.22,0.33] } },
+  // BANCA · El margen bruto y la deuda/capital no significan nada aquí: la deuda
+  // de un banco son los depósitos de sus clientes. Lo que define a un banco es
+  // cuánto retorno saca de su capital y a qué precio cotiza su valor tangible.
+  BANCO: {
+    label:'Banca', cap:9.0,
+    w:{ rent:28, crec:18, soli:20, valo:24, merc:10 },
+    m:{
+      roe5Y:['rent',1.5], roaTTM:['rent',1.2], margenNeto5Y:['rent',1.0],
+      ingresoEmpleado:['rent',0.4],                    // proxy débil de eficiencia
+      crecBookValue5Y:['crec',1.4],                    // un banco crece componiendo book value
+      crecEps5Y:['crec',1.1], crecIngr5Y:['crec',0.6],
+      deudaLPCapital:['soli',1.0],                     // la de largo plazo sí informa
+      payout:['soli',1.0], crecTBV5Y:['soli',0.7],
+      ptbv:['valo',1.6],                               // LA métrica de valoración bancaria
+      peAdelantado:['valo',0.9], peNormalizado:['valo',0.5], dividendo:['valo',0.6],
+      consenso:['merc',1.2], fuerzaRel26s:['merc',0.9],
+    },
+  },
 
-  HARDWARE: { label:'Hardware y equipos', cap:9.2, cyc:true,
-    w:{rent:26, crec:24, soli:14, valo:21, merc:15},
-    a:{ grossMargins:[0.28,0.38,0.50], profitMargins:[0.05,0.14,0.24],
-        operatingMargins:[0.08,0.20,0.30], returnOnEquity:[0.10,0.25,0.45],
-        forwardPE:[15,26,37], enterpriseToEbitda:[12,20,28], priceToSales:[1.5,3.5,7] } },
+  // SEGUROS · Misma familia que banca. El margen neto de 5 años hace de proxy del
+  // resultado técnico: una aseguradora que suscribe mal no lo sostiene un lustro.
+  SEGUROS: {
+    label:'Seguros', cap:9.0,
+    w:{ rent:26, crec:16, soli:22, valo:26, merc:10 },
+    m:{
+      roe5Y:['rent',1.5], margenNeto5Y:['rent',1.3], roaTTM:['rent',0.9],
+      crecBookValue5Y:['crec',1.4], crecEps5Y:['crec',1.0], crecIngr5Y:['crec',0.7],
+      deudaLPCapital:['soli',1.0], payout:['soli',1.0], crecTBV5Y:['soli',0.8],
+      ptbv:['valo',1.5], pb:['valo',0.8], peAdelantado:['valo',0.9], dividendo:['valo',0.6],
+      consenso:['merc',1.2], fuerzaRel26s:['merc',0.9],
+    },
+  },
 
-  // ── FINANCIERO ────────────────────────────────────────────────────────────
-  BANCO: { label:'Banca', cap:9.0,
-    w:{rent:30, crec:12, soli:28, valo:20, merc:10},
-    a:{ profitMargins:[0.18,0.26,0.34], returnOnEquity:[0.07,0.11,0.15],
-        returnOnAssets:[0.007,0.011,0.016], revenueGrowth:[0.00,0.05,0.11],
-        earningsGrowth:[-0.05,0.08,0.20], forwardPE:[8,11.5,15],
-        trailingPE:[9,13,18], priceToBook:[0.8,1.3,2.0],
-        dividendYield:[0.018,0.030,0.045] },
-    off:['grossMargins','operatingMargins','debtToEquity','currentRatio',
-         'enterpriseToEbitda','fcfYield','fcfMargin','fcfPositive','priceToSales',
-         'pegRatio','returnOnCapital'],
-    mw:{ priceToBook:2.2, returnOnEquity:2.0, returnOnAssets:2.4 } },
+  // REIT · El P/E de un REIT no informa: la depreciación contable de un edificio
+  // que se revaloriza tapa la utilidad. Lo que importa es el flujo de caja, si el
+  // dividendo está cubierto, y cuánto aguanta la deuda si suben las tasas.
+  REIT: {
+    label:'REIT · bienes raíces', cap:8.6,
+    w:{ rent:18, crec:16, soli:26, valo:30, merc:10 },
+    m:{
+      rotActivos:['rent',1.0],                         // proxy débil de ocupación
+      margenOper5Y:['rent',1.2], roi5Y:['rent',0.8],
+      crecDividendo5Y:['crec',1.4], crecIngr3Y:['crec',1.0], crecEbitda5Y:['crec',0.8],
+      payoutFlujo:['soli',1.6],                        // la pregunta central de un REIT
+      payout:['soli',0.4],                             // sobre EPS: ruidoso aquí, peso bajo
+      cobInteres:['soli',1.4],                         // exposición a tasas
+      deudaTotalCapital:['soli',0.8],
+      pFlujoCaja:['valo',1.6],                         // proxy de P/FFO
+      pb:['valo',0.9], evEbitda:['valo',1.0], dividendo:['valo',0.9],
+      consenso:['merc',1.1], fuerzaRel26s:['merc',0.9],
+    },
+  },
 
-  SEGUROS: { label:'Seguros', cap:9.0,
-    w:{rent:32, crec:12, soli:26, valo:20, merc:10},
-    a:{ profitMargins:[0.05,0.11,0.18], returnOnEquity:[0.08,0.13,0.19],
-        returnOnAssets:[0.005,0.012,0.022], revenueGrowth:[0.00,0.06,0.13],
-        forwardPE:[8,13,19], trailingPE:[9,14,21], priceToBook:[0.9,1.4,2.2],
-        dividendYield:[0.012,0.022,0.035] },
-    off:['grossMargins','operatingMargins','debtToEquity','currentRatio',
-         'enterpriseToEbitda','fcfYield','fcfMargin','fcfPositive','priceToSales',
-         'pegRatio','returnOnCapital'],
-    mw:{ priceToBook:2.0, returnOnEquity:2.0, returnOnAssets:2.2 } },
+  // UTILITY · El producto es la previsibilidad, no el crecimiento. Se premia la
+  // baja volatilidad y la cobertura del dividendo; crecer rápido no es la meta.
+  UTILITY: {
+    label:'Servicios públicos', cap:8.7,
+    w:{ rent:20, crec:14, soli:30, valo:26, merc:10 },
+    m:{
+      roi5Y:['rent',1.3], margenOper5Y:['rent',1.2], margenNeto5Y:['rent',0.9],
+      crecDividendo5Y:['crec',1.3], crecEps5Y:['crec',1.0], crecIngr5Y:['crec',0.7],
+      payoutFlujo:['soli',1.4], payout:['soli',0.6],
+      cobInteres:['soli',1.3], deudaTotalCapital:['soli',0.9],
+      capexCagr5Y:['soli',0.5], volatilidad:['soli',0.8],
+      peAdelantado:['valo',1.2], pb:['valo',0.8], evEbitda:['valo',1.0], dividendo:['valo',1.1],
+      consenso:['merc',1.1], fuerzaRel52s:['merc',0.8],
+    },
+  },
 
-  PAGOS: { label:'Pagos y fintech', cap:9.5,
-    w:{rent:30, crec:25, soli:12, valo:20, merc:13},
-    a:{ grossMargins:[0.45,0.65,0.80], profitMargins:[0.10,0.22,0.40],
-        operatingMargins:[0.15,0.30,0.50], returnOnEquity:[0.12,0.25,0.45],
-        returnOnCapital:[0.08,0.18,0.30], revenueGrowth:[0.05,0.12,0.22],
-        forwardPE:[15,26,36], enterpriseToEbitda:[10,18,28], priceToSales:[3,7,14],
-        debtToEquity:[0.20,0.70,1.60], fcfYield:[0.020,0.038,0.060],
-        fcfMargin:[0.10,0.24,0.40] } },
+  // BIOTECH EN FASE CLÍNICA · No hay utilidades, así que ningún múltiplo de
+  // utilidades aplica. La única pregunta real es cuánto le queda de caja antes de
+  // tener que diluir a sus accionistas, y si alguien la cubre.
+  BIOTECH_CLINICO: {
+    label:'Biotech en fase clínica', cap:8.5,
+    w:{ rent:5, crec:15, soli:45, valo:15, merc:20 },
+    m:{
+      margenBrutoTTM:['rent',0.6],
+      crecIngr3Y:['crec',1.0], crecIngrQ:['crec',0.6],
+      runwayMeses:['soli',1.8],                        // LA métrica del sector
+      liquidezCorriente:['soli',1.2], flujoCajaAccion:['soli',1.0],
+      deudaTotalCapital:['soli',0.8],
+      pb:['valo',1.2], ps:['valo',0.6],
+      consenso:['merc',1.4],                           // que la cubran ya es validación
+      fuerzaRel26s:['merc',0.7],
+    },
+  },
 
-  GESTOR_ACTIVOS: { label:'Gestión de activos y brokers', cap:9.0,
-    w:{rent:30, crec:15, soli:22, valo:21, merc:12},
-    a:{ profitMargins:[0.08,0.14,0.25], returnOnEquity:[0.09,0.16,0.24],
-        returnOnAssets:[0.008,0.025,0.055], forwardPE:[11,17,24], priceToBook:[1.0,1.8,3.0] },
-    off:['grossMargins','debtToEquity','currentRatio','enterpriseToEbitda',
-         'fcfYield','fcfMargin','fcfPositive'],
-    mw:{ priceToBook:1.6 } },
+  // TRANSPORTE Y AEROLÍNEAS · Capital-intensivo y cíclico. Castigarlo por
+  // apalancamiento es castigarlo por existir: lo que importa es si el flujo cubre
+  // los intereses y si el margen de hoy es sostenible o es pico de ciclo.
+  TRANSPORTE: {
+    label:'Transporte y aerolíneas', cap:7.8, cyc:true,
+    w:{ rent:28, crec:12, soli:28, valo:24, merc:8 },
+    m:{
+      margenOper5Y:['rent',1.5],                       // a través del ciclo
+      cicloMargen:['rent',1.0],                        // ¿pico o fondo? lo dice el dato
+      rotActivos:['rent',1.0], ingresoEmpleado:['rent',0.5],
+      crecIngr3Y:['crec',1.1], crecEbitda5Y:['crec',0.9],
+      cobInteres:['soli',1.6],                         // mejor que deuda/capital aquí
+      deudaTotalCapital:['soli',0.7], capexCagr5Y:['soli',0.9], flujoCajaAccion:['soli',0.9],
+      evEbitda:['valo',1.5],                           // el múltiplo correcto con deuda alta
+      evFcf:['valo',1.0], peAdelantado:['valo',0.7], pb:['valo',0.5],
+      consenso:['merc',1.1], fuerzaRel26s:['merc',0.8],
+    },
+  },
 
-  // ── SALUD ─────────────────────────────────────────────────────────────────
-  FARMA: { label:'Farmacéutica', cap:9.3,
-    w:{rent:28, crec:22, soli:15, valo:20, merc:15},
-    a:{ grossMargins:[0.60,0.71,0.80], profitMargins:[0.05,0.17,0.28],
-        operatingMargins:[0.12,0.28,0.40], returnOnEquity:[0.08,0.20,0.34],
-        returnOnCapital:[0.05,0.12,0.22], revenueGrowth:[0.00,0.06,0.14],
-        forwardPE:[12,20,30], enterpriseToEbitda:[9,14,20], priceToSales:[2,4,8],
-        debtToEquity:[0.30,0.80,1.50], fcfYield:[0.030,0.055,0.085],
-        dividendYield:[0.010,0.025,0.040] } },
+  // ENERGÍA · Los ingresos los mueve el precio del crudo, no la gestión. Por eso
+  // el crecimiento pesa poco y pesa mucho el retorno del capital a través del ciclo
+  // y la disciplina de inversión.
+  ENERGIA_EP: {
+    label:'Energía · exploración y producción', cap:8.4, cyc:true,
+    w:{ rent:26, crec:10, soli:24, valo:30, merc:10 },
+    m:{
+      margenOper5Y:['rent',1.4], cicloMargen:['rent',1.1], roi5Y:['rent',1.2],
+      crecEbitda5Y:['crec',1.0], crecIngr5Y:['crec',0.5],
+      cobInteres:['soli',1.3], deudaTotalCapital:['soli',1.1],
+      capexCagr5Y:['soli',1.0], flujoCajaAccion:['soli',0.9],
+      evEbitda:['valo',1.4], evFcf:['valo',1.2], pFcf:['valo',1.0],
+      payout:['valo',0.5], dividendo:['valo',0.8],
+      consenso:['merc',1.1], fuerzaRel26s:['merc',0.8],
+    },
+  },
 
-  BIOTECH_CLINICO: { label:'Biotech en fase clínica', cap:8.5,
-    w:{rent:10, crec:15, soli:35, valo:10, merc:30},
-    a:{ profitMargins:[-1.50,-0.30,0.10], returnOnEquity:[-0.40,-0.08,0.10],
-        revenueGrowth:[-0.10,0.15,0.60], forwardPE:[25,55,100],
-        currentRatio:[2.0,4.0,8.0], debtToEquity:[0.00,0.20,0.60],
-        fcfYield:[-0.15,-0.04,0.010], fcfMargin:[-2.0,-0.40,0.05] },
-    off:['grossMargins','operatingMargins','trailingPE','pegRatio',
-         'enterpriseToEbitda','priceToSales','returnOnCapital','earningsGrowth'],
-    mw:{ currentRatio:2.2, debtToEquity:1.6 } },   // runway = supervivencia
+  // RETAIL · Un margen bruto del 13% es el modelo de negocio de Costco, no una
+  // debilidad. Lo que separa a un buen minorista de uno malo es la rotación.
+  RETAIL: {
+    label:'Retail', cap:8.8,
+    w:{ rent:30, crec:18, soli:18, valo:26, merc:8 },
+    m:{
+      rotInventario:['rent',1.5],                      // la métrica operativa del sector
+      rotActivos:['rent',1.2], margenOper5Y:['rent',1.3],
+      margenBrutoTTM:['rent',0.3],                     // peso mínimo: es el modelo, no la calidad
+      roi5Y:['rent',1.0],
+      crecIngr3Y:['crec',1.4],                         // proxy de ventas comparables
+      crecEps3Y:['crec',1.0], crecIngrQ:['crec',0.6],
+      deudaTotalCapital:['soli',1.0], liquidezCorriente:['soli',0.8],
+      cobInteres:['soli',1.0], flujoCajaAccion:['soli',0.9],
+      evEbitda:['valo',1.3], peAdelantado:['valo',1.2], pFcf:['valo',0.9],
+      peg:['valo',0.6], dividendo:['valo',0.3],
+      consenso:['merc',1.2], fuerzaRel26s:['merc',0.8],
+    },
+  },
 
-  DISPOSITIVOS: { label:'Dispositivos médicos', cap:9.2,
-    w:{rent:28, crec:22, soli:15, valo:20, merc:15},
-    a:{ grossMargins:[0.42,0.54,0.66], profitMargins:[0.02,0.10,0.20],
-        operatingMargins:[0.06,0.16,0.26], returnOnEquity:[0.04,0.11,0.20],
-        returnOnCapital:[0.03,0.08,0.15], revenueGrowth:[0.02,0.07,0.15],
-        forwardPE:[20,32,48], enterpriseToEbitda:[12,18,26], priceToSales:[2,4,7] } },
-
-  SALUD_SERVICIOS: { label:'Servicios de salud', cap:8.9,
-    w:{rent:27, crec:20, soli:20, valo:22, merc:11},
-    a:{ grossMargins:[0.06,0.13,0.25], profitMargins:[-0.01,0.02,0.055],
-        operatingMargins:[0.01,0.035,0.07], returnOnEquity:[0.03,0.10,0.19],
-        forwardPE:[11,18,28], enterpriseToEbitda:[8,13,19], priceToSales:[0.2,0.6,1.4] } },
-
-  // ── ENERGÍA Y MATERIALES ──────────────────────────────────────────────────
-  ENERGIA_EP: { label:'Energía · exploración y producción', cap:8.4, cyc:true,
-    w:{rent:25, crec:8, soli:28, valo:27, merc:12},
-    a:{ grossMargins:[0.35,0.55,0.70], profitMargins:[0.02,0.13,0.25],
-        operatingMargins:[0.08,0.25,0.38], returnOnEquity:[0.03,0.11,0.20],
-        returnOnCapital:[0.02,0.08,0.15], revenueGrowth:[-0.20,0.00,0.18],
-        forwardPE:[8,14,21], enterpriseToEbitda:[3.2,5.2,8.0],
-        priceToBook:[0.8,1.4,2.2], debtToEquity:[0.15,0.45,0.85],
-        fcfYield:[0.02,0.07,0.13], fcfMargin:[0.03,0.14,0.26],
-        dividendYield:[0.020,0.038,0.060] },
-    off:['pegRatio','priceToSales'],
-    mw:{ revenueGrowth:0.5, fcfYield:1.6, enterpriseToEbitda:1.5 } },
-
+  // ═══ MODELO GENÉRICO MEJORADO ═════════════════════════════════════════════
+  SEMI:              _gc('Semiconductores', 9.6),
+  SEMI_EQUIP:        _gc('Equipos de semiconductores', 9.4),
+  HARDWARE:          _gc('Hardware y equipos', 9.2),
+  MATERIALES:        _gc('Materiales básicos', 8.2),
+  CONSUMO_DISC:      _gc('Consumo discrecional', 8.9),
+  INDUSTRIAL:        _gc('Industrial', 9.0),
+  AUTOS:             _gc('Automotriz', 8.0),
   ENERGIA_INTEGRADA: { label:'Energía integrada', cap:8.6, cyc:true,
-    w:{rent:25, crec:10, soli:26, valo:26, merc:13},
-    a:{ grossMargins:[0.20,0.36,0.50], profitMargins:[0.03,0.08,0.13],
-        operatingMargins:[0.05,0.12,0.19], returnOnEquity:[0.05,0.10,0.15],
-        revenueGrowth:[-0.15,0.00,0.14], forwardPE:[10,15,21],
-        enterpriseToEbitda:[5,8,11], priceToBook:[0.9,1.5,2.3],
-        fcfYield:[0.03,0.06,0.10], dividendYield:[0.025,0.040,0.060] },
-    off:['pegRatio'], mw:{ revenueGrowth:0.5 } },
-
-  MATERIALES: { label:'Materiales básicos', cap:8.2, cyc:true,
-    w:{rent:24, crec:14, soli:26, valo:24, merc:12},
-    a:{ grossMargins:[0.11,0.22,0.34], profitMargins:[-0.02,0.045,0.10],
-        operatingMargins:[0.03,0.10,0.19], returnOnEquity:[0.01,0.08,0.17],
-        returnOnCapital:[0.01,0.06,0.13], revenueGrowth:[-0.10,0.01,0.13],
-        forwardPE:[10,17,25], enterpriseToEbitda:[7,11,16],
-        priceToBook:[0.9,1.5,2.5], debtToEquity:[0.30,0.70,1.40],
-        priceToSales:[0.5,1.2,2.5], dividendYield:[0.010,0.025,0.042] },
-    mw:{ revenueGrowth:0.7 } },
-
-  // ── REGULADO Y DEFENSIVO ──────────────────────────────────────────────────
-  UTILITY: { label:'Servicios públicos', cap:8.7,
-    w:{rent:25, crec:10, soli:30, valo:25, merc:10},
-    a:{ grossMargins:[0.30,0.44,0.58], profitMargins:[0.07,0.14,0.21],
-        operatingMargins:[0.15,0.24,0.32], returnOnEquity:[0.06,0.10,0.14],
-        returnOnCapital:[0.03,0.05,0.08], returnOnAssets:[0.018,0.030,0.045],
-        revenueGrowth:[-0.02,0.04,0.10], earningsGrowth:[0.00,0.06,0.12], forwardPE:[14,18,23],
-        enterpriseToEbitda:[10,13.5,17], priceToBook:[1.1,1.8,2.6],
-        debtToEquity:[1.00,1.60,2.40], fcfYield:[-0.030,0.000,0.030],
-        fcfMargin:[-0.15,0.00,0.12], dividendYield:[0.025,0.035,0.048] },
-    off:['currentRatio','pegRatio','priceToSales','fcfPositive'],
-    mw:{ dividendYield:1.5, debtToEquity:1.5, fcfYield:0.5 } },
-
-  REIT: { label:'REIT · bienes raíces', cap:8.6,
-    w:{rent:25, crec:12, soli:30, valo:23, merc:10},
-    a:{ profitMargins:[0.05,0.13,0.28], operatingMargins:[0.15,0.26,0.38],
-        returnOnEquity:[0.02,0.05,0.09], returnOnCapital:[0.01,0.035,0.06],
-        returnOnAssets:[0.008,0.022,0.040],
-        revenueGrowth:[0.00,0.05,0.11], forwardPE:[25,40,60],
-        enterpriseToEbitda:[14,19,26], priceToBook:[0.9,1.6,2.6],
-        debtToEquity:[0.80,1.30,2.00], dividendYield:[0.030,0.043,0.060] },
-    off:['grossMargins','currentRatio','pegRatio','priceToSales',
-         'fcfYield','fcfMargin','fcfPositive','trailingPE'],
-    mw:{ dividendYield:2.0, enterpriseToEbitda:1.8, forwardPE:0.4, debtToEquity:1.6 } },
-
-  CONSUMO_BASICO: { label:'Consumo básico', cap:9.0,
-    w:{rent:30, crec:12, soli:22, valo:24, merc:12},
-    a:{ grossMargins:[0.25,0.42,0.55], profitMargins:[0.03,0.09,0.15],
-        operatingMargins:[0.08,0.15,0.21], returnOnEquity:[0.08,0.17,0.30],
-        returnOnCapital:[0.05,0.10,0.18], revenueGrowth:[-0.01,0.035,0.08],
-        forwardPE:[14,19,25], enterpriseToEbitda:[9,13,17], priceToSales:[0.8,1.8,3.5],
-        debtToEquity:[0.40,1.00,1.90], fcfYield:[0.030,0.050,0.075],
-        dividendYield:[0.015,0.026,0.038] },
-    mw:{ dividendYield:1.3 } },
-
-  // ── CÍCLICO DE CONSUMO E INDUSTRIA ────────────────────────────────────────
-  RETAIL: { label:'Retail', cap:8.8,
-    w:{rent:25, crec:20, soli:20, valo:22, merc:13},
-    a:{ grossMargins:[0.24,0.34,0.45], profitMargins:[0.015,0.045,0.085],
-        operatingMargins:[0.03,0.075,0.12], returnOnEquity:[0.10,0.22,0.36],
-        returnOnCapital:[0.06,0.13,0.22], revenueGrowth:[0.00,0.05,0.11],
-        forwardPE:[12,20,29], enterpriseToEbitda:[7,12,18], priceToSales:[0.4,0.9,1.8],
-        debtToEquity:[0.40,1.10,2.20], currentRatio:[0.9,1.3,1.9],
-        fcfYield:[0.020,0.040,0.065], fcfMargin:[0.01,0.035,0.065] },
-    mw:{ grossMargins:0.35, returnOnCapital:1.5 } },
-
-  CONSUMO_DISC: { label:'Consumo discrecional', cap:8.9, cyc:true,
-    w:{rent:26, crec:20, soli:20, valo:22, merc:12},
-    a:{ grossMargins:[0.22,0.33,0.45], profitMargins:[0.02,0.07,0.13],
-        operatingMargins:[0.06,0.13,0.20], returnOnEquity:[0.08,0.18,0.34],
-        returnOnCapital:[0.04,0.11,0.20], revenueGrowth:[-0.01,0.05,0.13],
-        forwardPE:[15,24,34], enterpriseToEbitda:[9,14,20], priceToSales:[0.7,1.8,3.6],
-        debtToEquity:[0.50,1.30,2.60] } },
-
-  INDUSTRIAL: { label:'Industrial', cap:9.0, cyc:true,
-    w:{rent:27, crec:18, soli:20, valo:22, merc:13},
-    a:{ grossMargins:[0.26,0.36,0.46], profitMargins:[0.04,0.09,0.15],
-        operatingMargins:[0.08,0.15,0.21], returnOnEquity:[0.08,0.15,0.24],
-        returnOnCapital:[0.05,0.11,0.18], revenueGrowth:[-0.02,0.05,0.12],
-        forwardPE:[15,21,29], enterpriseToEbitda:[10,15,20], priceToSales:[0.8,1.8,3.4],
-        debtToEquity:[0.30,0.80,1.50], fcfYield:[0.025,0.045,0.070] } },
-
-  AEROESPACIAL_DEF: { label:'Aeroespacial y defensa', cap:9.0,
-    w:{rent:26, crec:20, soli:20, valo:21, merc:13},
-    a:{ grossMargins:[0.13,0.19,0.28], profitMargins:[0.02,0.06,0.11],
-        operatingMargins:[0.05,0.10,0.15], returnOnEquity:[0.07,0.15,0.26],
-        returnOnCapital:[0.04,0.09,0.16], revenueGrowth:[0.00,0.06,0.14],
-        forwardPE:[18,28,42], enterpriseToEbitda:[13,19,26], priceToSales:[1.0,2.0,3.8],
-        debtToEquity:[0.40,1.00,2.00] } },
-
-  TRANSPORTE: { label:'Transporte y aerolíneas', cap:7.8, cyc:true,
-    w:{rent:24, crec:16, soli:26, valo:23, merc:11},
-    a:{ grossMargins:[0.16,0.23,0.30], profitMargins:[0.000,0.035,0.075],
-        operatingMargins:[0.02,0.065,0.11], returnOnEquity:[0.04,0.13,0.22],
-        returnOnCapital:[0.02,0.07,0.13], revenueGrowth:[-0.03,0.04,0.12],
-        forwardPE:[8,13,19], enterpriseToEbitda:[5,8,12], priceToSales:[0.3,0.8,1.6],
-        debtToEquity:[0.60,1.50,3.00], currentRatio:[0.6,0.9,1.3] },
-    mw:{ debtToEquity:1.6 } },
-
-  AUTOS: { label:'Automotriz', cap:8.0, cyc:true,
-    w:{rent:22, crec:18, soli:26, valo:22, merc:12},
-    a:{ grossMargins:[0.08,0.13,0.20], profitMargins:[-0.01,0.025,0.06],
-        operatingMargins:[0.01,0.045,0.09], returnOnEquity:[0.00,0.06,0.14],
-        returnOnCapital:[0.00,0.04,0.10], revenueGrowth:[-0.05,0.03,0.14],
-        forwardPE:[7,14,28], enterpriseToEbitda:[6,12,22], priceToSales:[0.2,0.6,1.5],
-        debtToEquity:[0.50,1.40,2.80] } },
-
-  TELECOM_MEDIOS: { label:'Telecom y medios', cap:8.7,
-    w:{rent:26, crec:16, soli:24, valo:23, merc:11},
-    a:{ grossMargins:[0.35,0.48,0.62], profitMargins:[-0.01,0.06,0.13],
-        operatingMargins:[0.06,0.15,0.23], returnOnEquity:[0.02,0.10,0.19],
-        returnOnCapital:[0.02,0.06,0.12], revenueGrowth:[-0.02,0.04,0.11],
-        forwardPE:[12,22,36], enterpriseToEbitda:[7,12,18], priceToSales:[0.8,2.0,4.0],
-        debtToEquity:[0.60,1.40,2.60], dividendYield:[0.008,0.025,0.045] } },
-
-  MERCADO: { label:'Mercado general', cap:9.2,
-    w:{rent:26, crec:22, soli:18, valo:21, merc:13}, a:{} },
+                       w:{ rent:26, crec:10, soli:24, valo:30, merc:10 },
+                       m:null },   // comparte modelo con ENERGIA_EP (se resuelve abajo)
+  SOFTWARE:          _g('Software', 9.6),
+  SAAS_GROWTH:       _g('SaaS · alto crecimiento', 9.3,
+                        { w:{ rent:16, crec:34, soli:20, valo:20, merc:10 } }),
+  INTERNET_PLAT:     _g('Plataformas de internet', 9.6),
+  PAGOS:             _g('Pagos y fintech', 9.5),
+  GESTOR_ACTIVOS:    _g('Gestión de activos y brokers', 9.0),
+  FARMA:             _g('Farmacéutica', 9.3),
+  DISPOSITIVOS:      _g('Dispositivos médicos', 9.2),
+  SALUD_SERVICIOS:   _g('Servicios de salud', 8.9),
+  CONSUMO_BASICO:    _g('Consumo básico', 9.0),
+  AEROESPACIAL_DEF:  _g('Aeroespacial y defensa', 9.0),
+  TELECOM_MEDIOS:    _g('Telecom y medios', 8.7),
+  MERCADO:           _g('Mercado general', 9.2),
 };
+_SECTOR_MODELS.ENERGIA_INTEGRADA.m = _SECTOR_MODELS.ENERGIA_EP.m;
+
+// Compatibilidad: el resto del código (y el clasificador) sigue hablando de
+// _SECTOR_PROFILES. Es el mismo objeto con otro nombre.
+const _SECTOR_PROFILES = _SECTOR_MODELS;
+
+// ── 3. ANCLAS MEDIDAS ───────────────────────────────────────────────────────
+// Los percentiles reales de cada métrica dentro de cada sector, medidos sobre el
+// universo con scripts/calibrar-anclas.mjs. NO hay números escritos a mano: si
+// un sector no tiene suficientes empresas para sostener un ancla, se cae al
+// mercado completo antes que inventar un corte.
+//
+// En el navegador las inyecta el <script> anterior como window.PORTIV_ANCLAS.
+// En Node, el arnés de pruebas asigna globalThis.PORTIV_ANCLAS.
+function _anclasRaiz() {
+  return (typeof globalThis !== 'undefined' && globalThis.PORTIV_ANCLAS) || null;
+}
+
+// Sector hermano al que caer cuando un perfil no tiene suficientes empresas. Es
+// preferible comparar una fintech de pagos contra software que contra el mercado
+// entero: se pierde precisión, no el sentido de la comparación.
+const _HERMANO = {
+  ENERGIA_INTEGRADA:'ENERGIA_EP', SEMI_EQUIP:'SEMI', HARDWARE:'SEMI',
+  SAAS_GROWTH:'SOFTWARE', PAGOS:'SOFTWARE', SOFTWARE:'INTERNET_PLAT',
+  DISPOSITIVOS:'SALUD_SERVICIOS', GESTOR_ACTIVOS:'BANCO',
+};
+
+// Devuelve [p25, p50, p75, p10, p90] del campo: primero su sector, luego el hermano,
+// y solo si no hay nada, el mercado entero. `origen` dice de dónde salió, para poder
+// auditar cada nota.
+function _ancla(pid, campo) {
+  const A = _anclasRaiz();
+  if (!A) return null;
+  const _de = (id) => {
+    const p = A.perfiles && A.perfiles[id];
+    if (p && p.suficiente && p.anclas && p.anclas[campo]) {
+      const a = p.anclas[campo];
+      if (a.n >= 8) return { v:[a.p25, a.p50, a.p75, a.p10, a.p90], n:a.n };
+    }
+    return null;
+  };
+  const propio = _de(pid);
+  if (propio) return Object.assign(propio, { origen:'sector' });
+  // Cadena de hermanos, con tope para no dar vueltas si alguien encadena mal.
+  let h = _HERMANO[pid];
+  for (let i = 0; h && i < 3; i++) {
+    const r = _de(h);
+    if (r) return Object.assign(r, { origen:'hermano', hermano:h });
+    h = _HERMANO[h];
+  }
+  const m = A.mercado && A.mercado.anclas && A.mercado.anclas[campo];
+  if (m) return { v:[m.p25, m.p50, m.p75, m.p10, m.p90], origen:'mercado', n:m.n };
+  return null;
+}
 
 // ── 4. CLASIFICADOR ─────────────────────────────────────────────────────────
 // Overrides por ticker donde la industria del proveedor de datos no basta.
@@ -461,13 +544,21 @@ function _sectorProfileOf(ticker, info) {
   return { id: 'MERCADO', p: _SECTOR_PROFILES.MERCADO };
 }
 
+
 // ── 5. NORMALIZACIÓN ROBUSTA ────────────────────────────────────────────────
 // z robusto contra el sector, winsorizado, mapeado a 0–10.
 // Estar EXACTAMENTE en la mediana del sector siempre da 5.0.
 function _anchorScore(x, anchors, dir) {
   if (x == null || !isFinite(x) || !anchors) return null;
-  const [p25, med, p75] = anchors;
-  const spread = Math.max(Math.abs(p75 - p25) / 1.35, 1e-9);   // ≈ σ robusta
+  const [p25, med, p75, p10, p90] = anchors;
+  // σ robusta. Con 15-20 empresas por sector el rango intercuartil sale demasiado
+  // estrecho y casi todo se va a los topes: un P/E adelantado de 14 en un banco no
+  // puede puntuar 1,9/10. Se toma el MAYOR de los dos estimadores de σ — el
+  // intercuartil y el p10-p90, que ve las colas — para no inventar precisión que
+  // la muestra no tiene.
+  const sIQR = Math.abs(p75 - p25) / 1.35;
+  const sDec = (p10 != null && p90 != null) ? Math.abs(p90 - p10) / 2.56 : 0;
+  const spread = Math.max(sIQR, sDec, 1e-9);
   let z = (x - med) / spread;
   z = Math.max(-2.2, Math.min(2.2, z)) * (dir < 0 ? -1 : 1);
   return Math.max(0.4, Math.min(9.9, 5 + 2.05 * z));
@@ -477,32 +568,14 @@ function _anchorScore(x, anchors, dir) {
 function computeSectorRating(ticker, info) {
   const { id: pid, p: prof } = _sectorProfileOf(ticker, info);
   if (pid === 'ETF') return { nota: null, esEtf: true, perfil: 'ETF' };
+  if (!prof || !prof.m) return { nota: null, perfil: pid, perfilId: pid, motivo: 'sin modelo' };
+  if (!_anclasRaiz()) return { nota: null, perfil: prof.label, perfilId: pid, motivo: 'sin anclas' };
 
-  const A = Object.assign({}, _MKT, prof.a || {});
-  const OFF = new Set(prof.off || []);
-  const MW = prof.mw || {};
-  const n = k => { const v = info?.[k]; return (typeof v === 'number' && isFinite(v)) ? v : null; };
-
-  // ── Métricas derivadas ──
-  const mc = n('marketCap'), ps = n('priceToSales'), fcf = n('freeCashflow');
-  const rev = (ps != null && ps > 0 && mc != null && mc > 0) ? mc / ps : null;
-  const px  = n('regularMarketPrice'), tgt = n('targetMeanPrice'), w52h = n('fiftyTwoWeekHigh');
-  const pe  = n('trailingPE'), fpe = n('forwardPE');
-  const rm  = n('recommendationMean'), numA = n('numberOfAnalystOpinions') || 0;
-
-  const D = {
-    fcfYield:   (fcf != null && mc > 0) ? fcf / mc : null,
-    fcfMargin:  (fcf != null && rev != null && rev > 0) ? fcf / rev : null,
-    fcfPositive:(fcf != null) ? (fcf > 0 ? 8.5 : 2.0) : null,   // ya en escala 0-10
-    epsAccel:   (fpe != null && pe != null && pe > 0 && fpe > 0) ? 1 - fpe / pe : null,
-    upside:     (tgt != null && px != null && px > 0) ? tgt / px - 1 : null,
-    pos52w:     (w52h != null && px != null && w52h > 0) ? px / w52h : null,
-    consenso:   rm != null ? rm : null,
-  };
-  const _DERIVED_ANCHOR = {
-    epsAccel: [-0.05, 0.12, 0.32],
-    upside:   [-0.02, 0.10, 0.28],
-    pos52w:   [0.72, 0.89, 0.98],
+  // ── Valor de cada métrica del modelo de ESTE sector ──
+  const _valor = (clave) => {
+    const d = _CAT[clave]; if (!d) return null;
+    const v = d.deriva ? d.deriva(info) : _leer(info, d.campo);
+    return (typeof v === 'number' && isFinite(v)) ? v : null;
   };
 
   // ── Puntuar cada métrica DOS VECES: contra su sector y contra el mercado ──
@@ -512,42 +585,36 @@ function computeSectorRating(ticker, info) {
   const PS = { rent:[], crec:[], soli:[], valo:[], merc:[] };
   const PM = { rent:[], crec:[], soli:[], valo:[], merc:[] };
   const detalle = {};
-  let usadas = 0, posibles = 0;
+  let usadas = 0, posibles = 0, deMercado = 0;
 
-  const _score = (k, dir, anchors) => {
-    if (k === 'fcfPositive')  return D.fcfPositive;
-    if (k === 'consenso') {
-      if (rm == null) return null;
-      const raw  = Math.max(0.5, Math.min(9.8, 11.2 - 2.6 * rm));
-      const conf = numA >= 30 ? 1 : numA >= 20 ? 0.9 : numA >= 12 ? 0.75 : numA >= 5 ? 0.55 : 0.3;
-      return 5 + (raw - 5) * conf;
+  for (const [clave, [pil, peso]] of Object.entries(prof.m)) {
+    const d = _CAT[clave]; if (!d || peso <= 0) continue;
+    posibles += peso;
+    const x = _valor(clave);
+    if (x == null) continue;
+
+    let sSec, sMkt;
+    if (d.escalaFija) {                       // ya viene en escala 0–10 (consenso)
+      sSec = sMkt = Math.max(0.4, Math.min(9.9, x));
+    } else {
+      const aSec = _ancla(pid, d.campo || clave);
+      if (!aSec) continue;
+      if (aSec.origen === 'mercado') deMercado += peso;
+      sSec = _anchorScore(x, aSec.v, d.dir);
+      const A = _anclasRaiz();
+      const aM = A.mercado && A.mercado.anclas && A.mercado.anclas[d.campo || clave];
+      sMkt = aM ? _anchorScore(x, [aM.p25, aM.p50, aM.p75, aM.p10, aM.p90], d.dir) : sSec;
     }
-    if (k === 'revenueGrowthQ')   return _anchorScore(n('revenueGrowthQ'), anchors.revenueGrowth, dir);
-    if (_DERIVED_ANCHOR[k])       return _anchorScore(D[k], _DERIVED_ANCHOR[k], dir);
-    if (D[k] !== undefined)       return _anchorScore(D[k], anchors[k], dir);
-    const v = n(k);
-    // Múltiplo negativo = sin utilidades. No es "barato": es no aplicable → castigo acotado.
-    if (dir < 0 && v != null && v <= 0) return 2.2;
-    return _anchorScore(v, anchors[k], dir);
-  };
-
-  for (const [k, [pil, dir, wBase]] of Object.entries(_METRIC_DEF)) {
-    if (OFF.has(k)) continue;
-    const w = wBase * (MW[k] != null ? MW[k] : 1);
-    if (w <= 0) continue;
-    posibles += w;
-
-    const sSec = _score(k, dir, A);
     if (sSec == null) continue;
-    const sMkt = _score(k, dir, _MKT);
 
-    usadas += w;
-    PS[pil].push([sSec, w]);
-    PM[pil].push([sMkt == null ? sSec : sMkt, w]);
-    detalle[k] = Math.round(sSec * 10) / 10;
+    usadas += peso;
+    PS[pil].push([sSec, peso]);
+    PM[pil].push([sMkt == null ? sSec : sMkt, peso]);
+    detalle[clave] = { v: Math.round(x * 1000) / 1000, nota: Math.round(sSec * 10) / 10,
+                       lbl: d.lbl, prox: d.prox || null };
   }
 
-  // ── Pilares (eje sectorial) ──
+  // ── Pilares ──
   const _roll = (P) => {
     const o = {};
     for (const [key, arr] of Object.entries(P)) {
@@ -575,9 +642,9 @@ function computeSectorRating(ticker, info) {
 
   // ── Neutralización del sesgo sectorial ─────────────────────────────────────
   // Se resta el bruto que obtendría una empresa EXACTAMENTE mediana de este
-  // sector (calculado por _sectorBias, no a mano). Así "ser de energía" o
-  // "ser biotech" ya no suma ni resta por sí solo: solo importa la distancia
-  // a tus pares. La diferenciación ENTRE sectores la carga `cap`.
+  // sector (calculado por _sectorBias, no a mano). Así "ser de energía" o "ser
+  // biotech" ya no suma ni resta por sí solo: solo importa la distancia a tus
+  // pares. La diferenciación ENTRE sectores la carga `cap`.
   const B = _sectorBias(pid);
 
   // ── Expansión de spread ────────────────────────────────────────────────────
@@ -589,35 +656,31 @@ function computeSectorRating(ticker, info) {
   let nota = CENTRO + (0.62 * zSec + 0.38 * zMkt) * GAIN;
 
   // ── Ajustes estructurales ──
+  // Mucho más cortos que en la v1: lo que antes hacía falta corregir a mano
+  // (pico de ciclo, apalancamiento sectorial) ahora lo miden métricas propias
+  // del modelo — cicloMargen y cobInteres — dentro del propio scoring.
   const flags = [];
-  const revG = n('revenueGrowth'), om = n('operatingMargins'), pm = n('profitMargins');
-
-  if (prof.cyc) {
-    const omHi = A.operatingMargins ? A.operatingMargins[2] : null;
-    if (revG != null && revG > 0.35 && om != null && omHi != null && om > omHi * 1.25) {
-      nota -= 0.35; flags.push('pico_ciclo');
-    }
-    if (revG != null && revG < -0.20 && fpe != null && A.forwardPE && fpe < A.forwardPE[0]) {
-      nota += 0.25; flags.push('fondo_ciclo');
-    }
+  const pmTTM = _leer(info, 'netProfitMarginTTM');
+  const crecTTM = _leer(info, 'revenueGrowthTTMYoy');
+  if (pmTTM != null && pmTTM < -20 && (crecTTM == null || crecTTM < 15)) {
+    nota -= 0.60; flags.push('quema_caja');
   }
-  if (pm != null && pm < -0.20 && (revG == null || revG < 0.15)) { nota -= 0.60; flags.push('quema_caja'); }
-  if (pid === 'BIOTECH_CLINICO' && (rev == null || rev < 5e7) && numA < 5) {
+  if (pid === 'BIOTECH_CLINICO' && (info?.numberOfAnalystOpinions || 0) < 5) {
     nota = Math.min(nota, 6.0); flags.push('sin_cobertura');
   }
-  const de = n('debtToEquity');
-  if ((pid === 'REIT' || pid === 'UTILITY' || pid === 'TRANSPORTE') &&
-      de != null && A.debtToEquity && de > A.debtToEquity[2] * 1.3) { nota -= 0.30; flags.push('apalancado_vs_pares'); }
 
-  // ── Percentil sectorial (solo el eje del sector, expandido) ──
+  // ── Percentil sectorial ──
   const zTot = (zSec * GAIN) / 2.05;
   const percentil = Math.max(1, Math.min(99, Math.round(
     100 * 0.5 * (1 + _erf(zTot / Math.SQRT2))
   )));
 
-  // ── Cobertura de datos: comprimir hacia 5.5 si faltan métricas del perfil ──
+  // ── Cobertura: comprimir hacia 5.5 si faltan métricas del modelo ──
   const cobertura = posibles > 0 ? usadas / posibles : 0;
   if (cobertura < 0.45) { nota = 5.5 + (nota - 5.5) * (0.40 + cobertura); flags.push('datos_limitados'); }
+  // Si buena parte de las anclas vinieron del mercado y no del sector, la
+  // comparación "contra sus pares" es más floja de lo que aparenta: se dice.
+  if (usadas > 0 && deMercado / usadas > 0.4) flags.push('anclas_de_mercado');
 
   // ── Techo estructural del sector y piso global ──
   nota = Math.max(2.0, Math.min(prof.cap, nota));
@@ -640,31 +703,31 @@ function computeSectorRating(ticker, info) {
   };
 }
 
-
 // ── 7. AUTO-CALIBRACIÓN DEL SESGO SECTORIAL ─────────────────────────────────
-// Para cada perfil se sintetiza la empresa que está EXACTAMENTE en la mediana
-// de su sector en todas sus métricas y se mide qué bruto produce. Ese valor es
-// el "cero" de ese sector. Se calcula una sola vez y se cachea.
-// Ventaja: si mañana cambias un ancla, la calibración se reajusta sola.
+// Para cada perfil se sintetiza la empresa que está EXACTAMENTE en la mediana de
+// su sector en todas las métricas de SU modelo y se mide qué bruto produce. Ese
+// valor es el "cero" de ese sector. Se calcula una vez y se cachea.
+// Ventaja: cuando se recalibran las anclas, esto se reajusta solo.
 const _BIAS_CACHE = {};
 function _sectorBias(pid) {
   if (_BIAS_CACHE[pid]) return _BIAS_CACHE[pid];
-  const p = _SECTOR_PROFILES[pid];
-  if (!p) return (_BIAS_CACHE[pid] = { sec: 5, mkt: 5 });
-  const A = Object.assign({}, _MKT, p.a || {});
-  const mc = 5e10;
-  const info = { __probe: 1, __forceProfile: pid, marketCap: mc,
-                 regularMarketPrice: 100, recommendationMean: 2.5,
-                 numberOfAnalystOpinions: 25 };
-  for (const [k, v] of Object.entries(A)) {
-    if (k === 'fcfYield' || k === 'fcfMargin') continue;
-    info[k] = v[1];
+  const p = _SECTOR_MODELS[pid];
+  if (!p || !p.m) return (_BIAS_CACHE[pid] = { sec: 5, mkt: 5 });
+
+  // Empresa mediana: cada campo del modelo puesto en el p50 de su sector.
+  const m = {};
+  for (const clave of Object.keys(p.m)) {
+    const d = _CAT[clave]; if (!d || !d.campo) continue;
+    const a = _ancla(pid, d.campo);
+    if (a) m[d.campo] = a.v[1];
   }
-  const rev = mc / A.priceToSales[1];
-  info.freeCashflow     = A.fcfMargin[1] * rev;
-  info.fiftyTwoWeekHigh = 100 / 0.89;      // posición 52s típica
-  info.targetMeanPrice  = 110;             // upside típico del consenso
-  info.revenueGrowthQ   = A.revenueGrowth[1];
+  // Las derivadas necesitan sus insumos, aunque no estén en el modelo del sector.
+  for (const campo of ['operatingMarginTTM','operatingMargin5Y',
+                       'cashPerSharePerShareQuarterly','cashFlowPerShareTTM']) {
+    if (m[campo] == null) { const a = _ancla(pid, campo); if (a) m[campo] = a.v[1]; }
+  }
+  const info = { __probe:1, __forceProfile:pid, __m:m,
+                 recommendationMean:2.5, numberOfAnalystOpinions:25 };
   const r = computeSectorRating('__CAL__', info) || {};
   return (_BIAS_CACHE[pid] = {
     sec: (r.brutoSec != null && isFinite(r.brutoSec)) ? r.brutoSec : 5,
@@ -685,23 +748,23 @@ function _erf(x) {
 
 
 /* ════════════════════════════════════════════════════════════════════════════
-   ADAPTADORES PARA index.html  —  no requieren tocar los 5 call sites
+   ADAPTADORES PARA index.html  —  no requieren tocar los puntos de llamada
    ════════════════════════════════════════════════════════════════════════════ */
 
 // Reemplazo directo de _computeGeneralRating. Misma firma, mismo tipo de retorno
-// (string con 1 decimal). Renombra la vieja a _computeGeneralRating_LEGACY y
-// pega esta encima: los 5 llamados siguen funcionando igual.
+// (string con 1 decimal).
 function _computeGeneralRating({pe, fpe, roe, roa, revG, epsG, pm, de, beta, info}) {
   const qType = String(info?.quoteType || '').toUpperCase();
   if (qType === 'ETF' || qType === 'MUTUALFUND') return '7.5';
-  const ticker = info?.symbol || info?.ticker || window?._PVX_CUR_TICKER || '';
+  const ticker = info?.symbol || info?.ticker ||
+                 (typeof window !== 'undefined' ? window._PVX_CUR_TICKER : '') || '';
   const r = computeSectorRating(ticker, info || {});
   if (!r || r.nota == null) return '5.5';
-  window._PVX_LAST_SECTOR_RATING = r;      // la UI lee percentil/pilares de aquí
+  if (typeof window !== 'undefined') window._PVX_LAST_SECTOR_RATING = r;
   return r.nota.toFixed(1);
 }
 
-// Etiqueta de la nota (reemplaza _ratingLabel, ahora con contexto sectorial).
+// Etiqueta de la nota, con contexto sectorial.
 function _ratingLabelSector(nota, percentil) {
   if (nota == null) return '—';
   const base = nota >= 8 ? 'Excelente' : nota >= 6.5 ? 'Buena' : nota >= 5 ? 'Neutral'
@@ -712,8 +775,8 @@ function _ratingLabelSector(nota, percentil) {
               : percentil <= 20 ? ' · rezagada en su sector' : '');
 }
 
-// Bloque de contexto para el prompt de IA. Sustituye el análisis genérico por uno
-// que habla el idioma del sector y conoce la mediana real de cada métrica.
+// Vocabulario obligatorio por sector para el prompt de IA. No es decorativo:
+// impide que el modelo hable de margen bruto a un banco o de P/E a un REIT.
 const _SECTOR_VOCAB = {
   BANCO:   'margen de interés neto (NIM), índice de eficiencia, calidad de cartera, capital CET1, coste del riesgo. NO hables de margen bruto ni de deuda/capital: en banca no significan nada.',
   SEGUROS: 'ratio combinado, resultado técnico vs financiero, reservas, disciplina de suscripción. NO uses margen bruto ni deuda/capital.',
@@ -722,6 +785,7 @@ const _SECTOR_VOCAB = {
   ENERGIA_EP: 'coste de producción por barril (breakeven), reservas y su reposición, disciplina de capex, retorno de caja al accionista. Márgenes altos hoy pueden ser pico de ciclo.',
   ENERGIA_INTEGRADA: 'integración upstream/downstream, breakeven, cobertura del dividendo con flujo de caja, disciplina de capex a través del ciclo.',
   SEMI: 'ciclo de inventarios, capacidad y nodos, exposición a un cliente o a un tipo de chip, visibilidad del backlog. Un margen récord suele ser techo de ciclo, no la nueva normalidad.',
+  SEMI_EQUIP: 'ciclo de capex de las fundiciones, backlog, exposición a China y a controles de exportación.',
   SAAS_GROWTH: 'retención neta de ingresos (NRR), regla del 40, margen de flujo de caja libre, meses de runway, coste de adquisición. La utilidad neta contable importa poco; la caja sí.',
   SOFTWARE: 'crecimiento de ingresos recurrentes, apalancamiento operativo, retención, competencia de plataformas.',
   BIOTECH_CLINICO: 'fase de los ensayos, meses de caja (runway), catalizadores regulatorios con fecha, dependencia de un solo activo, riesgo de dilución. Ningún múltiplo de utilidades aplica.',
@@ -732,43 +796,48 @@ const _SECTOR_VOCAB = {
   MATERIALES: 'precio del commodity subyacente, coste en la curva, apalancamiento operativo. El crecimiento de ingresos refleja el precio, no la ejecución.',
   CONSUMO_BASICO: 'poder de fijación de precios frente a inflación, volumen vs precio, marcas propias como amenaza, cobertura del dividendo.',
   INTERNET_PLAT: 'usuarios activos y monetización por usuario, mix de ingresos, capex en infraestructura, exposición regulatoria.',
+  GESTOR_ACTIVOS: 'activos bajo gestión (AUM) y sus flujos, comisión media, apalancamiento operativo, sensibilidad al mercado.',
+  PAGOS: 'volumen de pagos (TPV), take rate, coste por transacción, competencia de redes.',
+  DISPOSITIVOS: 'base instalada y consumibles recurrentes, ciclo de aprobación regulatoria, contratos hospitalarios.',
+  SALUD_SERVICIOS: 'mezcla de pagadores, coste médico (MLR), volumen de pacientes, presión regulatoria de reembolsos.',
+  AEROESPACIAL_DEF: 'backlog y su duración, mezcla de programas, dependencia del presupuesto de defensa.',
+  TELECOM_MEDIOS: 'ARPU, churn, capex sobre ingresos, apalancamiento y cobertura del dividendo.',
 };
 
+// Bloque de contexto para el prompt de IA: la empresa contra la mediana de SU
+// sector, métrica a métrica, usando exactamente las métricas de su modelo — no
+// una lista genérica. Las aproximaciones se marcan como tales.
 function buildSectorAIContext(ticker, info) {
   const r = computeSectorRating(ticker, info);
   if (!r || r.nota == null) return '';
-  const p = _SECTOR_PROFILES[r.perfilId];
-  const A = Object.assign({}, _MKT, p.a || {});
-  const OFF = new Set(p.off || []);
-  const pct = v => (v * 100).toFixed(1) + '%';
   const L = [];
   L.push(`PERFIL SECTORIAL: ${r.perfil} (${r.perfilId})`);
   L.push(`NOTA PORTIV: ${r.nota}/10 · percentil ${r.percentil} de su sector · ${r.etiqueta}`);
   const nd = v => v == null ? 'n/d' : v;
   L.push(`PILARES (1-10, vs. sus pares): rentabilidad ${nd(r.pilares.rentabilidad)} · crecimiento ${nd(r.pilares.crecimiento)} · solidez ${nd(r.pilares.solidez)} · valoración ${nd(r.pilares.valoracion)} · mercado ${nd(r.pilares.mercado)}`);
   L.push('');
-  L.push('LA EMPRESA CONTRA LA MEDIANA DE SU SECTOR:');
-  const show = [['profitMargins','Margen neto',1],['operatingMargins','Margen operativo',1],
-                ['grossMargins','Margen bruto',1],['returnOnEquity','ROE',1],
-                ['returnOnCapital','ROIC',1],['revenueGrowth','Crecimiento ingresos',1],
-                ['forwardPE','P/E adelantado',0],['enterpriseToEbitda','EV/EBITDA',0],
-                ['priceToBook','P/VL',0],['debtToEquity','Deuda/Capital',0],
-                ['dividendYield','Dividendo',1]];
-  for (const [k, lbl, isPct] of show) {
-    if (OFF.has(k)) continue;
-    const v = info?.[k];
-    if (typeof v !== 'number' || !isFinite(v) || !A[k]) continue;
-    const med = A[k][1];
-    const f = x => isPct ? pct(x) : (+x).toFixed(1);
-    const cmp = v > med * 1.15 ? 'POR ENCIMA' : v < med * 0.85 ? 'POR DEBAJO' : 'EN LÍNEA';
-    L.push(`  • ${lbl}: ${f(v)}  |  mediana del sector ${f(med)}  → ${cmp}`);
+  L.push('LAS MÉTRICAS QUE DEFINEN A ESTE SECTOR, COMPARADAS CON LA MEDIANA DE SUS PARES:');
+  const prof = _SECTOR_MODELS[r.perfilId];
+  for (const clave of Object.keys(prof.m)) {
+    const d = _CAT[clave], det = r.detalle[clave];
+    if (!d || !det) continue;
+    const a = _ancla(r.perfilId, d.campo || clave);
+    const med = a ? a.v[1] : null;
+    const f = x => (Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 1 ? x.toFixed(2) : x.toFixed(3));
+    const cmp = med == null ? '' :
+      (det.v > med * 1.15 ? ' → POR ENCIMA' : det.v < med * 0.85 ? ' → POR DEBAJO' : ' → EN LÍNEA');
+    const prox = d.prox ? `  [aproximación de ${d.prox}]` : '';
+    L.push(`  • ${d.lbl}: ${f(det.v)}` + (med != null ? `  |  mediana del sector ${f(med)}` : '') +
+           cmp + `  (nota ${det.nota}/10)` + prox);
   }
   if (r.flags?.length) L.push('', 'ALERTAS DEL MODELO: ' + r.flags.join(', '));
   L.push('');
   L.push(`CÓMO DEBES ANALIZAR ESTE SECTOR — usa estos conceptos: ${_SECTOR_VOCAB[r.perfilId] || 'márgenes, retorno sobre el capital, crecimiento y valoración frente a sus pares directos.'}`);
-  L.push('REGLA: compara SIEMPRE contra sus pares del sector, nunca contra el mercado en general. No uses métricas marcadas como no aplicables. No repitas los números: interprétalos.');
+  L.push('REGLA: compara SIEMPRE contra sus pares del sector, nunca contra el mercado en general. No menciones métricas que no estén en esta lista: si no están, es porque no aplican a este sector. No repitas los números: interprétalos.');
   return L.join('\n');
 }
 
-if (typeof module !== 'undefined') module.exports = { computeSectorRating, _sectorProfileOf, _SECTOR_PROFILES,
-                   _anchorScore, _sectorBias, buildSectorAIContext, _ratingLabelSector };
+if (typeof module !== 'undefined') module.exports = {
+  computeSectorRating, _sectorProfileOf, _SECTOR_PROFILES, _SECTOR_MODELS, _CAT,
+  _anchorScore, _sectorBias, _ancla, _leer, buildSectorAIContext, _ratingLabelSector,
+};
