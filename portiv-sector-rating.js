@@ -836,10 +836,7 @@ function sectorMoat(ticker, info) {
       const a = _ancla(r.perfilId, d.campo || k);
       const med = a ? a.v[1] : null;
       const comp = med == null ? '' : ` frente a ${fmt(med)} de sus pares`;
-      const juicio = det.nota >= 7.5 ? 'muy por encima del sector'
-                   : det.nota >= 6   ? 'por encima del sector'
-                   : det.nota <= 2.5 ? 'muy por debajo del sector'
-                   : det.nota <= 4   ? 'por debajo del sector' : 'en línea con el sector';
+      const juicio = _lectura(det.nota);
       drivers.push(`${d.lbl}: ${fmt(det.v)}${comp} — ${juicio}`);
     }
   }
@@ -897,6 +894,115 @@ function sectorMoatDims(ticker, info, moatObj, bullets) {
   return _MOAT_NOMBRES
     .map((n, i) => ({ n, v: niveles[i], s: lvl(niveles[i]), aplica: base[i] > 0 }))
     .filter(f => f.aplica);        // una dimensión que no existe en el sector no se pinta
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SECCIONES DEL ANÁLISIS, CONSTRUIDAS DESDE EL MODELO DEL SECTOR
+   ────────────────────────────────────────────────────────────────────────────
+   "Datos financieros", "Salud financiera" y "Pros y riesgos" mostraban siempre
+   las mismas filas: P/E, PEG, EV/EBITDA, margen bruto, current ratio… A un banco
+   se le enseñaban casillas vacías y a un REIT un P/E que no significa nada.
+
+   Aquí cada sección se arma con las métricas que ese sector tiene en su modelo,
+   con la mediana de sus pares al lado. Lo que no aplica no aparece.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+// Títulos por sector: la misma sección no se llama igual en banca que en biotech.
+const _TITULOS = {
+  BANCO:           { datos:'Valoración y capital',        salud:'Solidez del balance' },
+  SEGUROS:         { datos:'Valoración y capital',        salud:'Solidez del balance' },
+  GESTOR_ACTIVOS:  { datos:'Valoración y capital',        salud:'Solidez del balance' },
+  REIT:            { datos:'Valoración y flujo de caja',  salud:'Deuda y cobertura del dividendo' },
+  UTILITY:         { datos:'Valoración y dividendo',      salud:'Deuda y cobertura del dividendo' },
+  BIOTECH_CLINICO: { datos:'Valoración',                  salud:'Caja y capacidad de aguante' },
+  TRANSPORTE:      { datos:'Valoración con deuda',        salud:'Deuda, flota y cobertura' },
+  ENERGIA_EP:      { datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex' },
+  ENERGIA_INTEGRADA:{ datos:'Valoración y retorno de caja', salud:'Deuda y disciplina de capex' },
+  RETAIL:          { datos:'Valoración',                  salud:'Deuda, inventario y liquidez' },
+};
+
+// Cómo se escribe cada métrica: porcentaje, veces, o número a secas.
+function _fmtMetrica(clave, v) {
+  const PCT = /margen|roe|roa|roi|crec|payout|dividend|fuerzaRel|volatil|Margin|Growth|Yield/i;
+  const VECES = /^(pe|ps|pb|ptbv|ev|peg|pFlujo|pFcf|rot|cobInteres|ciclo)/;
+  if (PCT.test(clave)) return (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)) + '%';
+  if (VECES.test(clave)) return v.toFixed(v < 10 ? 2 : 1) + '×';
+  if (Math.abs(v) >= 1000) return v.toLocaleString('es-ES', { maximumFractionDigits: 0 });
+  return v.toFixed(2);
+}
+
+// Lectura en lenguaje llano. Dice si la empresa está MEJOR o PEOR que sus pares,
+// no si el número es mayor o menor: en un P/E o un payout, más bajo es mejor, y
+// decir "por debajo del sector" de un múltiplo caro se leería al revés.
+function _lectura(nota) {
+  return nota >= 8   ? 'mucho mejor que sus pares'
+       : nota >= 6.5 ? 'mejor que sus pares'
+       : nota >= 4    ? 'en línea con sus pares'
+       : nota >= 2.5  ? 'peor que sus pares'
+       :               'mucho peor que sus pares';
+}
+
+function sectorSections(ticker, info) {
+  const r = computeSectorRating(ticker, info);
+  if (!r || r.nota == null) return null;
+  const prof = _SECTOR_MODELS[r.perfilId];
+  if (!prof || !prof.m) return null;
+
+  const filas = (pilar) => Object.entries(prof.m)
+    .filter(([k, [p]]) => p === pilar && r.detalle[k])
+    .sort((a, b) => (prof.m[b[0]][1] - prof.m[a[0]][1]))     // primero lo que más pesa en el sector
+    .map(([k]) => ({ k, d: _CAT[k], det: r.detalle[k] }));
+
+  // ── Datos financieros: el pilar de valoración de este sector ──
+  const datos = filas('valo').map(({ k, d, det }) => {
+    const a = _ancla(r.perfilId, d.campo || k);
+    const med = a ? ` · mediana ${_fmtMetrica(k, a.v[1])}` : '';
+    return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
+             v: _fmtMetrica(k, det.v),
+             s: _lectura(det.nota) + med };
+  });
+
+  // ── Salud financiera: el pilar de solidez de este sector ──
+  const TONO = n => n >= 6.5 ? 'good' : n >= 4 ? 'mid' : 'bad';
+  const health = filas('soli').map(({ k, d, det }) => {
+    const a = _ancla(r.perfilId, d.campo || k);
+    return { kk: d.lbl, vv: _fmtMetrica(k, det.v),
+             dd: _lectura(det.nota) + (a ? ` (mediana ${_fmtMetrica(k, a.v[1])})` : ''),
+             tone: TONO(det.nota) };
+  });
+
+  // ── Pros y riesgos: donde de verdad gana y donde de verdad pierde, contra sus
+  //    pares. Antes salían de una lista fija de banderas con umbrales absolutos.
+  const todas = Object.keys(prof.m)
+    .filter(k => r.detalle[k] && _CAT[k])
+    .map(k => ({ k, d: _CAT[k], det: r.detalle[k] }));
+  const frase = ({ k, d, det }) => {
+    const a = _ancla(r.perfilId, d.campo || k);
+    const med = a ? ` frente a ${_fmtMetrica(k, a.v[1])} de sus pares` : '';
+    return `${d.lbl}: ${_fmtMetrica(k, det.v)}${med}`;
+  };
+  const pros = todas.filter(x => x.det.nota >= 6.8)
+                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 5).map(frase);
+  const riesgos = todas.filter(x => x.det.nota <= 3.6)
+                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 5).map(frase);
+
+  // ── Valoración: el pilar de valoración ya está calculado contra el sector ──
+  const val = r.pilares.valoracion;
+  const valLabel = val == null ? 'N/D'
+    : val >= 7.5 ? 'Barata frente a sus pares' : val >= 6 ? 'Razonable'
+    : val >= 4.5 ? 'En precio' : val >= 3 ? 'Exigente' : 'Cara frente a sus pares';
+  const caras = filas('valo').filter(x => x.det.nota <= 3.5).slice(0, 2).map(x => x.d.lbl.toLowerCase());
+  const baratas = filas('valo').filter(x => x.det.nota >= 7).slice(0, 2).map(x => x.d.lbl.toLowerCase());
+  let valText = `Frente a sus pares de ${prof.label}, la acción está en el percentil ${r.percentil} del sector.`;
+  if (caras.length)   valText += ` Paga prima en ${caras.join(' y ')}.`;
+  if (baratas.length) valText += ` Cotiza con descuento en ${baratas.join(' y ')}.`;
+
+  const t = _TITULOS[r.perfilId] || {};
+  return { datos, health, pros, riesgos, valText, valLabel,
+           tituloDatos: t.datos || 'Datos financieros',
+           tituloSalud: t.salud || 'Salud financiera',
+           perfil: r.perfil, perfilId: r.perfilId, percentil: r.percentil };
 }
 
 
@@ -993,5 +1099,5 @@ function buildSectorAIContext(ticker, info) {
 if (typeof module !== 'undefined') module.exports = {
   computeSectorRating, _sectorProfileOf, _SECTOR_PROFILES, _SECTOR_MODELS, _CAT,
   _anchorScore, _sectorBias, _ancla, _leer, buildSectorAIContext, _ratingLabelSector,
-  sectorMoat, sectorMoatDims, _MOAT_DIMS,
+  sectorMoat, sectorMoatDims, _MOAT_DIMS, sectorSections, _TITULOS,
 };
