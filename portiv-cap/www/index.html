@@ -8495,6 +8495,159 @@ function _erf(x) {
 
 
 /* ════════════════════════════════════════════════════════════════════════════
+   ANÁLISIS CUALITATIVO POR SECTOR
+   ────────────────────────────────────────────────────────────────────────────
+   El foso y las ventajas competitivas se juzgaban con umbrales absolutos:
+   margen bruto, ROIC y margen neto. A un banco eso lo condena por definición —
+   no publica margen bruto y su ROIC contable ronda el 4%, así que JPMorgan,
+   el banco más grande de EE.UU., salía como "sin foso claro", y ese veredicto
+   además aplastaba las diez dimensiones competitivas a "Débil".
+
+   Aquí el foso sale de lo único que de verdad lo demuestra: si la empresa
+   sostiene retornos por encima de sus PARES durante años. Eso ya lo mide el
+   pilar de rentabilidad del motor, que en cada sector se calcula con las
+   métricas de ese sector.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+// Cuánto pesa cada ventaja competitiva en cada sector (0 = irrelevante,
+// 3 = es la ventaja que define al sector).
+// Orden: red · switching · marca · escala · patentes · distribución · regulatoria · datos · costos · tecnología
+const _MOAT_DIMS = {
+  BANCO:            [2,3,2,3,0,2,3,2,2,1],   // licencia bancaria y costes de cambio
+  SEGUROS:          [1,2,2,3,0,3,3,3,2,1],   // suscripción, datos actuariales, regulación
+  GESTOR_ACTIVOS:   [2,3,3,3,0,2,2,2,2,1],
+  PAGOS:            [3,3,3,3,1,3,2,3,2,2],   // efecto red puro
+  REIT:             [0,2,1,2,0,1,3,0,2,0],   // ubicación irremplazable, zonificación
+  UTILITY:          [0,3,0,3,0,3,3,0,2,0],   // monopolio regulado
+  ENERGIA_EP:       [0,0,1,3,0,2,2,1,3,1],   // coste por barril en la curva
+  ENERGIA_INTEGRADA:[0,1,2,3,0,3,2,1,3,1],
+  MATERIALES:       [0,0,1,3,0,1,2,0,3,1],
+  TRANSPORTE:       [1,2,2,3,0,3,3,1,3,1],   // slots, rutas, coste por asiento
+  AUTOS:            [1,2,3,3,1,3,1,1,3,2],
+  INDUSTRIAL:       [1,3,2,3,2,2,2,1,2,2],
+  AEROESPACIAL_DEF: [0,3,2,3,3,2,3,1,2,3],   // programas y certificación
+  RETAIL:           [1,1,3,3,0,3,0,2,3,1],   // escala de compra y logística
+  CONSUMO_BASICO:   [0,1,3,3,1,3,1,1,3,0],
+  CONSUMO_DISC:     [1,1,3,2,1,3,0,1,2,1],
+  BIOTECH_CLINICO:  [0,1,0,0,3,0,3,1,0,3],   // patentes y aprobación regulatoria
+  FARMA:            [0,2,2,3,3,3,3,2,1,3],
+  DISPOSITIVOS:     [0,3,2,3,3,2,3,2,1,3],   // base instalada y consumibles
+  SALUD_SERVICIOS:  [2,3,1,3,0,2,3,3,2,1],
+  SEMI:             [1,3,2,3,3,2,1,2,2,3],
+  SEMI_EQUIP:       [0,3,1,3,3,1,2,1,1,3],
+  HARDWARE:         [1,2,3,3,2,3,0,1,2,3],
+  SOFTWARE:         [2,3,2,2,2,2,0,3,1,3],
+  SAAS_GROWTH:      [2,3,1,1,1,2,0,3,1,3],
+  INTERNET_PLAT:    [3,2,3,3,1,3,1,3,1,3],
+  TELECOM_MEDIOS:   [2,3,3,3,1,3,3,2,2,1],
+  MERCADO:          [1,1,1,1,1,1,1,1,1,1],
+};
+const _MOAT_NOMBRES = ['Efecto red','Costes de cambio','Marca fuerte','Economías de escala',
+  'Patentes / IP','Distribución dominante','Ventaja regulatoria','Datos exclusivos',
+  'Costes bajos','Ventaja tecnológica'];
+
+// Foso a partir del rating sectorial. Devuelve la MISMA forma que la función
+// anterior ({score, label, color, drivers}) para no tocar a quien la consume:
+// score en el rango −3 … 5.5 que ya esperan las etiquetas de más abajo.
+function sectorMoat(ticker, info) {
+  const r = computeSectorRating(ticker, info);
+  if (!r || r.nota == null || !r.pilares) return null;
+  const rent = r.pilares.rentabilidad;
+  if (rent == null) return null;
+
+  // Un foso es sostener retornos por encima de tus pares. El pilar de
+  // rentabilidad ya está calculado con las métricas del sector y sobre medias
+  // de 5 años; el percentil añade cuán arriba está dentro de su industria.
+  let score = (rent - 5) * 1.4 + ((r.percentil - 50) / 50) * 1.2;
+  score = Math.max(-3, Math.min(5.5, score));
+
+  let label, color;
+  if (score >= 4)        { label = 'Foso fuerte';    color = 'var(--green)'; }
+  else if (score >= 2)   { label = 'Foso moderado';  color = 'var(--blue)'; }
+  else if (score >= 0.5) { label = 'Foso estrecho';  color = 'var(--yellow)'; }
+  else                   { label = 'Sin foso claro'; color = 'var(--red)'; }
+
+  // Los motivos citan las métricas del sector con la mediana de sus pares al
+  // lado: "ROE de 5 años del 15,4% frente al 10,8% de la banca" dice mucho más
+  // que "ROE alto".
+  const prof = _SECTOR_MODELS[r.perfilId];
+  const drivers = [];
+  if (prof && prof.m) {
+    const filas = Object.entries(prof.m)
+      .filter(([k, [pil]]) => pil === 'rent' && r.detalle[k])
+      .map(([k]) => ({ k, d: _CAT[k], det: r.detalle[k] }))
+      .sort((a, b) => Math.abs(b.det.nota - 5) - Math.abs(a.det.nota - 5))
+      .slice(0, 4);
+    const fmt = x => Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 1 ? x.toFixed(1) : x.toFixed(2);
+    for (const { k, d, det } of filas) {
+      const a = _ancla(r.perfilId, d.campo || k);
+      const med = a ? a.v[1] : null;
+      const comp = med == null ? '' : ` frente a ${fmt(med)} de sus pares`;
+      const juicio = det.nota >= 7.5 ? 'muy por encima del sector'
+                   : det.nota >= 6   ? 'por encima del sector'
+                   : det.nota <= 2.5 ? 'muy por debajo del sector'
+                   : det.nota <= 4   ? 'por debajo del sector' : 'en línea con el sector';
+      drivers.push(`${d.lbl}: ${fmt(det.v)}${comp} — ${juicio}`);
+    }
+  }
+  return { score, label, color, drivers, perfilId: r.perfilId, percentil: r.percentil };
+}
+
+// Las diez dimensiones competitivas, con el prior del sector como base y la
+// evidencia numérica SECTORIAL (no umbrales absolutos) como confirmación.
+function sectorMoatDims(ticker, info, moatObj, bullets) {
+  const r = computeSectorRating(ticker, info);
+  const pid = (r && r.perfilId) || 'MERCADO';
+  const base = _MOAT_DIMS[pid] || _MOAT_DIMS.MERCADO;
+  const mc = _leer(info, 'marketCapitalization');          // en millones
+  const rent = (r && r.pilares) ? r.pilares.rentabilidad : null;
+  const pct = (r && r.percentil) != null ? r.percentil : 50;
+
+  // Evidencia: la escala se mide con el tamaño, y todo lo demás con si la
+  // empresa gana a sus pares. Sin margen bruto de por medio: un banco y un
+  // minorista no tienen por qué publicarlo para tener ventajas reales.
+  const grande = mc != null && mc > 2e5;                    // > 200.000 M$
+  const enorme = mc != null && mc > 5e5;                    // > 500.000 M$
+  const pequena = mc != null && mc < 2e4;                   // < 20.000 M$
+  const gana  = rent != null && rent >= 6.5;
+  const lidera = pct >= 80;
+
+  const kw = _MOAT_NOMBRES.map(() => 0);
+  const txt = (Array.isArray(bullets) ? bullets : []).join('  ').toLowerCase();
+  const KW = [
+    /(efecto de red|network|red de usuarios|efecto red)/, /(switching|costo de cambio|coste de cambio|lock-?in|retenci|contrat|suscrip)/,
+    /(marca|brand|prestigio)/, /(escala|scale|tama[nñ]o|volumen|mayor jugador|l[ií]der de mercado)/,
+    /(patente|patent|propiedad intelectual|licencia exclusiv)/, /(distribuci|distribution|canal|alcance|red de tiendas|puntos de venta)/,
+    /(regulat|licencia|concesi[oó]n)/, /(datos|data|algoritmo|informaci[oó]n propietaria)/,
+    /(coste|costo|cost|eficien|bajo coste|low-?cost|productor de menor)/, /(tecnolog|technolog|i\+d|r&d|innovaci[oó]n)/,
+  ];
+  KW.forEach((re, i) => { if (re.test(txt)) kw[i] = 1; });
+
+  const niveles = base.map((prior, i) => {
+    if (prior === 0) return 0;                              // no aplica en este sector
+    let v = prior;
+    // Un solo ajuste por dimensión: si se suman "gana a sus pares", "lidera el
+    // sector" y la mención editorial, casi todo acaba en Fuerte y el desglose
+    // deja de distinguir nada. Se aplica el mayor, no la suma.
+    if (i === 3) {                                          // escala: la mide el tamaño
+      v += enorme ? 1 : pequena ? -1 : 0;
+    } else if (rent != null && rent <= 3.5) {
+      v -= 1;                                               // pierde con sus pares
+    } else if (prior >= 3 && (lidera || gana)) {
+      v += 1;                                               // solo donde el sector ya dice que esa ventaja manda
+    }
+    if (kw[i] && v < 3) v += 1;                             // el editorial la nombra explícitamente
+    return Math.max(0, Math.min(3, v));
+  });
+
+  const lvl = v => v >= 3 ? 'Fuerte' : v >= 2 ? 'Moderado' : 'Débil';
+  return _MOAT_NOMBRES
+    .map((n, i) => ({ n, v: niveles[i], s: lvl(niveles[i]), aplica: base[i] > 0 }))
+    .filter(f => f.aplica);        // una dimensión que no existe en el sector no se pinta
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
    ADAPTADORES PARA index.html  —  no requieren tocar los puntos de llamada
    ════════════════════════════════════════════════════════════════════════════ */
 
@@ -24641,6 +24794,17 @@ function _stockFactsForPrompt(ticker, info){
 // Evalúa el FOSO (moat) SOLO con números: poder de fijación de precios (margen bruto),
 // retorno sobre capital (ROIC), retorno sobre patrimonio (ROE) y margen neto. Determinista.
 function _moatFromNumbers(info){
+  // Primero el foso sectorial: mide si la empresa sostiene retornos por encima de SUS
+  // pares, con las métricas de su sector. La versión de abajo, que juzga a todo el mundo
+  // por margen bruto y ROIC, condena a cualquier banco (no publican margen bruto y su
+  // ROIC contable ronda el 4%) y solo se usa si el motor no puede calificar.
+  try {
+    if (typeof sectorMoat === 'function') {
+      const _t = info?.symbol || info?.ticker || window._PVX_CUR_TICKER || '';
+      const _s = sectorMoat(_t, info);
+      if (_s) return _s;
+    }
+  } catch(e){}
   const gm = info?.grossMargins, roic = info?.returnOnCapital, roe = info?.returnOnEquity, pm = info?.profitMargins;
   let sc = 0; const drivers = [];
   if (gm != null){
@@ -25389,7 +25553,9 @@ function _renderQualAnalysis(a, el){
     </div>
     <div class="px-rating-desc">${esc(a.bio || (a.moat_bullets||[]).join('. '))}
       ${chips ? `<div class="px-scores">${chips}</div>
-      <div class="px-hint">La nota es el promedio de las ${RUBROS.filter(([k])=>sc(k)!=null).length} calificaciones de arriba. Cada una sale solo de los números que la empresa publica; un apartado sin datos no se califica ni entra al promedio.</div>` : ''}</div>
+      <div class="px-hint">${(a.scores && a.scores.sectorial)
+        ? `La nota compara a la empresa con las de su sector, usando las métricas que definen a esa industria. Los ${RUBROS.filter(([k])=>sc(k)!=null).length} apartados de arriba son sus pilares; la nota los pondera según lo que más pesa en el sector.`
+        : `La nota es el promedio de las ${RUBROS.filter(([k])=>sc(k)!=null).length} calificaciones de arriba. Cada una sale solo de los números que la empresa publica; un apartado sin datos no se califica ni entra al promedio.`}</div>` : ''}</div>
   </div>`;
 
   // La tarjeta de la NOTA sale del flujo de `h` y se pinta en #r-rating-host, que
@@ -26005,6 +26171,16 @@ function _moatSectorBucket(sec){
 // editoriales/cuantitativas. Ambos hacen que el desglose CORRELACIONE con la etiqueta
 // de foso y con las ventajas ya nombradas arriba (no dos secciones que se contradigan).
 function _moatFactorBreakdown(info, moatObj, moatBullets){
+  // Las diez dimensiones, con el prior del SECTOR: la ventaja regulatoria define a una
+  // utility y no existe en software; las patentes definen a una biotech y no a un banco.
+  // Las que no aplican no se pintan en vez de salir como "Débil".
+  try {
+    if (typeof sectorMoatDims === 'function') {
+      const _t = info?.symbol || info?.ticker || window._PVX_CUR_TICKER || '';
+      const _d = sectorMoatDims(_t, info, moatObj, moatBullets);
+      if (_d && _d.length) return _d;
+    }
+  } catch(e){}
   const bucket = _moatSectorBucket(info?.sector);
   const gm=info?.grossMargins, pm=info?.profitMargins, roe=info?.returnOnEquity,
         revG=info?.revenueGrowth, roic=info?.returnOnCapital, mc=info?.marketCap||0;
