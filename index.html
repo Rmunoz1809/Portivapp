@@ -11655,6 +11655,15 @@ function _canonicalSector(ticker){
 // encontraba fundamentales de casi ninguna posición, no podía calificarlas y —por diseño,
 // para no inventar— dejaba TODAS las filas en MANTENER. Ahora el caché sobrevive 12 h en
 // localStorage y el portafolio pide en segundo plano lo que le falta (_pvxEnsureFundamentals).
+// El motor sectorial lee de `info.__m` (el objeto `metric` crudo de Finnhub, 112-133 campos).
+// Un `info` guardado antes de que __m existiera se ve completo pero deja al motor con las ~20
+// métricas normalizadas: la nota sale de un subconjunto y pilares ENTEROS se quedan sin datos.
+// Medido en JPM: sin __m el apartado "Salud financiera" desaparece y la nota cae de 6.2 a 5.4.
+// Por eso NINGUNA caché de `info` —ni la local, ni la compartida de la nube— puede servir uno
+// sin __m: se ignora y se vuelve a pedir. El fetch actual siempre escribe __m como objeto
+// (`metricsData?.metric || {}`), así que un ETF sin métricas pasa el filtro con {} y no entra
+// en bucle de refetch.
+window._pvInfoCompleto = function(info){ return !!(info && info.__m && typeof info.__m === 'object'); };
 const _INFO_LS  = 'portiv_info_cache_v2';   // v2: los v1 se guardaron sin __m (el objeto de métricas crudo de Finnhub que lee el motor sectorial); sin él el análisis cae a las ~20 métricas normalizadas y vuelve a parecer el genérico
 const _INFO_TTL = 12 * 60 * 60 * 1000;
 const _INFO_CACHE = {};
@@ -11665,7 +11674,7 @@ const _INFO_TS    = {};
     const now = Date.now();
     Object.keys(raw).forEach(tk => {
       const e = raw[tk];
-      if (e && e.info && (now - (e.ts || 0)) < _INFO_TTL){ _INFO_CACHE[tk] = e.info; _INFO_TS[tk] = e.ts; }
+      if (e && _pvInfoCompleto(e.info) && (now - (e.ts || 0)) < _INFO_TTL){ _INFO_CACHE[tk] = e.info; _INFO_TS[tk] = e.ts; }
     });
   } catch(e){}
 })();
@@ -23566,7 +23575,7 @@ function _analysisEarningsKey(ticker){
 }
 function _analysisLocalGet(ticker, eKey){
   const e = _stockAnalysisCache[(ticker||'').toUpperCase()];
-  return (e && e.earningsKey === eKey && e.info) ? e : null;
+  return (e && e.earningsKey === eKey && _pvInfoCompleto(e.info)) ? e : null;
 }
 function _analysisLocalSet(ticker, info, overview, eKey){
   _stockAnalysisCache[(ticker||'').toUpperCase()] = { info, overview: overview || null, earningsKey: eKey, ts: Date.now() };
@@ -23582,6 +23591,11 @@ async function _analysisSharedGet(ticker, eKey){
     if (error || !data || !data.data) return null;
     // Si la entrada compartida es de un earnings ANTERIOR → ignórala (se regenera).
     if (eKey && eKey !== 'na' && data.earnings_key && data.earnings_key !== eKey) return null;
+    // La fila compartida está indexada por el ticker pelado y solo se invalida por earnings:
+    // una escrita antes de que el `info` llevara __m seguiría degradando el análisis de TODOS
+    // los usuarios hasta el próximo reporte, y ningún cambio de versión de caché la alcanza.
+    // Se ignora; el siguiente _analysisSharedSet la reescribe ya completa.
+    if (!_pvInfoCompleto(data.data && data.data.info)) return null;
     return data.data;   // { info, overview }
   } catch(e){ return null; }
 }
@@ -23602,7 +23616,7 @@ let _researchSnapCache = {};
 (function(){ try { _researchSnapCache = JSON.parse(localStorage.getItem(_RESEARCH_SNAP_LS) || '{}') || {}; } catch(e){ _researchSnapCache = {}; } })();
 function _researchSnapGet(ticker){
   const e = _researchSnapCache[(ticker||'').toUpperCase()];
-  if (!e || !e.info) return null;
+  if (!e || !_pvInfoCompleto(e.info)) return null;
   if (Date.now() - (e.ts || 0) > _RESEARCH_SNAP_TTL_MS) return null;   // expirado → refrescar
   return e;
 }
