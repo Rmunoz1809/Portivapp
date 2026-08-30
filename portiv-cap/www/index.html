@@ -11655,7 +11655,7 @@ function _canonicalSector(ticker){
 // encontraba fundamentales de casi ninguna posición, no podía calificarlas y —por diseño,
 // para no inventar— dejaba TODAS las filas en MANTENER. Ahora el caché sobrevive 12 h en
 // localStorage y el portafolio pide en segundo plano lo que le falta (_pvxEnsureFundamentals).
-const _INFO_LS  = 'portiv_info_cache_v1';
+const _INFO_LS  = 'portiv_info_cache_v2';   // v2: los v1 se guardaron sin __m (el objeto de métricas crudo de Finnhub que lee el motor sectorial); sin él el análisis cae a las ~20 métricas normalizadas y vuelve a parecer el genérico
 const _INFO_TTL = 12 * 60 * 60 * 1000;
 const _INFO_CACHE = {};
 const _INFO_TS    = {};
@@ -23548,7 +23548,7 @@ const _sleep = ms => new Promise(r => setTimeout(r, ms));
 //  · Se invalida cuando la empresa publica un nuevo earnings (earningsKey cambia) → al
 //    reportar, el siguiente que abra la acción regenera los números + rating frescos.
 // ══════════════════════════════════════════════════════════════════════════════
-const _STOCK_ANALYSIS_LS = 'portiv_stock_analysis_v1';
+const _STOCK_ANALYSIS_LS = 'portiv_stock_analysis_v2';   // v2: los v1 no caducan por tiempo —solo cuando la empresa reporta—, así que seguían sirviendo los números y el RATING calculados con la vara genérica anterior en toda acción que no haya reportado desde entonces
 let _stockAnalysisCache = {};
 (function(){ try { _stockAnalysisCache = JSON.parse(localStorage.getItem(_STOCK_ANALYSIS_LS) || '{}') || {}; } catch(e){ _stockAnalysisCache = {}; } })();
 
@@ -23596,7 +23596,7 @@ async function _analysisSharedSet(ticker, info, overview, eKey){
 // ── Snapshot COMPLETO del análisis (info+overview+chart+news+eps) en localStorage ──
 // Objetivo: re-entrar a una acción YA cargada = instantáneo y CERO llamadas a la API.
 // Se refresca solo cuando expira el TTL (precio/noticias cambian a diario).
-const _RESEARCH_SNAP_LS = 'portiv_research_snapshot_v2';   // v2: purga snapshots viejos con gráfica sintética envenenada
+const _RESEARCH_SNAP_LS = 'portiv_research_snapshot_v3';   // v3: los v2 guardan el `info` sin __m → el análisis sectorial se degradaba al genérico hasta que expiraran las 24 h. // v2: purga snapshots viejos con gráfica sintética envenenada
 const _RESEARCH_SNAP_TTL_MS = 24 * 60 * 60 * 1000;   // 24 h — sube/baja a gusto
 let _researchSnapCache = {};
 (function(){ try { _researchSnapCache = JSON.parse(localStorage.getItem(_RESEARCH_SNAP_LS) || '{}') || {}; } catch(e){ _researchSnapCache = {}; } })();
@@ -27042,8 +27042,28 @@ function _pvtEngancharResize(tk, canvas){
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
 const _QUAL_LS  = 'portiv_qual_analysis_v7';   // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
-try { ['portiv_qual_analysis_v1','portiv_qual_analysis_v2','portiv_qual_analysis_v3','portiv_qual_analysis_v4','portiv_qual_analysis_v5','portiv_qual_analysis_v6',
-       'portiv_stock_narrative_v1'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}   // borra físicamente los cachés viejos de TODAS las empresas: si no, quedan ocupando cuota sin que nadie los lea nunca
+// ── Purga del análisis viejo de TODAS las acciones ─────────────────────────
+// Antes se listaban a mano las versiones a borrar y la lista se quedó atrás: portiv_stock_narrative_v2,
+// portiv_earnings_reaction_v1 y v2 y portiv_research_snapshot_v1 nunca se borraron y seguían en cada
+// dispositivo con el análisis viejo de TODAS las empresas, ocupando cuota sin que nadie los leyera.
+// Ahora se declara la versión VIVA de cada caché de análisis y se borra cualquier OTRA versión del
+// mismo prefijo — las de hoy y las que vengan. La caché compartida de la nube (qbio:) no vive aquí.
+const _ANALISIS_VIVOS = ['portiv_qual_analysis_v7','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
+                         'portiv_research_snapshot_v3','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
+                         'portiv_info_cache_v2','portiv_peer_metric_v1'];
+(function _pvPurgaAnalisisViejo(){
+  try {
+    const vivos = new Set(_ANALISIS_VIVOS);
+    const prefijos = _ANALISIS_VIVOS.map(function(k){ return k.replace(/_v\d+$/, '_v'); });
+    const fuera = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || vivos.has(k)) continue;
+      if (prefijos.some(function(p){ return k.indexOf(p) === 0; })) fuera.push(k);
+    }
+    fuera.forEach(function(k){ try { localStorage.removeItem(k); } catch(_){} });
+  } catch(e){}
+})();
 function _qualLoad(){ try { return JSON.parse(localStorage.getItem(_QUAL_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _qualGet(tk, eKey){
   const c = _qualLoad()[(tk||'').toUpperCase()];
