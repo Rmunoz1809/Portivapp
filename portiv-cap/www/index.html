@@ -8553,12 +8553,16 @@ function sectorMoat(ticker, info) {
   const r = computeSectorRating(ticker, info);
   if (!r || r.nota == null || !r.pilares) return null;
   const rent = r.pilares.rentabilidad;
-  if (rent == null) return null;
 
   // Un foso es sostener retornos por encima de tus pares. El pilar de
   // rentabilidad ya está calculado con las métricas del sector y sobre medias
   // de 5 años; el percentil añade cuán arriba está dentro de su industria.
-  let score = (rent - 5) * 1.4 + ((r.percentil - 50) / 50) * 1.2;
+  // Hay empresas sin ninguna métrica de rentabilidad publicada — biotecnológicas
+  // preclínicas, sobre todo. Ahí no se inventa un foso: se juzga solo por dónde
+  // queda en su sector y se dice que la evidencia es corta.
+  const sinRent = (rent == null);
+  let score = sinRent ? ((r.percentil - 50) / 50) * 2.2
+                      : (rent - 5) * 1.4 + ((r.percentil - 50) / 50) * 1.2;
   score = Math.max(-3, Math.min(5.5, score));
 
   let label, color;
@@ -8572,6 +8576,9 @@ function sectorMoat(ticker, info) {
   // que "ROE alto".
   const prof = _SECTOR_MODELS[r.perfilId];
   const drivers = [];
+  if (sinRent) drivers.push('La empresa no publica todavía márgenes ni retornos sobre capital, '
+    + 'así que no hay con qué demostrar una ventaja duradera: lo que se ve aquí es solo su posición '
+    + `frente a los demás de ${prof ? prof.label.toLowerCase() : 'su sector'}.`);
   if (prof && prof.m) {
     const filas = Object.entries(prof.m)
       .filter(([k, [pil]]) => pil === 'rent' && r.detalle[k])
@@ -8579,12 +8586,9 @@ function sectorMoat(ticker, info) {
       .sort((a, b) => Math.abs(b.det.nota - 5) - Math.abs(a.det.nota - 5))
       .slice(0, 4);
     const fmt = x => Math.abs(x) >= 100 ? x.toFixed(0) : Math.abs(x) >= 1 ? x.toFixed(1) : x.toFixed(2);
-    for (const { k, d, det } of filas) {
-      const a = _ancla(r.perfilId, d.campo || k);
-      const med = a ? a.v[1] : null;
-      const comp = med == null ? '' : ` frente a ${fmt(med)} de sus pares`;
-      const juicio = _lectura(det.nota);
-      drivers.push(`${d.lbl}: ${fmt(det.v)}${comp} — ${juicio}`);
+    for (const { k, det } of filas) {
+      const f = _fraseAnalista(r.perfilId, k, det);
+      if (f) drivers.push(f);
     }
   }
   return { score, label, color, drivers, perfilId: r.perfilId, percentil: r.percentil };
@@ -8673,6 +8677,10 @@ const _TITULOS = {
 function _fmtMetrica(clave, v) {
   const PCT = /margen|roe|roa|roi|crec|payout|dividend|fuerzaRel|volatil|Margin|Growth|Yield/i;
   const VECES = /^(pe|ps|pb|ptbv|ev|peg|pFlujo|pFcf|rot|cobInteres|ciclo)/;
+  const DINERO = /^(flujoCajaAccion|ingresoEmpleado|utilidadEmpleado)$/;
+  const MESES = /^runwayMeses$/;
+  if (MESES.test(clave)) return Math.round(v) + ' meses';
+  if (DINERO.test(clave)) return (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('es-ES', { maximumFractionDigits: Math.abs(v) >= 100 ? 0 : 2 });
   if (PCT.test(clave)) return (Math.abs(v) >= 100 ? v.toFixed(0) : v.toFixed(1)) + '%';
   if (VECES.test(clave)) return v.toFixed(v < 10 ? 2 : 1) + '×';
   if (Math.abs(v) >= 1000) return v.toLocaleString('es-ES', { maximumFractionDigits: 0 });
@@ -8688,6 +8696,112 @@ function _lectura(nota) {
        : nota >= 4    ? 'en línea con sus pares'
        : nota >= 2.5  ? 'peor que sus pares'
        :               'mucho peor que sus pares';
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════════
+   LECTURA PROFESIONAL DE CADA MÉTRICA
+   ────────────────────────────────────────────────────────────────────────────
+   Un número comparado con su mediana no es un análisis. "Payout 236% frente a
+   120% de sus pares" es un dato; lo que un analista escribe es qué implica: que
+   el dividendo se paga con algo que no es la utilidad y hay que ir a mirar el
+   flujo. Aquí vive esa traducción, por métrica y, donde cambia de significado,
+   por sector.
+
+   `bien` se usa cuando la empresa gana a sus pares en esa métrica; `mal` cuando
+   pierde. Se redactan como conclusión, no como definición.
+   ════════════════════════════════════════════════════════════════════════════ */
+const _LEE = {
+  // ── Rentabilidad ──
+  roe5Y: { bien:'sostiene retornos sobre el capital por encima de sus pares durante cinco años: eso es franquicia, no un buen ciclo',
+           mal:'lleva cinco años sacando menos del mismo capital que sus pares, que es el síntoma de un negocio sin ventaja' },
+  roeTTM:{ bien:'saca más del capital de sus accionistas que sus pares', mal:'rentabiliza el capital peor que sus pares' },
+  roaTTM:{ bien:'exprime mejor su balance que la competencia', mal:'necesita más activos que sus pares para ganar lo mismo',
+           porPerfil:{ BANCO:{ bien:'gana más por cada dólar de activo que la banca mediana, que es la definición de un banco bien gestionado',
+                               mal:'gana menos por dólar de activo que la banca mediana: o presta peor o le cuesta más operar' } } },
+  roi5Y: { bien:'crea valor por encima de su coste de capital de forma sostenida', mal:'no está cubriendo su coste de capital: crecer así destruye valor' },
+  margenNeto5Y:{ bien:'convierte ventas en beneficio mejor que sus pares, y lo hace de forma estable', mal:'se queda menos de cada venta que sus pares' },
+  margenOper5Y:{ bien:'su margen operativo a través del ciclo está por encima del sector: aguanta mejor las malas',
+                 mal:'gana menos por operación que sus pares incluso promediando cinco años, no es un mal trimestre' },
+  margenOperTTM:{ bien:'margen operativo por encima del sector', mal:'margen operativo por debajo del sector' },
+  margenBrutoTTM:{ bien:'tiene poder para poner precio por encima de sus pares', mal:'poco margen de maniobra en precio frente a sus pares',
+                   porPerfil:{ RETAIL:{ bien:'margen bruto alto para el retail, lo que suele significar mix premium o marca propia',
+                                        mal:'margen bruto bajo: en retail eso puede ser el modelo (volumen y precio agresivo), no una debilidad — mírelo junto a la rotación' } } },
+  rotActivos:{ bien:'mueve más ventas por cada dólar de activo que sus pares', mal:'sus activos rinden menos ventas que los de sus pares',
+               porPerfil:{ REIT:{ bien:'sus inmuebles generan más renta por dólar invertido que los de sus pares', mal:'sus inmuebles rinden menos renta por dólar que los de sus pares: ocupación floja o activos caros' },
+                           TRANSPORTE:{ bien:'aprovecha mejor su flota que la competencia', mal:'su flota trabaja menos que la de sus competidores' } } },
+  rotInventario:{ bien:'rota el inventario más rápido que sus pares: menos capital atrapado y menos riesgo de rebajas',
+                  mal:'el inventario se le queda más tiempo que a sus pares, que es capital parado y rebajas futuras' },
+  ingresoEmpleado:{ bien:'genera más ingreso por empleado que sus pares', mal:'necesita más plantilla que sus pares para el mismo ingreso' },
+  utilidadEmpleado:{ bien:'convierte plantilla en beneficio mejor que sus pares', mal:'su plantilla produce menos beneficio que la de sus pares' },
+
+  // ── Crecimiento ──
+  crecIngr5Y:{ bien:'crece por encima del sector de forma sostenida', mal:'crece menos que el sector, y no es cosa de un año' },
+  crecIngr3Y:{ bien:'crece más que sus pares en el trienio', mal:'pierde terreno frente a sus pares en ventas',
+               porPerfil:{ RETAIL:{ bien:'gana cuota: en retail, crecer más que el sector suele venir de tráfico y ticket, no de precio', mal:'crece menos que el sector: o pierde tráfico o está cerrando tiendas' } } },
+  crecIngrTTM:{ bien:'aceleró más que sus pares en el último año', mal:'se desaceleró más que sus pares' },
+  crecIngrQ:{ bien:'el último trimestre vino mejor que el del sector', mal:'el último trimestre vino peor que el del sector' },
+  crecEps5Y:{ bien:'compone beneficio por acción por encima del sector', mal:'su beneficio por acción crece menos que el del sector' },
+  crecEps3Y:{ bien:'el beneficio por acción crece más rápido que en sus pares', mal:'el beneficio por acción se queda atrás frente a sus pares' },
+  crecBookValue5Y:{ bien:'compone valor contable más rápido que sus pares, que es como se crea valor en este negocio',
+                    mal:'compone valor contable más despacio que sus pares: el motor del sector va lento aquí' },
+  crecTBV5Y:{ bien:'el valor tangible por acción crece por encima del sector', mal:'el valor tangible por acción crece por debajo del sector' },
+  crecEbitda5Y:{ bien:'el EBITDA crece por encima del sector', mal:'el EBITDA crece por debajo del sector' },
+  crecDividendo5Y:{ bien:'sube el dividendo más rápido que sus pares, señal de que la caja acompaña', mal:'sube el dividendo menos que sus pares, o lleva tiempo congelado' },
+  crecMargen5Y:{ bien:'ha ido ampliando margen frente al sector', mal:'ha ido perdiendo margen frente al sector' },
+
+  // ── Solidez ──
+  deudaLPCapital:{ bien:'menos apalancada a largo plazo que sus pares', mal:'más apalancada a largo plazo que sus pares' },
+  deudaTotalCapital:{ bien:'balance más limpio que el de sus pares', mal:'lleva más deuda que sus pares: menos margen si el ciclo se tuerce' },
+  liquidezCorriente:{ bien:'cubre sus compromisos de corto plazo con más holgura que sus pares', mal:'menos colchón de corto plazo que sus pares' },
+  liquidezRapida:{ bien:'liquidez inmediata por encima del sector', mal:'liquidez inmediata por debajo del sector' },
+  cobInteres:{ bien:'su resultado cubre los intereses con más holgura que en sus pares', mal:'cubre los intereses más justo que sus pares: es la primera pieza que cruje si suben las tasas o cae el ciclo' },
+  payout:{ bien:'reparte una porción menor de su beneficio que sus pares: el dividendo tiene recorrido', mal:'reparte más de su beneficio que sus pares, así que hay menos margen si el beneficio flojea',
+           porPerfil:{ REIT:{ bien:'reparte menos sobre utilidad que sus pares REIT (recuerde que en un REIT esta cifra siempre sale alta: la depreciación aplasta la utilidad, mire el payout sobre flujo)',
+                              mal:'reparte más sobre utilidad que sus pares REIT — en el sector la cifra siempre es alta por la depreciación, así que la que manda es la de flujo de caja' } } },
+  payoutFlujo:{ bien:'el dividendo se paga con holgura desde el flujo de caja: es sostenible', mal:'el dividendo se come una parte del flujo mayor que en sus pares: menos colchón para recortes de renta o subidas de tasas' },
+  flujoCajaAccion:{ bien:'genera más caja por acción que sus pares', mal:'genera menos caja por acción que sus pares' },
+  capexCagr5Y:{ bien:'ha contenido la inversión mejor que sus pares', mal:'lleva cinco años acelerando inversión más que sus pares: o es un plan de crecimiento o es capex de mantener el negocio a flote' },
+  volatilidad:{ bien:'se mueve menos que sus pares, que es lo que se le pide a este sector', mal:'se mueve más que sus pares, poco habitual en un sector que se compra por previsibilidad' },
+  runwayMeses:{ bien:'tiene más meses de caja por delante que sus pares antes de necesitar dinero nuevo', mal:'le queda menos caja que a sus pares: el reloj de una ampliación de capital corre más rápido aquí' },
+  cicloMargen:{ bien:'su margen está por debajo de su propia media de cinco años: se compra en la parte baja del ciclo, no en el pico', mal:'su margen está muy por encima de su media de cinco años: esto es pico de ciclo, no la nueva normalidad, y revertir a la media duele' },
+
+  // ── Valoración ──
+  peAdelantado:{ bien:'cotiza más barata sobre beneficio esperado que sus pares', mal:'paga prima sobre beneficio esperado frente a sus pares: el mercado ya le exige ejecutar' },
+  peTTM:{ bien:'múltiplo sobre beneficio por debajo del sector', mal:'múltiplo sobre beneficio por encima del sector' },
+  peNormalizado:{ bien:'barata sobre beneficio normalizado frente al sector', mal:'cara sobre beneficio normalizado frente al sector' },
+  peg:{ bien:'lo que paga por su crecimiento es menor que en sus pares', mal:'paga caro por el crecimiento que compra' },
+  evEbitda:{ bien:'incluyendo la deuda, sale más barata que sus pares', mal:'incluyendo la deuda, sale más cara que sus pares — y con deuda alta este es el múltiplo que manda' },
+  evIngresos:{ bien:'barata sobre ventas incluyendo deuda', mal:'cara sobre ventas incluyendo deuda' },
+  evFcf:{ bien:'lo que cuesta comprar su caja libre está por debajo del sector', mal:'comprar su caja libre cuesta más que en sus pares' },
+  ps:{ bien:'barata sobre ventas frente al sector', mal:'cara sobre ventas frente al sector' },
+  pb:{ bien:'cotiza con descuento sobre su valor contable frente al sector', mal:'paga prima sobre valor contable frente al sector' },
+  ptbv:{ bien:'cotiza más barata sobre valor tangible que sus pares, que es la vara con la que se compra un banco',
+         mal:'paga prima sobre valor tangible frente a la banca mediana: hay que creerse que ese retorno superior se mantiene para justificarla' },
+  pFlujoCaja:{ bien:'barata sobre el flujo que de verdad genera (la vara correcta aquí, no el P/E)', mal:'cara sobre el flujo que genera' },
+  pFcf:{ bien:'barata sobre caja libre', mal:'cara sobre caja libre' },
+  dividendo:{ bien:'renta por dividendo por encima del sector', mal:'renta por dividendo por debajo del sector: se compra por otra cosa' },
+
+  // ── Mercado ──
+  fuerzaRel13s:{ bien:'lo está haciendo mejor que el mercado en el trimestre', mal:'lo está haciendo peor que el mercado en el trimestre' },
+  fuerzaRel26s:{ bien:'bate al S&P en el semestre: el mercado le está poniendo dinero', mal:'pierde contra el S&P en el semestre — puede ser oportunidad o puede ser que el mercado sepa algo' },
+  fuerzaRel52s:{ bien:'bate al S&P en el año', mal:'pierde contra el S&P en el año' },
+  consenso:{ bien:'los analistas que la cubren son más positivos que la media', mal:'los analistas que la cubren son más tibios que la media' },
+};
+
+// Frase de analista para una métrica: número, mediana del sector y qué implica.
+function _fraseAnalista(perfilId, clave, det) {
+  const d = _CAT[clave]; if (!d) return null;
+  const a = _ancla(perfilId, d.campo || clave);
+  const med = a ? a.v[1] : null;
+  const bien = det.nota >= 5;
+  const L = _LEE[clave];
+  const sec = L && L.porPerfil && L.porPerfil[perfilId];
+  const txt = (sec && (bien ? sec.bien : sec.mal)) || (L && (bien ? L.bien : L.mal)) || null;
+  const cifra = `${d.lbl} ${_fmtMetrica(clave, det.v)}` +
+                (med != null ? ` (sector ${_fmtMetrica(clave, med)})` : '');
+  if (!txt) return cifra + '.';
+  return `${cifra}: ${txt}.`;
 }
 
 function sectorSections(ticker, info) {
@@ -8724,15 +8838,18 @@ function sectorSections(ticker, info) {
   const todas = Object.keys(prof.m)
     .filter(k => r.detalle[k] && _CAT[k])
     .map(k => ({ k, d: _CAT[k], det: r.detalle[k] }));
-  const frase = ({ k, d, det }) => {
-    const a = _ancla(r.perfilId, d.campo || k);
-    const med = a ? ` frente a ${_fmtMetrica(k, a.v[1])} de sus pares` : '';
-    return `${d.lbl}: ${_fmtMetrica(k, det.v)}${med}`;
-  };
-  const pros = todas.filter(x => x.det.nota >= 6.8)
-                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 5).map(frase);
+  const frase = ({ k, det }) => _fraseAnalista(r.perfilId, k, det);
+  // El foso ya explica las métricas de rentabilidad donde la empresa gana; repetirlas
+  // aquí hace que las dos secciones digan lo mismo con las mismas palabras.
+  const yaEnFoso = new Set(Object.entries(prof.m).filter(([, [p]]) => p === 'rent').map(([k]) => k));
+  const pros = todas.filter(x => x.det.nota >= 6.8 && !yaEnFoso.has(x.k))
+                    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 5).map(frase).filter(Boolean);
+  // Si al quitarlas no queda nada positivo que decir, se admiten las de rentabilidad
+  // antes que enseñar una sección vacía.
+  if (!pros.length) pros.push(...todas.filter(x => x.det.nota >= 6.8)
+    .sort((a, b) => b.det.nota - a.det.nota).slice(0, 3).map(frase).filter(Boolean));
   const riesgos = todas.filter(x => x.det.nota <= 3.6)
-                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 5).map(frase);
+                       .sort((a, b) => a.det.nota - b.det.nota).slice(0, 5).map(frase).filter(Boolean);
 
   // ── Valoración: el pilar de valoración ya está calculado contra el sector ──
   const val = r.pilares.valoracion;
@@ -9471,7 +9588,7 @@ const AI_MODELS = {
   vision:     'gemini-3.7-flash',
   // Narrativa del análisis por acción (intro "qué es / cómo gana", pros, riesgos, valoración).
   // Sonnet 5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
-  // (qbio:v2:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
+  // (qbio:v3:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
   narrative:  'claude-sonnet-5',
   // Chat (AI Analyst) = el modelo chico, por costo: es la única vía de pago on-demand y el
   // modelo grande salía ~3× más caro por mensaje. La tendencia del modelo chico a pedir
@@ -25055,7 +25172,7 @@ function _buildQualAnalysis(ticker, info){
 //  CONECTADO A DATOS REALES POR TICKER (dinámico, nada hardcodeado de Netflix):
 //    • Rating, foso, ventajas por dimensión, márgenes, múltiplos ....... deterministas (info Finnhub)
 //    • Intro / pros / riesgos / valoración ............................. Sonnet 5 (AI_MODELS.narrative),
-//        editorial COMPANY_BIOS si existe, cacheado 1× global en la nube (qbio:v2:TICKER)
+//        editorial COMPANY_BIOS si existe, cacheado 1× global en la nube (qbio:v3:TICKER)
 //    • Salud financiera: FCF, margen FCF (fcf/ventas), dividendo, D/E, beta . info Finnhub
 //    • Escenarios 1 año + rango de objetivos de precio ................. targetLow/Mean/High analistas
 //    • Consenso Buy/Hold/Sell .......................................... info.recoBreakdown
@@ -26011,12 +26128,12 @@ function _valVerdict(valLabel){
 
 // ── Narrativa cualitativa (bio, pros, riesgos, texto de valoración) ──────────────
 // Editorial (COMPANY_BIOS) si existe → GRATIS. Si no → 1 llamada de IA BARATA (haiku,
-// salida corta), guardada en la nube (qbio:v2:TICKER vía _sharedAIGet/Set) → 1× global:
+// salida corta), guardada en la nube (qbio:v3:TICKER vía _sharedAIGet/Set) → 1× global:
 // el 1er usuario que abre esa acción la paga, el resto la lee gratis. Invalida por earnings.
 // v2: sube con qbio:v2 de la nube. Esta caché local se consulta ANTES que la compartida
 // y devuelve de inmediato, así que sin subirla el usuario que ya abrió una acción seguiría
 // leyendo la narrativa escrita con el prompt genérico aunque la nube ya tenga la sectorial.
-const _NARR_LS = 'portiv_stock_narrative_v2';
+const _NARR_LS = 'portiv_stock_narrative_v3';
 const _NARR_TTL = 120 * 24 * 60 * 60 * 1000;   // 120 días
 function _narrLoad(){ try { return JSON.parse(localStorage.getItem(_NARR_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _narrGetLocal(tk, eKey){
@@ -26086,7 +26203,7 @@ async function _getStockNarrative(ticker, info, facts){
   // de métricas para todos. Ahora el prompt lleva las métricas propias del sector con su
   // mediana al lado y prohíbe hablar de las que no aplican. Sin subir la versión, a un banco
   // se le seguiría explicando el margen bruto durante los días que dure la caché compartida.
-  const key = 'qbio:v2:' + ticker;
+  const key = 'qbio:v3:' + ticker;
   const local = _narrGetLocal(ticker, eKey);
   if (local) {
     // Ya está local → úsala al instante. Y en segundo plano ASEGURA que exista en la nube
@@ -26923,9 +27040,9 @@ function _pvtEngancharResize(tk, canvas){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v6';   // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
+const _QUAL_LS  = 'portiv_qual_analysis_v7';   // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
-try { ['portiv_qual_analysis_v1','portiv_qual_analysis_v2','portiv_qual_analysis_v3','portiv_qual_analysis_v4','portiv_qual_analysis_v5',
+try { ['portiv_qual_analysis_v1','portiv_qual_analysis_v2','portiv_qual_analysis_v3','portiv_qual_analysis_v4','portiv_qual_analysis_v5','portiv_qual_analysis_v6',
        'portiv_stock_narrative_v1'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}   // borra físicamente los cachés viejos de TODAS las empresas: si no, quedan ocupando cuota sin que nadie los lea nunca
 function _qualLoad(){ try { return JSON.parse(localStorage.getItem(_QUAL_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _qualGet(tk, eKey){
