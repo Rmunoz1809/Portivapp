@@ -9212,7 +9212,7 @@ const AI_MODELS = {
   vision:     'gemini-3.7-flash',
   // Narrativa del análisis por acción (intro "qué es / cómo gana", pros, riesgos, valoración).
   // Sonnet 5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
-  // (qbio:v1:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
+  // (qbio:v2:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
   narrative:  'claude-sonnet-5',
   // Chat (AI Analyst) = el modelo chico, por costo: es la única vía de pago on-demand y el
   // modelo grande salía ~3× más caro por mensaje. La tendencia del modelo chico a pedir
@@ -24768,7 +24768,7 @@ function _buildQualAnalysis(ticker, info){
 //  CONECTADO A DATOS REALES POR TICKER (dinámico, nada hardcodeado de Netflix):
 //    • Rating, foso, ventajas por dimensión, márgenes, múltiplos ....... deterministas (info Finnhub)
 //    • Intro / pros / riesgos / valoración ............................. Sonnet 5 (AI_MODELS.narrative),
-//        editorial COMPANY_BIOS si existe, cacheado 1× global en la nube (qbio:v1:TICKER)
+//        editorial COMPANY_BIOS si existe, cacheado 1× global en la nube (qbio:v2:TICKER)
 //    • Salud financiera: FCF, margen FCF (fcf/ventas), dividendo, D/E, beta . info Finnhub
 //    • Escenarios 1 año + rango de objetivos de precio ................. targetLow/Mean/High analistas
 //    • Consenso Buy/Hold/Sell .......................................... info.recoBreakdown
@@ -25719,9 +25719,12 @@ function _valVerdict(valLabel){
 
 // ── Narrativa cualitativa (bio, pros, riesgos, texto de valoración) ──────────────
 // Editorial (COMPANY_BIOS) si existe → GRATIS. Si no → 1 llamada de IA BARATA (haiku,
-// salida corta), guardada en la nube (qbio:v1:TICKER vía _sharedAIGet/Set) → 1× global:
+// salida corta), guardada en la nube (qbio:v2:TICKER vía _sharedAIGet/Set) → 1× global:
 // el 1er usuario que abre esa acción la paga, el resto la lee gratis. Invalida por earnings.
-const _NARR_LS = 'portiv_stock_narrative_v1';
+// v2: sube con qbio:v2 de la nube. Esta caché local se consulta ANTES que la compartida
+// y devuelve de inmediato, así que sin subirla el usuario que ya abrió una acción seguiría
+// leyendo la narrativa escrita con el prompt genérico aunque la nube ya tenga la sectorial.
+const _NARR_LS = 'portiv_stock_narrative_v2';
 const _NARR_TTL = 120 * 24 * 60 * 60 * 1000;   // 120 días
 function _narrLoad(){ try { return JSON.parse(localStorage.getItem(_NARR_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _narrGetLocal(tk, eKey){
@@ -25787,7 +25790,11 @@ const _narrInflight = new Map();   // TICKER → Promise en vuelo (dedup: 2 aper
 async function _getStockNarrative(ticker, info, facts){
   ticker = (ticker||'').toUpperCase();
   const eKey = _analysisEarningsKey(ticker);
-  const key = 'qbio:v1:' + ticker;
+  // v2: la narrativa cacheada se generó con el prompt genérico, que mandaba la misma lista
+  // de métricas para todos. Ahora el prompt lleva las métricas propias del sector con su
+  // mediana al lado y prohíbe hablar de las que no aplican. Sin subir la versión, a un banco
+  // se le seguiría explicando el margen bruto durante los días que dure la caché compartida.
+  const key = 'qbio:v2:' + ticker;
   const local = _narrGetLocal(ticker, eKey);
   if (local) {
     // Ya está local → úsala al instante. Y en segundo plano ASEGURA que exista en la nube
@@ -26614,9 +26621,10 @@ function _pvtEngancharResize(tk, canvas){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v4';   // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'. Sin bump se seguirían sirviendo hasta 24 h con las dos secciones vacías.
+const _QUAL_LS  = 'portiv_qual_analysis_v5';   // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
-try { ['portiv_qual_analysis_v1','portiv_qual_analysis_v2','portiv_qual_analysis_v3'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}   // borra físicamente los cachés viejos de TODAS las empresas
+try { ['portiv_qual_analysis_v1','portiv_qual_analysis_v2','portiv_qual_analysis_v3','portiv_qual_analysis_v4',
+       'portiv_stock_narrative_v1'].forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}   // borra físicamente los cachés viejos de TODAS las empresas: si no, quedan ocupando cuota sin que nadie los lea nunca
 function _qualLoad(){ try { return JSON.parse(localStorage.getItem(_QUAL_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _qualGet(tk, eKey){
   const c = _qualLoad()[(tk||'').toUpperCase()];
