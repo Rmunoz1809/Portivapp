@@ -2695,12 +2695,27 @@ window._ensureChartJs = (function(){
   /* Etiqueta pequeña pegada a la esquina del CTA: marca que conectar el portafolio es
      Portiv Pro sin robarle sitio al botón. No es un bloque informativo — eso empujaba
      el CTA hacia abajo y en pantallas cortas lo dejaba fuera. */
-  .pq-pro-row { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+  /* La insignia se centra sobre el CTA y dice QUÉ es de pago, no sólo el nombre del
+     plan: "Portiv Pro" a secas se leía como una etiqueta fría y nadie sabía a qué
+     se refería. El ámbar la separa del azul del resto del quiz sin gritar. */
+  .pq-pro-row { display: flex; justify-content: center; margin-bottom: 9px; }
   .pq-pro-badge {
-    display: inline-flex; align-items: center; gap: 5px;
-    padding: 4px 9px; border-radius: 999px;
-    background: var(--st-surface-cont, #e5eeff); color: var(--st-primary, #04162c);
-    font-size: 10.5px; font-weight: 800; letter-spacing: .04em; line-height: 1;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 13px; border-radius: 999px;
+    background: rgba(186,138,32,.12); color: #8a6410;
+    border: 1px solid rgba(186,138,32,.22);
+    font-size: 11.5px; font-weight: 800; letter-spacing: .01em; line-height: 1.15;
+  }
+  body.dark-theme .pq-pro-badge { background: rgba(226,178,72,.14); color: #e0b656; border-color: rgba(226,178,72,.28); }
+  /* "o" entre conectar el broker y meter las posiciones a mano: sin él, los dos
+     botones se leían como un paso tras otro y no como dos caminos alternativos. */
+  .pq-or {
+    display: flex; align-items: center; gap: 12px; margin: 14px 2px 2px;
+    color: var(--st-on-surf-var, #8a96a3); font-size: 12px; font-weight: 700;
+    text-transform: lowercase;
+  }
+  .pq-or::before, .pq-or::after {
+    content: ''; flex: 1; height: 1px; background: var(--st-surface-cont, #e5eeff);
   }
   /* La salida gratuita deja de ser un enlace subrayado suelto y pasa a una caja: se ve
      que es una opción de verdad y no una nota al pie, sin competir con el CTA oscuro. */
@@ -9263,6 +9278,21 @@ const _PV_AI_CONSENT = {
     try { if (window.__pvUserId) ks.unshift('pv_ai_consent_' + window.__pvUserId); } catch(e){}
     return ks;
   },
+  // Segunda copia en cookie. El WKWebView de iOS puede vaciar localStorage cuando el
+  // sistema recupera espacio, y ahí es donde el permiso volvía a preguntarse a alguien
+  // que ya lo había contestado. La cookie tiene caducidad explícita (10 años) y vive en
+  // otro almacén, así que las dos tendrían que perderse a la vez para volver a molestar.
+  _cookieGet(){
+    try {
+      const m = document.cookie.match(/(?:^|;\s*)pv_ai_consent=(yes|no)(?:;|$)/);
+      return m ? m[1] : null;
+    } catch(e){ return null; }
+  },
+  _cookieSet(v){
+    try {
+      document.cookie = 'pv_ai_consent=' + v + ';path=/;max-age=315360000;samesite=lax';
+    } catch(e){}
+  },
   // 'yes' | 'no' | null (nunca preguntado)
   get(){
     try {
@@ -9273,11 +9303,14 @@ const _PV_AI_CONSENT = {
         const o = localStorage.getItem(ks[i]);
         if (o === 'yes' || o === 'no') { try { localStorage.setItem(this.KEY, o); } catch(e){} return o; }
       }
+      const c = this._cookieGet();
+      if (c) { try { localStorage.setItem(this.KEY, c); } catch(e){} return c; }
       return null;
-    } catch(e){ return null; }
+    } catch(e){ return this._cookieGet(); }
   },
   set(v){
     try { localStorage.setItem(this.KEY, v); } catch(e){}
+    this._cookieSet(v);
     // El esquema viejo se limpia: si quedara, una lectura futura podría resucitar
     // una respuesta anterior a esta.
     try { this._viejas().forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
@@ -9290,6 +9323,11 @@ const _PV_AI_CONSENT = {
         sb.from('profiles').update({ ai_consent: v === 'yes' }).eq('id', uid)
           .then(function(){}, function(){});
       }
+      // Sin sesión todavía (el permiso se pide en el onboarding, antes de que Supabase
+      // termine de restaurarla) el espejo se quedaba sin escribir NUNCA: la nube seguía
+      // en null y el siguiente dispositivo volvía a preguntar. Se marca pendiente y
+      // hydrate() lo sube en cuanto hay uid.
+      else { try { localStorage.setItem('pv_ai_consent_pend', v); } catch(e){} }
     } catch(e){}
   },
   // Trae la decisión guardada en la nube al iniciar sesión en un dispositivo nuevo. Solo
@@ -9309,13 +9347,25 @@ const _PV_AI_CONSENT = {
           localStorage.removeItem(this.KEY);
           localStorage.removeItem('pv_ai_consent_local');
           localStorage.removeItem('pv_ai_consent_' + prev);
+          localStorage.removeItem('pv_ai_consent_pend');
+          document.cookie = 'pv_ai_consent=;path=/;max-age=0';
         } catch(e){}
       }
       try { localStorage.setItem(this.UIDKEY, uid); } catch(e){}
+      // Empujar la decisión tomada antes de tener sesión (ver set()).
+      try {
+        const pend = localStorage.getItem('pv_ai_consent_pend');
+        if (pend === 'yes' || pend === 'no') {
+          localStorage.removeItem('pv_ai_consent_pend');
+          sb.from('profiles').update({ ai_consent: pend === 'yes' }).eq('id', uid)
+            .then(function(){}, function(){});
+        }
+      } catch(e){}
       if (this.get()) return;
       const { data, error } = await sb.from('profiles').select('ai_consent').eq('id', uid).maybeSingle();
       if (error || !data || data.ai_consent == null) return;
       try { localStorage.setItem(this.KEY, data.ai_consent ? 'yes' : 'no'); } catch(e){}
+      this._cookieSet(data.ai_consent ? 'yes' : 'no');
     } catch(e){}
   },
   // Punto de entrada del gate. Devuelve true si se puede llamar a la IA.
@@ -38622,9 +38672,10 @@ document.addEventListener('DOMContentLoaded', function(){
         <span class="pq-chip">${p.horizonLabel}</span>
       </div>
       <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
-      <div class="pq-pro-row"><span class="pq-pro-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>Portiv Pro</span></div>
+      <div class="pq-pro-row"><span class="pq-pro-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>Conectar el broker es parte de Portiv Pro</span></div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
-      <button type="button" class="pq-manual-box" id="pqManualEntry">Ingresar posiciones manualmente</button>
+      <div class="pq-or">o</div>
+      <button type="button" class="pq-manual-box" id="pqManualEntry">Ingresar posiciones manualmente <span style="font-weight:700;opacity:.62">— gratis</span></button>
       <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     // Las diapositivas de "cómo funciona" ya se vieron al iniciar sesión, antes
