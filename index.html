@@ -8072,7 +8072,21 @@ const _CAT = {
   deudaTotalCapital:{ campo:'totalDebt/totalEquityQuarterly', dir:-1, lbl:'Deuda total / capital' },
   liquidezCorriente:{ campo:'currentRatioQuarterly', dir:+1, lbl:'Razón corriente' },
   liquidezRapida:   { campo:'quickRatioQuarterly', dir:+1, lbl:'Razón rápida' },
-  cobInteres:       { campo:'netInterestCoverageTTM', dir:+1, lbl:'Cobertura de intereses' },
+  // Finnhub devuelve cobertura negativa o casi cero cuando la empresa COBRA más
+  // intereses de los que paga: es acreedora neta, no está ahogada. Tal cual venía, el
+  // dato hundía la solidez de las que mejor balance tienen — Amazon (0,62), Berkshire
+  // (0,57), Lululemon (-47,8) y Palantir (-1,53), todas con caja neta o sin deuda.
+  // Si no hay deuda que cubrir, la cobertura no mide nada y se deja fuera: el
+  // apalancamiento ya lo mide deudaTotalCapital, que si es fiable.
+  cobInteres:       { campo:'netInterestCoverageTTM', dir:+1, lbl:'Cobertura de intereses',
+                      deriva: i => {
+                        const c  = _leer(i, 'netInterestCoverageTTM');
+                        if (c != null && c > 0.05) return c;
+                        const de = _leer(i, 'totalDebt/totalEquityQuarterly');
+                        const om = _leer(i, 'operatingMarginTTM');
+                        if (de != null && de < 0.6 && om != null && om > 0) return null;
+                        return c;
+                      } },
   payout:           { campo:'payoutRatioTTM',     dir:-1, lbl:'Payout del dividendo' },
   flujoCajaAccion:  { campo:'cashFlowPerShareTTM', dir:+1, lbl:'Flujo de caja por acción' },
   capexCagr5Y:      { campo:'capexCagr5Y',        dir:-1, lbl:'Crecimiento del capex (5 años)' },
@@ -8146,9 +8160,19 @@ const _CAT = {
 
 // Modelo genérico. Sirve para cualquier empresa que venda algo y tenga utilidades.
 const _GEN = {
-  margenOper5Y:['rent',1.2], margenNeto5Y:['rent',1.0], margenBrutoTTM:['rent',0.7],
-  roe5Y:['rent',1.1], roi5Y:['rent',1.1],
-  crecIngr3Y:['crec',1.3], crecEps3Y:['crec',1.0], crecIngrTTM:['crec',0.6], crecIngrQ:['crec',0.5],
+  // Rentabilidad: MITAD durabilidad (medias de 5 años) y MITAD estado actual (TTM).
+  // Antes pesaba 5,1 en medias de 5 años contra 0,7 en el dato de hoy, y eso juzgaba a
+  // una empresa por lo que fue, no por lo que es: Amazon salía con la rentabilidad de
+  // sus años de márgenes finos aunque hoy gane 17% neto y saque 30% sobre su capital.
+  margenOper5Y:['rent',0.9], margenNeto5Y:['rent',0.8], roe5Y:['rent',0.8], roi5Y:['rent',0.8],
+  margenOperTTM:['rent',0.9], margenNetoTTM:['rent',0.8], roeTTM:['rent',0.8], roiTTM:['rent',0.8],
+  margenBrutoTTM:['rent',0.5],
+  // ¿El negocio MEJORA o se deteriora? La media de 5 años sola no lo dice: castiga
+  // igual al que venía de márgenes finos y ya los expandió (Amazon, +14,4 puntos) que
+  // al que los está perdiendo (Pfizer −10,8, Warner −29,8, Nike −12,2).
+  crecMargen5Y:['rent',0.8],
+  crecIngr3Y:['crec',1.1], crecEps3Y:['crec',0.9], crecIngrTTM:['crec',0.9], crecIngrQ:['crec',0.6],
+  crecEpsTTM:['crec',0.5],
   roa5Y:['soli',0.8], deudaTotalCapital:['soli',1.1], liquidezCorriente:['soli',0.7],
   cobInteres:['soli',0.9], flujoCajaAccion:['soli',0.8],
   peAdelantado:['valo',1.3], peTTM:['valo',0.5], peg:['valo',0.8], evEbitda:['valo',1.1],
@@ -8593,19 +8617,25 @@ function computeSectorRating(ticker, info) {
   };
   const pilar = _roll(PS), pilarM = _roll(PM);
 
-  const _compose = (pil) => {
+  // El pilar de VALORACIÓN se compone aparte: no dice si el negocio es bueno, dice si
+  // está caro. Mezclarlo al 24% dentro de la misma nota hacía que las mejores empresas
+  // —que casi siempre cotizan caras— quedaran de notables tirando a mediocres: Costco
+  // sacaba 5,6 con todos sus pilares de negocio por encima de 5,7.
+  const _compose = (pil, soloNegocio) => {
     let num = 0, den = 0;
     for (const [key, peso] of Object.entries(prof.w)) {
+      if (soloNegocio && key === 'valo') continue;
       if (pil[key] == null) continue;
       num += pil[key] * peso; den += peso;
     }
     return den ? num / den : null;
   };
-  const brutoSec = _compose(pilar), brutoMkt = _compose(pilarM);
+  const brutoSec = _compose(pilar, true), brutoMkt = _compose(pilarM, true);
+  const valoSec  = pilar.valo, valoMkt = pilarM.valo;
   if (brutoSec == null) return { nota: null, perfil: prof.label, perfilId: pid, motivo: 'sin datos' };
 
   // ── Sonda de calibración: devuelve los brutos sin ajustar ──────────────────
-  if (info && info.__probe) return { brutoSec, brutoMkt };
+  if (info && info.__probe) return { brutoSec, brutoMkt, valoSec, valoMkt };
 
   // ── Neutralización del sesgo sectorial ─────────────────────────────────────
   // Se resta el bruto que obtendría una empresa EXACTAMENTE mediana de este
@@ -8617,10 +8647,31 @@ function computeSectorRating(ticker, info) {
   // ── Expansión de spread ────────────────────────────────────────────────────
   // Promediar ~20 métricas encoge la varianza (≈ √n). GAIN la devuelve a la
   // escala que espera un usuario: élite ≈ 9, promedio ≈ 5.5, rota ≈ 2.
-  const GAIN = 2.35, CENTRO = 5.55;
+  const GAIN = 2.15, CENTRO = 5.9;
+  // Las dos patas miden cosas DISTINTAS y por eso se restan ceros distintos:
+  //   zSec → ¿eres mejor que TUS PARES?  se resta el cero de tu sector.
+  //   zMkt → ¿eres bueno EN ABSOLUTO?    se resta el cero del MERCADO ENTERO.
+  // Antes a las dos se les restaba el cero del sector, así que las dos medían lo
+  // mismo y la nota era 100% relativa: Amazon, con 17% de margen neto, 30% de ROE y
+  // 24% sobre el capital, salía mediocre por estar en el cuartil bajo de un grupo de
+  // trece plataformas hiperrentables. Ser el menos rentable de la élite no es serlo.
+  const G = _sesgoMercado();
   const zSec = brutoSec - B.sec;
-  const zMkt = (brutoMkt == null) ? zSec : (brutoMkt - B.mkt);
-  let nota = CENTRO + (0.62 * zSec + 0.38 * zMkt) * GAIN;
+  const zMkt = (brutoMkt == null) ? zSec : (brutoMkt - G.mkt);
+  const W_SEC = 0.50, W_MKT = 0.50;
+  let nota = CENTRO + (W_SEC * zSec + W_MKT * zMkt) * GAIN;
+
+  // ── El precio, como ajuste acotado ─────────────────────────────────────────
+  // Cotizar caro resta y cotizar barato suma, pero nunca más de AJ_VALO puntos: una
+  // empresa excelente y cara sigue siendo excelente, y una rota y barata sigue rota.
+  const AJ_VALO = 1.2, GAIN_VALO = 0.42;
+  let ajusteValo = 0;
+  if (valoSec != null) {
+    const zvS = valoSec - B.valo;
+    const zvM = (valoMkt == null) ? zvS : (valoMkt - G.valoMkt);
+    ajusteValo = Math.max(-AJ_VALO, Math.min(AJ_VALO, (W_SEC * zvS + W_MKT * zvM) * GAIN_VALO));
+    nota += ajusteValo;
+  }
 
   // ── Ajustes estructurales ──
   // Mucho más cortos que en la v1: lo que antes hacía falta corregir a mano
@@ -8637,7 +8688,7 @@ function computeSectorRating(ticker, info) {
   }
 
   // ── Percentil sectorial ──
-  const zTot = (zSec * GAIN) / 2.05;
+  const zTot = (zSec * GAIN + ajusteValo) / 2.05;
   const percentil = Math.max(1, Math.min(99, Math.round(
     100 * 0.5 * (1 + _erf(zTot / Math.SQRT2))
   )));
@@ -8650,10 +8701,11 @@ function computeSectorRating(ticker, info) {
   if (usadas > 0 && deMercado / usadas > 0.4) flags.push('anclas_de_mercado');
 
   // ── Techo estructural del sector y piso global ──
-  nota = Math.max(2.0, Math.min(prof.cap, nota));
+  nota = Math.max(1.2, Math.min(prof.cap, nota));
 
   return {
     nota:      Math.round(nota * 10) / 10,
+    ajusteValo: Math.round(ajusteValo * 100) / 100,
     percentil,
     perfil:    prof.label,
     perfilId:  pid,
@@ -8676,6 +8728,7 @@ function computeSectorRating(ticker, info) {
 // valor es el "cero" de ese sector. Se calcula una vez y se cachea.
 // Ventaja: cuando se recalibran las anclas, esto se reajusta solo.
 const _BIAS_CACHE = {};
+function _sesgoMercado() { return _sectorBias('MERCADO'); }
 function _sectorBias(pid) {
   if (_BIAS_CACHE[pid]) return _BIAS_CACHE[pid];
   const p = _SECTOR_MODELS[pid];
@@ -8696,9 +8749,10 @@ function _sectorBias(pid) {
   const info = { __probe:1, __forceProfile:pid, __m:m,
                  recommendationMean:2.5, numberOfAnalystOpinions:25 };
   const r = computeSectorRating('__CAL__', info) || {};
+  const _ok = (v) => (v != null && isFinite(v)) ? v : 5;
   return (_BIAS_CACHE[pid] = {
-    sec: (r.brutoSec != null && isFinite(r.brutoSec)) ? r.brutoSec : 5,
-    mkt: (r.brutoMkt != null && isFinite(r.brutoMkt)) ? r.brutoMkt : 5,
+    sec: _ok(r.brutoSec), mkt: _ok(r.brutoMkt),
+    valo: _ok(r.valoSec), valoMkt: _ok(r.valoMkt),
   });
 }
 
@@ -26880,7 +26934,7 @@ function _renderQualAnalysis(a, el){
     </div>
     <div class="px-rating-desc">${esc(a.bio || (a.moat_bullets||[]).join('. '))}
       ${a.rating != null ? `<div class="px-hint">${(a.scores && a.scores.sectorial)
-        ? `La nota evalúa a la empresa en conjunto —lo que gana, cómo crece, cuánto cuesta, qué tan sólido es su balance y dónde queda frente a sus pares— con las métricas que de verdad definen a su sector, no con una vara igual para todos.`
+        ? `La nota mide el NEGOCIO: lo que gana hoy y lo que ha ganado de media en cinco años, si mejora o se deteriora, cómo crece y qué tan sólido es su balance, con las métricas que de verdad definen a su sector. Se mide dos veces —contra sus pares directos y contra el mercado entero— porque ser el menos rentable de una industria excelente no es ser mediocre. El precio no manda: cotizar caro o barato ajusta la nota como mucho un punto arriba o abajo.`
         : `La nota evalúa a la empresa en conjunto con todo lo que publica: rentabilidad, crecimiento, valoración, deuda y liquidez. Lo que no tiene dato no se califica ni se rellena con un número inventado.`}</div>` : ''}</div>
   </div>`;
 
@@ -28081,11 +28135,14 @@ const _pvtEstado = {};   // host → { ticker, bars, ind, periodo } para redibuj
 //      valen mucho más que tres sueltos: el grupo más pesado es la zona.
 //   3. El ancho lo pone la volatilidad real (ATR), no un porcentaje inventado. En una acción
 //      que se mueve un 5% al día, una banda del 1% se cruza en diez minutos.
-//   4. El NEGOCIO tiene la última palabra: la zona nunca puede quedar por encima del valor
-//      razonable de la empresa, y si la nota no llega al 5 no se propone entrada ninguna.
+//   4. El NEGOCIO recorta, no veta: la zona nunca queda por encima del valor razonable de
+//      la empresa, pero ni una nota baja ni un gráfico pobre borran el rango.
 //
-// Devuelve {sinZona:'motivo'} en vez de null cuando no hay zona: el usuario merece saber
-// POR QUÉ no la hay, que casi siempre es más informativo que la zona misma.
+// SIEMPRE devuelve una zona. Antes se negaba a darla en cuatro casos —pocos soportes,
+// soportes flojos, precio por encima de toda valoración, o nota del negocio bajo 5— y
+// "no hay zona" es justo la respuesta que no le sirve a nadie: quien abre esta pestaña
+// quiere saber a qué precio tendría sentido entrar. Lo que antes borraba la zona ahora
+// la acompaña como advertencia, y el usuario decide con el aviso delante.
 function _pvtPivotesBajos(bars, k = 5){
   const out = [];
   for (let i = k; i < bars.length - k; i++){
@@ -28124,7 +28181,17 @@ function _pvtZonaEntrada(bars, ind, biz){
     add('Retroceso 38.2% del año', hi52 - r*0.382, 0.85);
     add('Retroceso 50% del año',   hi52 - r*0.500, 1.00);
     add('Retroceso 61.8% del año', hi52 - r*0.618, 0.90);
-    if (C.length < 2) return { sinZona:'sin_soportes' };
+    // Sin soportes suficientes —acción en máximos históricos, o recién salida a bolsa—
+    // la zona la pone la volatilidad de la propia acción: cuánto suele corregir antes de
+    // rebotar. Es una zona más floja que una dibujada sobre mínimos reales, y se dice.
+    let sinSoportes = false;
+    if (C.length < 2){
+      sinSoportes = true;
+      add('Una vez la volatilidad diaria bajo el precio',  px - atr*1.0, 1.00);
+      add('Dos veces la volatilidad diaria bajo el precio', px - atr*2.0, 0.90);
+      if (C.length < 2){ add('Un 5% por debajo del precio de hoy', px*0.950, 0.80);
+                         add('Un 8% por debajo del precio de hoy', px*0.920, 0.70); }
+    }
 
     // Agrupar lo que está prácticamente en el mismo sitio.
     C.sort((a, b) => b.v - a.v);
@@ -28137,7 +28204,9 @@ function _pvtZonaEntrada(bars, ind, biz){
     // Gana el grupo con más peso; a igualdad, el más cercano al precio (entrar antes que tarde).
     G.sort((a, b) => (b.w - a.w) || (b.c - a.c));
     const g0 = G[0];
-    if (g0.w < 1.6) return { sinZona:'flojo' };
+    // Un solo nivel suelto sostiene peor que tres apilados, pero sigue siendo el mejor
+    // punto de referencia que da el gráfico: se entrega con el aviso, no se esconde.
+    const floja = g0.w < 1.6;
 
     let half = Math.max(px*0.008, Math.min(atr*0.60, px*0.030));
     let lo = g0.c - half, hi = g0.c + half;
@@ -28167,7 +28236,10 @@ function _pvtZonaEntrada(bars, ind, biz){
         if (fv.avg > 0 && lo > fv.avg) aviso = fv.avg;   // zona entera por encima del promedio
       }
     }
-    if (biz && typeof biz.rating === 'number' && biz.rating < 5) return { sinZona:'nota', rating:biz.rating };
+    // La nota del negocio ya NO borra la zona. Negarse a dar un rango porque la empresa
+    // no pasa el filtro propio mezclaba dos decisiones distintas: a qué precio tendría
+    // sentido entrar (esto) y si conviene entrar siquiera (la nota). Se dicen las dos.
+    const notaBaja = (biz && typeof biz.rating === 'number' && biz.rating < 5) ? biz.rating : null;
 
     // Redondeo a un número que un humano diría en voz alta.
     const paso = px >= 500 ? 5 : px >= 100 ? 1 : px >= 20 ? 0.5 : 0.1;
@@ -28185,7 +28257,7 @@ function _pvtZonaEntrada(bars, ind, biz){
     inval = Math.floor(inval/paso)*paso;
 
     return {
-      lo, hi, px, hi52, lo52, recorte, aviso, inval,
+      lo, hi, px, hi52, lo52, recorte, aviso, inval, floja, sinSoportes, notaBaja,
       nModelos: (fv && Array.isArray(fv.models)) ? fv.models.length : null,
       base,
       estado:   (px >= lo && px <= hi) ? 'dentro' : (px > hi ? 'esperar' : 'rota'),
@@ -28242,16 +28314,6 @@ function _pvtZonaCard(tk, z, biz){
   const pie  = `<div class="px-hint">La zona sale de dónde el precio ya ha frenado antes —mínimos previos, medias móviles y retrocesos del tramo del año— y se recorta con el valor razonable del negocio. Es un punto de partida para decidir, no una recomendación de compra.</div>`;
   const $ = v => `$${v >= 100 ? v.toFixed(0) : v.toFixed(2)}`;
   if (!z) return `<div class="px-card">${head}<p class="px-empty">No hay suficiente historial de precio de ${esc(tk)} para calcular una zona.</p></div>`;
-  if (z.sinZona){
-    const M = {
-      sin_soportes: 'No hay soportes claros por debajo del precio actual: la acción está en zona sin referencias recientes, y cualquier nivel que diéramos sería inventado.',
-      flojo:        'Los soportes que hay están sueltos y lejos unos de otros. Una zona construida sobre un solo nivel débil no aguanta, así que no la damos.',
-      caro:         `Todos los soportes técnicos quedan por encima de lo que vale la empresa incluso según su modelo de valoración más optimista (${$(z.fv||0)}, con el precio hoy en ${$(z.px||0)}). Entrar ahí sería comprar caro aunque el gráfico invite.`,
-      nota:         `La nota del negocio es ${(z.rating!=null?z.rating.toFixed(1):'—')}/10. Portiv no propone entrada en una empresa que no pasa su propio filtro, por bien que se vea el gráfico.`,
-    }[z.sinZona] || 'No hay una zona de entrada defendible con los datos de hoy.';
-    return `<div class="px-card">${head}
-      <div class="px-ez-no"><b>Sin zona de entrada.</b> ${esc(M)}</div>${pie}</div>`;
-  }
   const V = { dentro:{l:'Dentro de la zona',   c:'pos'},
               esperar:{l:'Esperar retroceso',  c:'neu'},
               rota:{l:'Zona perdida',          c:'neg'} }[z.estado] || {l:'',c:''};
@@ -28281,6 +28343,9 @@ function _pvtZonaCard(tk, z, biz){
     ${z.niveles.map(n => `<div class="px-ez-lvl"><span class="n">${esc(n.n)}</span><span class="v">${esc($(n.v))}</span></div>`).join('')}
     ${z.recorte != null ? `<div class="px-ez-cut">El techo se recortó a ${esc($(z.recorte))}: por encima de ahí el gráfico invitaba a entrar, pero ni el modelo de valoración más generoso justificaba el precio.</div>` : ''}
     ${z.aviso != null ? `<div class="px-ez-cut">Ojo: la zona entera queda por encima del valor razonable medio de la empresa (${esc($(z.aviso))}${z.nModelos ? `, promedio de ${z.nModelos} modelos` : ''}). El gráfico la sostiene y el modelo más optimista también, pero se está pagando por un futuro mejor que el que dicen sus números de hoy.</div>` : ''}
+    ${z.notaBaja != null ? `<div class="px-ez-cut"><b>La nota del negocio es ${esc(z.notaBaja.toFixed(1))}/10.</b> La zona dice a qué precio el gráfico y la valoración dejarían de estar en contra; no dice que la empresa merezca la compra. Con una nota así, el rango es el punto donde volver a mirarla, no una invitación a entrar.</div>` : ''}
+    ${z.sinSoportes ? `<div class="px-ez-cut">No hay mínimos previos ni medias por debajo del precio: la acción cotiza en zona sin referencias recientes. El rango sale de su propia volatilidad —cuánto suele corregir antes de rebotar— y no de niveles que el gráfico haya defendido ya. Es una zona más floja de lo normal.</div>` : ''}
+    ${z.floja && !z.sinSoportes ? `<div class="px-ez-cut">Los soportes de aquí abajo están sueltos, no apilados. Una zona sostenida por un solo nivel aguanta menos que una donde coinciden varios: tómala como orientación, no como suelo firme.</div>` : ''}
     <div class="px-ez-inval"><b>Si pierde ${esc($(z.inval))}</b> (${z.invalPct.toFixed(1)}% desde hoy) la zona deja de sostener: ahí abajo no queda ningún soporte reciente y la lectura técnica habría que rehacerla.</div>
     ${pie}</div>`;
 }
@@ -28442,7 +28507,7 @@ function _pvtEngancharResize(tk, canvas){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v9';   // v9: el analisis ensamblado lleva ahora los puntos clave, el valor razonable y las dimensiones de salud que alimentan las pestanas nuevas (Resumen y Analisis tecnico); los v8 se guardaron sin esos campos y se servirian con esas secciones vacias hasta 24 h. // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
+const _QUAL_LS  = 'portiv_qual_analysis_v10';  // v10: el motor de rating cambió de criterio — mide el negocio (mitad datos de hoy, mitad medias de cinco años, más si el margen mejora o se deteriora), lo compara contra sus pares Y contra el mercado entero, y deja el precio como ajuste acotado a un punto en vez de pesar el 24% de la nota. Los v9 llevan la nota vieja, que dejaba a Amazon en 4,6. // v9: el analisis ensamblado lleva ahora los puntos clave, el valor razonable y las dimensiones de salud que alimentan las pestanas nuevas (Resumen y Analisis tecnico); los v8 se guardaron sin esos campos y se servirian con esas secciones vacias hasta 24 h. // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
 // ── Purga del análisis viejo de TODAS las acciones ─────────────────────────
 // Antes se listaban a mano las versiones a borrar y la lista se quedó atrás: portiv_stock_narrative_v2,
@@ -28450,7 +28515,7 @@ const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación po
 // dispositivo con el análisis viejo de TODAS las empresas, ocupando cuota sin que nadie los leyera.
 // Ahora se declara la versión VIVA de cada caché de análisis y se borra cualquier OTRA versión del
 // mismo prefijo — las de hoy y las que vengan. La caché compartida de la nube (qbio:) no vive aquí.
-const _ANALISIS_VIVOS = ['portiv_qual_analysis_v9','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
+const _ANALISIS_VIVOS = ['portiv_qual_analysis_v10','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
                          'portiv_research_snapshot_v3','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
                          'portiv_info_cache_v2','portiv_peer_metric_v1'];
 (function _pvPurgaAnalisisViejo(){
