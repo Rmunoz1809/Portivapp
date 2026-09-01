@@ -5517,7 +5517,6 @@ window._pvAwaitIAP = function(totalMs){
       .eps-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
       .eps-sec-head{ display:flex; justify-content:flex-end; margin-bottom:12px; }
     </style>
-    <div id="r-eps" style="margin-bottom:16px"></div>
       </div><!-- /.pv-lock-body -->
       <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
         <div class="pv-lock-card">
@@ -24655,7 +24654,6 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
       }
     }
   }
-  try { if (typeof EPS !== 'undefined') EPS.renderStock(ticker); } catch(e) {}
 
   // ── Proyecciones de precio (datos reales de analistas)
   _renderProjections(ticker, info);
@@ -26021,8 +26019,10 @@ function _pvxHealthDims(info){
 // Las dos necesitan un histórico de varios años que el proveedor no entrega — escribirlas
 // con lo que hay sería inventarlas.
 //
-// Primero lo bueno, después lo que hay que vigilar, y seis líneas como máximo: una lista
-// de doce puntos no se lee de un vistazo, que es exactamente para lo que está.
+// Se ordenan por RELEVANCIA —lo que más debería cambiar tu lectura de la empresa—, no
+// por si son buenas o malas noticias: que pierda dinero pesa más que que pague dividendo.
+// Seis líneas como máximo, y si las seis salieran positivas se cede la última al riesgo
+// más relevante: una lista de doce puntos, o toda verde, no es un resumen.
 function _pvxKeyPoints(info, ex){
   if (!info) return null;
   const n  = v => (typeof v === 'number' && isFinite(v)) ? v : null;
@@ -26031,8 +26031,11 @@ function _pvxKeyPoints(info, ex){
   // txt = el titular · det = el número que lo sostiene · why = qué significa, en cristiano
   // m   = métrica con la que Portiv ya compara contra los pares ('roe' | 'netM' | 'revG' | 'pe'),
   //       o null si esa comparación no existe. Decide si el modal pinta gráfico de pares.
-  const g = (txt, det, why, m) => good.push({ k:'g', txt, det, why, m:m||null });
-  const w = (txt, det, why, m) => watch.push({ k:'w', txt, det, why, m:m||null });
+  // r = RELEVANCIA (0-10): cuánto debería cambiar tu lectura de la empresa esta línea.
+  // No es lo mismo que ser buena o mala noticia — que pierda dinero pesa mucho más que
+  // que pague dividendo, y por eso la lista se ordena por esto y no por el signo.
+  const g = (r, txt, det, why, m) => good.push({ k:'g', r, txt, det, why, m:m||null });
+  const w = (r, txt, det, why, m) => watch.push({ k:'w', r, txt, det, why, m:m||null });
 
   const gm=n(info.grossMargins), pm=n(info.profitMargins), roe=n(info.returnOnEquity);
   const fcf=n(info.freeCashflow), mc=n(info.marketCap), ps=n(info.priceToSales);
@@ -26043,97 +26046,104 @@ function _pvxKeyPoints(info, ex){
 
   // Margen bruto — lo que queda de cada venta antes de gastos. Alto = poder de precio.
   if (gm != null){
-    if (gm >= .60) g('Margen bruto de empresa con poder de precio',
+    if (gm >= .60) g(8.0, 'Margen bruto de empresa con poder de precio',
       `De cada $100 que vende le quedan $${(gm*100).toFixed(0)} antes de gastos.`,
       'El margen bruto es lo que sobra de una venta una vez pagado lo que cuesta producirla. Cuando es muy alto casi siempre significa lo mismo: la empresa puede cobrar más que sus costos sin que el cliente se vaya, porque su producto no se sustituye con facilidad. Es el rastro numérico de una ventaja competitiva, y es lo que le deja dinero para investigar, hacer marca o aguantar una guerra de precios.');
-    else if (gm < .20) w('Margen bruto estrecho',
+    else if (gm < .20) w(6.5, 'Margen bruto estrecho',
       `De cada $100 vendidos solo quedan $${(gm*100).toFixed(0)} antes de gastos.`,
       'Con un margen bruto bajo, casi todo lo que entra por ventas se va en producir lo vendido. No es necesariamente malo —hay modelos de volumen que viven así, como la distribución o el retail— pero deja muy poco colchón: una subida de costos o una rebaja de precio se comen la ganancia entera.');
   }
   // Margen neto — lo que de verdad acaba siendo ganancia.
-  if (pm != null && pm >= .20) g('Una quinta parte de lo que vende acaba en ganancia',
+  if (pm != null && pm >= .20) g(8.2, 'Una quinta parte de lo que vende acaba en ganancia',
     `Margen neto del ${pc(pm)}: de cada $100 de ventas, $${(pm*100).toFixed(0)} llegan abajo del todo.`,
     'El margen neto es el final del recorrido: lo que queda después de producir, vender, pagar intereses e impuestos. Por encima del 20% son pocas las empresas, y casi siempre son las que tienen algo que las protege. Es también lo que hace que crecer valga la pena: cada venta nueva se convierte en ganancia de verdad y no solo en más actividad.', 'netM');
-  else if (pm != null && pm < 0) w('Todavía pierde dinero',
+  else if (pm != null && pm < 0) w(9.5, 'Todavía pierde dinero',
     `Margen neto del ${pc(pm)}: los gastos superan a los ingresos.`,
     'Perder dinero no siempre es una alarma: una empresa joven puede estar gastando hoy para ganar cuota mañana. Lo que importa es de dónde sale ese dinero y cuánto le queda. Conviene mirar la caja y la deuda antes que el resultado contable — la pregunta real es cuántos trimestres puede aguantar así.', 'netM');
   // Retorno sobre el dinero de los accionistas.
-  if (roe != null && roe >= .20) g('Rentabiliza muy bien el dinero del accionista',
+  if (roe != null && roe >= .20) g(8.0, 'Rentabiliza muy bien el dinero del accionista',
     `ROE del ${pc(roe)}: por cada $100 de patrimonio genera $${(roe*100).toFixed(0)} de ganancia al año.`,
     'El ROE mide cuánta ganancia saca la empresa del dinero que es de los accionistas. Un ROE alto y sostenido en el tiempo es una de las señales más fiables de un buen negocio: significa que cada peso reinvertido vuelve a producir. Un matiz: también sube cuando la empresa se apalanca mucho, así que conviene leerlo junto a la deuda.', 'roe');
   // Caja libre — la prueba de que la ganancia contable existe también en el banco.
   if (fcf != null && fcf > 0){
     const rev = (ps > 0 && mc > 0) ? mc/ps : null;
     const fm  = (rev > 0) ? fcf/rev : null;
-    if (fm != null && fm >= .15) g('La ganancia se convierte en caja de verdad',
+    if (fm != null && fm >= .15) g(8.4, 'La ganancia se convierte en caja de verdad',
       `Caja libre equivalente al ${pc(fm)} de sus ventas, ya pagada la inversión del año.`,
       'La ganancia es una opinión contable; la caja libre es un hecho bancario. Es el efectivo que sobra después de operar y de pagar la inversión del año, y es el único dinero con el que se puede repartir dividendo, recomprar acciones, comprar otra empresa o bajar deuda. Cuando se parece a la ganancia declarada, los números son limpios.');
-    else g('Genera caja libre positiva',
+    else g(5.0, 'Genera caja libre positiva',
       'Le sobra efectivo después de pagar la inversión del año.',
       'Que la caja libre sea positiva significa que el negocio se paga solo: no necesita pedir prestado ni emitir acciones nuevas para seguir funcionando y para renovar lo que usa. Es el mínimo que se le pide a una empresa madura.');
   } else if (fcf != null && fcf < 0){
-    w('Quema caja',
+    w(9.2, 'Quema caja',
       'Su inversión del año supera al efectivo que produce el negocio.',
       'Quemar caja significa que la empresa gasta más de lo que ingresa en efectivo, y esa diferencia tiene que salir de algún lado: deuda nueva o acciones nuevas. Puede ser una decisión deliberada —construir fábricas, crecer rápido— pero pone un reloj en marcha: hay que saber cuánta caja le queda y a qué precio consigue la que le falta.');
   }
   // Crecimiento de ingresos.
-  if (rg != null && rg >= .20) g('Crece a un ritmo poco común para su tamaño',
+  if (rg != null && rg >= .20) g(8.6, 'Crece a un ritmo poco común para su tamaño',
     `Ingresos ${pc(rg)} por encima de los del año pasado.`,
     'Crecer por encima del 20% al año es raro, y más cuanto más grande es la empresa: sobre una base ya enorme, cada punto extra son miles de millones. Suele indicar que está ganando cuota o que su mercado se está expandiendo. La pregunta que sigue es siempre la misma: cuánto de ese ritmo es sostenible y cuánto es un momento excepcional.', 'revG');
-  else if (rg != null && rg < 0) w('Las ventas están cayendo',
+  else if (rg != null && rg < 0) w(8.8, 'Las ventas están cayendo',
     `Ingresos ${pc(Math.abs(rg))} por debajo de los del año pasado.`,
     'Que caigan los ingresos puede ser el ciclo del sector, la pérdida de un cliente grande o competencia que le está quitando terreno. La diferencia importa mucho: lo primero se revierte solo, lo último no. Conviene mirar si los rivales caen igual o si es solo esta empresa.', 'revG');
   // Apalancamiento operativo: crece más la ganancia que la venta.
   if (rg != null && eg != null && rg > .02 && eg > rg + .05)
-    g('Las ganancias crecen más rápido que las ventas',
+    g(7.2, 'Las ganancias crecen más rápido que las ventas',
       `Ingresos ${pc(rg)} y ganancias ${pc(eg)}.`,
       'Cuando la ganancia crece más deprisa que la venta, la empresa tiene apalancamiento operativo: buena parte de sus costos son fijos, así que cada venta adicional cae casi entera al resultado. Es la señal de un negocio que mejora al escalar, no solo de uno que se hace más grande. Funciona igual de bien al revés, y por eso también amplifica las caídas.');
   // Balance.
-  if (de != null && de <= .30) g('Balance prácticamente sin deuda',
+  if (de != null && de <= .30) g(7.0, 'Balance prácticamente sin deuda',
     `Debe $${de.toFixed(2)} por cada $1 de patrimonio.`,
     'La relación deuda/patrimonio dice cuánto del negocio está financiado con dinero prestado. Muy baja significa que la empresa decide su propio calendario: no la obliga a vender activos en el peor momento ni depende de que le renueven un crédito. Es lo que separa a las que sobreviven a una recesión de las que la sufren.');
-  else if (de != null && de >= 2) w('Balance muy apalancado',
+  else if (de != null && de >= 2) w(8.5, 'Balance muy apalancado',
     `Debe $${de.toFixed(2)} por cada $1 de patrimonio.`,
     'Mucha deuda amplifica los dos lados: en un buen año multiplica el retorno del accionista, y en uno malo se lleva por delante el margen entero pagando intereses. Con las tasas altas el costo de refinanciar sube, y ahí es donde el apalancamiento deja de ser una decisión y pasa a ser un problema.');
-  if (cr != null && cr < 1) w('Liquidez ajustada a doce meses',
+  if (cr != null && cr < 1) w(8.0, 'Liquidez ajustada a doce meses',
     `Su activo circulante cubre ${cr.toFixed(2)}× el pasivo de corto plazo.`,
     'El ratio corriente compara lo que la empresa puede convertir en efectivo dentro de un año con lo que tiene que pagar en ese mismo plazo. Por debajo de 1 no le alcanza con lo que tiene: depende de refinanciar o de que el negocio genere caja a tiempo. En sectores de cobro muy rápido puede ser normal; en el resto, es algo que vigilar.');
   // Dividendo — el rendimiento de HOY, sin afirmar nada sobre su historia.
-  if (dy != null && dy >= .02) g(`Paga dividendo con un rendimiento del ${pc(dy)}`,
+  if (dy != null && dy >= .02) g(5.5, `Paga dividendo con un rendimiento del ${pc(dy)}`,
     `Sobre el precio de hoy, reparte ${pc(dy)} al año en efectivo.`,
     'El rendimiento por dividendo es el efectivo anual que reparte dividido entre el precio de la acción. Sube cuando la empresa reparte más, pero también cuando la acción cae — así que un rendimiento muy alto puede ser una buena renta o una advertencia. Este número es el de hoy: no dice nada sobre si el dividendo se ha subido, congelado o recortado antes.');
   // Consenso de analistas.
   const cs = ex && ex.consensus;
   if (cs && cs.tot >= 5 && cs.buyPct >= 70)
-    g(`${cs.buyN} de ${cs.tot} analistas la tienen en compra`,
+    g(6.0, `${cs.buyN} de ${cs.tot} analistas la tienen en compra`,
       `${cs.buyPct}% en compra, ${cs.holdPct}% en mantener y ${cs.sellPct}% en venta.`,
       'El consenso resume la recomendación de las casas de análisis que cubren la acción. Sirve para saber qué espera el mercado, no para decidir por ti: cuando casi todos están en compra, esa opinión ya está en el precio, y las sorpresas suelen venir por el lado contrario.');
   else if (cs && cs.tot >= 5 && cs.sellPct >= 30)
-    w(`${cs.sellN} de ${cs.tot} analistas la tienen en venta`,
+    w(7.0, `${cs.sellN} de ${cs.tot} analistas la tienen en venta`,
       `${cs.buyPct}% en compra, ${cs.holdPct}% en mantener y ${cs.sellPct}% en venta.`,
       'Que un tercio o más de los analistas recomiende vender es poco habitual: la mayoría de las recomendaciones del mercado son de compra o mantener. Cuando aparecen tantas ventas suele haber una razón concreta y localizable — el margen, una regulación, un cliente que se va. Vale la pena buscar cuál antes que descartarla.');
   // Dónde cotiza dentro de su propio año.
   if (px > 0 && hi > 0 && lo > 0 && hi > lo){
     const pos = (px - lo)/(hi - lo);
-    if (pos >= .90) g('Cotiza en máximos de las últimas 52 semanas',
+    if (pos >= .90) g(5.8, 'Cotiza en máximos de las últimas 52 semanas',
       `A $${px.toFixed(2)}, contra un máximo de $${hi.toFixed(2)} y un mínimo de $${lo.toFixed(2)} en el año.`,
       'Estar en máximos significa que nadie que tenga la acción está perdiendo dinero, y eso quita presión vendedora. Históricamente las acciones en máximos tienden a seguir subiendo más de lo que la intuición sugiere. También significa que todas las buenas noticias conocidas ya están pagadas: a estos precios el margen de error es menor.');
-    else if (pos <= .15) w('Cotiza cerca de sus mínimos del año',
+    else if (pos <= .15) w(6.0, 'Cotiza cerca de sus mínimos del año',
       `A $${px.toFixed(2)}, contra un máximo de $${hi.toFixed(2)} y un mínimo de $${lo.toFixed(2)}.`,
       'Estar cerca de mínimos puede ser una oportunidad o una advertencia, y el precio solo no lo distingue. La pregunta útil no es cuánto ha caído, sino si lo que la hizo caer es temporal o permanente. Comparar el precio con lo que valen sus números —la tarjeta de valor razonable— ayuda más que mirar el gráfico.');
   }
   // Lo que dicen los modelos de valor razonable.
   const fv = ex && ex.fairValue;
   if (fv && fv.upPct != null && fv.upPct >= 20)
-    g(`Los modelos de valoración la sitúan un ${fv.upPct.toFixed(0)}% por encima`,
+    g(7.8, `Los modelos de valoración la sitúan un ${fv.upPct.toFixed(0)}% por encima`,
       `Promedio de ${fv.models.length} modelos: $${fv.avg.toFixed(2)} frente a los $${fv.px.toFixed(2)} de hoy.`,
       'Portiv valora la acción con varios métodos clásicos a la vez —flujo de caja descontado, poder de ganancias, múltiplos justificados— y promedia los que se pueden calcular con datos publicados. Que el promedio quede por encima del precio sugiere que el mercado paga menos de lo que dicen sus números. Ningún modelo acierta solo: lo interesante es cuando varios coinciden.');
   else if (fv && fv.upPct != null && fv.upPct <= -20)
-    w(`Los modelos la sitúan un ${Math.abs(fv.upPct).toFixed(0)}% por debajo`,
+    w(7.6, `Los modelos la sitúan un ${Math.abs(fv.upPct).toFixed(0)}% por debajo`,
       `Promedio de ${fv.models.length} modelos: $${fv.avg.toFixed(2)} frente a los $${fv.px.toFixed(2)} de hoy.`,
       'El promedio de los modelos queda por debajo del precio: con los números publicados hoy, el mercado está pagando por un futuro mejor del que las cifras actuales justifican. Puede tener razón —los modelos usan el pasado y el mercado descuenta el futuro— pero significa que el precio depende de que ese crecimiento llegue de verdad.');
 
-  const out = good.concat(watch).slice(0, 6);
+  // Se ordena por RELEVANCIA, no por signo: arriba lo que más debería mover tu lectura
+  // de la empresa. Así la lista no sale toda verde por defecto.
+  const out = good.concat(watch).sort((x, y) => y.r - x.r).slice(0, 6);
+  // Si al cortar en seis se quedó fuera TODO lo que hay que vigilar, el riesgo más
+  // relevante entra en el lugar del positivo más flojo: un resumen sin un solo pero
+  // no es un resumen, es un folleto.
+  if (watch.length && !out.some(pt => pt.k === 'w'))
+    out[out.length - 1] = watch.slice().sort((x, y) => y.r - x.r)[0];
   return out.length >= 3 ? out : null;      // con dos líneas no hay resumen que dar
 }
 
@@ -26311,7 +26321,7 @@ async function _pvxExtras(ticker, info){
   let catalysts=[];
   try{
     let q=null;
-    // Solo lectura de caché (EPS.renderStock ya la llenó): NO bloquear el análisis con una
+    // Solo lectura de caché (_upgradeAnalysisToAI ya la llenó): NO bloquear el análisis con una
     // llamada de red por una sección menor. Si aún no está, los catalizadores editoriales bastan.
     if (typeof EPS!=='undefined' && EPS._cache && EPS._cache[ticker] && Array.isArray(EPS._cache[ticker].quarters)) q=EPS._cache[ticker].quarters.find(x=>x&&x.future&&x.date);
     if(q){ const M=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; const d=new Date((q.date||'')+'T12:00:00'); const ds=isNaN(d)?q.date:`${d.getDate()} ${M[d.getMonth()]} ${d.getFullYear()}`; catalysts.push({date:ds, title:'Próximo reporte de resultados', desc:'El evento con más impacto del trimestre — el mercado reacciona fuerte al beat/miss.', impact:'hi'}); }
@@ -26851,22 +26861,17 @@ function _renderQualAnalysis(a, el){
   const clr = rc(a.rating);
   let h = '';
 
-  // ── Calificación 1-10 por apartado. `a.scores` lo calcula _pvxRubricScores con datos
-  //    reales; si un rubro no tiene dato, su badge no se pinta (nunca un número inventado).
-  const S  = (a && a.scores && typeof a.scores === 'object') ? a.scores : null;
-  const sc = k => (S && typeof S[k] === 'number' && isFinite(S[k])) ? S[k] : null;
-  // Badge de nota, arriba a la derecha del título de la tarjeta.
-  const badge = k => { const v = sc(k); return v==null ? ''
-    : `<span class="px-score" style="border-color:${rc(v)}55"><b style="color:${rc(v)}">${v.toFixed(1)}</b><i>/10</i></span>`; };
-  // Título de tarjeta con badge opcional (k = clave del rubro en a.scores).
-  const stitle = (t, k) => `<h2 class="px-sec-title"><span class="t">${esc(t)}</span>${k?badge(k):''}</h2>`;
+  // Título de tarjeta. Ya no lleva la calificación del apartado: la empresa se juzga
+  // entera, no apartado por apartado (ver la NOTA, más abajo).
+  const stitle = t => `<h2 class="px-sec-title"><span class="t">${esc(t)}</span></h2>`;
   const empty  = txt => `<p class="px-empty">${esc(txt)}</p>`;
 
-  // 1) NOTA de la empresa = promedio de las calificaciones por apartado + desglose.
-  const RUBROS = [['moat','Foso competitivo'],['dims','Ventajas competitivas'],['datos','Datos financieros'],
-                  ['salud','Salud financiera'],['prosRiesgos','Pros y riesgos']];
-  const chips = RUBROS.filter(([k]) => sc(k)!=null).map(([k,l]) =>
-    `<span class="px-sbox"><span class="l">${esc(l)}</span><span class="v" style="color:${rc(sc(k))}">${sc(k).toFixed(1)}</span></span>`).join('');
+  // 1) NOTA de la empresa: UNA evaluación del conjunto, sin desglose por apartado.
+  //    Antes se pintaban los cinco pilares (foso, ventajas, datos, salud, pros y riesgos)
+  //    con su calificación y la nota debajo. Sobraba y además se contradecía: la nota la
+  //    pondera el motor sectorial según lo que pesa en cada industria, así que no salía
+  //    del promedio de esos cinco números y el usuario veía cinco cifras que no sumaban
+  //    a la de arriba. Ahora se da la nota y qué la sostiene, sin la aritmética falsa.
   h += `<div class="px-card px-rating-card">
     <div class="px-rating-badge">
       <div class="num" style="color:${clr}">${a.rating!=null ? a.rating.toFixed(1) : '—'}</div>
@@ -26874,10 +26879,9 @@ function _renderQualAnalysis(a, el){
       <div class="sub">NOTA / 10</div>
     </div>
     <div class="px-rating-desc">${esc(a.bio || (a.moat_bullets||[]).join('. '))}
-      ${chips ? `<div class="px-scores">${chips}</div>
-      <div class="px-hint">${(a.scores && a.scores.sectorial)
-        ? `La nota compara a la empresa con las de su sector, usando las métricas que definen a esa industria. Los ${RUBROS.filter(([k])=>sc(k)!=null).length} apartados de arriba son sus pilares; la nota los pondera según lo que más pesa en el sector.`
-        : `La nota es el promedio de las ${RUBROS.filter(([k])=>sc(k)!=null).length} calificaciones de arriba. Cada una sale solo de los números que la empresa publica; un apartado sin datos no se califica ni entra al promedio.`}</div>` : ''}</div>
+      ${a.rating != null ? `<div class="px-hint">${(a.scores && a.scores.sectorial)
+        ? `La nota evalúa a la empresa en conjunto —lo que gana, cómo crece, cuánto cuesta, qué tan sólido es su balance y dónde queda frente a sus pares— con las métricas que de verdad definen a su sector, no con una vara igual para todos.`
+        : `La nota evalúa a la empresa en conjunto con todo lo que publica: rentabilidad, crecimiento, valoración, deuda y liquidez. Lo que no tiene dato no se califica ni se rellena con un número inventado.`}</div>` : ''}</div>
   </div>`;
 
   // La tarjeta de la NOTA sale del flujo de `h` y se pinta en #r-rating-host, que
@@ -28438,7 +28442,7 @@ function _pvtEngancharResize(tk, canvas){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v8';   // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
+const _QUAL_LS  = 'portiv_qual_analysis_v9';   // v9: el analisis ensamblado lleva ahora los puntos clave, el valor razonable y las dimensiones de salud que alimentan las pestanas nuevas (Resumen y Analisis tecnico); los v8 se guardaron sin esos campos y se servirian con esas secciones vacias hasta 24 h. // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
 // ── Purga del análisis viejo de TODAS las acciones ─────────────────────────
 // Antes se listaban a mano las versiones a borrar y la lista se quedó atrás: portiv_stock_narrative_v2,
@@ -28446,7 +28450,7 @@ const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación po
 // dispositivo con el análisis viejo de TODAS las empresas, ocupando cuota sin que nadie los leyera.
 // Ahora se declara la versión VIVA de cada caché de análisis y se borra cualquier OTRA versión del
 // mismo prefijo — las de hoy y las que vengan. La caché compartida de la nube (qbio:) no vive aquí.
-const _ANALISIS_VIVOS = ['portiv_qual_analysis_v8','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
+const _ANALISIS_VIVOS = ['portiv_qual_analysis_v9','portiv_stock_narrative_v3','portiv_stock_analysis_v2',
                          'portiv_research_snapshot_v3','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
                          'portiv_info_cache_v2','portiv_peer_metric_v1'];
 (function _pvPurgaAnalisisViejo(){
