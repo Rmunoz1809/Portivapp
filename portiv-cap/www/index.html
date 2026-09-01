@@ -32793,7 +32793,7 @@ const _AI_EXTRACTION_PROMPT = `You are a precise OCR-grade financial data extrac
 
 ━━ WORKFLOW: TRANSCRIBE FIRST, INTERPRET SECOND ━━
 Do these steps in order. Do NOT skip step 1.
-STEP 1 — VERBATIM TRANSCRIPTION: Before structuring anything, transcribe the holdings table LITERALLY, row by row, exactly as printed (every symbol, every number, every +/- sign, in left-to-right column order). Put this raw text in the top-level "raw_transcription" field, and each row's own literal line in that position's "raw_transcription". This is your source of truth — the structured fields below must be copied from this transcription, never re-derived.
+STEP 1 — VERBATIM TRANSCRIPTION: Before structuring anything, transcribe the holdings table LITERALLY, row by row, exactly as printed (every symbol, every number, every +/- sign, in left-to-right column order). Put each row's own literal line in that position's "raw_transcription". This is your source of truth — the structured fields below must be copied from this transcription, never re-derived.
 STEP 2 — COUNT ROWS: Count how many position rows are visible in the holdings table and put that number in "row_count". You MUST output exactly that many positions (see COMPLETENESS).
 STEP 3 — DETECT HEADERS: Identify the column header of EACH numeric column (e.g. "Price", "Day Chng %", "Mkt Val", "Gain/Loss %"). Map every number in a row to the header above it. Only then fill the structured fields.
 
@@ -32866,9 +32866,15 @@ This is critical: the chart was drawn for THAT period, so the x-axis dates and v
 If you cannot identify a selected button, output null.
 
 ━━ OUTPUT — STRICT JSON ONLY (no markdown, no prose) ━━
-Each number is a plain number or null. Each percent is the signed percent number (e.g. -1.05). "confidence" is 0–1. "needs_review" is true whenever ANYTHING in the row was uncertain, contradictory, or unreadable. "raw_transcription" (per row) is the literal printed line; the top-level "raw_transcription" is the whole table transcribed verbatim.
-FIELD ORDER MATTERS: output "positions" EARLY (right after the account totals) and put the bulky top-level "raw_transcription" + the chart arrays LAST. This way, if the response is ever cut short, the positions are already complete. Emit fields in exactly this order:
-{"page_type":"summary"|"positions","row_count":N,"portfolio_value":N,"cash_balance":N,"money_market":N,"day_change":N,"total_gain_loss":N,"total_gain_loss_percent":N,"invested_capital":N,"period_changes":{"1M":N,"3M":N,"6M":N,"YTD":N,"1Y":N,"2Y":N}|null,"positions":[{"ticker":"STR","company_name":"STR","shares":N,"avg_cost":N,"current_price":N,"day_change_pct":N,"total_return_pct":N,"total_gain_usd":N,"confidence":N,"needs_review":true|false,"raw_transcription":"STR"}]|null,"chart_x_labels":["STR"]|[],"chart_y_axis":["STR"]|[],"chart_selected_period":"STR"|null,"value_chart":[{"date":"YYYY-MM-DD","value":N}]|null,"raw_transcription":"STR"}`;
+Each number is a plain number or null. Each percent is the signed percent number (e.g. -1.05). "confidence" is 0–1. "needs_review" is true whenever ANYTHING in the row was uncertain, contradictory, or unreadable. "raw_transcription" is the literal printed line of that row.
+FIELD ORDER MATTERS: output "positions" EARLY (right after the account totals) and put the chart arrays LAST. This way, if the response is ever cut short, the positions are already complete. Emit fields in exactly this order:
+{"page_type":"summary"|"positions","row_count":N,"portfolio_value":N,"cash_balance":N,"money_market":N,"day_change":N,"total_gain_loss":N,"total_gain_loss_percent":N,"invested_capital":N,"period_changes":{"1M":N,"3M":N,"6M":N,"YTD":N,"1Y":N,"2Y":N}|null,"positions":[{"ticker":"STR","company_name":"STR","shares":N,"avg_cost":N,"current_price":N,"day_change_pct":N,"total_return_pct":N,"total_gain_usd":N,"confidence":N,"needs_review":true|false,"raw_transcription":"STR"}]|null,"chart_x_labels":["STR"]|[],"chart_y_axis":["STR"]|[],"chart_selected_period":"STR"|null,"value_chart":[{"date":"YYYY-MM-DD","value":N}]|null}`;
+// Se retiró el "raw_transcription" DE PRIMER NIVEL (la tabla entera transcrita otra vez).
+// Nadie lo leía nunca, se emitía DESPUÉS de las posiciones —así que tampoco servía de
+// borrador para razonar mejor—, era el campo más largo de la respuesta y sus saltos de
+// línea sin escapar son la causa documentada del "0 posiciones" que _aiJsonEscapeControls
+// tuvo que salir a parchear. El anclaje que sí importa —la línea literal de CADA fila—
+// se mantiene en el "raw_transcription" de cada posición.
 
 // ── Segundo pase: VERIFICACIÓN celda-por-celda contra los píxeles ──────────────
 // Recibe las MISMAS imágenes + un JSON de primera lectura. Re-mira cada fila y corrige
