@@ -5309,14 +5309,6 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-nw-act{margin-left:auto;display:flex;align-items:center;gap:9px}
       .pvx .px-nw-ts{font-size:11.5px;color:var(--px-muted)}
       .pvx .px-nw-live{font-size:11.5px;font-weight:700;color:var(--px-blue)}
-      /* Estados financieros: misma tabla que la comparación con competidores, con filas
-         de grupo para separar resultados, balance y flujo de caja. */
-      .pvx .px-fin td.tk{white-space:normal;min-width:132px}
-      .pvx .px-fin tr.grp td{background:#f7f9fc;font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;
-        font-size:12px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--px-ink-soft);
-        text-align:left;padding:11px 12px}
-      .pvx .px-fin th.ttm,.pvx .px-fin td.ttm{background:#f7f9fc;font-weight:700}
-      .pvx .px-fin td.na{color:var(--px-muted)}
       /* Valor razonable: cabecera con el precio intrínseco + una fila por modelo.
          Sustituye a los escenarios a 1 año, que repetían los objetivos de analistas. */
       .pvx .px-fv-top{display:flex;align-items:flex-end;gap:18px;flex-wrap:wrap;margin-top:16px;
@@ -11861,7 +11853,7 @@ function _renderEtfAnalysis(a, el){
       <div class="lbl" style="color:${clr}">${esc(a.rating_label)}</div>
       <div class="sub">NOTA / 10</div>
     </div>
-    <div class="px-rating-desc">${esc(p.thesis || `${p.name}: fondo cotizado. Portiv no tiene todavía la composición curada de este ETF, así que la lectura se hace con los datos de mercado disponibles.`)}
+    <div class="px-rating-desc">${p.thesis ? esc(p.thesis) : ''}
       ${chips ? `<div class="px-scores">${chips}</div>
       <div class="px-hint">Un fondo no se califica como una empresa: no tiene foso, márgenes ni valuación propia. La nota es el promedio ponderado de los ${RUBROS.filter(([k])=>sc(k)!=null).length} rubros con los que un profesional compara ETFs — <b>costo, diversificación, retorno esperado de la clase de activo, riesgo, momentum y liquidez</b>.</div>`:''}</div>
   </div>`;
@@ -26201,112 +26193,6 @@ function _pvxKeyPoints(info, ex){
   return out.length >= 3 ? out : null;      // con dos líneas no hay resumen que dar
 }
 
-// ── ESTADOS FINANCIEROS REPORTADOS ────────────────────────────────────────────────
-// Lo que la empresa presenta ante la SEC, tal cual: resultados, balance y flujo de caja
-// por trimestre fiscal más la suma de los últimos doce meses. Se pide APARTE del análisis
-// (igual que los competidores y el técnico) para no retrasarlo: es una tabla grande y el
-// análisis tiene que estar en pantalla antes.
-//
-// Los conceptos vienen etiquetados en XBRL y cada empresa usa su propia variante del mismo
-// tag, así que cada fila acepta una lista de candidatos y se queda con el primero que exista.
-const _FIN_CACHE = {};
-const _FIN_ROWS = [
-  ['ic','Estado de resultados', [
-    ['Ingresos',              ['RevenueFromContractWithCustomerExcludingAssessedTax','Revenues','RevenueFromContractWithCustomerIncludingAssessedTax','SalesRevenueNet','TotalRevenues']],
-    ['Resultado operativo',   ['OperatingIncomeLoss','IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest']],
-    ['Beneficio neto',        ['NetIncomeLoss','ProfitLoss','NetIncomeLossAvailableToCommonStockholdersBasic']],
-    ['Ganancia por acción (diluida)', ['EarningsPerShareDiluted','IncomeLossFromContinuingOperationsPerDilutedShare'], 'eps'],
-  ]],
-  ['bs','Balance', [
-    ['Efectivo e inversiones', ['CashAndCashEquivalentsAtCarryingValue','CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents']],
-    ['Activo circulante',      ['AssetsCurrent']],
-    ['Activo total',           ['Assets']],
-    ['Pasivo circulante',      ['LiabilitiesCurrent']],
-    ['Pasivo total',           ['Liabilities']],
-    ['Patrimonio neto',        ['StockholdersEquity','StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest']],
-  ]],
-  ['cf','Flujo de caja', [
-    ['Flujo de operaciones',   ['NetCashProvidedByUsedInOperatingActivities','NetCashProvidedByUsedInOperatingActivitiesContinuingOperations']],
-    ['Flujo de inversión',     ['NetCashProvidedByUsedInInvestingActivities','NetCashProvidedByUsedInInvestingActivitiesContinuingOperations']],
-    ['Flujo de financiación',  ['NetCashProvidedByUsedInFinancingActivities','NetCashProvidedByUsedInFinancingActivitiesContinuingOperations']],
-    ['Inversión en activos (capex)', ['PaymentsToAcquirePropertyPlantAndEquipment','PaymentsToAcquireProductiveAssets']],
-  ]],
-];
-// Un concepto XBRL puede venir como "us-gaap_Assets", "Assets" o con prefijo del emisor.
-function _finPick(list, names){
-  if (!Array.isArray(list)) return null;
-  for (const n of names){
-    const hit = list.find(x => x && typeof x.concept === 'string' &&
-      x.concept.replace(/^[a-z0-9-]+[_:]/i,'') === n);
-    if (hit && typeof hit.value === 'number' && isFinite(hit.value)) return hit.value;
-  }
-  return null;
-}
-async function _pvxFinancials(ticker){
-  ticker = (ticker||'').toUpperCase();
-  if (_FIN_CACHE[ticker] !== undefined) return _FIN_CACHE[ticker];
-  let raw = null;
-  try { raw = await _fhFetchRaw(`/stock/financials-reported?symbol=${encodeURIComponent(ticker)}&freq=quarterly`, 12000); }
-  catch(e){ _FIN_CACHE[ticker] = null; return null; }
-  const data = (raw && Array.isArray(raw.data)) ? raw.data : null;
-  if (!data || !data.length){ _FIN_CACHE[ticker] = null; return null; }
-  // Los cuatro trimestres más recientes, del más nuevo al más viejo.
-  const qs = data.filter(d => d && d.report && d.endDate)
-                 .sort((a,b) => String(b.endDate).localeCompare(String(a.endDate)))
-                 .slice(0,4);
-  if (qs.length < 2){ _FIN_CACHE[ticker] = null; return null; }
-  const M = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-  const lbl = d => { const x = new Date(String(d.endDate).slice(0,10) + 'T12:00:00');
-    return isNaN(x) ? String(d.endDate).slice(0,7) : `${M[x.getMonth()]} ${String(x.getFullYear()).slice(-2)}`; };
-  const cols = qs.map(lbl);
-  const secs = _FIN_ROWS.map(([key, titulo, filas]) => ({ titulo, filas: filas.map(([label, names, kind]) => {
-    const vals = qs.map(q => _finPick(q.report[key], names));
-    // Los doce meses: en resultados y flujo de caja se SUMAN los cuatro trimestres (y solo
-    // si están los cuatro); en el balance no se suma nada — es una foto, vale el último dato.
-    let ttm = null;
-    if (key === 'bs') ttm = vals.find(v => v != null) ?? null;
-    else if (vals.length === 4 && vals.every(v => v != null)) ttm = vals.reduce((a,b) => a + b, 0);
-    return { label, kind: kind || 'money', vals, ttm };
-  }).filter(r => r.ttm != null || r.vals.some(v => v != null)) })).filter(sc => sc.filas.length);
-  const out = secs.length ? { cols, secs } : null;
-  _FIN_CACHE[ticker] = out;
-  return out;
-}
-function _pvxFinCard(fin){
-  if (!fin) return `<div class="px-card"><h2 class="px-sec-title"><span class="t">Estados financieros</span></h2>
-    <p class="px-intro">Lo que la empresa presenta en sus informes trimestrales.</p>
-    <div style="margin-top:14px"><p class="px-empty">El proveedor de datos no incluye los estados financieros reportados de esta empresa en el plan actual.</p></div></div>`;
-  const esc = pvEsc;
-  // Millones de dólares, con separador de miles y el signo delante — como en un informe.
-  const fm = (v, kind) => {
-    if (v == null) return '<span class="na">—</span>';
-    if (kind === 'eps') return (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
-    const m = v / 1e6, sg = m < 0 ? '-' : '';
-    return sg + Math.round(Math.abs(m)).toLocaleString('en-US');
-  };
-  const nCols = fin.cols.length + 2;
-  return `<div class="px-card"><h2 class="px-sec-title"><span class="t">Estados financieros</span></h2>
-    <p class="px-intro">Lo que la empresa presenta en sus informes trimestrales, sin retocar. Cifras en millones de dólares.</p>
-    <div class="px-cmp-wrap"><table class="px-cmp px-fin">
-      <thead><tr><th>Periodo</th><th class="ttm">Últimos 12 meses</th>${fin.cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr></thead>
-      <tbody>${fin.secs.map(sc => `<tr class="grp"><td colspan="${nCols}">${esc(sc.titulo)}</td></tr>` +
-        sc.filas.map(f => `<tr><td class="tk">${esc(f.label)}</td><td class="ttm">${fm(f.ttm, f.kind)}</td>${
-          f.vals.map(v=>`<td>${fm(v, f.kind)}</td>`).join('')}</tr>`).join('')).join('')}</tbody>
-    </table></div>
-    <div class="px-hint">Trimestres fiscales tal y como los reporta la empresa, del más reciente al más antiguo. La columna de doce meses suma los cuatro trimestres en resultados y flujo de caja; en el balance no se suma nada, porque es una foto de un día concreto y vale el dato más reciente. "—" = la empresa no publica esa línea.</div></div>`;
-}
-// Relleno LAZY del hueco de la pestaña "Finanzas" (mismo patrón que competidores y técnico).
-async function _pvxFillFin(host, ticker){
-  if (!host) return;
-  // Se pinta al entrar a la pestaña, así que el hueco tiene que decir algo mientras baja
-  // el estado financiero (antes se pedía al abrir la acción y ya estaba resuelto).
-  try { host.innerHTML = `<div class="px-card"><h2 class="px-sec-title"><span class="t">Estados financieros</span></h2><p class="px-empty">Cargando los estados de los últimos trimestres…</p></div>`; } catch(e){}
-  try {
-    const fin = await _pvxFinancials(ticker);
-    if (host.dataset.tk === ticker) host.innerHTML = _pvxFinCard(fin);
-  } catch(e){ try { if (host.dataset.tk === ticker) host.innerHTML = _pvxFinCard(null); } catch(e2){} }
-}
-
 async function _pvxExtras(ticker, info){
   ticker = (ticker||'').toUpperCase();
   const px = info.regularMarketPrice || 0;
@@ -26709,12 +26595,6 @@ window._pvxTab = function(btn, id){
     // La lectura del trimestre se pide AQUÍ, no al abrir la acción: es la llamada de IA más
     // lenta y cara del análisis y sólo se ve en esta pestaña.
     if (id === 'ea' && typeof _pvxFillEarnings === 'function') _pvxFillEarnings(scope);
-    // Estados financieros: la descarga más pesada del análisis, y sólo se ve aquí.
-    if (id === 'fi' && typeof _pvxFillFin === 'function'){
-      const fh = scope.querySelector('#pvx-fin-host');
-      const ftk = fh && fh.dataset.tk;
-      if (fh && ftk && fh.dataset.done !== ftk){ fh.dataset.done = ftk; _pvxFillFin(fh, ftk); }
-    }
   } catch(e){}
 };
 
@@ -26932,7 +26812,7 @@ function _renderQualAnalysis(a, el){
       <div class="lbl" style="color:${clr}">${esc(a.rating_label)}</div>
       <div class="sub">NOTA / 10</div>
     </div>
-    <div class="px-rating-desc">${esc(a.bio || (a.moat_bullets||[]).join('. '))}
+    <div class="px-rating-desc">${a.bio ? esc(a.bio) : ''}
       ${a.rating != null ? `<div class="px-hint">${(a.scores && a.scores.sectorial)
         ? `La nota mide el NEGOCIO: lo que gana hoy y lo que ha ganado de media en cinco años, si mejora o se deteriora, cómo crece y qué tan sólido es su balance, con las métricas que de verdad definen a su sector. Se mide dos veces —contra sus pares directos y contra el mercado entero— porque ser el menos rentable de una industria excelente no es ser mediocre. El precio no manda: cotizar caro o barato ajusta la nota como mucho un punto arriba o abajo.`
         : `La nota evalúa a la empresa en conjunto con todo lo que publica: rentabilidad, crecimiento, valoración, deuda y liquidez. Lo que no tiene dato no se califica ni se rellena con un número inventado.`}</div>` : ''}</div>
@@ -27222,7 +27102,7 @@ function _renderQualAnalysis(a, el){
     const PANES = [
       ['ov', 'Resumen',    OVa + OVv + OVp + OVz],
       ['ea', 'Resultados', EA],
-      ['fi', 'Finanzas',   FI + `<div id="pvx-fin-host" data-tk="${esc(a.ticker)}"></div>`],
+      ['fi', 'Finanzas',   FI],
       ['nw', 'Noticias',   NW + `<div id="pvx-news-host" data-tk="${esc(a.ticker)}"></div>`],
       ['en', 'Análisis técnico', EN],
     ];
@@ -27286,15 +27166,6 @@ function _renderQualAnalysis(a, el){
     // La zona de entrada necesita el NEGOCIO, no solo el gráfico: sin el valor razonable
     // recomendaría comprar en un soporte que ya está por encima de lo que vale la empresa.
     if (_th) _pvtFillInto(_th, a.ticker, { fv: a.fairValue || null, rating: (typeof a.rating === 'number' ? a.rating : null) });
-  } catch(e){}
-  // ④ Estados financieros de la pestaña "Finanzas": ya NO se piden al abrir la acción.
-  // /stock/financials-reported devuelve los estados completos de cuatro trimestres —el
-  // payload más pesado del análisis— para una tabla que nadie ve hasta cambiar de pestaña,
-  // y esa descarga competía por conexión con la narrativa, que sí se está esperando en
-  // pantalla. Se pide al entrar a "Finanzas" (ver _pvxTab), como Noticias y Resultados.
-  try {
-    const _fnh = el.querySelector('#pvx-fin-host');
-    if (_fnh) _fnh.dataset.tk = a.ticker;
   } catch(e){}
   }   // /if (!_lockedUI)
   // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
