@@ -3853,6 +3853,18 @@ html.pv-ipad #tab-analizar,  html.pv-ipad #tab-settings, html.pv-ipad #tab-aiana
 html.pv-ipad .stitch-layout { min-height: calc(100dvh - var(--pv-ipad-nav-total)) !important; }
 /* El detalle de noticia arrancaba tras los 220px de la sidebar: ahora full screen. */
 html.pv-ipad .nm-overlay { left: 0 !important; }
+/* La noticia ocupaba media pantalla: el iPad se maqueta a 1024 fijos, así que nunca
+   entraba en el breakpoint de 860 y .nm-layout seguía en dos columnas (artículo + 340px
+   de barra lateral). En vertical eso dejaba el texto en ~50% del ancho y el resto en
+   blanco. Aquí pasa a una sola columna a todo el ancho, con la tarjeta de impacto
+   debajo del artículo en vez de al lado. */
+html.pv-ipad .nm-layout {
+  grid-template-columns: 1fr !important;
+  max-width: none !important;
+  gap: 18px !important;
+  padding: 24px 28px calc(96px + env(safe-area-inset-bottom, 0px)) !important;
+}
+html.pv-ipad .nm-sidebar { order: 1 !important; }
 
 /* ── Topbar de marca (el mismo diseño del móvil, escalado a tablet) ── */
 html.pv-ipad .m-topbar {
@@ -25986,7 +25998,12 @@ function _renderQualAnalysis(a, el){
   // acaba dentro de .pv-lock-body y, en el plan gratuito, difuminado.
   try {
     const _rh = document.getElementById('r-rating-host');
-    if (_rh) { _rh.classList.add('pvx'); _rh.innerHTML = h; h = ''; }
+    if (_rh) {
+      // Sello del ticker pintado: sin él, la comprobación de arriba no distingue una nota
+      // recién puesta de la que dejó la acción anterior.
+      try { if (el.dataset && el.dataset.tk) _rh.dataset.tk = el.dataset.tk; } catch(e){}
+      _rh.classList.add('pvx'); _rh.innerHTML = h; h = '';
+    }
   } catch(e){}
 
   // Plan gratuito: se guarda `a` para poder repintar el análisis COMPLETO —con sus
@@ -27343,6 +27360,14 @@ async function _upgradeAnalysisToAI(ticker, info){
   ticker = (ticker||'').toUpperCase();
   const el = document.getElementById('r-analysis');
   if (!el) return;
+  // La tarjeta de la NOTA vive en #r-rating-host, FUERA de #r-analysis, y no se limpiaba al
+  // cambiar de acción: mientras se analizaba la nueva seguía en pantalla la nota, la
+  // descripción y los pilares de la ANTERIOR, y sólo se corregían cuando llegaba el análisis.
+  // Vaciarla al entrar es lo correcto: mejor sin nota que con la nota de otra empresa.
+  try {
+    const _rh0 = document.getElementById('r-rating-host');
+    if (_rh0 && _rh0.dataset.tk !== ticker) { _rh0.dataset.tk = ticker; _rh0.innerHTML = ''; }
+  } catch(e){}
   if (_isEtfTicker(ticker, info)) { el.innerHTML = ''; el.style.display = 'none'; try{_pvxRatingFallback(ticker);}catch(e){} return; }   // ETF → sin análisis por empresa
   el.dataset.tk = ticker;
   el.style.display = 'block';
