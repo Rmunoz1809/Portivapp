@@ -5183,6 +5183,7 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-metric .ctx{font-size:12px;color:var(--px-muted);margin:0 18px 0 auto;text-align:right}
       .pvx .px-metric .ctx b{color:var(--px-green-text);font-weight:600}
       .pvx .px-metric .ctx b.hi{color:var(--px-red)}
+      .pvx .px-metric .ctx b.neu{color:var(--px-muted)}
       .pvx .px-metric .v{text-align:right;flex:0 0 auto;min-width:96px}
       .pvx .px-metric .v .big{font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:17px;font-weight:700}
       .pvx .px-metric .v .tiny{font-size:11.5px;color:var(--px-muted);margin-top:1px}
@@ -8792,6 +8793,17 @@ function _lectura(nota) {
        :               'mucho peor que sus pares';
 }
 
+// Color de la lectura. Antes TODAS las lecturas se pintaban verdes, así que un
+// "mucho peor que sus pares" se leía como si fuera bueno. Rojo lo negativo, gris
+// lo neutro, verde sólo lo que de verdad está mejor que el sector.
+function _lectClase(s){
+  const t = (s || '').toLowerCase();
+  if (!t) return '';
+  if (/peor que|caro|cara\b|exigente|premium|elevad|muy alta|alta\b|concentrad|amplifica|pequeñ|riesgo|débil|d[eé]ficit|negativ/.test(t)) return 'hi';
+  if (/en l[ií]nea|neutral|similar/.test(t)) return 'neu';
+  return '';
+}
+
 
 /* ════════════════════════════════════════════════════════════════════════════
    LECTURA PROFESIONAL DE CADA MÉTRICA
@@ -11658,7 +11670,7 @@ function _renderEtfAnalysis(a, el){
     ].filter(r=>r.v && r.v!=='—');
     h += `<div class="px-card">${stitle('Qué compras con este fondo','costo')}
       <p class="px-intro">La ficha del vehículo: quién lo gestiona, cuánto cobra, qué tan grande es y cuántas empresas hay dentro.</p>
-      <div style="margin-top:14px">${rows.length?rows.map(r=>`<div class="px-metric"><span class="k">${esc(r.l)}</span><span class="ctx">${r.s?`lectura: <b class="${/caro|pequeño|concentrada|amplifica/.test(r.s)?'hi':''}">${esc(r.s)}</b>`:''}</span><span class="v"><div class="big">${esc(r.v)}</div></span></div>`).join('')
+      <div style="margin-top:14px">${rows.length?rows.map(r=>`<div class="px-metric"><span class="k">${esc(r.l)}</span><span class="ctx">${r.s?`lectura: <b class="${_lectClase(r.s)}">${esc(r.s)}</b>`:''}</span><span class="v"><div class="big">${esc(r.v)}</div></span></div>`).join('')
         : empty('Portiv todavía no tiene la ficha curada de este fondo.')}</div></div>`;
   }
 
@@ -26040,7 +26052,7 @@ function _renderQualAnalysis(a, el){
   {
     const datos = (a.datos||[]).filter(d=>d.v && d.v!=='—' && d.v!=='N/A');
     h += `<div class="px-card">${stitle(a.tituloDatos || 'Datos financieros','datos')}
-      ${datos.length ? datos.map(d=>{const hi=/premium|cara|alta|exigente|elevad|muy alta/i.test(d.s||'');return `<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">${d.s?`lectura: <b class="${hi?'hi':''}">${esc(d.s)}</b>`:''}</span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`;}).join('')
+      ${datos.length ? datos.map(d=>{const hi=_lectClase(d.s);return `<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">${d.s?`lectura: <b class="${hi}">${esc(d.s)}</b>`:''}</span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`;}).join('')
           : empty('El proveedor no publica múltiplos para esta empresa todavía.')}
       <div class="px-hint">Cada fila es una métrica de valoración propia de este sector, comparada con la mediana de sus pares directos. La columna del centro dice si la empresa está mejor o peor que ellos.</div></div>`;
   }
@@ -26065,7 +26077,7 @@ function _renderQualAnalysis(a, el){
   if (a.bloques_sector) {
     for (const b of a.bloques_sector) {
       h += `<div class="px-card">${stitle(b.titulo)}
-        ${b.filas.map(d=>`<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">lectura: <b>${esc(d.s)}</b></span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`).join('')}
+        ${b.filas.map(d=>`<div class="px-metric"><span class="k">${esc(d.l)}</span><span class="ctx">lectura: <b class="${_lectClase(d.s)}">${esc(d.s)}</b></span><span class="v"><div class="big">${esc(d.v)}</div></span></div>`).join('')}
         <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero.</div></div>`;
     }
   }
