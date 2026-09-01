@@ -28450,7 +28450,17 @@ async function _assembleBase(ticker, info){
   try { base = _buildQualAnalysis(ticker, info); } catch(e){ base = null; }
   if (!base) return null;
   const a = Object.assign({}, base, {
-    bio: (base.moat_bullets||[]).join('. '),
+    // La descripción de la empresa sale de la ficha editorial si la hay, y si no se queda
+    // VACÍA hasta que llegue la narrativa de IA (_applyNarrative la escribe encima). Antes
+    // se rellenaba con las viñetas del foso unidas por puntos: un párrafo de métricas
+    // encadenadas que ocupaba el sitio de la descripción y, cuando la narrativa no llegaba
+    // —sin clave de IA, o si falla—, se quedaba ahí para siempre haciéndose pasar por una.
+    bio: (function(){
+      try {
+        const _ed = (typeof COMPANY_BIOS !== 'undefined') ? COMPANY_BIOS[ticker] : null;
+        return (_ed && typeof _ed.desc === 'string' && _ed.desc.trim()) ? _ed.desc : '';
+      } catch(e){ return ''; }
+    })(),
     // Sin narrativa de IA, los pros salen de donde la empresa GANA a sus pares del
     // sector, no de los bullets del foso (que hablan de otra cosa).
     pros: (base.pros_sector && base.pros_sector.length) ? base.pros_sector : base.moat_bullets,
