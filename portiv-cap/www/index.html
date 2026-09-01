@@ -9545,8 +9545,22 @@ const _PV_AI_CONSENT = {
     if (v === 'yes') return true;
     if (v === 'no')  return false;
     if (this._inflight) return this._inflight;
-    this._inflight = this._ask().then((ok) => { this._inflight = null; return ok; });
+    this._inflight = this._resolver().then((ok) => { this._inflight = null; return ok; });
     return this._inflight;
+  },
+  // Antes de molestar a nadie se comprueba la nube. Que localStorage esté vacío NO
+  // significa "nunca contestó": el WKWebView de iOS puede vaciarlo cuando el sistema
+  // recupera espacio, y las cookies del esquema capacitor:// tampoco están garantizadas.
+  // Ahí estaba el permiso reapareciendo a quien ya lo había aceptado. Si esta cuenta ya
+  // respondió, la decisión vive en profiles.ai_consent: hydrate() la baja, la reescribe
+  // en local y el modal no llega a abrirse. Sin sesión hydrate() vuelve al instante, así
+  // que esto no añade espera a quien de verdad no ha contestado nunca.
+  async _resolver(){
+    try { await this.hydrate(); } catch(e){}
+    const v = this.get();
+    if (v === 'yes') return true;
+    if (v === 'no')  return false;
+    return this._ask();
   },
   // Modal construido en JS y no en el markup: no hay que tocar ningún bloque de HTML
   // existente y no pesa nada hasta la primera vez que se abre. Paleta neutra del app
