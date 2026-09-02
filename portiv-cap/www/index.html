@@ -5216,11 +5216,12 @@ window._pvAwaitIAP = function(totalMs){
         padding:18px 20px;border:1px solid var(--px-line);border-radius:15px;background:#f7f9fc}
       .pvx .px-ez-top .lbl{font-size:11px;font-weight:700;letter-spacing:.5px;color:var(--px-muted)}
       .pvx .px-ez-top .num{font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;
-        font-size:32px;font-weight:800;line-height:1;margin:9px 0 6px;color:var(--px-green-text);font-variant-numeric:tabular-nums}
+        font-size:32px;font-weight:800;line-height:1;margin:9px 0 6px;color:var(--px-navy);font-variant-numeric:tabular-nums}
       .pvx .px-ez-top .sub{font-size:12px;color:var(--px-muted);line-height:1.5}
       .pvx .px-ez-tag{margin-left:auto;flex:0 0 auto;font-size:12px;font-weight:700;padding:6px 12px;
         border-radius:999px;background:var(--px-track);color:var(--px-ink-soft)}
-      .pvx .px-ez-tag.pos{background:var(--px-green-soft);color:var(--px-green-text)}
+      /* Sin variantes de color: las tres dicen dónde está el precio, ninguna dice si eso es
+         bueno. El verde y el rojo se reservan al dato financiero. */
       .pvx .px-ez-tag.neu{background:#e8eefb;color:var(--px-blue)}
       .pvx .px-ez-tag.neg{background:var(--px-amber-soft);color:var(--px-amber)}
       /* Carril de 52 semanas con la banda de entrada y la marca del precio de hoy. */
@@ -5237,10 +5238,9 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-ez-lvl .n{flex:1 1 auto;min-width:0;font-size:13.5px;color:var(--px-ink-soft);overflow-wrap:anywhere}
       .pvx .px-ez-lvl .v{flex:0 0 auto;font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;
         font-size:15px;font-weight:700;color:var(--px-ink);font-variant-numeric:tabular-nums}
-      .pvx .px-ez-cut,.pvx .px-ez-inval,.pvx .px-ez-no{margin-top:14px;padding:12px 14px;border-radius:8px;
+      .pvx .px-ez-cut,.pvx .px-ez-no{margin-top:14px;padding:12px 14px;border-radius:8px;
         font-size:13px;line-height:1.65;color:var(--px-ink-soft)}
       .pvx .px-ez-cut{border-left:3px solid var(--px-blue);background:rgba(53,99,184,.06)}
-      .pvx .px-ez-inval{border-left:3px solid var(--px-amber);background:rgba(169,121,31,.07)}
       .pvx .px-ez-no{border-left:3px solid var(--px-muted);background:rgba(123,132,148,.07);margin-top:16px}
       /* Veredicto técnico: tres líneas antes del gráfico. */
       .pvx .px-ez-ver{margin-bottom:18px}
@@ -28119,21 +28119,12 @@ function _pvtZonaEntrada(bars, ind, biz){
     if (hi <= lo) hi = lo + paso;
 
     // Invalidación: el nivel por debajo del cual la zona deja de tener sentido. Por defecto
-    // un colchón de volatilidad bajo la zona; si hay un mínimo previo CERCA (a menos de tres
-    // ATR) se ancla a él, que es donde de verdad se decide. Un pivote lejano no sirve de
-    // invalidación: para cuando se toca, la tesis lleva rota semanas.
-    const debajo = piv.map(x => x.v).filter(v => v < lo).sort((x, y) => y - x)[0];
-    let inval = lo - atr*1.5;
-    if (debajo != null && debajo > lo - atr*3) inval = debajo - atr*0.5;
-    inval = Math.floor(inval/paso)*paso;
-
     return {
-      lo, hi, px, hi52, lo52, recorte, aviso, inval, floja, sinSoportes, notaBaja,
+      lo, hi, px, hi52, lo52, recorte, aviso, floja, sinSoportes, notaBaja,
       nModelos: (fv && Array.isArray(fv.models)) ? fv.models.length : null,
       base,
       estado:   (px >= lo && px <= hi) ? 'dentro' : (px > hi ? 'esperar' : 'rota'),
       distPct:  ((px - hi)/px)*100,
-      invalPct: ((inval - px)/px)*100,
       niveles:  niv,
     };
   } catch(e){ return null; }
@@ -28181,13 +28172,13 @@ function _pvtVeredictoTec(ind){
 // ── Tarjetas ──────────────────────────────────────────────────────────────────────
 function _pvtZonaCard(tk, z, biz){
   const esc = pvEsc;
-  const head = `<h2 class="px-sec-title"><span class="t">Zona de entrada</span></h2>`;
-  const pie  = `<div class="px-hint">La zona sale de dónde el precio ya ha frenado antes —mínimos previos, medias móviles y retrocesos del tramo del año— y se recorta con el valor razonable del negocio. Es un punto de partida para decidir, no una recomendación de compra.</div>`;
+  const head = `<h2 class="px-sec-title"><span class="t">Dónde ha frenado el precio</span></h2>`;
+  const pie  = `<div class="px-hint">El rango sale de dónde el precio ya ha frenado antes —mínimos previos, medias móviles y retrocesos del tramo del año— y se contrasta con el valor razonable del negocio. Precios ajustados por split, no por dividendo. Esto describe lo que el gráfico muestra: no es una recomendación de inversión ni asesoría financiera.</div>`;
   const $ = v => `$${v >= 100 ? v.toFixed(0) : v.toFixed(2)}`;
-  if (!z) return `<div class="px-card">${head}<p class="px-empty">No hay suficiente historial de precio de ${esc(tk)} para calcular una zona.</p></div>`;
-  const V = { dentro:{l:'Dentro de la zona',   c:'pos'},
-              esperar:{l:'Esperar retroceso',  c:'neu'},
-              rota:{l:'Zona perdida',          c:'neg'} }[z.estado] || {l:'',c:''};
+  if (!z) return `<div class="px-card">${head}<p class="px-empty">No hay suficiente historial de precio de ${esc(tk)} para calcular un rango.</p></div>`;
+  const V = { dentro:{l:'El precio está dentro',  c:'pos'},
+              esperar:{l:'El precio está encima',  c:'neu'},
+              rota:{l:'El precio está debajo',     c:'neg'} }[z.estado] || {l:'',c:''};
   const span = (z.hi52 - z.lo52) || 1;
   const pos  = v => Math.max(0, Math.min(100, ((v - z.lo52)/span)*100));
   const bL = pos(z.lo), bR = pos(z.hi);
@@ -28197,9 +28188,9 @@ function _pvtZonaCard(tk, z, biz){
       ? `hoy cotiza a ${$(z.px)}, un ${Math.abs(z.distPct).toFixed(1)}% por encima`
       : `hoy cotiza a ${$(z.px)}, por debajo de la zona`;
   return `<div class="px-card">${head}
-    <p class="px-intro">Dónde el gráfico y el negocio dicen que tiene sentido entrar en ${esc(tk)}.</p>
+    <p class="px-intro">La franja de precio en la que ${esc(tk)} ha encontrado compradores antes, contrastada con lo que dicen los números del negocio.</p>
     <div class="px-ez-top">
-      <div><div class="lbl">ENTRADA RECOMENDADA</div>
+      <div><div class="lbl">RANGO DONDE EL PRECIO SE HA FRENADO</div>
         <div class="num">${esc($(z.lo))} – ${esc($(z.hi))}</div>
         <div class="sub">${esc(sub)}</div></div>
       <div class="px-ez-tag ${V.c}">${esc(V.l)}</div>
@@ -28209,15 +28200,14 @@ function _pvtZonaCard(tk, z, biz){
       <span class="now" style="left:${pos(z.px).toFixed(2)}%"></span>
     </div>
     <div class="px-ez-scale"><span>${esc($(z.lo52))} <i>mínimo 52s</i></span><span>${esc($(z.hi52))} <i>máximo 52s</i></span></div>
-    ${z.base === 'valoracion' ? `<div class="px-ez-cut">Esta zona NO sale del gráfico: todos los soportes técnicos quedaron por encima de lo que vale la empresa, así que el rango lo pone la valoración. Traducido: por debajo de ${esc($(z.hi))} los números empiezan a justificar el precio, aunque ahí no haya todavía un suelo dibujado.</div>` : ''}
-    <div class="px-ez-sub">${z.base === 'valoracion' ? 'De dónde sale' : 'Qué forma esa zona'}</div>
+    ${z.base === 'valoracion' ? `<div class="px-ez-cut">Este rango NO sale del gráfico: todos los soportes técnicos quedaron por encima de lo que vale la empresa, así que el rango lo pone la valoración. Traducido: por debajo de ${esc($(z.hi))} los números empiezan a justificar el precio, aunque ahí no haya todavía un suelo dibujado.</div>` : ''}
+    <div class="px-ez-sub">${z.base === 'valoracion' ? 'De dónde sale' : 'Qué forma ese rango'}</div>
     ${z.niveles.map(n => `<div class="px-ez-lvl"><span class="n">${esc(n.n)}</span><span class="v">${esc($(n.v))}</span></div>`).join('')}
     ${z.recorte != null ? `<div class="px-ez-cut">El techo se recortó a ${esc($(z.recorte))}: por encima de ahí el gráfico invitaba a entrar, pero ni el modelo de valoración más generoso justificaba el precio.</div>` : ''}
-    ${z.aviso != null ? `<div class="px-ez-cut">Ojo: la zona entera queda por encima del valor razonable medio de la empresa (${esc($(z.aviso))}${z.nModelos ? `, promedio de ${z.nModelos} modelos` : ''}). El gráfico la sostiene y el modelo más optimista también, pero se está pagando por un futuro mejor que el que dicen sus números de hoy.</div>` : ''}
-    ${z.notaBaja != null ? `<div class="px-ez-cut"><b>La nota del negocio es ${esc(z.notaBaja.toFixed(1))}/10.</b> La zona dice a qué precio el gráfico y la valoración dejarían de estar en contra; no dice que la empresa merezca la compra. Con una nota así, el rango es el punto donde volver a mirarla, no una invitación a entrar.</div>` : ''}
-    ${z.sinSoportes ? `<div class="px-ez-cut">No hay mínimos previos ni medias por debajo del precio: la acción cotiza en zona sin referencias recientes. El rango sale de su propia volatilidad —cuánto suele corregir antes de rebotar— y no de niveles que el gráfico haya defendido ya. Es una zona más floja de lo normal.</div>` : ''}
-    ${z.floja && !z.sinSoportes ? `<div class="px-ez-cut">Los soportes de aquí abajo están sueltos, no apilados. Una zona sostenida por un solo nivel aguanta menos que una donde coinciden varios: tómala como orientación, no como suelo firme.</div>` : ''}
-    <div class="px-ez-inval"><b>Si pierde ${esc($(z.inval))}</b> (${z.invalPct.toFixed(1)}% desde hoy) la zona deja de sostener: ahí abajo no queda ningún soporte reciente y la lectura técnica habría que rehacerla.</div>
+    ${z.aviso != null ? `<div class="px-ez-cut">Ojo: el rango entero queda por encima del valor razonable medio de la empresa (${esc($(z.aviso))}${z.nModelos ? `, promedio de ${z.nModelos} modelos` : ''}). El gráfico la sostiene y el modelo más optimista también, pero se está pagando por un futuro mejor que el que dicen sus números de hoy.</div>` : ''}
+    ${z.notaBaja != null ? `<div class="px-ez-cut"><b>La nota del negocio es ${esc(z.notaBaja.toFixed(1))}/10.</b> El rango dice a qué precio el gráfico y la valoración dejarían de estar en contra; no dice nada sobre la calidad de la empresa. Con una nota así, el rango es un dato del gráfico y poco más.</div>` : ''}
+    ${z.sinSoportes ? `<div class="px-ez-cut">No hay mínimos previos ni medias por debajo del precio: la acción cotiza en zona sin referencias recientes. El rango sale de su propia volatilidad —cuánto suele corregir antes de rebotar— y no de niveles que el gráfico haya defendido ya. Es un rango más flojo de lo normal.</div>` : ''}
+    ${z.floja && !z.sinSoportes ? `<div class="px-ez-cut">Los soportes de aquí abajo están sueltos, no apilados. Un rango sostenido por un solo nivel aguanta menos que uno donde coinciden varios: es una referencia débil, no un suelo firme.</div>` : ''}
     ${pie}</div>`;
 }
 function _pvtVeredictoBloque(v){
