@@ -5226,7 +5226,7 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-ez-tag.neg{background:var(--px-amber-soft);color:var(--px-amber)}
       /* Carril de 52 semanas con la banda de entrada y la marca del precio de hoy. */
       .pvx .px-ez-rail{position:relative;height:14px;border-radius:7px;background:var(--px-track);margin:22px 0 0}
-      .pvx .px-ez-rail .band{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--px-green);opacity:.85}
+      .pvx .px-ez-rail .band{position:absolute;top:0;bottom:0;border-radius:7px;background:var(--px-ink-soft);opacity:.55}
       .pvx .px-ez-rail .now{position:absolute;top:-7px;bottom:-7px;width:3px;border-radius:2px;
         background:var(--px-navy);transform:translateX(-1.5px)}
       .pvx .px-ez-scale{display:flex;justify-content:space-between;margin-top:9px;font-size:11.5px;
@@ -25595,7 +25595,6 @@ function _buildQualAnalysis(ticker, info){
 //    • Barras de crecimiento ingresos/EPS trimestral por barra (se cubre con la tarjeta #r-eps existente)
 //    • Tabla de comparación con competidores (peers: falta métrica financiera por peer)
 //    • Dona de % ownership institucional / retail / short interest
-//    • "Lectura general" del análisis técnico (llega de technical_signals; sin fila no se pinta)
 //    • Recompras, cobertura de intereses, efectivo vs deuda (totales), promedio histórico de múltiplos 5a
 //  ---------------------------------------------------------------------------------
 //  Degradación ESTRICTA: cada bloque devuelve null/[] si falta el dato → la sección no se renderiza.
@@ -27603,10 +27602,12 @@ function _moatFactorBreakdown(info, moatObj, moatBullets){
 // Reparto de responsabilidades, a propósito:
 //   · gráfico e indicadores → matemática determinista en el cliente. No cuestan una llamada
 //     de IA ni dependen de que exista backend. Si Alpaca responde, la sección funciona.
-//   · "Lectura general"      → narrativa generada en la nube y guardada en technical_signals.
-//     Si no hay fila (o la tabla todavía no existe), el bloque simplemente no se pinta.
-//     Una pantalla sin narrativa sigue siendo una pantalla útil; una con narrativa inventada
-//     en el cliente, no.
+//   · "Lectura general"      → narrativa generada por IA sobre los hechos deterministas y
+//     cacheada en shared_analysis por ticker + firma. El modelo NO emite números: escribe
+//     sobre la estructura y el JS inyecta los valores al pintar, así que el texto no envejece.
+//     Si no hay narrativa —sin entitlement, sin red, o el filtro la descartó por traer
+//     cifras— el bloque no se pinta. Una pantalla sin narrativa sigue siendo útil; una con
+//     números inventados o congelados, no.
 
 // Temporalidades del selector. `dias` es la ventana visible; `agg` cómo se agregan las velas
 // diarias para que nunca se dibuje una mancha: a 6M y 1A por semana, a 5A por mes. Comprimir
@@ -27818,7 +27819,427 @@ function _pvtPrepararVista(bars, ind, periodo){
 // Canvas 2D puro, sin librería ni adaptador de fechas: dos dependencias menos en un setup
 // sin bundler. Los colores NO se escriben aquí — se leen de las variables que ya define .pvx,
 // así que el gráfico sigue al tema de la app sin duplicar un solo hex.
-function _pvtDibujar(canvas, velas, sma50, sma200){
+// ── Capa determinista: niveles con historia, perfil de volumen y firma ────────────
+// Todo lo de aquí abajo se calcula en el cliente sobre las MISMAS barras que ya se trajeron
+// para el gráfico: no añade ni una llamada de red. Es la entrada del prompt de la narrativa,
+// y por eso se mantiene compacta — cada campo que se agrega se paga en tokens, una vez por
+// firma y para todos los usuarios.
+//
+// Aviso de DATO, no de estilo: las barras vienen de Alpaca con `adjustment=split`, no `all`.
+// Los splits están corregidos; los dividendos NO. En una acción con dividendo alto —bancos,
+// REITs— el precio de hace tres años queda algo por encima del que se pagó de verdad y un
+// nivel viejo puede aparecer unos centavos desplazado. Se mantiene `split` porque es lo que
+// usa el resto de la app y tener dos series de precio distintas en la misma pantalla es peor
+// problema que este. El hecho viaja en el JSON (`ajuste`) para no fingir una precisión que no
+// hay.
+
+// Giros locales: sesiones cuyo mínimo (o máximo) domina su ventana de ±k sesiones. Convive
+// con _pvtPivotesBajos, que sigue alimentando la zona de entrada y solo detecta mínimos; aquí
+// hacen falta los DOS lados, porque una resistencia perdida se convierte en soporte y el
+// precio la vuelve a visitar por abajo.
+function _pvtFechaNivel(t){
+  try {
+    const d = new Date(t), hoy = new Date().getFullYear();
+    const base = d.toLocaleDateString('es-MX', { day:'numeric', month:'short' }).replace('.', '');
+    return d.getFullYear() === hoy ? base : base + " '" + String(d.getFullYear()).slice(-2);
+  } catch(e){ return ''; }
+}
+
+function _pvtSwings(bars, k){
+  const K = k || 5, out = [];
+  if (!Array.isArray(bars) || bars.length < 2*K + 1) return out;
+  for (let i = K; i < bars.length - K; i++){
+    let bajo = true, alto = true;
+    for (let j = i - K; j <= i + K; j++){
+      if (j === i) continue;
+      if (bars[j].l <= bars[i].l) bajo = false;
+      if (bars[j].h >= bars[i].h) alto = false;
+      if (!bajo && !alto) break;
+    }
+    if (bajo) out.push({ i:i, t:bars[i].t, v:bars[i].l, tipo:'bajo' });
+    if (alto) out.push({ i:i, t:bars[i].t, v:bars[i].h, tipo:'alto' });
+  }
+  return out;
+}
+
+// Agrupa los giros en niveles y CUENTA cuántas veces el precio visitó cada uno de verdad.
+// La diferencia entre "tres giros cerca" y "tres toques" no es cosmética: un lateral de dos
+// semanas produce veinte giros en la misma franja y ninguno es una visita nueva. Un toque es
+// un EPISODIO — el precio entra en la banda y vuelve a salir— y hacen falta tres sesiones
+// fuera para que la siguiente entrada cuente aparte.
+//
+// La tolerancia de agrupación es empírica y se arranca en 0,6 ATR: la franja en la que una
+// acción se mueve en un día normal. Un umbral fijo en porcentaje agruparía de más en KO y de
+// menos en TSLA. Si al mirar tickers reales aparecen niveles partidos en dos, este es el
+// único número que hay que tocar.
+function _pvtTramoToques(t){ return t >= 5 ? 'defendido' : 'ocasional'; }
+
+// Rejilla de precio anclada al orden de magnitud: 100 → paso 10, 10 → paso 1, 1 → paso 0,1.
+// Solo se mueve con un split o un cambio de escala, que es cuando DEBE moverse. Todo lo que
+// tenga que ser estable en el tiempo —centros de nivel, firma— se apoya en ella.
+const _PVT_REJILLA_MULT = 0.1;         // ≈ 1-3% del precio según dónde caiga la magnitud
+function _pvtPasoRejilla(px, mult){
+  if (!(px > 0)) return null;
+  return Math.pow(10, Math.floor(Math.log10(px))) * (mult || _PVT_REJILLA_MULT);
+}
+
+function _pvtNiveles(bars, ind, opts){
+  const o = opts || {};
+  if (!bars || !ind || !(ind.precio > 0)) return [];
+  const serie = bars.slice(-Math.min(bars.length, o.ventana || 504));
+  if (serie.length < 60) return [];
+  const px  = ind.precio;
+  const atr = (ind.atr != null && isFinite(ind.atr) && ind.atr > 0) ? (ind.atr/100)*px : px*0.02;
+  const sw  = _pvtSwings(serie, o.k || 5);
+  if (sw.length < 2) return [];
+
+  // Los giros se reparten en una REJILLA FIJA de precio, no en grupos sembrados por los propios
+  // datos. La versión anterior agrupaba con una pasada voraz sobre los giros ordenados por
+  // valor, y eso es inestable por construcción: un giro nuevo podía re-particionarlo todo y
+  // cambiar el centro de un nivel que no se había movido. Medido sobre histórico real, ese
+  // repartición era la causa principal de que la firma cambiara —y no se arreglaba afinando el
+  // criterio de orden, porque el problema estaba antes, en el agrupamiento.
+  //
+  // Con la rejilla anclada al orden de magnitud del precio, cada giro cae siempre en la misma
+  // casilla y el centro de un nivel es un múltiplo exacto de la rejilla: no deriva nunca.
+  const g = _pvtPasoRejilla(px);
+  if (!(g > 0)) return [];
+  const bins = new Map();
+  for (const s of sw){
+    const k = Math.round(s.v / g);
+    if (!bins.has(k)) bins.set(k, []);
+    bins.get(k).push(s);
+  }
+
+  const niveles = [];
+  for (const [k, giros] of bins){
+    if (giros.length < 2) continue;                     // un giro suelto es un punto, no un nivel
+    const centro = k * g;
+    // Fuera lo que está a más de un 28% del precio: por debajo de ahí ya es otra tesis. Mismo
+    // criterio que usa la zona de entrada.
+    if (centro > px*1.35 || centro < px*0.72) continue;
+    // El ancho de la banda sí sigue al ATR —es lo que hace comparable a KO con TSLA—, pero solo
+    // decide qué cuenta como contacto; el centro ya está fijado por la rejilla.
+    const semi = Math.max(g*0.5, atr*0.6);
+    const bi = centro - semi, bs = centro + semi;
+
+    // Un TOQUE no es cualquier visita: es una visita de la que el precio salió POR DONDE ENTRÓ.
+    // Si entró por arriba y salió por abajo, atravesó el nivel — eso es un cruce, y un cruce
+    // demuestra lo contrario que un rebote.
+    const ep = [];
+    let dentro = false, fuera = 0, ladoFuera = null, cur = null;
+    serie.forEach((b, i) => {
+      const toca = b.l <= bs && b.h >= bi;
+      if (toca){
+        if (!dentro){ dentro = true; cur = { t:b.t, i:i, desde:ladoFuera }; }
+        fuera = 0;
+      } else {
+        const lado = b.l > bs ? 'arriba' : 'abajo';
+        if (dentro && ++fuera >= 3){ dentro = false; cur.hacia = lado; ep.push(cur); cur = null; }
+        ladoFuera = lado;
+      }
+    });
+    const rebotes = ep.filter(e => e.desde && e.hacia && e.desde === e.hacia);
+    const cruces  = ep.filter(e => e.desde && e.hacia && e.desde !== e.hacia).length;
+    if (rebotes.length < 2) continue;                   // sin dos rechazos no hay nivel defendido
+    niveles.push({
+      centro: centro, bordeInf: bi, bordeSup: bs,
+      toques: rebotes.length, cruces: cruces,
+      tramoToques: _pvtTramoToques(rebotes.length),
+      distanciaATR: +(Math.abs(px - centro) / atr).toFixed(2),
+      fechas: rebotes.map(e => _pvtFechaNivel(e.t)),
+      antiguedadSesiones:  serie.length - 1 - rebotes[0].i,
+      sesionesDesdeUltimo: serie.length - 1 - rebotes[rebotes.length - 1].i,
+      lado: centro < px ? 'abajo' : 'arriba',
+    });
+  }
+
+  // Dominante = entre los DEFENDIDOS, el más cercano al precio de hoy. Criterio posicional, no
+  // por puntaje: el precio se mueve despacio y solo cambia de nivel al cruzar el punto medio
+  // entre dos, mientras que cualquier score reordena candidatos parecidos en cuanto llega una
+  // barra. Y además es el que miraría un analista: lo que explica lo que hace la acción hoy es
+  // la estructura que tiene al lado, no la más tocada de hace dos años.
+  const defendidos = niveles.filter(nv => nv.tramoToques === 'defendido');
+  const pool = (defendidos.length ? defendidos : niveles).sort((a, b) => a.distanciaATR - b.distanciaATR);
+  const resto = niveles.filter(nv => pool.indexOf(nv) === -1).sort((a, b) => a.distanciaATR - b.distanciaATR);
+  return pool.concat(resto);
+}
+
+// Perfil de volumen por banda de precio: cuánto dinero cambió de manos en cada franja. Es el
+// segundo eje objetivo del análisis. Un nivel sostenido solo por "rebotó tres veces" es un
+// argumento flojo; el volumen negociado ahí es dinero real, no una línea dibujada.
+//
+// El volumen de cada sesión se REPARTE entre las bandas que su rango atraviesa, en proporción
+// al solape. Asignarlo entero al cierre concentraría sesiones completas en un punto y pintaría
+// picos que no ocurrieron.
+function _pvtVolProfile(bars, nBandas, ventana){
+  const N = nBandas || 32;
+  const serie = (bars || []).slice(-Math.min((bars || []).length, ventana || 504));
+  if (serie.length < 40) return { disponible:false, motivo:'historial insuficiente' };
+  let total = 0;
+  for (const b of serie) total += (b.v > 0 ? b.v : 0);
+  // Trampa 5: el feed IEX puede venir sin volumen para algunos símbolos. Sin dato no se
+  // estima ni se rellena — se dice que no hay.
+  if (!(total > 0)) return { disponible:false, motivo:'el feed no trae volumen para este símbolo' };
+  let min = Infinity, max = -Infinity;
+  for (const b of serie){ if (b.l < min) min = b.l; if (b.h > max) max = b.h; }
+  if (!(max > min)) return { disponible:false, motivo:'rango de precio degenerado' };
+
+  const paso = (max - min) / N;
+  const bandas = [];
+  for (let i = 0; i < N; i++) bandas.push({ inf:min + paso*i, sup:min + paso*(i+1), vol:0 });
+  for (const b of serie){
+    const v = b.v > 0 ? b.v : 0; if (!v) continue;
+    const lo = Math.min(b.l, b.h), hi = Math.max(b.l, b.h);
+    const iA = Math.max(0, Math.min(N-1, Math.floor((lo - min)/paso)));
+    const iB = Math.max(0, Math.min(N-1, Math.floor((hi - min)/paso)));
+    if (iA === iB || !(hi > lo)){ bandas[iA].vol += v; continue; }
+    const span = hi - lo;
+    for (let i = iA; i <= iB; i++){
+      const solape = Math.min(hi, bandas[i].sup) - Math.max(lo, bandas[i].inf);
+      if (solape > 0) bandas[i].vol += v * (solape / span);
+    }
+  }
+  let poc = bandas[0];
+  for (const b of bandas) if (b.vol > poc.vol) poc = b;
+  return {
+    disponible:true, min:min, max:max, paso:paso, nBandas:N, total:total,
+    sesiones: serie.length, bandas: bandas,
+    poc: { inf:+poc.inf.toFixed(2), sup:+poc.sup.toFixed(2), frac:poc.vol/total },
+  };
+}
+
+// Cuánto del volumen del periodo cayó dentro de una franja concreta, y en qué percentil queda
+// esa franja frente al resto del perfil.
+function _pvtVolEnNivel(vp, centro, bordeInf, bordeSup){
+  if (!vp || !vp.disponible) return { disponible:false, motivo: (vp && vp.motivo) || 'sin perfil' };
+  const dentro = vp.bandas.filter(b => b.sup > bordeInf && b.inf < bordeSup);
+  if (!dentro.length) return { disponible:false, motivo:'la franja queda fuera del rango del perfil' };
+  let acum = 0; for (const b of dentro) acum += b.vol;
+  const media   = acum / dentro.length;
+  const menores = vp.bandas.filter(b => b.vol < media).length;
+  return {
+    disponible: true,
+    fraccionDelTotal: +(acum / vp.total).toFixed(4),
+    percentilVolumen: Math.round((menores / vp.bandas.length) * 100),
+    esZonaDeMayorVolumen: centro >= vp.poc.inf && centro <= vp.poc.sup,
+  };
+}
+
+// Orquestador. Devuelve el JSON compacto que consumen el render Y el prompt de la narrativa.
+// Si no hay nivel con historia devuelve null: sin hecho no hay texto, y eso es correcto.
+// 'dentro' = a menos de un ATR del centro de la franja. No es "entre los dos bordes": ese
+// criterio cambiaba de respuesta cada sesión cuando el precio ronda el nivel.
+function _pvtPosicion(px, centro, atrD){
+  const a = (atrD > 0) ? atrD : px * 0.02;
+  const d = (px - centro) / a;
+  return d > 1 ? 'arriba' : d < -1 ? 'abajo' : 'dentro';
+}
+
+function _pvtFacts(ticker, bars, ind, vp){
+  if (!bars || bars.length < 120 || !ind || !(ind.precio > 0)) return null;
+  const px   = ind.precio;
+  const atrD = (ind.atr != null && isFinite(ind.atr) && ind.atr > 0) ? (ind.atr/100)*px : null;
+  const niveles = _pvtNiveles(bars, ind);
+  if (!niveles.length) return null;
+  const dom  = niveles[0];
+  const perfil = vp || _pvtVolProfile(bars);
+  const dist = px - dom.centro;
+  return {
+    ticker: (ticker || '').toUpperCase(),
+    precioActual: +px.toFixed(2),
+    atrDolares: atrD != null ? +atrD.toFixed(2) : null,
+    ajuste: 'split',                                    // dividendos NO ajustados: ver aviso arriba
+    sesiones: bars.length,
+    nivelDominante: {
+      centro:   +dom.centro.toFixed(2),
+      bordeInf: +dom.bordeInf.toFixed(2),
+      bordeSup: +dom.bordeSup.toFixed(2),
+      toques: dom.toques, tramoToques: dom.tramoToques, fechas: dom.fechas.slice(-6),
+      sesionesDesdeUltimo: dom.sesionesDesdeUltimo,
+      antiguedadSesiones: dom.antiguedadSesiones,
+      lado: dom.lado,
+    },
+    volumenEnNivel: _pvtVolEnNivel(perfil, dom.centro, dom.bordeInf, dom.bordeSup),
+    distancia: {
+      atr: atrD ? +(dist / atrD).toFixed(2) : null,
+      porcentaje: +((dist / px) * 100).toFixed(1),
+    },
+    mm200: {
+      valor: (ind.sma200 > 0) ? +ind.sma200.toFixed(2) : null,
+      ladoPrecio: (ind.sma200 > 0) ? (px >= ind.sma200 ? 'arriba' : 'abajo') : null,
+    },
+    posicionEnNivel: _pvtPosicion(px, dom.centro, atrD),
+    otrosNiveles: niveles.slice(1, 4).map(n => ({ centro:+n.centro.toFixed(2), toques:n.toques, lado:n.lado })),
+    crucesDelNivel: dom.cruces,
+    perfilVolumen: perfil.disponible
+      ? { poc: perfil.poc, sesiones: perfil.sesiones }
+      : { disponible:false, motivo: perfil.motivo },
+  };
+}
+
+// ── Firma de regeneración ─────────────────────────────────────────────────────────
+// La firma existe para que el ruido diario NO invalide el caché: si el nivel está en 540 hoy y
+// en 538 mañana, la firma tiene que ser la misma o se paga una generación por día, por ticker
+// y para nada.
+//
+// La rejilla de redondeo es FIJA, anclada al orden de magnitud del precio. El primer intento la
+// derivaba del ATR y del precio de hoy, y así no redondea nada: la rejilla se movía junto con
+// el valor que se pretendía estabilizar, y medio punto porcentual bastaba para cambiar la
+// firma (comprobado sobre META: seis perturbaciones, seis firmas distintas). Anclada al orden
+// de magnitud solo se mueve con un split o con un desplome, que es exactamente cuando DEBE
+// moverse.
+//
+// _PVT_FIRMA_MULT es el único parámetro a calibrar. `await _pvtFirmaLog('META')` en consola
+// recorre el histórico y dice cuántas regeneraciones habría disparado cada valor.
+const _PVT_FIRMA_MULT = 0.05;          // ≈1% del precio, en una rejilla que no se mueve
+function _pvtPasoFirma(f, mult){
+  const px = f.precioActual;
+  if (!(px > 0)) return null;
+  return Math.pow(10, Math.floor(Math.log10(px))) * (mult || _PVT_FIRMA_MULT);
+}
+function _pvtFirma(f, mult){
+  if (!f || !f.nivelDominante) return null;
+  const paso = _pvtPasoFirma(f, mult);
+  if (!(paso > 0)) return null;
+  const centro = Math.round(f.nivelDominante.centro / paso) * paso;
+  // Los toques van en TRAMOS, no en crudo: que una sesión entre o salga de la banda mueve la
+  // cuenta en uno y no cambia nada de lo que dice el texto. El tramo sí cambia cuando el nivel
+  // pasa de "visitado alguna vez" a "defendido una y otra vez", que es lo que se narra.
+  const tramo = f.nivelDominante.tramoToques || _pvtTramoToques(f.nivelDominante.toques);
+  return ['v1', f.ticker, centro.toFixed(2), 't' + tramo,
+          'mm' + (f.mm200.ladoPrecio || 'na'), 'p' + f.posicionEnNivel].join('|');
+}
+
+// Herramienta de CALIBRACIÓN, no ruta de producción. Recorre el histórico simulando el cierre
+// de cada sesión y cuenta cuántas veces habría cambiado la firma con cada multiplicador de
+// paso. Uso: await _pvtFirmaLog('META')
+window._pvtFirmaLog = async function(ticker, mults){
+  const M = mults || [0.02, 0.05, 0.10, 0.20];
+  const bars = await _pvtFetchDiarias(ticker);
+  if (!bars) { console.log('sin barras para', ticker); return null; }
+  const res = {};
+  for (const m of M){
+    let prev = null, cambios = 0, muestras = 0;
+    for (let n = 260; n <= bars.length; n += 1){
+      const sub = bars.slice(0, n);
+      const ind = _pvtIndicadores(sub);
+      const f   = _pvtFacts(ticker, sub, ind);
+      if (!f) continue;
+      const firm = _pvtFirma(f, m);
+      if (!firm) continue;
+      muestras++;
+      if (prev !== null && firm !== prev) cambios++;
+      prev = firm;
+    }
+    res['x' + m] = { sesiones:muestras, regeneraciones:cambios,
+                     unaCada: muestras && cambios ? Math.round(muestras / cambios) + ' sesiones' : 'nunca' };
+  }
+  console.table(res);
+  return res;
+};
+
+// ── Narrativa: prosa sobre hechos, nunca cifras ───────────────────────────────────
+// El modelo NO emite números. Recibe hechos ya calculados y escribe sobre su ESTRUCTURA; los
+// valores exactos los inyecta el JS al pintar, en el mismo bloque. Sin esta regla el texto
+// queda muerto en 48 horas: el precio se mueve y la cifra escrita se queda.
+const _PVT_NARR_SYS = [
+  'Eres analista técnico. Escribes para un inversionista minorista, en español neutro latinoamericano.',
+  '',
+  'REGLA 1 — PROHIBIDO ESCRIBIR NÚMEROS. Ni dígitos, ni cifras en letra, ni porcentajes, ni símbolos de moneda, ni multiplicadores. Nada de "540", "17,5 veces", "8%", "$550", "tres veces". Los valores exactos los inserta la aplicación junto a tu texto; si los escribes tú quedan congelados y en dos días son falsos. Describe la ESTRUCTURA con palabras: "el precio ha frenado en esa franja en varias ocasiones", "ahí se concentró la mayor parte del volumen negociado", "cotiza por encima de su media de largo plazo".',
+  '',
+  'REGLA 2 — PROHIBIDO INVENTAR NIVELES. Solo puedes hablar de lo que viene en el JSON. No agregues soportes, resistencias, medias ni franjas que no estén ahí.',
+  '',
+  'REGLA 3 — REGISTRO DESCRIPTIVO, NUNCA IMPERATIVO. Describes lo que el gráfico muestra; no dices qué hacer. Prohibidas: comprar, vender, entrar, salir, acumular, recomendar, aprovechar, "conviene", "es momento de". Un imperativo convierte el análisis en recomendación de inversión.',
+  '',
+  'REGLA 4 — SIN NIVELES DE SALIDA. No menciones stop-loss, objetivos de precio ni puntos de venta.',
+  '',
+  'FORMATO: exactamente tres párrafos separados por una línea en blanco, sin títulos ni viñetas.',
+  '  1) Qué es esa franja de precio y con qué frecuencia el mercado volvió a ella.',
+  '  2) Qué dice el volumen negociado dentro de la franja: si ahí cambió de manos mucho dinero o poco, y qué significa sobre el interés real. Si el JSON dice que no hay volumen disponible, dilo y no lo supongas.',
+  '  3) Dónde está el precio hoy respecto de la franja y de su media de largo plazo, y qué haría que esta lectura dejara de ser válida, en términos de estructura.',
+  'Entre ciento cuarenta y doscientas palabras en total. Sin disclaimers: la app ya los pone.',
+].join('\n');
+
+// El prompt prohíbe números, pero un prompt no es una garantía. Aquí se COMPRUEBA: toda frase
+// que traiga un dígito o un símbolo de cifra se cae, y si con eso el texto pierde más de la
+// mitad se descarta entero. Mejor sin lectura que con una cifra que envejece.
+function _pvtLimpiarNarrativa(txt){
+  const t = String(txt || '').replace(/[ \t]+/g, ' ').trim();
+  if (!t) return '';
+  const parrafos = t.split(/\n{2,}/).map(p => {
+    const frases = p.match(/[^.!?]+[.!?]*/g) || [p];
+    return frases.filter(f => !/[0-9$%×]/.test(f)).join(' ').replace(/\s+/g, ' ').trim();
+  }).filter(Boolean);
+  const out = parrafos.join('\n\n');
+  if (!out || out.replace(/\s/g, '').length < t.replace(/\s/g, '').length * 0.5) return '';
+  return out;
+}
+
+// Caché compartido → gate de entitlement → generación. En ese orden, y el orden importa: un
+// usuario sin Portiv Pro nunca llega a la llamada, ni con el caché frío.
+//
+// UNA FILA POR TICKER, que guarda dentro su firma. El diseño original usaba `ticker + firma`
+// como clave y no llevaba vencimiento, con el argumento de que la firma y el earnings bastan
+// para invalidar. Se midió sobre histórico real (cuatro años, seis tickers de sectores
+// distintos, ver _pvtFirmaLog) y no bastan: la firma cambia cada cinco a catorce sesiones
+// porque el nivel dominante, su tramo de toques y el lado de la media se mueven de verdad, no
+// por redondeo. Se probaron cuatro detectores —rebotes en vez de cruces, rejilla fija de
+// precio, elección posicional, tolerancia de compatibilidad de un paso— y ninguno bajó de ahí.
+// Con clave por firma eso significa una fila nueva y una generación pagada cada semana y pico
+// por ticker, y un texto que cambia solo delante del usuario.
+//
+// El freno es un PISO, no un TTL: un TTL obliga a regenerar pasados N días y AÑADE costo; el
+// piso PROHÍBE regenerar antes de N días y lo quita. La firma sigue haciendo su trabajo —un
+// cambio estructural regenera en cuanto pasa el piso— y el earnings salta el piso, porque ahí
+// el texto sí quedó viejo de golpe.
+const _PVT_PISO_MS = 14 * 24 * 60 * 60 * 1000;
+const _pvtNarrFallida = new Set();      // ticker que ya falló en esta sesión → no reintentar
+async function _pvtNarrativaIA(ticker, facts){
+  const tk = (ticker || '').toUpperCase();
+  if (!tk || !facts) return null;
+  const firma = _pvtFirma(facts);
+  if (!firma) return null;
+  let eKey = 'na';
+  try { if (typeof _analysisEarningsKey === 'function') eKey = _analysisEarningsKey(tk) || 'na'; } catch(e){}
+  const key = 'tec:v1:' + tk;
+  if (_pvtNarrFallida.has(key)) return null;
+
+  let previa = null;
+  try { previa = await _sharedAIGet(key, null); } catch(e){}
+  if (previa && previa.texto){
+    const edad = Date.now() - Date.parse(previa.generated_at || 0);
+    const reporto = eKey !== 'na' && previa.earningsKey && previa.earningsKey !== eKey;
+    const mismaEstructura = previa.firma === firma;
+    const dentroDelPiso = isFinite(edad) && edad < _PVT_PISO_MS && !window._pvtSinPiso;
+    if (!reporto && (mismaEstructura || dentroDelPiso))
+      return { texto:previa.texto, generated_at:previa.generated_at || null,
+               origen: mismaEstructura ? 'cache' : 'piso' };
+  }
+
+  if (typeof _pvAiEntitled === 'function'){
+    try { if (!(await _pvAiEntitled())) return { bloqueado:true }; } catch(e){ return { bloqueado:true }; }
+  }
+
+  try {
+    const res = await _aiFetch({
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: 900,
+                             system: _PVT_NARR_SYS,
+                             prompt: 'HECHOS (JSON):\n' + JSON.stringify(facts) + '\n\nEscribe los tres párrafos.' })
+    }, true);
+    if (!res.ok) return null;
+    const data = await res.json();
+    try { _tokAdd(data.usage, AI_MODELS.narrative, 'tecnico'); } catch(e){}
+    const texto = _pvtLimpiarNarrativa(data.text || '');
+    if (!texto){ _pvtNarrFallida.add(key); return null; }   // trajo cifras: se descarta, no se guarda
+    const obj = { texto:texto, earningsKey:eKey, firma:firma, generated_at:new Date().toISOString() };
+    try { _sharedAISet(key, obj); } catch(e){}     // …y queda gratis para todos los demás.
+    return { texto:texto, generated_at:obj.generated_at, origen:'nuevo' };
+  } catch(e){ return null; }
+}
+
+function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   const W = canvas.offsetWidth | 0;
   if (!W || !velas || velas.length < 2) return false;   // Trampa 2: contenedor todavía sin ancho
 
@@ -27874,6 +28295,41 @@ function _pvtDibujar(canvas, velas, sma50, sma200){
     ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + ancho, y); ctx.stroke();
     ctx.fillStyle = MUTED;
     ctx.fillText(p.toFixed(dec), x0 + ancho + 6, y);
+  }
+
+  // Banda del nivel dominante y perfil de volumen. Los dos en gris NEUTRO a propósito: son
+  // ESTRUCTURA, no dirección. El verde y el rojo están reservados al dato financiero —velas y
+  // variación de precio— y no se gastan en marcar una zona.
+  const _ex = extra || {};
+  if (_ex.nivel && isFinite(_ex.nivel.bordeInf) && isFinite(_ex.nivel.bordeSup)){
+    const ya = yP(_ex.nivel.bordeSup), yb = yP(_ex.nivel.bordeInf);
+    ctx.save();
+    ctx.globalAlpha = 0.13; ctx.fillStyle = INK_SOFT;
+    ctx.fillRect(x0, Math.min(ya, yb), ancho, Math.max(2, Math.abs(yb - ya)));
+    ctx.restore();
+    ctx.strokeStyle = MUTED; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+    const yc = Math.round(yP(_ex.nivel.centro)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(x0, yc); ctx.lineTo(x0 + ancho, yc); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  // Perfil de volumen: histograma horizontal pegado al eje, cada banda tan ancha como volumen
+  // se negoció en ella. Alfa baja y por debajo de las velas: informa sin competir con el
+  // precio, que es lo que se viene a leer. Las bandas fuera de la ventana visible se saltan.
+  if (_ex.perfil && _ex.perfil.disponible && _ex.perfil.bandas && _ex.perfil.bandas.length){
+    let vmaxB = 0;
+    for (const b of _ex.perfil.bandas) if (b.vol > vmaxB) vmaxB = b.vol;
+    if (vmaxB > 0){
+      const anchoMax = ancho * 0.16;
+      ctx.save(); ctx.globalAlpha = 0.22; ctx.fillStyle = INK_SOFT;
+      for (const b of _ex.perfil.bandas){
+        const ys = yP(b.sup), yi = yP(b.inf);
+        const top = Math.min(ys, yi), alto = Math.max(1, Math.abs(yi - ys) - 1);
+        if (top + alto < pTop || top > pBot) continue;
+        const w = (b.vol / vmaxB) * anchoMax;
+        if (w > 0.5) ctx.fillRect(x0, top, w, alto);
+      }
+      ctx.restore();
+    }
   }
 
   // Volumen primero, en gris neutro: colorearlo duplicaría la señal cromática de las velas.
@@ -27974,21 +28430,10 @@ function _pvtFila(nombre, valor, expl, barra){
 
 // Lee la narrativa de la nube. Un solo SELECT por PostgREST, sin Edge Function de por medio.
 // Cualquier fallo (sin sesión, tabla aún no creada, red) devuelve null y el bloque se oculta.
-async function _pvtNarrativa(ticker){
-  try {
-    const sb = window.sbClient;
-    if (!sb) return null;
-    const { data, error } = await sb
-      .from('technical_signals')
-      .select('narrative, generated_at')
-      .eq('ticker', (ticker || '').toUpperCase())
-      .order('as_of_date', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error || !data || !data.narrative) return null;
-    return data;
-  } catch(e){ return null; }
-}
+// La narrativa técnica se GENERA en el cliente (ver _pvtNarrativaIA, arriba) y se cachea en
+// shared_analysis por ticker + firma. Antes se leía de una tabla `technical_signals` que
+// alguien poblaba desde fuera: se retiró para no tener dos fuentes de verdad para el mismo
+// párrafo. La tabla puede borrarse cuando se confirme que nada más la lee.
 
 const _pvtEstado = {};   // host → { ticker, bars, ind, periodo } para redibujar sin volver a la red
 
@@ -28222,10 +28667,7 @@ async function _pvtFillInto(host, ticker, biz){
   host.dataset.tk = tk;
   host.innerHTML = `<p class="px-empty">Cargando el comportamiento del precio…</p>`;
 
-  const [bars, narr] = await Promise.all([
-    _pvtFetchDiarias(tk).catch(() => null),
-    _pvtNarrativa(tk),
-  ]);
+  const bars = await _pvtFetchDiarias(tk).catch(() => null);
   if (host.dataset.tk !== tk) return;                      // el usuario ya cambió de acción
   if (!bars || bars.length < 30){
     host.innerHTML = `<p class="px-empty">Aún no tenemos análisis técnico de este ticker.</p>`;
@@ -28233,7 +28675,12 @@ async function _pvtFillInto(host, ticker, biz){
   }
 
   const ind = _pvtIndicadores(bars);
-  _pvtEstado[tk] = { bars, ind, periodo: '3M', host };
+  // Capa determinista. Cuesta cero: sale de las mismas barras que ya están en memoria y se
+  // recalcula en cada apertura, así que ningún número de la pantalla puede quedarse viejo.
+  const vp    = _pvtVolProfile(bars);
+  const facts = _pvtFacts(tk, bars, ind, vp);
+  _pvtEstado[tk] = { bars, ind, periodo: '3M', host,
+                     extra: { nivel: facts ? facts.nivelDominante : null, perfil: vp } };
 
   // La zona de entrada vive en su propia tarjeta, ENCIMA de la técnica, y se pinta con las
   // mismas barras: una sola llamada a Alpaca alimenta las dos.
@@ -28248,7 +28695,7 @@ async function _pvtFillInto(host, ticker, biz){
   const n1 = (v, d = 1) => (v == null || !isFinite(v)) ? '—' : v.toFixed(d);
   const pct = v => (v == null || !isFinite(v)) ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
 
-  const lectura = narr ? _pvtBloqueLectura(narr) : '';
+  const lectura = '';   // llega después: la narrativa es asíncrona y no retrasa el gráfico
   const veredicto = _pvtVeredictoBloque(_pvtVeredictoTec(ind));   // tres líneas antes del gráfico
 
   // El gráfico va en su propia tarjeta, la primera de la pestaña. Si ese host no existe
@@ -28283,25 +28730,81 @@ async function _pvtFillInto(host, ticker, biz){
     if (st){ st.periodo = b.dataset.pvt; _pvtRedibujar(tk, cv); }
   });
   _pvtEngancharResize(tk, cv);
+
+  // La narrativa viaja aparte y NUNCA bloquea el gráfico: si el caché compartido responde,
+  // aparece de inmediato; si hay que generarla, aparece cuando esté. El gate de entitlement
+  // vive dentro de _pvtNarrativaIA, ANTES de que salga ningún paquete a la API — también en
+  // el caso de caché frío, que es el que se le escapa a un gate puesto en el render.
+  if (facts){
+    _pvtNarrativaIA(tk, facts).then(narr => {
+      if (!narr || narr.bloqueado || host.dataset.tk !== tk) return;
+      const bloque = _pvtBloqueLectura(narr, facts);
+      if (!bloque) return;
+      const ver = host.querySelector('.px-ez-ver');
+      if (ver) ver.insertAdjacentHTML('afterend', bloque);
+      else host.insertAdjacentHTML('afterbegin', bloque);
+    }).catch(() => {});
+  }
 }
 
 // Bloque "Lectura general". Solo se pinta si la nube devolvió narrativa; si tiene más de 10
 // días se etiqueta con su fecha en vez de ocultarla — data vieja etiquetada es aceptable,
 // data vieja disfrazada de actual no.
-function _pvtBloqueLectura(narr){
+// Bloque "Lectura general". La prosa la escribe el modelo y NO trae ni una cifra; los números
+// los pone esta función, aquí abajo, leyendo los hechos de hoy. Por eso el texto no envejece:
+// lo único que caduca son los valores, y los valores se recalculan en cada apertura.
+function _pvtBloqueLectura(narr, f){
+  if (!narr || !narr.texto) return '';
+  const esc = pvEsc;
+  const $ = v => '$' + (v >= 100 ? v.toFixed(0) : v.toFixed(2));
   let sello = '';
   const t = Date.parse(narr.generated_at || '');
   if (isFinite(t) && (Date.now() - t) > 10 * 86400000){
-    sello = ` <span style="font-weight:500;color:var(--px-muted)">· Lectura del ${
-      new Date(t).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })}</span>`;
+    sello = ' <span style="font-weight:500;color:var(--px-muted)">· Lectura del '
+          + new Date(t).toLocaleDateString('es-MX', { day:'numeric', month:'long' }) + '</span>';
   }
-  return `<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)">
-    <h4 style="display:flex;align-items:center;gap:7px;font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:13px;margin:0 0 8px;color:var(--px-ink-soft)">
-      <span class="material-symbols-outlined" style="font-size:16px;color:var(--px-green-text)">auto_awesome</span>Lectura general${sello}</h4>
-    <p style="font-size:13.5px;color:var(--px-ink-soft);line-height:1.7;margin:0">${pvEsc(narr.narrative)}</p>
-  </div>`;
-}
+  const parrafos = String(narr.texto).split(/\n{2,}/).filter(Boolean).map(p =>
+    '<p style="font-size:13.5px;color:var(--px-ink-soft);line-height:1.7;margin:0 0 10px">' + esc(p) + '</p>').join('');
 
+  // Los datos concretos, inyectados por el JS. Cada fila es un hecho calculado, no una opinión.
+  const D = [];
+  if (f){
+    const nd = f.nivelDominante;
+    D.push([$(nd.bordeInf) + ' – ' + $(nd.bordeSup),
+            'franja que el precio visitó ' + nd.toques + (nd.toques === 1 ? ' vez' : ' veces')
+            + ' (' + nd.fechas.slice(0, 4).join(', ') + (nd.fechas.length > 4 ? '…' : '') + ')']);
+    if (f.volumenEnNivel && f.volumenEnNivel.disponible){
+      D.push([Math.round(f.volumenEnNivel.fraccionDelTotal * 100) + '%',
+              'del volumen de los últimos dos años se negoció dentro de esa franja'
+              + (f.volumenEnNivel.esZonaDeMayorVolumen
+                  ? ' — es la banda de mayor volumen de todo el periodo'
+                  : ' (percentil ' + f.volumenEnNivel.percentilVolumen + ' del perfil)')]);
+    } else {
+      // Trampa 5: sin dato se dice, no se estima.
+      D.push(['Sin dato', 'el feed no trae volumen utilizable para ' + esc(f.ticker)
+              + ': el perfil de volumen no se calcula']);
+    }
+    if (f.distancia.atr != null){
+      D.push([Math.abs(f.distancia.atr).toFixed(1) + ' ATR',
+              'separan el precio de hoy del centro de la franja (' + Math.abs(f.distancia.porcentaje).toFixed(1)
+              + '%), medido en sesiones normales de esta acción']);
+    }
+    if (f.mm200.valor != null){
+      D.push([$(f.mm200.valor), 'media de 200 días; el precio cotiza por '
+              + (f.mm200.ladoPrecio === 'arriba' ? 'encima' : 'debajo') + ' de ella']);
+    }
+  }
+  const filas = D.map(r =>
+    '<div style="display:grid;grid-template-columns:minmax(84px,auto) 1fr;gap:12px;padding:8px 0;border-top:1px solid var(--px-line);align-items:baseline">'
+    + '<b style="font-size:13px;color:var(--px-ink-soft);white-space:nowrap">' + esc(r[0]) + '</b>'
+    + '<span style="font-size:12.5px;color:var(--px-muted);line-height:1.55">' + esc(r[1]) + '</span></div>').join('');
+
+  return '<div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--px-line)">'
+    + '<h4 style="display:flex;align-items:center;gap:7px;font-family:\'Poppins\',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:13px;margin:0 0 8px;color:var(--px-ink-soft)">'
+    // Ícono en gris: el verde y el rojo son de datos financieros, no de adornos de UI.
+    + '<span class="material-symbols-outlined" style="font-size:16px;color:var(--px-muted)">auto_awesome</span>Lectura general' + sello + '</h4>'
+    + parrafos + filas + '</div>';
+}
 // Recalcula la vista para la temporalidad activa y repinta el canvas.
 //
 // Trampa 2: si el apartado se monta dentro de un contenedor todavía sin ancho —pestaña que
@@ -28314,7 +28817,7 @@ function _pvtRedibujar(tk, canvas, intento){
   if (!st || !canvas || !canvas.isConnected) return;
   if (!intento) clearTimeout(canvas._pvtRetry);   // repintado nuevo → cancela la escalera vieja
   const vista = _pvtPrepararVista(st.bars, st.ind, st.periodo);
-  if (_pvtDibujar(canvas, vista.velas, vista.sma50, vista.sma200)) return;
+  if (_pvtDibujar(canvas, vista.velas, vista.sma50, vista.sma200, st.extra)) return;
   const n = intento || 0;
   if (n < 40) canvas._pvtRetry = setTimeout(() => _pvtRedibujar(tk, canvas, n + 1), n < 5 ? 50 : 200);
 }
