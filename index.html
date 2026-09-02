@@ -5403,7 +5403,12 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-cat .cimp.lo{background:#eef0f3;color:var(--px-muted)}
       /* Análisis técnico — el canvas es lo único que necesita reglas propias: alto fijo,
          ancho fluido y bloqueo del gesto de scroll horizontal en el WebView de iOS. */
-      .pvx .px-tec-canvas{display:block;width:100%;height:214px;touch-action:pan-y}
+      .pvx .px-tec-canvas{display:block;width:100%;height:300px;touch-action:pan-y}
+      .pvx .pvt-ohlc{font-size:11.5px;color:var(--px-muted);margin:0 0 10px;
+        font-variant-numeric:tabular-nums;line-height:1.5}
+      .pvx .pvt-ohlc b{color:var(--px-ink-soft);font-weight:700}
+      .pvx .pvt-ohlc .pos{color:var(--px-green-text);font-weight:700}
+      .pvx .pvt-ohlc .neg{color:var(--px-red);font-weight:700}
       .pvx .px-disclaimer{font-size:11px;color:var(--px-muted);text-align:center;padding:6px 0 18px;line-height:1.6}
       @media(max-width:760px){
         .pvx .px-hgrid,.pvx .px-pr,.pvx .px-eqr-notes{grid-template-columns:1fr}
@@ -27613,15 +27618,16 @@ function _moatFactorBreakdown(info, moatObj, moatBullets){
 // diarias para que nunca se dibuje una mancha: a 6M y 1A por semana, a 5A por mes. Comprimir
 // las diarias en vez de agregarlas es justo lo que produce el borrón ilegible en teléfono.
 const _PVT_PERIODOS = {
-  '3M': { lbl: '3M', dias: 92,   agg: 'd' },
-  '6M': { lbl: '6M', dias: 183,  agg: 'w' },
-  '1A': { lbl: '1A', dias: 365,  agg: 'w' },
-  '5A': { lbl: '5A', dias: 1826, agg: 'm' },
+  '1M':   { lbl: '1M',   dias: 31,   agg: 'd' },
+  '3M':   { lbl: '3M',   dias: 92,   agg: 'd' },
+  '6M':   { lbl: '6M',   dias: 183,  agg: 'd' },
+  '1A':   { lbl: '1A',   dias: 365,  agg: 'd' },
+  'Todo': { lbl: 'Todo', dias: 1826, agg: 'w' },
 };
 const _PVT_WARMUP = 300;          // días extra de calentamiento para que la SMA 200 tenga dato
                                   // desde la PRIMERA vela visible, no desde la número 200.
 const _pvtCache = {};             // ticker → { bars, ts } — barras diarias crudas (5 años + warmup)
-const _PVT_TTL  = 6 * 3600 * 1000;
+const _PVT_TTL  = 90 * 60 * 1000;
 
 // Barras diarias con OHLCV COMPLETO. _alpacaBars() se queda solo con los cierres, que basta
 // para una línea pero no para una vela, así que aquí se pide la misma serie y se conserva
@@ -27635,7 +27641,8 @@ async function _pvtFetchDiarias(ticker, timeoutMs = 12000){
   if (typeof _alpacaFetch !== 'function') return null;
 
   const D = 86400000;
-  const start = new Date(Date.now() - (_PVT_PERIODOS['5A'].dias + _PVT_WARMUP) * D)
+  const maxDias = Math.max.apply(null, Object.keys(_PVT_PERIODOS).map(k => _PVT_PERIODOS[k].dias));
+  const start = new Date(Date.now() - (maxDias + _PVT_WARMUP) * D)
                   .toISOString().slice(0, 10);
   const qs = `symbols=${encodeURIComponent(sym)}&timeframe=1Day&start=${start}`
            + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
@@ -27655,6 +27662,40 @@ async function _pvtFetchDiarias(ticker, timeoutMs = 12000){
   if (bars.length < 2) return null;
   _pvtCache[sym] = { bars, ts: Date.now() };
   return bars;
+}
+
+// Concilia las barras con el precio VIVO antes de calcular nada.
+//
+// Las barras diarias se cachean y, con el mercado abierto, la última todavía se está formando:
+// Alpaca la publica con retraso. El precio de la cabecera viene de /quote y sí es de este
+// minuto. Sin conciliar, la misma pantalla enseña dos precios distintos —uno en el encabezado y
+// otro en el gráfico— y, peor, el análisis entero (distancia al nivel, posición, firma) se
+// calcula sobre el viejo. Aquí se ajusta la última vela al precio real, o se abre una nueva si
+// el feed aún no publicó la sesión de hoy, y todo lo que viene después sale del precio de verdad.
+function _pvtConPrecioVivo(bars, ticker){
+  if (!bars || !bars.length) return bars;
+  let px = null;
+  try {
+    const tk = (ticker || '').toUpperCase();
+    if (typeof _currentResearchTicker === 'string'
+        && (_currentResearchTicker || '').toUpperCase() === tk
+        && typeof _researchCurPrice === 'number' && _researchCurPrice > 0) px = _researchCurPrice;
+  } catch(e){}
+  if (!(px > 0)) return bars;                       // sin precio vivo se deja el feed tal cual
+
+  const out = bars.slice();
+  const ult = Object.assign({}, out[out.length - 1]);
+  if (Date.now() - ult.t > 30 * 3600 * 1000){
+    // El feed no publicó todavía la sesión de hoy: se abre una vela EN CURSO con el precio vivo.
+    out.push({ t: Date.now(), o: px, h: px, l: px, c: px, v: 0, vivo: true });
+  } else {
+    ult.c = px;
+    if (px > ult.h) ult.h = px;
+    if (px < ult.l) ult.l = px;
+    ult.vivo = true;
+    out[out.length - 1] = ult;
+  }
+  return out;
 }
 
 // ── Matemática de indicadores ─────────────────────────────────────────────────────
@@ -27803,7 +27844,7 @@ function _pvtAgregar(bars, modo){
 // día de cada vela agregada, para que la línea siga siendo la media de 50 y 200 DÍAS aunque el
 // gráfico esté en semanal o mensual.
 function _pvtPrepararVista(bars, ind, periodo){
-  const cfg = _PVT_PERIODOS[periodo] || _PVT_PERIODOS['3M'];
+  const cfg = _PVT_PERIODOS[periodo] || _PVT_PERIODOS['6M'] || _PVT_PERIODOS[Object.keys(_PVT_PERIODOS)[0]];
   const desde = Date.now() - cfg.dias * 86400000;
   const idx = bars.map((b, i) => ({ ...b, i })).filter(b => b.t >= desde);
   const vis = idx.length >= 2 ? idx : bars.map((b, i) => ({ ...b, i })).slice(-2);
@@ -27815,10 +27856,6 @@ function _pvtPrepararVista(bars, ind, periodo){
   };
 }
 
-// ── Dibujo del gráfico ────────────────────────────────────────────────────────────
-// Canvas 2D puro, sin librería ni adaptador de fechas: dos dependencias menos en un setup
-// sin bundler. Los colores NO se escriben aquí — se leen de las variables que ya define .pvx,
-// así que el gráfico sigue al tema de la app sin duplicar un solo hex.
 // ── Capa determinista: niveles con historia, perfil de volumen y firma ────────────
 // Todo lo de aquí abajo se calcula en el cliente sobre las MISMAS barras que ya se trajeron
 // para el gráfico: no añade ni una llamada de red. Es la entrada del prompt de la narrativa,
@@ -28202,7 +28239,7 @@ async function _pvtNarrativaIA(ticker, facts){
   if (!firma) return null;
   let eKey = 'na';
   try { if (typeof _analysisEarningsKey === 'function') eKey = _analysisEarningsKey(tk) || 'na'; } catch(e){}
-  const key = 'tec:v1:' + tk;
+  const key = 'tec:v2:' + tk;
   if (_pvtNarrFallida.has(key)) return null;
 
   let previa = null;
@@ -28239,11 +28276,37 @@ async function _pvtNarrativaIA(ticker, facts){
   } catch(e){ return null; }
 }
 
+// Lectura de una sesión: apertura, máximo, mínimo, cierre y variación. Es lo que se busca al
+// mirar una vela concreta, y escrito ahorra tener que deducirlo del dibujo.
+function _pvtLineaOHLC(b){
+  if (!b) return '';
+  const dif = b.c - b.o, pct = b.o ? (dif / b.o) * 100 : 0;
+  const cls = dif >= 0 ? 'pos' : 'neg', sig = dif >= 0 ? '+' : '−';
+  const fecha = new Date(b.t).toLocaleDateString('es-MX', { day:'numeric', month:'short', year:'numeric' }).replace('.', '');
+  return `${fecha} · A <b>${_pvtFmt(b.o, 2)}</b> M <b>${_pvtFmt(b.h, 2)}</b> m <b>${_pvtFmt(b.l, 2)}</b> C <b>${_pvtFmt(b.c, 2)}</b>`
+       + ` <span class="${cls}">${sig}${_pvtFmt(Math.abs(dif), 2)} (${sig}${_pvtFmt(Math.abs(pct), 2)}%)</span>`;
+}
+
+const _PVT_H = 300;
+function _pvtFmt(v, d){
+  if (v == null || !isFinite(v)) return '—';
+  const n = (d == null) ? (Math.abs(v) >= 100 ? 0 : 2) : d;
+  return v.toLocaleString('es-MX', { minimumFractionDigits:n, maximumFractionDigits:n });
+}
+// Escalones "redondos" para el eje: 1, 2, 2.5 y 5 por década. Un eje con 587,3 y 612,9 no se
+// lee; uno con 575, 600 y 625 sí.
+function _pvtPasoEje(rango, marcas){
+  const bruto = rango / Math.max(1, marcas);
+  const mag = Math.pow(10, Math.floor(Math.log10(bruto)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (mag*m >= bruto) return mag*m;
+  return mag*10;
+}
+
 function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   const W = canvas.offsetWidth | 0;
   if (!W || !velas || velas.length < 2) return false;   // Trampa 2: contenedor todavía sin ancho
 
-  const H = 214, dpr = window.devicePixelRatio || 1;
+  const H = _PVT_H, dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   const ctx = canvas.getContext('2d');
   if (!ctx) return false;
@@ -28256,121 +28319,151 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   const BAJA  = tok('--px-red',        '#c1443e');
   const LINEA = tok('--px-line',       '#e9ebef');
   const MUTED = tok('--px-muted',      '#7b8494');
-  const INK_SOFT = tok('--px-ink-soft','#3a4658');
-  const TRACK = tok('--px-track',      '#e6eaf0');
+  const NAVY  = tok('--px-navy',       '#0b1c30');
+  const AZUL  = tok('--px-blue',       '#2f6bff');
 
-  const EJE = 40, TOPE = 6, ALTO_P = 158, HUECO = 12, ALTO_V = 34;
-  const x0 = 0, ancho = W - EJE;
-  const pTop = TOPE, pBot = TOPE + ALTO_P;
-  const vTop = pBot + HUECO, vBot = vTop + ALTO_V;
-  if (ancho < 40) return false;
+  const EJE = 54, ancho0 = W - EJE, x0 = 0;
+  const pTop = 12, ALTO_P = 184, pBot = pTop + ALTO_P;
+  const vTop = pBot + 30, ALTO_V = 42, vBot = vTop + ALTO_V;
+  const yFechas = vBot + 20;
+  if (ancho0 < 60) return false;
+  const ancho = ancho0;
 
-  // Escala de precio: extremos de las mechas MÁS los valores de ambas medias, para que una SMA
-  // no se salga del cuadro. 6% de aire arriba y abajo.
+  const _ex = extra || {};
+  const ult = velas[velas.length - 1];
+
+  // Escala de precio: mechas, la media larga y —si existe— la franja del nivel, para que ni la
+  // línea ni la banda se salgan del cuadro.
   let min = Infinity, max = -Infinity;
   for (const v of velas){ if (v.l < min) min = v.l; if (v.h > max) max = v.h; }
-  for (const s of [sma50, sma200]) for (const v of s){
-    if (v == null) continue;
-    if (v < min) min = v; if (v > max) max = v;
+  for (const v of sma200){ if (v == null) continue; if (v < min) min = v; if (v > max) max = v; }
+  if (_ex.nivel){
+    if (_ex.nivel.bordeInf < min) min = _ex.nivel.bordeInf;
+    if (_ex.nivel.bordeSup > max) max = _ex.nivel.bordeSup;
   }
   if (!isFinite(min) || !isFinite(max)) return false;
   if (max === min){ max = min * 1.01 || 1; min = min * 0.99; }
-  const aire = (max - min) * 0.06; min -= aire; max += aire;
+  const aire = (max - min) * 0.07; min -= aire; max += aire;
   const yP = p => pBot - ((p - min) / (max - min)) * ALTO_P;
 
   let vmax = 0; for (const v of velas) if (v.v > vmax) vmax = v.v;
   const yV = v => vmax > 0 ? vBot - (v / vmax) * ALTO_V : vBot;
 
   const n = velas.length, paso = ancho / n;
-  const cuerpo = Math.max(1, Math.min(6, Math.floor(paso * 0.68)));
+  const cuerpo = Math.max(1, Math.min(7, Math.floor(paso * 0.66)));
   const cx = i => x0 + paso * i + paso / 2;
 
-  // Grilla horizontal + eje de precio a la derecha. Tres marcas: techo, medio, piso.
   ctx.font = '10px Manrope, system-ui, sans-serif';
-  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  const dec = max < 10 ? 2 : max < 1000 ? 1 : 0;
-  for (let i = 0; i <= 2; i++){
-    const p = max - (max - min) * (i / 2), y = Math.round(yP(p)) + 0.5;
+  ctx.textBaseline = 'middle';
+
+  // Grilla y eje de precio a la DERECHA, en valores redondos.
+  const pasoEje = _pvtPasoEje(max - min, 5);
+  ctx.textAlign = 'left';
+  for (let p = Math.ceil(min/pasoEje)*pasoEje; p <= max; p += pasoEje){
+    const y = Math.round(yP(p)) + 0.5;
     ctx.strokeStyle = LINEA; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + ancho, y); ctx.stroke();
     ctx.fillStyle = MUTED;
-    ctx.fillText(p.toFixed(dec), x0 + ancho + 6, y);
+    ctx.fillText(_pvtFmt(p, pasoEje < 1 ? 2 : 0), x0 + ancho + 8, y);
   }
 
-  // Banda del nivel dominante y perfil de volumen. Los dos en gris NEUTRO a propósito: son
-  // ESTRUCTURA, no dirección. El verde y el rojo están reservados al dato financiero —velas y
-  // variación de precio— y no se gastan en marcar una zona.
-  const _ex = extra || {};
+  // Franja del nivel: azul, que es estructura y no dirección. El verde y el rojo se reservan al
+  // dato financiero — una franja de precio no dice si algo va bien.
   if (_ex.nivel && isFinite(_ex.nivel.bordeInf) && isFinite(_ex.nivel.bordeSup)){
     const ya = yP(_ex.nivel.bordeSup), yb = yP(_ex.nivel.bordeInf);
+    const top = Math.min(ya, yb), alto = Math.max(3, Math.abs(yb - ya));
     ctx.save();
-    ctx.globalAlpha = 0.13; ctx.fillStyle = INK_SOFT;
-    ctx.fillRect(x0, Math.min(ya, yb), ancho, Math.max(2, Math.abs(yb - ya)));
+    ctx.globalAlpha = 0.16; ctx.fillStyle = AZUL;
+    ctx.fillRect(x0, top, ancho, alto);
     ctx.restore();
-    ctx.strokeStyle = MUTED; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
-    const yc = Math.round(yP(_ex.nivel.centro)) + 0.5;
-    ctx.beginPath(); ctx.moveTo(x0, yc); ctx.lineTo(x0 + ancho, yc); ctx.stroke();
-    ctx.setLineDash([]);
-  }
-  // Perfil de volumen: histograma horizontal pegado al eje, cada banda tan ancha como volumen
-  // se negoció en ella. Alfa baja y por debajo de las velas: informa sin competir con el
-  // precio, que es lo que se viene a leer. Las bandas fuera de la ventana visible se saltan.
-  if (_ex.perfil && _ex.perfil.disponible && _ex.perfil.bandas && _ex.perfil.bandas.length){
-    let vmaxB = 0;
-    for (const b of _ex.perfil.bandas) if (b.vol > vmaxB) vmaxB = b.vol;
-    if (vmaxB > 0){
-      const anchoMax = ancho * 0.16;
-      ctx.save(); ctx.globalAlpha = 0.22; ctx.fillStyle = INK_SOFT;
-      for (const b of _ex.perfil.bandas){
-        const ys = yP(b.sup), yi = yP(b.inf);
-        const top = Math.min(ys, yi), alto = Math.max(1, Math.abs(yi - ys) - 1);
-        if (top + alto < pTop || top > pBot) continue;
-        const w = (b.vol / vmaxB) * anchoMax;
-        if (w > 0.5) ctx.fillRect(x0, top, w, alto);
-      }
-      ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = 0.55; ctx.strokeStyle = AZUL; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(x0, Math.round(top)+0.5); ctx.lineTo(x0+ancho, Math.round(top)+0.5);
+    ctx.moveTo(x0, Math.round(top+alto)+0.5); ctx.lineTo(x0+ancho, Math.round(top+alto)+0.5);
+    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
+    if (alto >= 13){
+      ctx.fillStyle = AZUL; ctx.textAlign = 'left';
+      ctx.font = '600 10px Manrope, system-ui, sans-serif';
+      ctx.fillText(_pvtFmt(_ex.nivel.bordeInf, 0) + ' – ' + _pvtFmt(_ex.nivel.bordeSup, 0), x0 + 6, top + alto/2);
+      ctx.font = '10px Manrope, system-ui, sans-serif';
     }
   }
 
-  // Volumen primero, en gris neutro: colorearlo duplicaría la señal cromática de las velas.
-  ctx.fillStyle = TRACK;
+  // Volumen: una barra por sesión, del color de SU vela. El gris neutro no distinguía una
+  // sesión de compra de una de venta, que es justo lo que el volumen aporta.
+  ctx.save(); ctx.globalAlpha = 0.55;
   for (let i = 0; i < n; i++){
-    const y = yV(velas[i].v), alto = Math.max(1, vBot - y);
-    ctx.fillRect(cx(i) - cuerpo / 2, vBot - alto, cuerpo, alto);
+    const v = velas[i];
+    ctx.fillStyle = (v.c >= v.o) ? SUBE : BAJA;
+    const y = yV(v.v), alto = Math.max(1, vBot - y);
+    ctx.fillRect(cx(i) - cuerpo/2, vBot - alto, cuerpo, alto);
   }
+  ctx.restore();
+  ctx.fillStyle = MUTED; ctx.textAlign = 'left';
+  ctx.fillText('Vol.', x0 + 2, vTop - 4);
 
   // Velas. Cada una codifica cierre contra apertura → es dato financiero y lleva el verde/rojo
-  // de la app. Mecha de máximo a mínimo, cuerpo de apertura a cierre con piso de 1.2px para que
+  // de la app. Mecha de máximo a mínimo, cuerpo de apertura a cierre con piso de 1,2 px para que
   // un doji no desaparezca.
   for (let i = 0; i < n; i++){
-    const v = velas[i], sube = v.c >= v.o, col = sube ? SUBE : BAJA;
+    const v = velas[i], col = (v.c >= v.o) ? SUBE : BAJA;
     const x = Math.round(cx(i)) + 0.5;
     ctx.strokeStyle = col; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x, yP(v.h)); ctx.lineTo(x, yP(v.l)); ctx.stroke();
     const yA = yP(v.o), yC = yP(v.c);
-    const arriba = Math.min(yA, yC), alto = Math.max(1.2, Math.abs(yC - yA));
     ctx.fillStyle = col;
-    ctx.fillRect(cx(i) - cuerpo / 2, arriba, cuerpo, alto);
+    ctx.fillRect(cx(i) - cuerpo/2, Math.min(yA, yC), cuerpo, Math.max(1.2, Math.abs(yC - yA)));
   }
 
-  // Medias: gris, nunca verde ni rojo — colorearlas competiría con las velas. La de 50 sólida y
-  // más oscura, la de 200 punteada y más clara. Se usan los dos grises de TEXTO de la app, no
-  // --px-line: ese es un color de borde y como línea de datos resulta ilegible sobre blanco.
-  const traza = (serie, color, guion) => {
-    ctx.strokeStyle = color; ctx.lineWidth = 1.4;
-    ctx.setLineDash(guion ? [3, 3] : []);
-    ctx.beginPath();
-    let abierto = false;
-    for (let i = 0; i < n; i++){
-      const val = serie[i];
-      if (val == null){ abierto = false; continue; }
-      const x = cx(i), y = yP(val);
-      if (abierto) ctx.lineTo(x, y); else { ctx.moveTo(x, y); abierto = true; }
-    }
-    ctx.stroke(); ctx.setLineDash([]);
-  };
-  traza(sma50,  INK_SOFT, false);
-  traza(sma200, MUTED,    true);
+  // MM200: una sola línea, sólida y oscura. Nunca verde ni roja — competiría con las velas.
+  ctx.strokeStyle = NAVY; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  let abierto = false, xUlt = null, yUlt = null;
+  for (let i = 0; i < n; i++){
+    const val = sma200[i];
+    if (val == null){ abierto = false; continue; }
+    const x = cx(i), y = yP(val);
+    if (abierto) ctx.lineTo(x, y); else { ctx.moveTo(x, y); abierto = true; }
+    xUlt = x; yUlt = y;
+  }
+  ctx.stroke();
+  if (xUlt != null && yUlt > pTop + 16){
+    ctx.fillStyle = NAVY; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
+    ctx.font = '600 10px Manrope, system-ui, sans-serif';
+    ctx.fillText('MM200', x0 + ancho - 4, yUlt - 7);
+    ctx.font = '10px Manrope, system-ui, sans-serif'; ctx.textBaseline = 'middle';
+  }
+
+  // Precio de hoy: línea punteada y etiqueta en el eje, del color del día. Es dato financiero,
+  // así que aquí el verde y el rojo sí corresponden.
+  const colHoy = (ult.c >= ult.o) ? SUBE : BAJA;
+  const yHoy = Math.round(yP(ult.c)) + 0.5;
+  ctx.save();
+  ctx.globalAlpha = 0.6; ctx.strokeStyle = colHoy; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+  ctx.beginPath(); ctx.moveTo(x0, yHoy); ctx.lineTo(x0 + ancho, yHoy); ctx.stroke();
+  ctx.setLineDash([]); ctx.restore();
+  const txtHoy = _pvtFmt(ult.c, 2), anchoTag = Math.min(EJE - 4, ctx.measureText(txtHoy).width + 14);
+  const yTag = Math.max(pTop + 8, Math.min(pBot - 8, yP(ult.c)));
+  ctx.fillStyle = colHoy;
+  if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(x0 + ancho + 3, yTag - 8, anchoTag, 16, 4); ctx.fill(); }
+  else ctx.fillRect(x0 + ancho + 3, yTag - 8, anchoTag, 16);
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.font = '600 10px Manrope, system-ui, sans-serif';
+  ctx.fillText(txtHoy, x0 + ancho + 3 + anchoTag/2, yTag);
+  ctx.font = '10px Manrope, system-ui, sans-serif';
+
+  // Eje de fechas. La densidad se calcula por ancho disponible, no fija: en un iPhone caben
+  // cuatro y en escritorio ocho, y forzar el mismo número deja las etiquetas superpuestas.
+  const cabe = Math.max(3, Math.min(7, Math.floor(ancho / 64)));
+  ctx.fillStyle = MUTED; ctx.textAlign = 'center';
+  const vistas = new Set();
+  for (let k = 0; k < cabe; k++){
+    const frac = cabe === 1 ? 0.5 : (0.07 + (0.86 * k) / (cabe - 1));
+    const i = Math.min(n - 1, Math.max(0, Math.round(frac * (n - 1))));
+    if (vistas.has(i)) continue;
+    vistas.add(i);
+    ctx.fillText(_pvtFechaCorta(velas[i].t), cx(i), yFechas);
+  }
   return true;
 }
 
@@ -28667,9 +28760,10 @@ async function _pvtFillInto(host, ticker, biz){
   host.dataset.tk = tk;
   host.innerHTML = `<p class="px-empty">Cargando el comportamiento del precio…</p>`;
 
-  const bars = await _pvtFetchDiarias(tk).catch(() => null);
+  const crudas = await _pvtFetchDiarias(tk).catch(() => null);
   if (host.dataset.tk !== tk) return;                      // el usuario ya cambió de acción
-  if (!bars || bars.length < 30){
+  const bars = _pvtConPrecioVivo(crudas, tk);
+  if (!crudas || !bars || bars.length < 30){
     host.innerHTML = `<p class="px-empty">Aún no tenemos análisis técnico de este ticker.</p>`;
     return;
   }
@@ -28679,18 +28773,20 @@ async function _pvtFillInto(host, ticker, biz){
   // recalcula en cada apertura, así que ningún número de la pantalla puede quedarse viejo.
   const vp    = _pvtVolProfile(bars);
   const facts = _pvtFacts(tk, bars, ind, vp);
-  _pvtEstado[tk] = { bars, ind, periodo: '3M', host,
-                     extra: { nivel: facts ? facts.nivelDominante : null, perfil: vp } };
+  const zona  = _pvtZonaEntrada(bars, ind, biz);
+  _pvtEstado[tk] = { bars, ind, periodo: '6M', host,
+                     extra: { nivel: zona ? { bordeInf: zona.lo, bordeSup: zona.hi,
+                                              centro: (zona.lo + zona.hi) / 2 } : null } };
 
   // La zona de entrada vive en su propia tarjeta, ENCIMA de la técnica, y se pinta con las
   // mismas barras: una sola llamada a Alpaca alimenta las dos.
   try {
     const ez = document.getElementById('pvx-ent-host');
-    if (ez && ez.dataset.tk === tk) ez.innerHTML = _pvtZonaCard(tk, _pvtZonaEntrada(bars, ind, biz), biz);
+    if (ez && ez.dataset.tk === tk) ez.innerHTML = _pvtZonaCard(tk, zona, biz);
   } catch(e){}
 
   const chips = Object.keys(_PVT_PERIODOS).map(k =>
-    `<button type="button" class="period-btn${k === '3M' ? ' active' : ''}" data-pvt="${k}">${_PVT_PERIODOS[k].lbl}</button>`).join('');
+    `<button type="button" class="period-btn${k === '6M' ? ' active' : ''}" data-pvt="${k}">${_PVT_PERIODOS[k].lbl}</button>`).join('');
 
   const n1 = (v, d = 1) => (v == null || !isFinite(v)) ? '—' : v.toFixed(d);
   const pct = v => (v == null || !isFinite(v)) ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
@@ -28702,13 +28798,9 @@ async function _pvtFillInto(host, ticker, biz){
   // (otra superficie que reutilice esta función) todo cae junto en el de siempre.
   const cvHost = document.getElementById('pvx-cv-host') || host;
   cvHost.innerHTML = `
+    <div class="pvt-ohlc" id="pvt-ohlc-${pvEsc(tk)}">${_pvtLineaOHLC(bars[bars.length - 1])}</div>
     <canvas class="px-tec-canvas" id="pvt-cv-${pvEsc(tk)}"></canvas>
-    <div class="period-btns" id="pvt-chips" style="margin-top:10px;grid-template-columns:repeat(4,1fr) !important">${chips}</div>
-    <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;font-size:11.5px;color:var(--px-muted)">
-      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:2px;background:var(--px-ink-soft);display:block"></span>SMA 50</span>
-      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:0;border-top:2px dashed var(--px-muted);display:block"></span>SMA 200</span>
-      <span style="display:inline-flex;align-items:center;gap:6px"><span style="width:8px;height:8px;background:var(--px-track);display:block;border-radius:2px"></span>Volumen</span>
-    </div>`;
+    <div class="period-btns" id="pvt-chips" style="margin-top:10px;grid-template-columns:repeat(5,1fr) !important">${chips}</div>`;
   host.innerHTML = `${veredicto}
     ${lectura}
     <div style="margin-top:18px">
