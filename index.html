@@ -38624,6 +38624,23 @@ document.addEventListener('DOMContentLoaded', function(){
     return false;
   }
   window._pvOpenExternalRaw = _pvOpenExternalRaw;
+  // Salida ÚNICA del paywall sin compra. La comparten los DOS caminos que existen:
+  // la X del overlay web y la cancelación de la hoja nativa de RevenueCat. Antes cada
+  // uno terminaba en un sitio distinto y ninguno entraba a la app — el web volvía a la
+  // tarjeta del perfil con el scroll bloqueado y el nativo, literalmente, no hacía nada.
+  // Con una sola función los dos acaban dentro, y el que se añada mañana también.
+  function _pvEnterFreeApp(){
+    window._pvPaywallFromQuiz = false;
+    try { var o = document.getElementById('portivPaywall'); if (o) o.classList.remove('open'); } catch(e){}
+    // El cuestionario vive por DEBAJO del muro: si no se cierra, su tarjeta queda
+    // pintada encima de la app y el usuario sigue sin ver nada suyo.
+    try { var q = document.getElementById('pqOverlay'); if (q) q.classList.remove('open'); } catch(e){}
+    try { document.body.style.overflow = ''; } catch(e){}
+    try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+    try { if (typeof window._pvResumeSubGate === 'function') window._pvResumeSubGate(); } catch(e){}
+  }
+  window._pvEnterFreeApp = _pvEnterFreeApp;
+
   window._pvShowPaywall = function(){
     // Quien YA tiene acceso no ve paywall. Sin esto, terminar el quiz o tocar
     // "Conectar mi broker" le abría la hoja de compra a un suscriptor activo, al
@@ -38660,9 +38677,12 @@ document.addEventListener('DOMContentLoaded', function(){
             try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
             setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 700);
           }
-          // Cancelado / no presentado → no se toca nada. Si el muro venía del
-          // cuestionario, la tarjeta del perfil sigue debajo y es justo donde tiene que
-          // quedarse el usuario: con su CTA y con la entrada manual a mano.
+          // Cancelado / no presentado. Esta es la MITAD iOS del mismo callejón: la hoja
+          // de RevenueCat no pasa por _pvClosePaywall, así que aquí no llegaba ninguna
+          // salida y el usuario se quedaba con el cuestionario abierto debajo y la
+          // entrada manual tapada. Si el muro venía del cuestionario, se entra al plan
+          // gratuito igual que por la X del overlay web.
+          else if (window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} }
         }).catch(function(){});
       } catch(e){}
     }
@@ -38694,15 +38714,20 @@ document.addEventListener('DOMContentLoaded', function(){
   window._pvClosePaywall = function(){
     var o = document.getElementById('portivPaywall');
     if(o) o.classList.remove('open');
-    // Muro abierto al terminar el cuestionario: cerrarlo con la X devuelve a la tarjeta
-    // del perfil, NO al interior de la app. Ahí están el CTA (que vuelve a abrir el muro)
-    // y la entrada manual; entrar a la app sin portafolio ni suscripción no es una salida,
-    // es un callejón. Por eso tampoco se reanuda aquí el muro de suscripción: sigue
-    // diferido mientras el cuestionario está abierto, y _closeQuiz lo retoma al salir.
-    if (window._pvPaywallFromQuiz) {
-      try { document.body.style.overflow = 'hidden'; } catch(e){}   // el quiz sigue abierto
-      return;
-    }
+    // Muro abierto al terminar el cuestionario: cerrarlo entra al plan GRATUITO.
+    //
+    // Antes esta rama devolvía a la tarjeta del perfil con overflow:'hidden' y sin
+    // ninguna salida: el cuestionario seguía abierto por debajo y la única puerta —
+    // "Ingresar posiciones manualmente" — tardaba 3 s en aparecer Y quedaba TAPADA por
+    // el propio muro. Resultado para una cuenta recién creada: el primer inicio de
+    // sesión terminaba en una pantalla de suscripción de la que no se sale, que se lee
+    // como "necesito pagar para entrar". El plan gratuito (portafolio manual +
+    // Diagnóstico rápido) era inalcanzable justo para quien acababa de registrarse.
+    //
+    // Cerrar el muro NO regala nada: las features de pago las siguen tapando .pv-lock
+    // y _pvAiEntitled, y el servidor sigue respondiendo 403 sin entitlement. Lo único
+    // que cambia es que la app deja de ser inaccesible.
+    if (window._pvPaywallFromQuiz) { _pvEnterFreeApp(); return; }
     // El quiz de perfil vive DEBAJO del paywall (z-index 12000 los dos). Al cerrar el
     // paywall se hacía showTab('portfolio') pero el quiz seguía tapando la pantalla:
     // el usuario se quedaba mirando la tarjeta del perfil sin salida. Mismo motivo que
