@@ -28617,7 +28617,7 @@ function _pvtZonaEntrada(bars, ind, biz){
     // punto de referencia que da el gráfico: se entrega con el aviso, no se esconde.
     const floja = g0.w < 1.6;
 
-    let half = Math.max(px*0.008, Math.min(atr*0.60, px*0.030));
+    let half = Math.max(px*0.012, Math.min(atr*0.72, px*0.035));
     let lo = g0.c - half, hi = g0.c + half;
     let niv = g0.m.slice().sort((x, y) => y.v - x.v).map(x => ({ n:x.n, v:x.v }));
 
@@ -28652,9 +28652,12 @@ function _pvtZonaEntrada(bars, ind, biz){
 
     // Redondeo a un número que un humano diría en voz alta.
     const paso = px >= 500 ? 5 : px >= 100 ? 1 : px >= 20 ? 0.5 : 0.1;
-    lo = Math.floor(lo/paso)*paso;
-    hi = Math.ceil(hi/paso)*paso;
-    if (hi <= lo) hi = lo + paso;
+    // Al MÁS CERCANO, no hacia fuera por los dos lados: redondear hacia abajo el piso y hacia
+    // arriba el techo sumaba hasta dos pasos de anchura y convertía un rango de 30 en uno de 40.
+    // Y toFixed antes de devolverlo, o la coma flotante deja un 7.1000000000000005 en el dato.
+    lo = +(Math.round(lo/paso)*paso).toFixed(2);
+    hi = +(Math.round(hi/paso)*paso).toFixed(2);
+    if (hi <= lo) hi = +(lo + paso).toFixed(2);
 
     // Invalidación: el nivel por debajo del cual la zona deja de tener sentido. Por defecto
     return {
@@ -28710,8 +28713,8 @@ function _pvtVeredictoTec(ind){
 // ── Tarjetas ──────────────────────────────────────────────────────────────────────
 function _pvtZonaCard(tk, z, biz){
   const esc = pvEsc;
-  const head = `<h2 class="px-sec-title"><span class="t">Dónde ha frenado el precio</span></h2>`;
-  const pie  = `<div class="px-hint">El rango sale de dónde el precio ya ha frenado antes —mínimos previos, medias móviles y retrocesos del tramo del año— y se contrasta con el valor razonable del negocio. Precios ajustados por split, no por dividendo. Esto describe lo que el gráfico muestra: no es una recomendación de inversión ni asesoría financiera.</div>`;
+  const head = `<h2 class="px-sec-title"><span class="t">Rango de compra</span></h2>`;
+  const pie  = `<div class="px-hint">El rango sale de dónde el precio ya ha frenado antes —mínimos previos, medias móviles y retrocesos del tramo del año— y se contrasta con el valor razonable del negocio. Precios ajustados por split, no por dividendo. <b>Esto no es una recomendación de compra ni asesoría financiera:</b> es dónde el precio ha frenado antes y qué dice la valoración. La decisión y el tamaño de la posición son tuyos.</div>`;
   const $ = v => `$${v >= 100 ? v.toFixed(0) : v.toFixed(2)}`;
   if (!z) return `<div class="px-card">${head}<p class="px-empty">No hay suficiente historial de precio de ${esc(tk)} para calcular un rango.</p></div>`;
   const V = { dentro:{l:'El precio está dentro',  c:'pos'},
@@ -28726,9 +28729,9 @@ function _pvtZonaCard(tk, z, biz){
       ? `hoy cotiza a ${$(z.px)}, un ${Math.abs(z.distPct).toFixed(1)}% por encima`
       : `hoy cotiza a ${$(z.px)}, por debajo de la zona`;
   return `<div class="px-card">${head}
-    <p class="px-intro">La franja de precio en la que ${esc(tk)} ha encontrado compradores antes, contrastada con lo que dicen los números del negocio.</p>
+    <p class="px-intro">El rango sale de dónde ${esc(tk)} ha encontrado compradores antes, contrastado con lo que dicen los números del negocio.</p>
     <div class="px-ez-top">
-      <div><div class="lbl">RANGO DONDE EL PRECIO SE HA FRENADO</div>
+      <div><div class="lbl">RANGO DE COMPRA</div>
         <div class="num">${esc($(z.lo))} – ${esc($(z.hi))}</div>
         <div class="sub">${esc(sub)}</div></div>
       <div class="px-ez-tag ${V.c}">${esc(V.l)}</div>
