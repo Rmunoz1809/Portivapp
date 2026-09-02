@@ -38875,40 +38875,22 @@ document.addEventListener('DOMContentLoaded', function(){
    por qué está bloqueado y se le da el camino para arreglarlo.
 ═══════════════════════════════════════════════════════════════ */
 (function(){
-  // Interruptor del bloqueo VISUAL. En false la app no se tapa nunca (el servidor sigue
-  // devolviendo 403 igual: esto no regala acceso a nada, sólo deja de mostrar el muro).
-  // Ponlo en false si alguna vez hay usuarios reales sin forma de pagar todavía.
+  // ── EL MURO DE SUSCRIPCIÓN YA NO EXISTE ────────────────────────────────
+  // Aquí vivía `ENFORCE`, el interruptor del bloqueo duro, y el `_block()` que
+  // tapaba la app entera con "Necesitas una suscripción activa" y dos únicas
+  // salidas: pagar o cerrar sesión. Se "quitó" poniéndolo en false, pero el
+  // código se quedó — y un interruptor apagado es una bomba con el temporizador
+  // en pausa: cualquier build, rama o caché que no lo tuviera apagado volvía a
+  // encerrar fuera a quien acababa de registrarse. Se borra entero para que no
+  // haya nada que reactivar.
   //
-  // ACTUALIZACIÓN — ahora en FALSE a propósito. El muro "Necesitas una suscripción
-  // activa" tapaba la app entera y era la única pantalla que veía quien no pagaba:
-  // ni siquiera podía cargar posiciones a mano ni ver el Diagnóstico rápido, que son
-  // gratis y de coste cero. El control de lo que SÍ cuesta dinero no vive aquí:
-  //   · html.pv-free / html.pv-pro  → difuminan y ponen candado (.pv-lock) sobre las
-  //     features de pago. Lo escribe _pvApplyProClass, que se llama JUSTO DESPUÉS de
-  //     `_last = st` y por tanto SIGUE corriendo con ENFORCE en false.
-  //   · _pvAiEntitled()             → corta la llamada de IA antes de que salga el
-  //     paquete (análisis del asesor y chat).
-  //   · snapConnect()               → sale al paywall si window._pvIsPro === false.
-  // Ninguno de los tres mira ENFORCE, así que apagar el muro NO regala nada premium:
-  // sólo deja entrar a la app. Volver a ponerlo en true restaura el muro tal cual.
-  var ENFORCE = false;
-
-  // Mismo bypass que la función SQL. Se duplica a propósito: si sólo estuviera en el
-  // servidor, el dueño vería el bloqueo en pantalla aunque las llamadas le funcionaran.
-  // OJO: estos correos viajan en texto plano dentro de un HTML público, así que quedan
-  // expuestos al scraping de spam. Se conservan a propósito: el bypass visual del gate los
-  // necesita en cliente y el servidor valida la propiedad igual, así que publicarlos no
-  // concede ningún privilegio. Documentado para que la exposición sea una decisión y no
-  // un descuido; si algún día molesta el spam, la salida es mover el check a un claim del JWT.
-  var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
-
-  // Estados de Paddle/RevenueCat que SIGUEN dando acceso. 'past_due' entra aquí a
-  // propósito: Paddle reintenta el cobro varios días y cortar al primer rechazo
-  // expulsaría a un cliente que sólo tiene la tarjeta vencida. Se le avisa, no se le echa.
-  var STATUS_OK    = { active:1, trialing:1, grace:1, past_due:1, canceled:1 };
-  // 'canceled' con entitlement_active=true = canceló la renovación pero conserva el
-  // acceso hasta fin de periodo. Cuando expire llegará otro evento con active=false.
-  var STATUS_WARN  = { past_due:1, canceled:1 };
+  // Lo que SÍ cobra sigue intacto, y nunca dependió de este muro:
+  //   · html.pv-free / .pv-pro → difuminan y ponen candado sobre lo de pago.
+  //   · _pvAiEntitled()        → corta la IA antes de que salga el paquete.
+  //   · snapConnect()          → sale al paywall si window._pvIsPro === false.
+  //   · has_active_entitlement() en el servidor → 403 subscription_required.
+  // Sin muro, un usuario sin pagar entra al plan gratuito (portafolio manual +
+  // Diagnóstico rápido) y no ve ni un dato de pago.
 
   var _last = null;      // último estado conocido (evita repintar en cada recheck)
 
@@ -39285,95 +39267,22 @@ document.addEventListener('DOMContentLoaded', function(){
   // Si el gate resuelve mientras el quiz está abierto, el muro lo tapa y el usuario
   // nuevo ve el paywall sin haber contestado una sola pregunta. Se difiere: los
   // argumentos se guardan y se replican en cuanto el quiz se cierra.
-  var _pendingBlock = null;
-  function _quizOpen(){
-    try {
-      var q = document.getElementById('pqOverlay');
-      return !!(q && q.classList.contains('open'));
-    } catch(e){ return false; }
-  }
-  // Se llama desde las salidas del quiz. No repinta el muro guardado a ciegas:
-  // vuelve a preguntar al servidor, porque entre el diferido y ahora el usuario
-  // pudo haber pagado.
+  // Se conserva sólo la reanudación del gate al cerrar el cuestionario: ya no hay
+  // muro que diferir, pero sí un veredicto que refrescar (el usuario pudo pagar).
   window._pvResumeSubGate = function(){
-    if (_quizOpen()) return;                 // sigue abierto → nada que hacer
     if (window._pvGateBusy) return;          // pago en confirmación → manda _pvAwaitEntitlement
-    var had = _pendingBlock;
-    _pendingBlock = null;
-    if (!had) return;
     try { window._pvSubGate(); } catch(e){}
   };
 
-  function _block(title, body, ctaLabel, onCta){
-    // Diferido: sale ANTES de tocar el DOM y ANTES de overflow:'hidden', para no
-    // dejar el body bloqueado sin muro visible.
-    if (_quizOpen()) { _pendingBlock = [title, body, ctaLabel, onCta || null]; return; }
-    var o = document.getElementById('pvSubBlock');
-    if (!o) {
-      o = document.createElement('div');
-      o.id = 'pvSubBlock';
-      o.style.cssText = 'position:fixed;inset:0;z-index:12500;display:none;'
-        + 'align-items:center;justify-content:center;padding:24px;'
-        + 'background:rgba(8,17,31,.94);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);';
-      o.innerHTML = '<div style="max-width:400px;width:100%;background:#fff;border-radius:20px;'
-        + 'padding:30px 26px;text-align:center;box-shadow:0 22px 60px rgba(0,0,0,.35);">'
-        + '<div style="width:56px;height:56px;margin:0 auto 16px;border-radius:50%;background:#fdecec;'
-        + 'display:flex;align-items:center;justify-content:center;">'
-        // Candado en SVG y no en Material Symbols: la ligadura del icon-font no siempre
-        // ha cargado cuando se pinta este overlay y se veía la palabra "LOCK" en crudo.
-        + '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ba1a1a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        + '<rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg></div>'
-        + '<h2 id="pvSubBlockTitle" style="margin:0 0 9px;font-size:20px;font-weight:800;color:#0f1d35;"></h2>'
-        + '<p id="pvSubBlockBody" style="margin:0 0 22px;font-size:14.5px;line-height:1.5;color:#5b6c85;"></p>'
-        + '<button id="pvSubBlockCta" style="width:100%;height:50px;border:none;border-radius:13px;'
-        + 'background:#12d18e;color:#04231a;font-size:15.5px;font-weight:800;cursor:pointer;"></button>'
-        + '<button id="pvSubBlockManual" style="width:100%;height:46px;margin-top:9px;'
-        + 'border:1.5px solid #12d18e;border-radius:13px;background:#fff;color:#0b7a55;'
-        + 'font-size:14.5px;font-weight:700;cursor:pointer;">Agregar mi portafolio manualmente</button>'
-        + '<button id="pvSubBlockOut" style="width:100%;height:44px;margin-top:9px;border:none;'
-        + 'background:none;color:#8a97a8;font-size:13.5px;font-weight:600;cursor:pointer;">Cerrar sesión</button>'
-        + '</div>';
-      document.body.appendChild(o);
-      // Sin esta salida el usuario sin suscripción queda encerrado sin forma de
-      // cambiar de cuenta — y la cuenta correcta puede ser justo la que sí pagó.
-      o.querySelector('#pvSubBlockOut').onclick = function(){
-        try { if (typeof window._authSignout === 'function') { window._authSignout(); return; } } catch(e){}
-        try { window.sbClient.auth.signOut().then(function(){ return window._pvIapLogout(); }).then(function(){ location.reload(); }); } catch(e){ location.reload(); }
-      };
-      // Salida del muro SIN pagar. Antes, quien no compraba quedaba encerrado y la
-      // app no podía enseñar lo que vale gratis (posiciones + Diagnóstico rápido).
-      // Las features de pago siguen protegidas por el candado (.pv-lock) y por
-      // _pvAiEntitled, no por este muro — cerrarlo no desbloquea nada de IA.
-      //
-      // Por qué un botón y no un temporizador: en iOS nativo _pvShowPaywall presenta
-      // la hoja PREHECHA de RevenueCat, a la que no se le puede inyectar nada desde
-      // aquí. Este muro sí es nuestro y es el que queda tras cancelar esa hoja, así
-      // que la salida funciona igual en web y en nativo.
-      o.querySelector('#pvSubBlockManual').onclick = function(){
-        _unblock();
-        try { window._pvManualOnboard(); } catch(e){}
-      };
-      // El handler se resuelve EN CADA CLIC y no al crear el overlay: el muro se
-      // reutiliza, y el de "sin conexión" tiene que reintentar la comprobación,
-      // no abrir un cobro que nadie ha rechazado.
-      o.querySelector('#pvSubBlockCta').onclick = function(){
-        var f = o._pvCta || window._pvRetryPayment;
-        try { f(); } catch(e){}
-      };
-    }
-    o._pvCta = onCta || null;
-    o.querySelector('#pvSubBlockTitle').textContent = title;
-    o.querySelector('#pvSubBlockBody').textContent = body;
-    o.querySelector('#pvSubBlockCta').textContent = ctaLabel;
-    o.style.display = 'flex';
-    document.body.style.overflow = 'hidden';
-  }
   function _unblock(){
-    _pendingBlock = null;   // el veredicto cambió: el muro diferido ya no aplica
     var o = document.getElementById('pvSubBlock');
-    if (o) o.style.display = 'none';
+    if (o && o.parentNode) o.parentNode.removeChild(o);   // se arranca, no se oculta
     document.body.style.overflow = '';
   }
+  // Barrido de arranque: si un muro viejo alcanzó a pintarse, se retira y se
+  // devuelve el scroll. Sin esto, el bug sobrevive en el primer arranque tras
+  // actualizar, que es justo cuando el usuario viene a comprobar que se arregló.
+  try { _unblock(); } catch(e){}
 
   // Reabrir el checkout es la vía de "cambiar tarjeta" que funciona sin endpoint nuevo:
   // Paddle pide método de pago otra vez y el cobro corregido genera transaction.completed,
@@ -39483,10 +39392,11 @@ document.addEventListener('DOMContentLoaded', function(){
         'Reintentar', _retry);
       return null;
     }
-    _bannerHide();
-    if (!ENFORCE) { _unblock(); return null; }
-    _block('Sin conexión a internet',
-      'No pudimos comprobar el estado de tu suscripción porque el dispositivo no tiene conexión. Conéctate a internet y vuelve a intentarlo.',
+    // Sin veredicto que dé acceso y sin red: se avisa, NO se tapa. Antes aquí
+    // salía el muro de "Sin conexión", que dejaba la app inservible por un túnel.
+    _unblock();
+    _banner('warn',
+      'No pudimos comprobar tu suscripción porque no hay conexión. Puedes seguir usando Portiv.',
       'Reintentar', _retry);
     return null;
   }
@@ -39544,37 +39454,12 @@ document.addEventListener('DOMContentLoaded', function(){
       return st;
     }
 
-    // Sin entitlement → bloqueo duro.
+    // Sin entitlement NO se bloquea nada: se entra al plan gratuito. El estado ya
+    // quedó reflejado en <html> por _pvApplyProClass (pv-free), que es lo que pone
+    // el candado sobre las features de pago. El motivo concreto (reembolso, pausa,
+    // cobro rechazado) se cuenta en el banner de arriba cuando toca, no en un muro.
     _bannerHide();
-    if (!ENFORCE) { _unblock(); return st; }
-
-    if (st.status === 'refunded') {
-      _block('Tu suscripción fue reembolsada',
-        'Se procesó un reembolso y el acceso quedó cerrado. Puedes volver a suscribirte cuando quieras.',
-        'Suscribirme de nuevo');
-    } else if (st.status === 'paused') {
-      _block('Tu suscripción está pausada',
-        'Reanúdala desde los ajustes de suscripciones de tu iPhone para recuperar el acceso.',
-        'Abrir ajustes de suscripción');
-    } else if (st.status === 'transferred') {
-      _block('Esta suscripción se movió a otra cuenta',
-        'La compra quedó asociada a otro Apple ID. Suscríbete de nuevo para seguir usando Portiv.',
-        'Suscribirme');
-    } else if (st.status === 'past_due' || st.status === 'expired') {
-      if (_nat) {
-        _block('Tu suscripción no está activa',
-          'Apple no pudo renovar tu suscripción y el acceso quedó suspendido. Revisa tu método de pago en los ajustes de suscripciones de tu iPhone, o suscríbete de nuevo.',
-          'Gestionar suscripción');
-      } else {
-        _block('Tu pago fue rechazado',
-          'No pudimos cobrar tu suscripción y el acceso quedó suspendido. Actualiza tu tarjeta y el cobro se reintenta al instante.',
-          'Cambiar tarjeta y pagar');
-      }
-    } else {
-      _block('Necesitas una suscripción activa',
-        'Portiv conecta con tu broker y analiza tu portafolio en tiempo real. Activa tu suscripción para entrar.',
-        'Activar suscripción');
-    }
+    _unblock();
     return st;
   };
 
@@ -39983,7 +39868,7 @@ document.addEventListener('DOMContentLoaded', function(){
     // CTA principal desde el primer frame y se lee como "da igual lo que elijas".
     //
     // Va en ESTA pantalla y no en el muro de suscripción porque ese muro ya no
-    // existe (ENFORCE=false): sin esta línea, quien no compra en el paywall se queda
+    // existe (se borró el muro de suscripción): sin esta línea, quien no compra se queda
     // sin ninguna forma de cargar su portafolio.
     //
     // display+opacity y no sólo opacity: con display:none no ocupa alto mientras
