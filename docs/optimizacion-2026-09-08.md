@@ -17,11 +17,13 @@
 - Contabilidad real en `_PRICING`/`_tokAdd`: `claude-sonnet-5` $2/$10 (antes $3/$15),
   `gemini-3.5-flash-lite` $0.30/$2.50, búsqueda web Gemini $0.014 por consulta (Anthropic $0.01).
 
-### Carga inicial (pendiente de un clic)
+### Carga inicial (ya en producción)
 - `.github/workflows/pages.yml` construye `dist/index.html` (−42 % gzip: 937 KB → 541 KB,
-  JS 2,45 MB → 1,43 MB) y lo publica en Pages. **Falta**: GitHub → Settings → Pages →
-  Source = "GitHub Actions". Hasta entonces el workflow construye pero el sitio sigue sirviendo
-  el fuente crudo (3,1 MB). El fuente no se toca; sus comentarios siguen siendo la documentación.
+  JS 2,45 MB → 1,43 MB) y lo publica en Pages en cada push a `main`. Comprobado en vivo el
+  2026-09-08: portivapp.com sirve 1,87 MB (558 KB gzip) en vez de 3,1 MB (971 KB gzip).
+  El fuente no se toca; sus comentarios siguen siendo la documentación del proyecto.
+- `<link rel="preload" href="vendor/supabase.js" as="script">` en el `<head>`: el SDK se
+  descubría al final del HTML; ahora baja en paralelo desde el primer trozo.
 
 ## Hallazgos que quedan abiertos
 - `anthropic-proxy` está desplegado (v21) pero su código NO está en el repo: no se puede auditar
