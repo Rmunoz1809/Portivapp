@@ -1,0 +1,45 @@
+# Publica en GitHub Pages la versión MINIFICADA de Portiv (dist/index.html), no el fuente.
+# El fuente index.html conserva sus comentarios (son la documentación del proyecto); lo que
+# viaja al navegador pesa un 42 % menos en gzip (≈540 KB frente a ≈940 KB) y se parsea antes.
+#
+# REQUISITO ÚNICO (una vez, en GitHub → Settings → Pages): Source = "GitHub Actions".
+# Mientras Pages siga en "Deploy from a branch", este workflow construye pero no publica.
+name: Publicar Portiv (minificado)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      # Todo lo estático que la app pide en tiempo de ejecución viaja junto al HTML minificado.
+      - run: |
+          cp -R fonts vendor dist/
+          cp icon.png og-image.png CNAME .nojekyll dist/
+          # Las demás páginas (términos, etc.) viajan tal cual; index.html NO: el de dist es el minificado.
+          for f in *.html; do [ "$f" != "index.html" ] && cp "$f" dist/; done
+          ls -la dist
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: dist }
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -205,6 +205,13 @@ Deno.serve(async (req) => {
 
   let useWebSearch = false;
   const generationConfig: Record<string, unknown> = { maxOutputTokens: _maxTok };
+  // RAZONAMIENTO: en Gemini 3 viene activado por defecto (medium en los flash grandes) y sus
+  // tokens se cobran como SALIDA (usageMetadata.thoughtsTokenCount). Lo que pide Portiv es
+  // extracción y redacción estructurada, no matemáticas: `low` basta y recorta la parte más
+  // cara de la respuesta. La familia -lite ya arranca en `minimal`, su mínimo; a los flash
+  // grandes `minimal` les da error, así que se les pide `low`.
+  // Verificado en ai.google.dev/gemini-api/docs/generate-content/thinking (2026-09-08).
+  generationConfig.thinkingConfig = { thinkingLevel: familyOf(model) === "lite" ? "minimal" : "low" };
   if (payload.temperature != null) generationConfig.temperature = payload.temperature;
 
   const apiBody: Record<string, unknown> = { generationConfig };

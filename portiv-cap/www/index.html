@@ -22615,7 +22615,24 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
 
   if (action === 'quote') {
     const syms = (tickers || '').split(',').map(s => s.trim()).filter(Boolean);
+    // LOTE: una sola invocación del proxy para todos los símbolos (/quote?symbols=A,B,C).
+    // Antes cada símbolo era una invocación de la Edge Function más una lectura de caché en
+    // Postgres: con 15 posiciones, 15 arranques de función y 15 viajes a la base para pintar
+    // la tabla. El proxy responde { quotes: { SYM: {c,d,dp,…} } }; un proxy viejo o un fallo
+    // no traen `quotes` y cada símbolo cae al camino individual de siempre.
+    const _batch = {};
+    if (syms.length > 1 && _fhSupabaseOn()) {
+      try {
+        const b = await fhFetch(`/quote?symbols=${syms.join(',')}`, timeoutMs);
+        if (b && b.quotes && typeof b.quotes === 'object') Object.assign(_batch, b.quotes);
+      } catch(e) { /* sin lote → camino individual */ }
+    }
     const results = await Promise.all(syms.map(async sym => {
+      const _bq = _batch[sym] || _batch[sym.toUpperCase()];
+      if (_bq && typeof _bq.c === 'number' && _bq.c > 0) {
+        try { _quoteCachePut(sym, _bq.c, _bq.d || 0, _bq.dp || 0, 'fh'); } catch(e){}
+        return { symbol: sym, regularMarketPrice: _bq.c, regularMarketChange: _bq.d || 0, regularMarketChangePercent: _bq.dp || 0 };
+      }
       // Finnhub /quote (vía proxy propio) PRIMERO: rápido y fiable (c/d/dp = precio/cambio/%día).
       // Los proxies CORS públicos de Yahoo hoy están caídos/bloqueados (403 / cuelgues de 13-19s),
       // así que Yahoo pasa a RESPALDO — antes iba primero y colgaba/vaciaba toda la cotización
@@ -23048,7 +23065,9 @@ async function fetchLivePrices() {
   // moneda de la cartera, se quedaría con el precio de otro valor distinto (mismo ticker,
   // otra bolsa) o con dólares dentro de una cartera en euros. Ahí manda el precio del broker.
   const syms = HOLDINGS.filter(h => !h.noLive).map(h => h.ticker);
-  const batchSize = 5;
+  // 40 por lote: apiCall('quote') ya pide todos los símbolos del lote al proxy en UNA sola
+  // llamada, así que con 5 se hacían rondas en serie (con 300 ms de pausa) sin motivo.
+  const batchSize = 40;
   let updated = false;
   // Mapa ticker → previousClose recibido de la API (para guardar al final)
   const freshPrevClose = {};
@@ -33759,7 +33778,7 @@ const _CHAT_COOLDOWN = 3000;
 // cache write (5 min) ≈ 1.25x input. Búsqueda web ≈ $0.01 por consulta.
 const _PRICING = {
   'claude-sonnet-4-6': { in: 3.00, out: 15.00 },
-  'claude-sonnet-5':   { in: 3.00, out: 15.00 },
+  'claude-sonnet-5':   { in: 2.00, out: 10.00 },   // precio de lanzamiento hecho permanente (platform.claude.com/docs/en/about-claude/pricing, 2026-09-08)
   'claude-haiku-4-5':  { in: 1.00, out:  5.00 },
   'claude-opus-4-8':   { in: 5.00, out: 25.00 },
   // Gemini (todo menos AI_MODELS.narrative). Precios de ai.google.dev/gemini-api/docs/pricing
@@ -33773,7 +33792,7 @@ const _PRICING = {
   // el gasto de ESE reintento se cobraba a _PRICE_DEFAULT — el precio de Haiku, $1/$5 — e
   // inflaba el badge ~3.5x sobre el costo real. Precio de la familia lite; VERIFICAR en
   // ai.google.dev/gemini-api/docs/pricing y corregir si Google lo tarifa distinto.
-  'gemini-3.5-flash-lite': { in: 0.25, out:  1.50 },
+  'gemini-3.5-flash-lite': { in: 0.30, out:  2.50 },   // verificado 2026-09-08 en ai.google.dev/gemini-api/docs/pricing
   // gemini-3.7-flash tiene precio promocional HASTA EL 2026-12-31. A partir del 2027-01-01
   // sube a { in: 1.50, out: 7.50 } — actualizar esta línea en esa fecha o el badge subestimará.
   'gemini-3.7-flash':      { in: 0.75, out:  3.75 },
@@ -33885,7 +33904,10 @@ function _tokAdd(usage, model, bucket){
   const cr  = usage.cache_read_input_tokens || 0;        // tokens leídos de caché (≈0.1x)
   const web = (usage.server_tool_use && usage.server_tool_use.web_search_requests) || 0;
   _tok[bucket].in += inp + cw + cr; _tok[bucket].out += out; _tok[bucket].calls++;
-  const cost = ( inp*pr.in + out*pr.out + cw*pr.in*1.25 + cr*pr.in*0.10 ) / 1_000_000 + web*0.01;
+  // Búsqueda web: Anthropic $10/1000 búsquedas; Gemini 3.x $14/1000 consultas (tras 5000
+  // gratis al mes) y cobra CADA consulta que el modelo decida hacer, no la petición.
+  const _webUnit = /^gemini-/.test(String(model || '')) ? 0.014 : 0.01;
+  const cost = ( inp*pr.in + out*pr.out + cw*pr.in*1.25 + cr*pr.in*0.10 ) / 1_000_000 + web*_webUnit;
   const wk = _weekCostGet(bucket);
   _weekCostSave(bucket, wk.cost + cost);
   _renderTokenBadge();

@@ -44,6 +44,53 @@ function ttlFor(path: string): number {
   return 60;
 }
 
+// Cotizaciones en lote: lee la caché de todos los símbolos de una vez, pide a Finnhub sólo
+// los que faltan o vencieron (en paralelo, acotado) y escribe las frescas en un solo upsert.
+// Si Finnhub falla para un símbolo se sirve su dato vencido antes que nada.
+async function quoteBatch(syms: string[]) {
+  const ttl = ttlFor("/quote");
+  const now = Date.now();
+  const keyOf = (s: string) => `/quote?symbol=${s}`;
+  const out: Record<string, unknown> = {};
+  const stale: Record<string, unknown> = {};
+  let missing: string[] = [];
+  try {
+    const { data: rows } = await db.from("fh_cache").select("key, data, fetched_at").in("key", syms.map(keyOf));
+    const byKey = new Map<string, any>((rows ?? []).map((r: any) => [r.key, r]));
+    for (const s of syms) {
+      const r = byKey.get(keyOf(s));
+      if (r && r.fetched_at && (now - new Date(r.fetched_at).getTime()) / 1000 < ttl) out[s] = r.data;
+      else { missing.push(s); if (r) stale[s] = r.data; }
+    }
+  } catch (_e) {
+    missing = syms.slice();
+  }
+  const fresh: { key: string; data: unknown; fetched_at: string }[] = [];
+  let i = 0;
+  const worker = async () => {
+    while (i < missing.length) {
+      const s = missing[i++];
+      try {
+        const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(s)}&token=${FINNHUB_KEY}`);
+        if (r.ok) {
+          const d = await r.json().catch(() => null);
+          if (d && typeof d.c === "number") {
+            out[s] = d;
+            fresh.push({ key: keyOf(s), data: d, fetched_at: new Date().toISOString() });
+            continue;
+          }
+        }
+      } catch (_e) { /* sigue con la caché vencida */ }
+      if (s in stale) out[s] = stale[s];
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, missing.length) }, worker));
+  if (fresh.length) {
+    try { await db.from("fh_cache").upsert(fresh, { onConflict: "key" }); } catch (_e) { /* se devuelve igual */ }
+  }
+  return json({ quotes: out }, 200);
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -69,6 +116,20 @@ Deno.serve(async (req) => {
   ];
   if (!allowed.some((a) => path.toLowerCase().startsWith(a))) {
     return json({ error: "endpoint not allowed" }, 403);
+  }
+
+  // ── LOTE de cotizaciones: /quote?symbols=A,B,C ─────────────────────────────
+  // Una invocación y UNA lectura de caché para toda la cartera. Las claves son las mismas
+  // que usa el camino individual (/quote?symbol=X), así que ambos comparten la caché.
+  if (/^\/quote\?/i.test(path)) {
+    const symsParam = new URLSearchParams(path.split("?")[1] ?? "").get("symbols");
+    if (symsParam) {
+      const syms = Array.from(new Set(
+        symsParam.split(",").map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z0-9.\-]{1,12}$/.test(s)),
+      )).slice(0, 60);
+      if (!syms.length) return json({ error: "no symbols" }, 400);
+      return await quoteBatch(syms);
+    }
   }
 
   const cacheKey = path;
