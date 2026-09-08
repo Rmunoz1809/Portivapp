@@ -22637,7 +22637,8 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       const _bq = _batch[sym] || _batch[sym.toUpperCase()];
       if (_bq && typeof _bq.c === 'number' && _bq.c > 0) {
         try { _quoteCachePut(sym, _bq.c, _bq.d || 0, _bq.dp || 0, 'fh'); } catch(e){}
-        return { symbol: sym, regularMarketPrice: _bq.c, regularMarketChange: _bq.d || 0, regularMarketChangePercent: _bq.dp || 0 };
+        // `pc` es el cierre previo REAL de Finnhub: fetchLivePrices lo prefiere a derivarlo del %.
+        return { symbol: sym, regularMarketPrice: _bq.c, regularMarketChange: _bq.d || 0, regularMarketChangePercent: _bq.dp || 0, regularMarketPreviousClose: (typeof _bq.pc === 'number' && _bq.pc > 0) ? _bq.pc : undefined };
       }
       // Finnhub /quote (vía proxy propio) PRIMERO: rápido y fiable (c/d/dp = precio/cambio/%día).
       // Los proxies CORS públicos de Yahoo hoy están caídos/bloqueados (403 / cuelgues de 13-19s),
@@ -22647,7 +22648,7 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
         const d = await fhFetch(`/quote?symbol=${sym}`, timeoutMs);
         if (d && typeof d.c === 'number' && d.c > 0) {
           try { _quoteCachePut(sym, d.c, d.d || 0, d.dp || 0, 'fh'); } catch(e){}
-          return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0 };
+          return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0, regularMarketPreviousClose: (typeof d.pc === 'number' && d.pc > 0) ? d.pc : undefined };
         }
       } catch(e) { /* respaldo Yahoo */ }
       // El RESPALDO Yahoo se eliminó: _yhChart es hoy un stub que devuelve null siempre (ver
