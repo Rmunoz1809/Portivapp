@@ -103,11 +103,32 @@ push a `main`).
 | 3 | Registro perdido en arranque en frío | El gate de sesión puede resolver antes de que el bloque del módulo se parsee. En ese arranque el token no se guardaba nunca. |
 | 4 | El alta del token chocaba con RLS | El upsert por `token` necesitaba UPDATE sobre una fila de OTRO usuario (mismo iPhone, otra cuenta) y RLS lo bloqueaba en silencio. Ahora va por `registrar_device_token()`. |
 | 5 | Doble notificación matutina | Un reintento del cron en la misma hora volvía a puntuar, el anti-duplicado descartaba sólo el evento ya enviado y ganaba el segundo mejor. |
+| 7 | **El plugin nunca se registraba** | Con Swift Package Manager, Capacitor sólo carga las clases listadas en `ios/App/App/capacitor.config.json` → `packageClassList`. Compilar el plugin no basta. `Capacitor.Plugins.PushNotifications` era `undefined`, así que `requestPermissions()` no fallaba: se quedaba esperando para siempre, sin permiso, sin token y sin error. Se agregó `"PushNotificationsPlugin"` a mano, porque `cap sync` (que regenera esa lista) arrasa con `ios/App/App/public/`. |
 | 6 | Finnhub a 60 llamadas por minuto | Sin pausa entre lotes, un 429 dejaba carteras a medias. Una notificación de cierre a medias es peor que ninguna. |
 
 También se acotó por columna el permiso de UPDATE sobre `push_selection_log`: RLS no
 limita columnas, y con el permiso abierto un usuario podía reescribir su propio
 historial de fatiga para forzarse notificaciones. Ahora sólo puede tocar `abierto`.
+
+## 6-ter · Ver las notificaciones en el SIMULADOR
+
+El simulador **no recibe push de APNs de verdad**: no existe un token válido de Apple.
+Lo que sí acepta es un payload local, idéntico al que manda la Edge Function. Sirve
+para ver el texto, el corte de la pantalla de bloqueo y el comportamiento del tap.
+El camino completo (servidor → Apple → teléfono) sólo se prueba en un iPhone real.
+
+```bash
+cd /Users/rafael/Portiv && ./scripts/push-simulador.sh
+```
+
+Los textos los genera el motor real, no están escritos a mano en el script.
+
+Requisito: la app instalada en el simulador y con el permiso de notificaciones ya
+concedido. Como el permiso se ofrece recién después de login y posiciones, la primera
+vez hay que entrar a la app y aceptar la pantalla de pre-permiso.
+
+Verificado el 2026-09-09 en un iPhone 17 Pro. Las dos se ven correctas en la pantalla
+de bloqueo, dentro del límite de caracteres.
 
 ## 7 · Tests que tienen que seguir en verde
 
