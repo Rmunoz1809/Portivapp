@@ -47,6 +47,15 @@ Las tres se protegen con la cabecera `x-cron-secret`, no con JWT de usuario.
 
 Ambas se llaman con `x-cron-secret`. `?force=1` salta las ventanas, para probar.
 
+Los dos jobs los crea la migración `20260909160000_push_cron.sql`. El minuto del
+cron **es** el minuto de envío: la función sólo decide la hora, no el minuto.
+
+⚠️ El secreto vive en DOS sitios y hay que poner el mismo valor en los dos:
+`supabase secrets set PUSH_CRON_SECRET=…` lo lee la Edge Function para validar;
+pg_cron no ve esos secretos, así que necesita el mismo string en Vault con el
+nombre `push_cron_secret` para poder mandarlo. Si falta el de Vault, la cabecera
+va vacía y las funciones responden 403 en cada ejecución.
+
 ## 5 · Prueba de humo, en este orden
 
 1. Build de desarrollo en un iPhone real (el simulador **no** recibe push de APNs).
