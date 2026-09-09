@@ -5111,6 +5111,12 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-sbox .l{font-size:12.5px;color:var(--px-ink-soft)}
       .pvx .px-sbox .v{font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-size:14px;font-weight:800;font-variant-numeric:tabular-nums}
       .pvx .px-empty{font-size:13px;color:var(--px-muted);line-height:1.6;margin:0}
+      /* Botón de reintento de las secciones que se generan solas (lectura del trimestre,
+         análisis técnico). Un fallo de red no puede dejar la sección muerta sin salida. */
+      .pvx .px-retry{margin-top:12px;padding:8px 16px;border-radius:999px;border:1px solid var(--px-line);
+        background:var(--px-card);color:var(--px-ink-soft);font-size:13px;font-weight:700;cursor:pointer;
+        font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif}
+      .pvx .px-retry:active{opacity:.7}
       .pvx .px-intro{margin:-6px 0 0;color:var(--px-muted);font-size:13px}
       /* "Otros datos publicados": son 25-40 filas de referencia. Plegadas para que no
          entierren las secciones narrativas que van debajo, pero a un clic de distancia. */
@@ -5398,15 +5404,20 @@ window._pvAwaitIAP = function(totalMs){
       .pvx .px-proj .pr2 .pp{font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-weight:800;font-size:16px}
       .pvx .px-proj .pr2 .pc{font-size:12.5px;font-weight:600}
       .pvx .px-proj .pr2 .pc.pos{color:var(--px-green-text)} .pvx .px-proj .pr2 .pc.neg{color:var(--px-red)}
-      /* catalysts */
-      .pvx .px-cat{display:flex;gap:14px;padding:13px 0;border-bottom:1px solid #f1f2f5;align-items:flex-start}
-      .pvx .px-cat:last-child{border-bottom:none}
-      .pvx .px-cat .cd{flex:0 0 auto;width:92px;font-family:'Poppins',system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;font-weight:700;font-size:12.5px;color:var(--px-green-text)}
-      .pvx .px-cat .cc b{font-weight:700} .pvx .px-cat .cc span{display:block;font-size:12px;color:var(--px-muted);margin-top:2px;line-height:1.45}
-      .pvx .px-cat .cimp{margin-left:auto;flex:0 0 auto;font-size:10.5px;font-weight:800;padding:3px 9px;border-radius:20px}
-      .pvx .px-cat .cimp.hi{background:var(--px-red-soft);color:var(--px-red)}
-      .pvx .px-cat .cimp.md{background:var(--px-amber-soft);color:var(--px-amber)}
-      .pvx .px-cat .cimp.lo{background:#eef0f3;color:var(--px-muted)}
+      /* Consenso de analistas — tabla mensual (calcada de .px-cmp) */
+      .pvx .px-anl-wrap{overflow-x:auto;margin-top:16px}
+      .pvx .px-anl{width:100%;border-collapse:collapse;font-size:14px;min-width:460px}
+      .pvx .px-anl th{text-align:right;font-size:12px;font-weight:600;color:var(--px-muted);padding:10px 12px;border-bottom:1px solid var(--px-line)}
+      .pvx .px-anl th:first-child{text-align:left}
+      .pvx .px-anl td{text-align:right;padding:14px 12px;border-bottom:1px solid #f1f2f5;font-variant-numeric:tabular-nums;white-space:nowrap}
+      .pvx .px-anl td.mo{text-align:left;font-weight:700}
+      .pvx .px-anl tbody tr:last-child td{border-bottom:none}
+      .pvx .px-anl tr.now{background:var(--px-green-soft)}
+      .pvx .px-anl .dl{display:block;font-size:11px;font-weight:600;margin-top:2px;color:var(--px-muted)}
+      .pvx .px-anl .dl.pos{color:var(--px-green-text)} .pvx .px-anl .dl.neg{color:var(--px-red)}
+      .pvx .px-anl .cns{font-weight:800;color:var(--px-green-text)}
+      .pvx .px-anl-bar{display:block;width:78px;height:6px;border-radius:4px;background:var(--px-track);margin:5px 0 0 auto;overflow:hidden}
+      .pvx .px-anl-bar i{display:block;height:100%;background:var(--px-green)}
       /* Análisis técnico — el canvas es lo único que necesita reglas propias: alto fijo,
          ancho fluido y bloqueo del gesto de scroll horizontal en el WebView de iOS. */
       .pvx .px-tec-canvas{display:block;width:100%;height:300px;touch-action:pan-y}
@@ -5440,7 +5451,11 @@ window._pvAwaitIAP = function(totalMs){
         .pvx .px-metric .v{min-width:64px}
         .pvx .px-metric .v .big{font-size:15.5px}
         .pvx .px-metric .k,.pvx .px-hbox .kk{overflow-wrap:anywhere}
-        .pvx .px-cat .cd{width:72px;font-size:11.5px}
+        /* iPhone: la tabla de analistas suelta la columna Total y aprieta el padding. */
+        .pvx .px-anl{min-width:320px;font-size:13px}
+        .pvx .px-anl th,.pvx .px-anl td{padding:11px 7px}
+        .pvx .px-anl .opt{display:none}
+        .pvx .px-anl-bar{width:62px}
         /* Rango de objetivos: en pantalla estrecha la escala se cambia por una rejilla de
            cifras. Las etiquetas absolutas de los extremos SIEMPRE se salían del recuadro. */
         .pvx .px-ptr-scale{display:none}
@@ -22781,6 +22796,10 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       priceToSales:        m.psTTM ?? m.psAnnual ?? null,
       priceToFreeCashFlow: m.pfcfShareTTM ?? m.pfcfShareAnnual ?? null,
       recoBreakdown:       Array.isArray(recoData) && recoData.length > 0 ? recoData[0] : null,
+      // Histórico mensual entero (el plan actual devuelve 4 meses) → tabla "Consenso de
+      // analistas". Sale del MISMO /stock/recommendation que ya se pide arriba: cero
+      // llamadas nuevas y cero latencia añadida a la ficha.
+      recoHistory:         Array.isArray(recoData) && recoData.length ? recoData.slice(0, 6) : null,
       shareOutstanding:    prof.shareOutstanding ?? null,
       country:             prof.country  ?? '',
       ipo:                 prof.ipo      ?? null,
@@ -26292,18 +26311,42 @@ async function _pvxExtras(ticker, info){
   const beta=info.beta;
   if(beta!=null) push('Volatilidad (beta)', d2(beta), beta<0.8?'Se mueve menos que el mercado':beta<1.3?'Se mueve parecido al mercado':'Más volátil que el mercado', beta>1.8?'warn':'');
 
-  // Catalizadores: próximos resultados (real, de EPS) + temas editoriales (bios).
-  let catalysts=[];
+  // Consenso de analistas por mes (real, de /stock/recommendation). Se agrupa igual que
+  // `consensus` de arriba — compra = strongBuy+buy, venta = sell+strongSell — para que la
+  // tabla NO contradiga a la tarjeta de consenso del Resumen. La variación compara con el
+  // mes anterior, así se ve si el bloque de compra crece o se encoge.
+  let analystRows = null;
   try{
-    let q=null;
-    // Solo lectura de caché (_upgradeAnalysisToAI ya la llenó): NO bloquear el análisis con una
-    // llamada de red por una sección menor. Si aún no está, los catalizadores editoriales bastan.
-    if (typeof EPS!=='undefined' && EPS._cache && EPS._cache[ticker] && Array.isArray(EPS._cache[ticker].quarters)) q=EPS._cache[ticker].quarters.find(x=>x&&x.future&&x.date);
-    if(q){ const M=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic']; const d=new Date((q.date||'')+'T12:00:00'); const ds=isNaN(d)?q.date:`${d.getDate()} ${M[d.getMonth()]} ${d.getFullYear()}`; catalysts.push({date:ds, title:'Próximo reporte de resultados', desc:'El evento con más impacto del trimestre — el mercado reacciona fuerte al beat/miss.', impact:'hi'}); }
+    // El info que llega aquí no siempre trae recoHistory (viene de la instantánea de
+    // investigación, que se guardó sin ese campo). Se pide directo: es el MISMO endpoint
+    // gratuito, memoizado 60 min → en la ruta normal no sale ni una llamada extra.
+    let hist = Array.isArray(info.recoHistory) ? info.recoHistory : null;
+    if (!hist){
+      try { const r = await fhFetch(`/stock/recommendation?symbol=${ticker}`, 8000);
+            if (Array.isArray(r) && r.length) hist = r.slice(0, 6); } catch(e){}
+    }
+    if (hist && hist.length){
+      const M = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+      const fila = r => {
+        const buy = (r.strongBuy||0)+(r.buy||0), hold = r.hold||0, sell = (r.sell||0)+(r.strongSell||0);
+        const tot = buy+hold+sell;
+        const d = new Date(String(r.period||'')+'T12:00:00');
+        return { mes: isNaN(d) ? String(r.period||'') : `${M[d.getMonth()]} ${d.getFullYear()}`,
+                 buy, hold, sell, tot, pct: tot>0 ? Math.round(buy/tot*100) : null };
+      };
+      // El endpoint ya devuelve el mes más reciente primero; se ordena igual por si acaso.
+      const ord = hist.slice().sort((a,b)=> String(b.period||'').localeCompare(String(a.period||''))).map(fila).filter(x=>x.tot>0);
+      if (ord.length){
+        // Variación contra el mes siguiente de la lista (= el mes anterior en el tiempo).
+        ord.forEach((x,k)=>{ const prev = ord[k+1];
+          x.dBuy  = prev ? x.buy  - prev.buy  : null;
+          x.dHold = prev ? x.hold - prev.hold : null;
+          x.dSell = prev ? x.sell - prev.sell : null;
+        });
+        analystRows = ord;
+      }
+    }
   }catch(e){}
-  const bioC = (typeof COMPANY_BIOS!=='undefined') ? COMPANY_BIOS[ticker] : null;
-  if(bioC && Array.isArray(bioC.catalysts)) bioC.catalysts.slice(0,4).forEach(c=>catalysts.push({date:'Tema', title:c, desc:'', impact:'md'}));
-  if(!catalysts.length) catalysts=null;
 
   // ① Crecimiento reciente (sin red: usa EPS ya cargado + YoY de info). ② Competidores se
   // carga LAZY en 2º plano dentro del render (peers reales) → nunca bloquea ni retrasa el
@@ -26314,7 +26357,7 @@ async function _pvxExtras(ticker, info){
   const fairValue = _pvxFairValue(info);
   return { px, consensus, targetRange, retBox, proj, health: health.length?health:null,
            fairValue, healthDims: _pvxHealthDims(info),
-           keyPoints: _pvxKeyPoints(info, { consensus, fairValue }), catalysts, recentGrowth };
+           keyPoints: _pvxKeyPoints(info, { consensus, fairValue }), analystRows, recentGrowth };
 }
 
 // ── CALIFICACIÓN POR APARTADO (1-10) ──────────────────────────────────────────────
@@ -26671,8 +26714,19 @@ async function _pvxFillEarnings(scope){
     if (!host) return;
     const ticker = (host.dataset.tk || '').toUpperCase();
     if (!ticker || host.dataset.done === ticker) return;
+    // El análisis vivo puede no estar todavía colgado del DOM si el usuario salta a
+    // "Resultados" en el mismo tick en que se pinta. Antes se abandonaba en silencio y la
+    // tarjeta se quedaba con el mensaje de "no hay reporte" hasta cambiar de acción.
     const a = _pvxLiveA(ticker);
-    if (!a) return;
+    if (!a) {
+      const n0 = (parseInt(host.dataset.wait || '0', 10) || 0) + 1;
+      host.dataset.wait = String(n0);
+      if (n0 <= 5) setTimeout(() => {
+        try { if (host.isConnected && host.dataset.tk === ticker) _pvxFillEarnings(scope); } catch(e){}
+      }, 400);
+      return;
+    }
+    host.dataset.wait = '0';
     if (a.earningsReaction) { host.dataset.done = ticker; return; }     // ya venía con el análisis
     if (typeof _getEarningsReaction !== 'function') return;
     // La generación va en un mapa de "en vuelo" y NO se cancela con el repintado: si la
@@ -26703,10 +26757,26 @@ async function _pvxFillEarnings(scope){
       <span style="font-size:13.5px;font-weight:600;color:var(--px-muted)">Leyendo el último reporte de ${pvEsc(ticker)}…</span></div></div>`;
     const eqr = await p;
     if (!host.isConnected || host.dataset.tk !== ticker) return;        // cambió de acción mientras tanto
-    host.dataset.done = ticker;
     const live = _pvxLiveA(ticker) || a;
-    if (eqr && !live.earningsReaction) live.earningsReaction = eqr;
-    host.innerHTML = _pvxEqrCard(live);
+    if (eqr) {
+      live.earningsReaction = live.earningsReaction || eqr;
+      host.dataset.done = ticker;
+      host.innerHTML = _pvxEqrCard(live);
+      return;
+    }
+    // Sin objeto. Sólo se da por CERRADA la sección cuando la empresa de verdad no tiene un
+    // trimestre reportado; un fallo de generación no puede marcarse como 'hecho' porque eso
+    // congelaba el hueco para el resto de la sesión (y la caché local lo repetía después).
+    const motivo = _pvxEqrMotivo(ticker);
+    host.innerHTML = _pvxEqrVacio(ticker, motivo);
+    if (motivo === 'sinreporte' || motivo === 'bloqueado') { host.dataset.done = ticker; return; }
+    // Transitorio → se reintenta solo, con espera creciente y tope de 2 intentos para no
+    // encadenar generaciones de pago si el fallo es del modelo y no de la red.
+    const n = (parseInt(host.dataset.try || '0', 10) || 0) + 1;
+    host.dataset.try = String(n);
+    if (n <= 2) setTimeout(() => {
+      try { if (host.isConnected && host.dataset.tk === ticker && host.dataset.done !== ticker) _pvxFillEarnings(scope); } catch(e){}
+    }, n * 3000);
   } catch(e){}
 }
 
@@ -26811,12 +26881,56 @@ function _pvxEqrCard(a){
       ${_notes ? `<div class="px-eqr-notes">${_notes}</div>` : ''}
       <div class="px-hint">Cifras de EPS tomadas del reporte oficial. La lectura del trimestre es una conclusión derivada de los datos del reporte, no una recomendación ni una predicción garantizada; se genera una sola vez por trimestre y se comparte entre usuarios.</div></div>`;
   } else {
-    out += `<div class="px-card">${stitle('Earnings análisis')}
-      <p class="px-intro">Qué dejó el último reporte de resultados.</p>
-      <div style="margin-top:14px">${empty('Todavía no hay un reporte de resultados analizado para esta empresa. Aparecerá aquí en cuanto publique el próximo trimestre.')}</div></div>`;
+    out += _pvxEqrVacio(a.ticker || '', _pvxEqrMotivo(a.ticker || ''));
   }
   return out;
 }
+
+// ── Por qué NO hay lectura del trimestre ─────────────────────────────────────────
+// Antes había un solo mensaje —"todavía no hay un reporte analizado"— para dos situaciones
+// que no se parecen en nada: la empresa que aún no ha publicado (definitivo, no hay nada que
+// hacer) y la generación que se cayó (transitoria: red, 429 del proxy, token a medio
+// refrescar, JSON roto). Como la segunda se pintaba con el texto de la primera y además se
+// marcaba la sección como "hecha", la acción se quedaba SIN análisis para siempre aunque el
+// reporte existiera y sus cifras estuvieran pintadas justo arriba. Aquí se separan.
+function _pvxEqrMotivo(ticker){
+  const tk = (ticker || '').toUpperCase();
+  try {
+    const eK = (typeof _analysisEarningsKey === 'function') ? _analysisEarningsKey(tk) : 'na';
+    if (!eK || eK === 'na') return 'sinreporte';
+    if (typeof _eqrFactsFor === 'function' && !_eqrFactsFor(tk)) return 'sinreporte';
+  } catch(e){ return 'sinreporte'; }
+  // Hay reporte con cifras: si no se pintó lectura es porque no se pudo generar.
+  try {
+    const _canGen = (window._aiKeyAvailable && window._aiKeyAvailable())
+                 || (typeof _aiSbOn === 'function' && _aiSbOn());
+    if (!_canGen) return 'bloqueado';
+  } catch(e){}
+  return 'fallo';
+}
+function _pvxEqrVacio(ticker, motivo){
+  const esc = pvEsc;
+  const cab = `<div class="px-card"><h2 class="px-sec-title"><span class="t">Earnings análisis</span></h2>
+      <p class="px-intro">Qué dejó el último reporte de resultados.</p><div style="margin-top:14px">`;
+  const txt = t => `<p class="px-empty">${esc(t)}</p>`;
+  if (motivo === 'sinreporte')
+    return cab + txt('Todavía no hay un reporte de resultados analizado para esta empresa. Aparecerá aquí en cuanto publique el próximo trimestre.') + '</div></div>';
+  if (motivo === 'bloqueado')
+    return cab + txt('La lectura del último trimestre se genera con Portiv Pro. Las cifras del reporte que ves arriba no dependen de eso.') + '</div></div>';
+  return cab + txt('No se pudo generar la lectura de este trimestre ahora mismo. Las cifras del reporte sí están arriba; la lectura se reintenta sola al volver a esta pestaña.')
+       + `<button class="px-retry" onclick="_pvxEqrReintentar('${esc((ticker||'').toUpperCase())}')">Reintentar</button></div></div>`;
+}
+// Reintento manual: borra la marca de "hecho" y vuelve a pasar por _pvxFillEarnings, que
+// arranca de nuevo en la nube (si otro usuario ya la generó, sale gratis) antes de pagar.
+window._pvxEqrReintentar = function(tk){
+  try {
+    const host = document.getElementById('pvx-eqr-host');
+    if (!host) return;
+    host.dataset.done = '';
+    host.dataset.try  = '0';
+    _pvxFillEarnings(document);
+  } catch(e){}
+};
 
 function _renderQualAnalysis(a, el){
   if (!el || !a) return;
@@ -27102,13 +27216,31 @@ function _renderQualAnalysis(a, el){
     OVz += p;
   }
 
-  // 12) PRÓXIMOS catalizadores (fecha + evento + impacto).
-  {
-    const cts = (a.catalysts && a.catalysts.length) ? a.catalysts : null;
-    EA += `<div class="px-card">${stitle('Próximos catalizadores')}
-      <p class="px-intro">Fechas y temas que pueden mover el precio: cuándo conviene prestar atención.</p>
-      ${cts ? `<div style="margin-top:12px">${cts.map(c=>`<div class="px-cat"><div class="cd">${esc(c.date)}</div><div class="cc"><b>${esc(c.title)}</b>${c.desc?`<span>${esc(c.desc)}</span>`:''}</div><span class="cimp ${c.impact}">${c.impact==='hi'?'Alto':c.impact==='md'?'Medio':'Bajo'}</span></div>`).join('')}</div>`
-          : `<div style="margin-top:14px">${empty('Todavía no hay fecha confirmada del próximo reporte ni otros eventos publicados para esta empresa.')}</div>`}</div>`;
+  // 12) CONSENSO de analistas por mes (sustituye a los antiguos "Próximos catalizadores",
+  //     que eran mitad fecha real mitad texto editorial). Sin firmas: /stock/recommendation
+  //     sólo da recuentos agregados; los nombres viven en /stock/upgrade-downgrade, que es
+  //     de pago. Si algún día se contrata, esta tabla se amplía con la columna de la firma.
+  if (a.analystRows && a.analystRows.length){
+    const dl = (v, malo) => {
+      if (v == null) return `<span class="dl">—</span>`;
+      if (v === 0)   return `<span class="dl">=</span>`;
+      const sube = v > 0, cls = malo ? (sube?'neg':'pos') : (sube?'pos':'neg');
+      return `<span class="dl ${cls}">${sube?'+':'−'}${Math.abs(v)}</span>`;
+    };
+    EA += `<div class="px-card">${stitle('Consenso de analistas')}
+      <p class="px-intro">Cómo han votado los analistas que cubren la acción en los últimos meses: si el bloque de compra crece o se encoge.</p>
+      <div class="px-anl-wrap"><table class="px-anl">
+        <thead><tr><th>Mes</th><th>Compra</th><th>Mantener</th><th>Venta</th><th class="opt">Total</th><th>Consenso</th></tr></thead>
+        <tbody>${a.analystRows.map((r,k)=>`<tr class="${k===0?'now':''}">
+          <td class="mo">${esc(r.mes)}</td>
+          <td>${r.buy}${dl(r.dBuy,false)}</td>
+          <td>${r.hold}${r.dHold==null?'<span class="dl">—</span>':`<span class="dl">${r.dHold>0?'+':r.dHold<0?'−':''}${r.dHold===0?'=':Math.abs(r.dHold)}</span>`}</td>
+          <td>${r.sell}${dl(r.dSell,true)}</td>
+          <td class="opt">${r.tot}</td>
+          <td>${r.pct!=null?`<span class="cns">${r.pct}%</span><span class="px-anl-bar"><i style="width:${r.pct}%"></i></span>`:'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <p class="px-hint">Compra = compra fuerte + compra · Venta = venta + venta fuerte, la misma agrupación que la tarjeta de consenso del Resumen. La variación compara con el mes anterior.</p></div>`;
   }
 
   // 13) ANÁLISIS TÉCNICO — velas japonesas + indicadores. Sustituye al viejo apartado de
@@ -28789,16 +28921,46 @@ function _pvtVeredictoBloque(v){
     `<div class="row"><span class="k">${esc(f.k)}</span><span class="v ${f.c}">${esc(f.v)}</span><span class="d">${esc(f.d)}</span></div>`).join('')}</div>`;
 }
 
+// Barras diarias CON REINTENTO. Alpaca (vía el proxy) falla en transitorio bastante más de
+// lo que parece: 429 cuando se agota el presupuesto de llamadas por IP —el gráfico de
+// "Precio Histórico" ya se llevó una petición justo antes—, 401 con el token a medio
+// refrescar, o un timeout de 12 s. Cualquiera de esos dejaba la sección con "Aún no tenemos
+// análisis técnico de este ticker" para el resto de la sesión, aunque el ticker tuviera
+// cinco años de velas. Tres intentos con espera creciente antes de darla por imposible.
+async function _pvtDiariasConReintento(tk, host){
+  for (let i = 0; i < 3; i++){
+    if (i){
+      await new Promise(r => setTimeout(r, i * 1800));
+      if (host && host.dataset.tk !== tk) return null;      // el usuario ya cambió de acción
+    }
+    const b = await _pvtFetchDiarias(tk).catch(() => null);
+    if (b && b.length >= 30) return b;
+  }
+  return null;
+}
+// Último encargo pintado, para que el botón "Reintentar" pueda repetirlo con su MISMO
+// contexto de negocio (sin el valor razonable, la zona de entrada saldría distinta).
+let _pvtUltimo = null;
+window._pvtReintentar = function(tk){
+  try {
+    const u = _pvtUltimo;
+    if (!u || u.tk !== (tk || '').toUpperCase() || !u.host || !u.host.isConnected) return;
+    _pvtFillInto(u.host, u.tk, u.biz);
+  } catch(e){}
+};
+
 async function _pvtFillInto(host, ticker, biz){
   const tk = (ticker || '').toUpperCase();
   host.dataset.tk = tk;
+  _pvtUltimo = { tk, host, biz };
   host.innerHTML = `<p class="px-empty">Cargando el comportamiento del precio…</p>`;
 
-  const crudas = await _pvtFetchDiarias(tk).catch(() => null);
+  const crudas = await _pvtDiariasConReintento(tk, host);
   if (host.dataset.tk !== tk) return;                      // el usuario ya cambió de acción
   const bars = _pvtConPrecioVivo(crudas, tk);
   if (!crudas || !bars || bars.length < 30){
-    host.innerHTML = `<p class="px-empty">Aún no tenemos análisis técnico de este ticker.</p>`;
+    host.innerHTML = `<p class="px-empty">No se pudo cargar el histórico de precios de ${pvEsc(tk)} para calcular el análisis técnico.</p>`
+      + `<button class="px-retry" onclick="_pvtReintentar('${pvEsc(tk)}')">Reintentar</button>`;
     return;
   }
 
