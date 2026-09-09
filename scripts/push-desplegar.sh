@@ -54,9 +54,10 @@ supabase db push --include-all
 
 paso "4/5 · Secreto compartido y credenciales de APNs"
 # Se genera aquí y no se escribe a mano en ningún sitio.
-SECRETO=$(openssl rand -hex 32)
-supabase secrets set PUSH_CRON_SECRET="$SECRETO"
-echo "PUSH_CRON_SECRET puesto en las Edge Functions."
+# Se mantiene por compatibilidad: `autorizado()` acepta este valor o el de Vault,
+# para que un despliegue a medias nunca deje las funciones sin poder autenticar.
+# La fuente de verdad es Vault, que la crea la migración 20260909170000.
+supabase secrets set PUSH_CRON_SECRET="$(openssl rand -hex 32)"
 
 # Las de APNs sólo si aún no están: no se pisan las que ya existan.
 if ! supabase secrets list 2>/dev/null | grep -q APNS_KEY_ID; then
@@ -73,23 +74,18 @@ supabase functions deploy apns-push    --no-verify-jwt
 supabase functions deploy push-morning --no-verify-jwt
 supabase functions deploy push-close   --no-verify-jwt
 
-# ── Último paso, manual a propósito ─────────────────────────────────────────
-# pg_cron no ve los secretos de las Edge Functions: necesita el mismo valor en
-# Vault. Se deja en el portapapeles para pegarlo una vez.
-printf "select vault.create_secret('%s', 'push_cron_secret');\n" "$SECRETO" | pbcopy
-
 cat <<FIN
 
 ═══════════════════════════════════════════════════════════════════════════
- Falta UN pegado y queda listo.
+ Listo. No queda nada manual.
 
- En el portapapeles tienes la línea que crea el secreto en Vault. Pégala en:
-   https://supabase.com/dashboard/project/$REF/sql/new
+ El secreto del cron lo genera la migración dentro de Vault y la función lo
+ valida por RPC, así que no hay dos copias que sincronizar ni nada que pegar.
 
- Sin eso los cron mandan la cabecera vacía y las funciones responden 403.
-
- Para comprobar que quedó bien:
+ Para comprobarlo:
    select jobname, schedule from cron.job where jobname like 'push-%';
-   select name from vault.secrets;
+   select public.push_cron_ok(
+     (select decrypted_secret from vault.decrypted_secrets
+       where name = 'push_cron_secret'));   -- tiene que dar true
 ═══════════════════════════════════════════════════════════════════════════
 FIN

@@ -12,7 +12,7 @@ import { enviarPush } from "../_shared/apns.ts";
 import { admin, autorizado, borrarToken } from "../_shared/push-common.ts";
 
 Deno.serve(async (req) => {
-  if (!autorizado(req)) return new Response("forbidden", { status: 403 });
+  if (!await autorizado(req)) return new Response("forbidden", { status: 403 });
   if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
 
   const body = await req.json().catch(() => null);

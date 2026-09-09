@@ -71,11 +71,15 @@ Ambas se llaman con `x-cron-secret`. `?force=1` salta las ventanas, para probar.
 Los dos jobs los crea la migración `20260909160000_push_cron.sql`. El minuto del
 cron **es** el minuto de envío: la función sólo decide la hora, no el minuto.
 
-⚠️ El secreto vive en DOS sitios y hay que poner el mismo valor en los dos:
-`supabase secrets set PUSH_CRON_SECRET=…` lo lee la Edge Function para validar;
-pg_cron no ve esos secretos, así que necesita el mismo string en Vault con el
-nombre `push_cron_secret` para poder mandarlo. Si falta el de Vault, la cabecera
-va vacía y las funciones responden 403 en cada ejecución.
+El secreto vive **sólo en Vault**. La migración `20260909170000` lo genera ahí
+dentro (dos uuid concatenados) y la función lo valida con el RPC
+`public.push_cron_ok(text)`, que devuelve un booleano y nunca el valor. No hay
+dos copias que sincronizar ni nada que pegar a mano.
+
+Antes estaba en dos sitios y era una fuente de fallo silencioso: si se
+desincronizaban, las funciones respondían 403 cada hora sin que nada pareciera
+roto. `PUSH_CRON_SECRET` se sigue poniendo como red de seguridad —`autorizado()`
+acepta cualquiera de los dos— pero no es la fuente de verdad.
 
 ## 5 · Prueba de humo, en este orden
 

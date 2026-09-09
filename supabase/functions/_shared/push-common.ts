@@ -6,9 +6,27 @@ export const admin = createClient(
   { auth: { persistSession: false } });
 
 export const CRON_SECRET = Deno.env.get("PUSH_CRON_SECRET") ?? "";
-export function autorizado(req: Request): boolean {
+
+// El secreto vive en Vault, que es de donde lo saca pg_cron. La comprobación se
+// hace en la base con `push_cron_ok`, que devuelve un booleano y nunca el valor.
+// Se acepta además el de entorno si está puesto: así un despliegue viejo no se
+// queda fuera mientras se propaga el nuevo.
+let cacheVault = { ok: false, hasta: 0 };
+
+export async function autorizado(req: Request): Promise<boolean> {
   const h = req.headers.get("x-cron-secret") ?? "";
-  return CRON_SECRET.length > 0 && h === CRON_SECRET;
+  if (h.length === 0) return false;
+  if (CRON_SECRET.length > 0 && h === CRON_SECRET) return true;
+
+  // Cache corta: las funciones corren una vez por hora, pero apns-push puede
+  // recibir ráfagas y no tiene sentido consultar la base en cada llamada.
+  const ahora = Date.now();
+  if (cacheVault.hasta > ahora) return cacheVault.ok;
+
+  const { data, error } = await admin.rpc("push_cron_ok", { p_secreto: h });
+  if (error) return false;                 // ante la duda no se autoriza
+  cacheVault = { ok: data === true, hasta: ahora + 5 * 60_000 };
+  return cacheVault.ok;
 }
 
 /** Partes de fecha/hora de un instante en una zona IANA. Sin librerías. */

@@ -25,7 +25,7 @@ import {
 const HORA_ET = 8;               // el cron corre al minuto 30 → cae 8:30 ET (apertura 9:30)
 
 Deno.serve(async (req) => {
-  if (!autorizado(req)) return new Response("forbidden", { status: 403 });
+  if (!await autorizado(req)) return new Response("forbidden", { status: 403 });
   const url = new URL(req.url);
   const forzar = url.searchParams.get("force") === "1";
 

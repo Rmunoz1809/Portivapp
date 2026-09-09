@@ -25,7 +25,7 @@ const MINUTO_MIN = 5;            // se deja respirar al cierre antes de leer pre
 const DIAS_SNAPSHOT_MAX = 7;     // datos rancios son peores que nada
 
 Deno.serve(async (req) => {
-  if (!autorizado(req)) return new Response("forbidden", { status: 403 });
+  if (!await autorizado(req)) return new Response("forbidden", { status: 403 });
   const forzar = new URL(req.url).searchParams.get("force") === "1";
 
   const ahora = new Date();
