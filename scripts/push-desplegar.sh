@@ -30,6 +30,22 @@ paso "2/5 · Enlazar el proyecto"
 supabase link --project-ref "$REF"
 
 paso "3/5 · Migraciones (tablas, RLS, RPC y los dos cron)"
+# El historial remoto tiene 18 migraciones de junio y julio cuyos archivos nunca
+# se guardaron en el repo. `db push` se niega a seguir mientras esa divergencia
+# exista. `migration repair --status reverted` sólo BORRA ESAS FILAS DE LA TABLA
+# DE HISTORIAL: no revierte nada, no toca ni un objeto de la base. El esquema que
+# crearon sigue exactamente igual. Es lo que recomienda el propio CLI y es la
+# única salida, porque los archivos no existen en ninguna parte para recuperarlos.
+HUERFANAS=(
+  20260625000000 20260702120000 20260712170000 20260712170100 20260713172000
+  20260713173000 20260713173100 20260713180000 20260714110000 20260714120000
+  20260714130000 20260714140000 20260714150000 20260714160000 20260714182943
+  20260714182945 20260720120000 20260720120100
+)
+if ! supabase db push --dry-run >/dev/null 2>&1; then
+  echo "Historial divergente: se limpian las 18 entradas sin archivo."
+  supabase migration repair --status reverted "${HUERFANAS[@]}"
+fi
 supabase db push
 
 paso "4/5 · Secreto compartido y credenciales de APNs"
