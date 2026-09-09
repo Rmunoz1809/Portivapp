@@ -10662,6 +10662,11 @@ let _analysisDirty = true; // empieza dirty para el primer render
 
 
 function renderAll() {
+  // Espejo de la cartera para el servidor (sólo pesos) y, si ya hay posiciones,
+  // el ofrecimiento de las notificaciones. Ambos son idempotentes y no bloquean
+  // el render: si fallan, la app sigue igual.
+  try { if (window._pvPush) { window._pvPush.subirSnapshot(); window._pvPush.ofrecerSiToca(); } } catch(e){}
+
   const T = calcTotals();
   renderHeader(T);
   renderSummary(T);
@@ -37367,6 +37372,7 @@ if (document.readyState === 'loading') {
     </div>
     <div class="acct-item" id="acctManageSub" style="display:none" onclick="_pvManageSubscription()">Gestionar suscripción</div>
     <div class="acct-item" onclick="_pvRestorePurchases()">Restaurar compras</div>
+    <div class="acct-item" onclick="_pvAjustesNotificaciones()">Notificaciones</div>
     <div class="acct-item" onclick="_acctHelp()">Ayuda</div>
     <!-- Términos y Privacidad SIEMPRE alcanzables desde dentro de la app.
          Antes sólo vivían en tres sitios que un usuario de iOS ya logueado no ve nunca:
@@ -38054,6 +38060,12 @@ if (document.readyState === 'loading') {
         }
       }
     } catch(e){}
+    // Notificaciones push: el registro va AQUÍ, en el mismo punto por el que pasan las
+    // tres transiciones "sin sesión → con sesión" (arranque con sesión persistida, login
+    // y signup). No pide permiso: sólo re-registra si el usuario YA lo concedió, porque
+    // el token de APNs puede cambiar entre arranques.
+    try { if (window._pvPush) window._pvPush.trasLogin(); } catch(e){}
+
     // Sesión autenticada lista → SharedNews ya puede ESCRIBIR en la nube (RLS exige auth).
     // Sin esto, la generación corría como anónimo, la escritura la bloqueaba RLS y nunca
     // persistía → cada dispositivo regeneraba (bug de "se genera dos veces" + costo N×).
@@ -45433,6 +45445,286 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   else aplicar();
   window.addEventListener('resize', aplicar, { passive: true });
   window.addEventListener('orientationchange', aplicar, { passive: true });
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   Notificaciones push — registro, permiso y ajustes  (window._pvPush)
+   ─────────────────────────────────────────────────────────────────────────
+   Dos avisos diarios, ambos GRATIS (no van detrás de 'Portiv Pro'):
+     · matutino  — el evento del calendario económico más relevante para su cartera
+     · de cierre — cómo se movió su cartera hoy
+   Los dos los redacta el servidor con plantillas fijas. Cero IA en esa ruta: el
+   push llega a la pantalla de bloqueo sin contexto ni disclaimer, así que no
+   puede llevar prosa generada.
+
+   EL PERMISO DE iOS ES DE UN SOLO TIRO. Si el usuario dice que no, no hay segunda
+   oportunidad sin mandarlo a Ajustes del sistema. Por eso: pantalla propia primero,
+   y el diálogo nativo SÓLO si acepta ahí. Nunca en el primer arranque — se pide
+   después de que ya tenga posiciones, cuando la notificación significa algo.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  var LS_PEDIDO = 'pv_push_preguntado_v1';   // ya se mostró la pantalla de pre-permiso
+  var LS_ENV    = 'pv_push_env';
+
+  function plugin(){
+    try { return (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.PushNotifications) || null; }
+    catch(e){ return null; }
+  }
+  function esNativo(){
+    try { return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); }
+    catch(e){ return false; }
+  }
+  function sb(){ return window.sbClient || null; }
+  function uid(){ try { return window.__pvUserId && window.__pvUserId !== 'local' ? window.__pvUserId : null; } catch(e){ return null; } }
+  function log(){ try { console.log.apply(console, ['[push]'].concat([].slice.call(arguments))); } catch(e){} }
+
+  /* La zona horaria decide a qué hora local cae la matutina. El mercado objetivo
+     está repartido de ET a PT: no se asume nada. */
+  function zona(){
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York'; }
+    catch(e){ return 'America/New_York'; }
+  }
+
+  /* sandbox vs producción. El JS no puede saberlo con certeza, así que se manda la
+     mejor conjetura y el SERVIDOR la corrige sola: si Apple responde BadDeviceToken,
+     prueba el otro host y reescribe esta columna. Un token de un entorno NUNCA
+     funciona en el otro, y el fallo sólo se ve en producción. */
+  function entorno(){
+    try {
+      if (window.__PORTIV_APNS_ENV) return window.__PORTIV_APNS_ENV;
+      var g = localStorage.getItem(LS_ENV);
+      if (g) return g;
+    } catch(e){}
+    return 'production';
+  }
+
+  // ── Guardado del token ─────────────────────────────────────────────────────
+  // El upsert va por `token`, NO por (user_id, token): si alguien cierra sesión y
+  // entra otra persona en ese mismo iPhone, iOS entrega el MISMO token. Sin
+  // reasignar el dueño, el segundo usuario recibiría la cartera del primero.
+  function guardarToken(token){
+    var c = sb(), u = uid();
+    if (!c || !u || !token) return Promise.resolve(false);
+    return c.from('device_tokens').upsert({
+      user_id: u, token: token, platform: 'ios',
+      environment: entorno(), timezone: zona(), updated_at: new Date().toISOString()
+    }, { onConflict: 'token' }).then(function(r){
+      if (r.error) { log('upsert falló', r.error.message); return false; }
+      log('token guardado'); return true;
+    }).catch(function(e){ log('upsert error', e); return false; });
+  }
+
+  // ── Listeners. Se registran UNA sola vez. ─────────────────────────────────
+  var _listos = false;
+  function listeners(){
+    var P = plugin();
+    if (_listos || !P) return;
+    _listos = true;
+    P.addListener('registration', function(t){ guardarToken(t && t.value); });
+    P.addListener('registrationError', function(e){ log('registrationError', e); });
+    // Tap en la notificación → destino CONCRETO, nunca el home. Si abriera el home,
+    // el usuario mira el total y cierra.
+    P.addListener('pushNotificationActionPerformed', function(ev){
+      try {
+        var d = (ev && ev.notification && ev.notification.data) || {};
+        if (d.log_id) marcarAbierta(d.log_id);
+        if (d.deeplink) abrirDeeplink(String(d.deeplink));
+      } catch(e){ log('deeplink', e); }
+    });
+  }
+
+  /* El umbral adaptativo del motor necesita saber si ABRIÓ, no sólo si se envió:
+     quien no abre 5 matutinas seguidas pasa de umbral 45 a 65. Menos ruido. */
+  function marcarAbierta(logId){
+    var c = sb(); if (!c) return;
+    c.from('push_selection_log').update({ abierto: true, abierto_at: new Date().toISOString() })
+     .eq('id', logId).then(function(){}, function(){});
+  }
+
+  function abrirDeeplink(url){
+    var m;
+    if ((m = /^portiv:\/\/posicion\/([A-Z.\-]+)/i.exec(url))) {
+      if (typeof window.openDrawer === 'function') { window.openDrawer(m[1].toUpperCase()); return; }
+      if (typeof window.showTicker === 'function') { window.showTicker(m[1].toUpperCase()); return; }
+    }
+    if ((m = /^portiv:\/\/calendario\/(.+)$/i.exec(url))) {
+      var evId = decodeURIComponent(m[1]);
+      try { window.__pvPushEventoDestino = evId; } catch(e){}
+      if (typeof window.switchTab === 'function') { window.switchTab('noticias'); }
+      // El calendario se posiciona en el evento cuando termina de pintarse.
+      setTimeout(function(){
+        try {
+          var el = document.querySelector('[data-evento-id="' + evId + '"]');
+          if (el && el.scrollIntoView) el.scrollIntoView({ behavior:'smooth', block:'center' });
+        } catch(e){}
+      }, 600);
+    }
+  }
+
+  // ── Pantalla de pre-permiso ───────────────────────────────────────────────
+  // Copy con el valor CONCRETO, no "activa las notificaciones". Sin verde ni rojo:
+  // esos dos colores están reservados a datos financieros.
+  function pantallaPrePermiso(){
+    return new Promise(function(resolve){
+      var wrap = document.createElement('div');
+      wrap.id = 'pvPushGate';
+      wrap.setAttribute('style',
+        'position:fixed;inset:0;z-index:14000;background:rgba(11,28,48,.55);'+
+        'display:flex;align-items:center;justify-content:center;padding:24px;');
+      var card = document.createElement('div');
+      card.setAttribute('style',
+        'background:#fff;max-width:380px;width:100%;padding:26px 22px 18px;'+
+        'border-radius:16px;font-family:var(--font),system-ui,sans-serif;'+
+        'box-shadow:0 18px 48px rgba(11,28,48,.28);');
+      card.innerHTML =
+        '<div style="font-size:18px;font-weight:700;color:#0b1c30;margin-bottom:10px;">'+
+          'Te avisamos qué mueve el mercado antes de que abra</div>'+
+        '<div style="font-size:14px;line-height:1.5;color:#44546a;margin-bottom:6px;">'+
+          'Cada mañana, el dato económico del día que toca tus posiciones. '+
+          'Al cierre, cómo se movió tu cartera.</div>'+
+        '<div style="font-size:12px;line-height:1.5;color:#6b7a90;margin-bottom:18px;">'+
+          'Dos avisos al día como máximo. Puedes desactivar cada uno por separado '+
+          'desde tu cuenta.</div>'+
+        '<button id="pvPushSi" style="width:100%;padding:13px;border:none;border-radius:10px;'+
+          'background:#04162c;color:#fff;font-size:15px;font-weight:600;cursor:pointer;">'+
+          'Activar avisos</button>'+
+        '<button id="pvPushNo" style="width:100%;padding:12px;margin-top:8px;border:none;'+
+          'background:transparent;color:#6b7a90;font-size:14px;cursor:pointer;">'+
+          'Ahora no</button>';
+      wrap.appendChild(card);
+      document.body.appendChild(wrap);
+      var cerrar = function(v){ try { wrap.remove(); } catch(e){} resolve(v); };
+      card.querySelector('#pvPushSi').onclick = function(){ cerrar(true); };
+      card.querySelector('#pvPushNo').onclick = function(){ cerrar(false); };
+      wrap.onclick = function(e){ if (e.target === wrap) cerrar(false); };
+    });
+  }
+
+  // ── API pública ───────────────────────────────────────────────────────────
+  var API = {
+    disponible: function(){ return esNativo() && !!plugin(); },
+
+    /* Tras el login. NO pide permiso: sólo re-registra si el usuario YA lo concedió
+       (el token de APNs puede cambiar entre arranques y hay que refrescarlo). */
+    trasLogin: function(){
+      if (!API.disponible()) return;
+      var P = plugin();
+      listeners();
+      P.checkPermissions().then(function(r){
+        if (r && r.receive === 'granted') P.register();
+      }).catch(function(e){ log('checkPermissions', e); });
+    },
+
+    /* El momento adecuado: ya tiene posiciones. Aquí sí se ofrece el permiso, una
+       sola vez. Se llama desde renderAll(), que corre cuando hay cartera. */
+    ofrecerSiToca: function(){
+      if (!API.disponible()) return;
+      try { if (localStorage.getItem(LS_PEDIDO)) return; } catch(e){}
+      if (!uid()) return;
+      if (!(window.HOLDINGS && window.HOLDINGS.length)) return;   // nunca en el primer arranque
+      var P = plugin();
+      listeners();
+      P.checkPermissions().then(function(r){
+        if (!r || r.receive !== 'prompt') return;   // ya concedido o ya denegado: no insistir
+        return pantallaPrePermiso().then(function(acepta){
+          try { localStorage.setItem(LS_PEDIDO, '1'); } catch(e){}
+          if (!acepta) return;                      // el diálogo nativo NO se dispara
+          return P.requestPermissions().then(function(res){
+            if (res && res.receive === 'granted') P.register();
+          });
+        });
+      }).catch(function(e){ log('ofrecerSiToca', e); });
+    },
+
+    /* Snapshot de la cartera para el servidor: SÓLO pesos, nunca dinero.
+       Con {ticker, peso} + las cotizaciones del día salen las dos notificaciones,
+       y el patrimonio del usuario no sale nunca del teléfono. */
+    subirSnapshot: function(){
+      var c = sb(), u = uid();
+      if (!c || !u || !window.HOLDINGS || !window.HOLDINGS.length) return;
+      var vivos = window.HOLDINGS.filter(function(h){
+        return h && h.ticker && +h.qty > 0 && +h.price > 0; });
+      var total = vivos.reduce(function(s,h){ return s + h.qty * h.price; }, 0);
+      if (!(total > 0)) return;
+      var pos = vivos.map(function(h){
+        return { t: String(h.ticker).toUpperCase(), w: +(h.qty * h.price / total).toFixed(6) }; });
+      var top3 = pos.slice().sort(function(a,b){ return b.w - a.w; }).slice(0,3)
+                    .map(function(p){ return p.t; });
+      var firma = JSON.stringify(pos);
+      if (API._ultimaFirma === firma) return;      // sin cambios → no se escribe
+      API._ultimaFirma = firma;
+      c.from('push_portfolio').upsert({
+        user_id: u, posiciones: pos, top3: top3, updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' }).then(function(r){
+        if (r.error) { API._ultimaFirma = null; log('snapshot', r.error.message); }
+      }, function(){ API._ultimaFirma = null; });
+    },
+
+    /* Ajustes: cada aviso se puede apagar por separado DENTRO de la app, no sólo
+       desde iOS (App Store 4.5.4). */
+    leerPreferencias: function(){
+      var c = sb(), u = uid();
+      if (!c || !u) return Promise.resolve(null);
+      return c.from('device_tokens').select('opt_in_am,opt_in_close').eq('user_id', u).limit(1)
+        .then(function(r){ return (r.data && r.data[0]) || null; });
+    },
+    guardarPreferencias: function(am, cierre){
+      var c = sb(), u = uid();
+      if (!c || !u) return Promise.resolve(false);
+      return c.from('device_tokens')
+        .update({ opt_in_am: !!am, opt_in_close: !!cierre, updated_at: new Date().toISOString() })
+        .eq('user_id', u)
+        .then(function(r){ return !r.error; });
+    }
+  };
+
+  window._pvPush = API;
+
+  /* Pantalla de ajustes de notificaciones. Sin verde ni rojo: reservados a datos
+     financieros, jamás decorativos. */
+  window._pvAjustesNotificaciones = function(){
+    if (!API.disponible()) {
+      if (typeof showToast === 'function') showToast('Las notificaciones sólo están disponibles en la app de iPhone.');
+      return;
+    }
+    API.leerPreferencias().then(function(pref){
+      var am = !pref || pref.opt_in_am !== false;
+      var cl = !pref || pref.opt_in_close !== false;
+      var wrap = document.createElement('div');
+      wrap.setAttribute('style','position:fixed;inset:0;z-index:14000;background:rgba(11,28,48,.55);'+
+        'display:flex;align-items:center;justify-content:center;padding:24px;');
+      var fila = function(id, titulo, desc, on){
+        return '<label style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;cursor:pointer;">'+
+          '<input type="checkbox" id="'+id+'" '+(on?'checked':'')+' style="margin-top:3px;width:18px;height:18px;">'+
+          '<span><span style="display:block;font-size:14px;font-weight:600;color:#0b1c30;">'+titulo+'</span>'+
+          '<span style="display:block;font-size:12px;color:#6b7a90;line-height:1.45;">'+desc+'</span></span></label>';
+      };
+      var card = document.createElement('div');
+      card.setAttribute('style','background:#fff;max-width:380px;width:100%;padding:24px 22px 16px;'+
+        'border-radius:16px;font-family:var(--font),system-ui,sans-serif;box-shadow:0 18px 48px rgba(11,28,48,.28);');
+      card.innerHTML = '<div style="font-size:17px;font-weight:700;color:#0b1c30;margin-bottom:6px;">Notificaciones</div>'+
+        fila('pvOptAm','Aviso de la mañana','El dato económico del día que toca tus posiciones.', am)+
+        fila('pvOptCl','Resumen del cierre','Cómo se movió tu cartera al terminar la sesión.', cl)+
+        '<button id="pvOptGuardar" style="width:100%;margin-top:14px;padding:12px;border:none;border-radius:10px;'+
+        'background:#04162c;color:#fff;font-size:15px;font-weight:600;cursor:pointer;">Guardar</button>'+
+        '<button id="pvOptCerrar" style="width:100%;padding:11px;margin-top:6px;border:none;background:transparent;'+
+        'color:#6b7a90;font-size:14px;cursor:pointer;">Cancelar</button>';
+      wrap.appendChild(card); document.body.appendChild(wrap);
+      var cerrar = function(){ try { wrap.remove(); } catch(e){} };
+      card.querySelector('#pvOptCerrar').onclick = cerrar;
+      wrap.onclick = function(e){ if (e.target === wrap) cerrar(); };
+      card.querySelector('#pvOptGuardar').onclick = function(){
+        API.guardarPreferencias(card.querySelector('#pvOptAm').checked,
+                                card.querySelector('#pvOptCl').checked).then(function(ok){
+          cerrar();
+          if (typeof showToast === 'function') showToast(ok ? 'Preferencias guardadas' : 'No se pudo guardar');
+        });
+      };
+    });
+  };
 })();
 </script>
 </body>
