@@ -46,7 +46,11 @@ if ! supabase db push --dry-run >/dev/null 2>&1; then
   echo "Historial divergente: se limpian las 18 entradas sin archivo."
   supabase migration repair --status reverted "${HUERFANAS[@]}"
 fi
-supabase db push
+# --include-all: tres migraciones locales de snaptrade son más antiguas que la
+# última del remoto y sin esto el CLI se planta. Se comprobó una por una que son
+# re-ejecutables: `add column if not exists`, `create table/index if not exists`,
+# y el único `update` está filtrado por `is null`, así que no pisa datos.
+supabase db push --include-all
 
 paso "4/5 · Secreto compartido y credenciales de APNs"
 # Se genera aquí y no se escribe a mano en ningún sitio.
