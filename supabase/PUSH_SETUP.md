@@ -42,8 +42,8 @@ Las tres se protegen con la cabecera `x-cron-secret`, no con JWT de usuario.
 
 | Función | Cron (UTC) | Por qué |
 |---|---|---|
-| `push-morning` | `30 * * * *` | Cada hora al minuto 30. La función manda sólo a quien tenga las **7:00 locales**, así que a todos les cae a las **7:30 de su hora**. |
-| `push-close` | `0 * * * *` | Cada hora. Actúa sólo cuando en **ET** son las 16:10–16:59. El cierre es un instante único: no se agenda por hora local. |
+| `push-morning` | `30 * * * *` | Cada hora al minuto 30. La función actúa sólo cuando en **ET** son las 8, así que sale a las **8:30 ET**: una hora antes de la apertura, la misma hora absoluta para todos. |
+| `push-close` | `5 * * * *` | Cada hora al minuto 5. Actúa sólo cuando en **ET** son las 16:05–16:59, o sea apenas cierra. El cierre es un instante único: no se agenda por hora local. |
 
 Ambas se llaman con `x-cron-secret`. `?force=1` salta las ventanas, para probar.
 

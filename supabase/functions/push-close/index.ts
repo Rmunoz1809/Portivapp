@@ -4,12 +4,12 @@
 //  Plantilla de JS pura, sin IA. Porcentajes, nunca dólares: la pantalla de
 //  bloqueo la ve quien esté al lado.
 //
-//  Se dispara a la MISMA hora absoluta para todos (~4:15 PM ET), no en hora local:
+//  Se dispara a la MISMA hora absoluta para todos (4:05 PM ET), no en hora local:
 //  el cierre del mercado ocurre en un solo instante. Mandárselo a un usuario de PT
 //  a las 5 PM de su hora sería un resumen de hace cuatro horas.
 //
 //  Deploy: supabase functions deploy push-close --no-verify-jwt
-//  Cron:   cada hora; la función misma decide si es la hora correcta en ET.
+//  Cron:   cada hora al minuto 5; la función misma decide si es la hora correcta en ET.
 // ═══════════════════════════════════════════════════════════════════════════
 // @deno-types="../_shared/push-rank.d.ts"
 import { textoCierre } from "../_shared/push-rank.js";
@@ -19,7 +19,9 @@ import {
 } from "../_shared/push-common.ts";
 
 const HORA_ET = 16;              // 4 PM ET
-const MINUTO_MIN = 10;           // se deja respirar al cierre antes de leer precios
+const MINUTO_MIN = 5;            // se deja respirar al cierre antes de leer precios; el cron
+                                 // corre al minuto 5, así que la ventana tiene que empezar ahí
+                                 // o la hora entera se salta y el cierre no sale nunca.
 const DIAS_SNAPSHOT_MAX = 7;     // datos rancios son peores que nada
 
 Deno.serve(async (req) => {

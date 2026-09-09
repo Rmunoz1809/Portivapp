@@ -4,8 +4,10 @@
 //  Todo el motor vive en _shared/push-rank.js y es determinista: mismo input →
 //  mismo output. Cero llamadas a IA en esta ruta.
 //
-//  Agendado por la zona horaria del usuario para caer a las 7:30 locales. El
-//  mercado objetivo (hispanos en EE.UU.) va de ET a PT: nunca asumir ET.
+//  Se dispara a las 8:30 ET, una hora antes de la apertura, a la MISMA hora
+//  absoluta para todos. El calendario económico es de EE.UU. y la apertura es un
+//  instante único: adelantarlo o atrasarlo por la hora local del usuario haría que
+//  el aviso llegue con el mercado ya abierto (PT) o de madrugada.
 //
 //  Deploy: supabase functions deploy push-morning --no-verify-jwt
 //  Cron:   cada hora al minuto 30.
@@ -20,7 +22,7 @@ import {
   type FilaPortafolio, type FilaToken,
 } from "../_shared/push-common.ts";
 
-const HORA_LOCAL_OBJETIVO = 7;   // el cron corre al minuto 30 → cae 7:30 local
+const HORA_ET = 8;               // el cron corre al minuto 30 → cae 8:30 ET (apertura 9:30)
 
 Deno.serve(async (req) => {
   if (!autorizado(req)) return new Response("forbidden", { status: 403 });
@@ -30,8 +32,9 @@ Deno.serve(async (req) => {
   const ahora = new Date();
   const et = enZona(ahora, "America/New_York");
   // El calendario económico es de EE.UU.: en día sin mercado no hay nada que contar.
-  if (!mercadoAbierto(et.fecha, et.diaSemana) && !forzar) {
-    return json({ skip: "mercado cerrado", fecha: et.fecha });
+  if (!forzar) {
+    if (!mercadoAbierto(et.fecha, et.diaSemana)) return json({ skip: "mercado cerrado", fecha: et.fecha });
+    if (et.hora !== HORA_ET) return json({ skip: "fuera de ventana", et });
   }
 
   const { data: tokens } = await admin.from("device_tokens")
@@ -39,12 +42,8 @@ Deno.serve(async (req) => {
     .eq("opt_in_am", true);
   if (!tokens?.length) return json({ enviados: 0, motivo: "sin tokens" });
 
-  // Sólo los dispositivos cuya hora LOCAL es la de la ventana.
-  const enVentana = (tokens as FilaToken[]).filter((t) => {
-    try { return forzar || enZona(ahora, t.timezone).hora === HORA_LOCAL_OBJETIVO; }
-    catch { return false; }                       // zona inválida → se ignora, no se adivina
-  });
-  if (!enVentana.length) return json({ enviados: 0, motivo: "nadie en ventana", et });
+  // La ventana ya se decidió arriba en ET: aquí entran todos los que la pidieron.
+  const enVentana = tokens as FilaToken[];
 
   const uids = [...new Set(enVentana.map((t) => t.user_id))];
   const { data: carteras } = await admin.from("push_portfolio")
