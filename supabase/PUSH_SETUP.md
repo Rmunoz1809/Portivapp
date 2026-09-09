@@ -38,6 +38,27 @@ supabase functions deploy push-morning  --no-verify-jwt
 
 Las tres se protegen con la cabecera `x-cron-secret`, no con JWT de usuario.
 
+## 3.bis · Estado real comprobado el 2026-09-09  ⚠️
+
+Se verificó contra el proyecto (`zblhifszlhdgkhnymwjh`) y **no había nada del
+lado servidor**, pese a darse por hecho:
+
+| Pieza | Estado |
+|---|---|
+| Tablas `device_tokens`, `push_selection_log`, `push_portfolio` | no existen |
+| RPC `registrar_device_token` | no existe |
+| Funciones `apns-push`, `push-morning`, `push-close` | no desplegadas (hay 17 funciones, ninguna de estas) |
+| Secreto `push_cron_secret` en Vault | no existe (Vault sólo tiene `snaptrade_cron_secret`) |
+| Cron `push-morning` / `push-close` | no existen |
+
+O sea: las migraciones nunca se aplicaron y las funciones nunca se subieron.
+`scripts/push-desplegar.sh` hace los cinco pasos en orden y deja un solo pegado
+manual (el secreto de Vault).
+
+De paso quedó a la vista que los cuatro cron `gen-*` fallan por lo mismo:
+`pv_run_generate: faltan secretos en Vault (project_url / gen_shared_secret)`.
+Es un problema aparte, del pipeline de noticias, no del push.
+
 ## 4 · Cron
 
 | Función | Cron (UTC) | Por qué |
