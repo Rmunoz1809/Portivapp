@@ -83,7 +83,9 @@ acepta cualquiera de los dos— pero no es la fuente de verdad.
 
 ## 5 · Prueba de humo, en este orden
 
-1. Build de desarrollo en un iPhone real (el simulador **no** recibe push de APNs).
+1. Build de desarrollo. En este Mac sirve el simulador: es Apple silicon con macOS 26
+   y Xcode 26, y desde Xcode 14 el simulador **sí** obtiene token de APNs y recibe
+   push de verdad. Un iPhone físico también vale, claro.
 2. Entrar, conectar el broker o cargar posiciones → aparece la pantalla de
    pre-permiso → aceptar → el diálogo nativo de iOS.
 3. Comprobar que hay fila en `device_tokens` con `environment` y `timezone`.
@@ -146,7 +148,9 @@ historial de fatiga para forzarse notificaciones. Ahora sólo puede tocar `abier
 
 ## 6-ter · Ver las notificaciones en el SIMULADOR
 
-El simulador **no recibe push de APNs de verdad**: no existe un token válido de Apple.
+En un Mac Intel o con Xcode anterior al 14, el simulador **no** obtiene token de APNs
+y sólo sirve para ver los textos con `simctl push`. En este Mac (M4, macOS 26, Xcode 26)
+sí lo obtiene y el camino completo se puede probar sin iPhone físico.
 Lo que sí acepta es un payload local, idéntico al que manda la Edge Function. Sirve
 para ver el texto, el corte de la pantalla de bloqueo y el comportamiento del tap.
 El camino completo (servidor → Apple → teléfono) sólo se prueba en un iPhone real.

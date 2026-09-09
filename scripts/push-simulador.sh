@@ -1,7 +1,9 @@
 #!/bin/bash
 # Ver las notificaciones en el SIMULADOR.
 #
-# El simulador NO recibe push de APNs de verdad: no hay token válido de Apple. Lo que
+# Este script NO prueba APNs: inyecta el payload en local con `simctl push`. Sirve para
+# ver los textos y el tap sin depender del servidor. (En Apple silicon con Xcode 14+ el
+# simulador sí puede recibir push real de APNs; eso es otra prueba, no esta.) Lo que
 # sí acepta es un payload local con `simctl push`, que es idéntico al que manda la
 # Edge Function. Sirve para ver el texto, el corte de la pantalla de bloqueo y el tap.
 # Para probar el camino completo (servidor → Apple → teléfono) hace falta un iPhone real.
