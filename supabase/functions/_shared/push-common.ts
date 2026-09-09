@@ -50,8 +50,13 @@ export async function cotizaciones(tickers: string[]): Promise<Map<string, numbe
   const out = new Map<string, number>();
   if (!KEY) return out;
   const unicos = [...new Set(tickers.map((t) => t.toUpperCase()))];
+  // Finnhub corta a 60 llamadas por minuto en el plan gratuito. Con la unión de
+  // tickers de todos los usuarios se pasa fácil: 8 en paralelo y una pausa entre
+  // lotes deja el ritmo en ~48/min. Un 429 devolvería carteras a medias, y una
+  // notificación de cierre a medias es peor que ninguna.
   const LOTE = 8;
   for (let i = 0; i < unicos.length; i += LOTE) {
+    if (i > 0) await new Promise((r) => setTimeout(r, 1100));
     await Promise.all(unicos.slice(i, i + LOTE).map(async (t) => {
       try {
         const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(t)}&token=${KEY}`);

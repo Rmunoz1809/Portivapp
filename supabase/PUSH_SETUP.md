@@ -80,11 +80,41 @@ cd /Users/rafael/Portiv
 TZ=America/New_York node supabase/functions/_shared/push-dryrun.mjs
 ```
 
+## 6-bis · ⚠️ HAY QUE VOLVER A APLICAR ESTO
+
+Se corrigieron seis bugs después del primer despliegue. Dos de ellos cambian la base
+de datos y el cliente, así que **lo ya desplegado NO funciona tal cual**:
+
+```bash
+cd /Users/rafael/Portiv
+supabase db push                                 # migración 20260909150000
+supabase functions deploy push-morning --no-verify-jwt
+supabase functions deploy push-close   --no-verify-jwt
+supabase functions deploy apns-push    --no-verify-jwt
+```
+
+Y el `index.html` nuevo tiene que llegar al dispositivo (build de iOS y, para la web,
+push a `main`).
+
+| # | Bug | Síntoma que daba |
+|---|---|---|
+| 1 | `window.HOLDINGS` no existe | `HOLDINGS` se declara con `let`: es visible por nombre pero nunca es propiedad de `window`. El snapshot de cartera y la pantalla de permiso **no corrían jamás**. |
+| 2 | Deep links a funciones inventadas | `openDrawer`, `showTicker` y `switchTab` no existen. Los reales son `showTab()` y `toggleDrawer(idx)`. Ningún tap llegaba a ningún sitio. |
+| 3 | Registro perdido en arranque en frío | El gate de sesión puede resolver antes de que el bloque del módulo se parsee. En ese arranque el token no se guardaba nunca. |
+| 4 | El alta del token chocaba con RLS | El upsert por `token` necesitaba UPDATE sobre una fila de OTRO usuario (mismo iPhone, otra cuenta) y RLS lo bloqueaba en silencio. Ahora va por `registrar_device_token()`. |
+| 5 | Doble notificación matutina | Un reintento del cron en la misma hora volvía a puntuar, el anti-duplicado descartaba sólo el evento ya enviado y ganaba el segundo mejor. |
+| 6 | Finnhub a 60 llamadas por minuto | Sin pausa entre lotes, un 429 dejaba carteras a medias. Una notificación de cierre a medias es peor que ninguna. |
+
+También se acotó por columna el permiso de UPDATE sobre `push_selection_log`: RLS no
+limita columnas, y con el permiso abierto un usuario podía reescribir su propio
+historial de fatiga para forzarse notificaciones. Ahora sólo puede tocar `abierto`.
+
 ## 7 · Tests que tienen que seguir en verde
 
 ```bash
-TZ=America/New_York node supabase/functions/_shared/push-tests.mjs       # 23 casos borde y copy
-TZ=America/New_York node supabase/functions/_shared/push-drift-test.mjs  # calendario app vs push
+TZ=America/New_York node supabase/functions/_shared/push-tests.mjs        # 23 casos borde y copy
+TZ=America/New_York node supabase/functions/_shared/push-drift-test.mjs   # calendario app vs push
+node supabase/functions/_shared/push-cliente-test.mjs                     # 12 del módulo del cliente
 ```
 
 El de **drift** es el importante a largo plazo: el motor del push tiene su propia

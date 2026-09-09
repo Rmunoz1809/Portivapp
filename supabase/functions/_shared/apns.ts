@@ -54,6 +54,8 @@ export type Envio = {
   deeplink: string;
   /** Id de la fila de push_selection_log, para marcar la apertura. */
   logId?: string;
+  /** Título largo del evento. El cliente lo usa para posicionar el calendario. */
+  tituloEvento?: string;
   collapseId?: string;
 };
 
@@ -75,6 +77,7 @@ export async function enviarPush(e: Envio): Promise<Resultado> {
     // El cliente lee esto en el listener pushNotificationActionPerformed.
     deeplink: e.deeplink,
     log_id: e.logId ?? null,
+    titulo_evento: e.tituloEvento ?? null,
   };
 
   const headers: Record<string, string> = {

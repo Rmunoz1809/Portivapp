@@ -83,6 +83,11 @@ Deno.serve(async (req) => {
       ...earnings.filter((e) => !!e.ticker && misTickers.has(e.ticker)),
     ];
     const historial = histPorUsuario.get(tk.user_id) ?? [];
+
+    // Idempotencia por usuario y día. Sin esto, un reintento del cron dentro de la
+    // misma hora volvía a puntuar, el anti-duplicado descartaba sólo el evento ya
+    // enviado, ganaba el SEGUNDO mejor y el usuario recibía dos notificaciones.
+    if (historial.some((h) => h.fecha === et.fecha && h.enviado)) { continue; }
     const umbral = umbralPara(historial);
     const r = pvNewsRank({ fechaISO: et.fecha, eventos, holdings, historial, umbral });
 
@@ -111,7 +116,7 @@ Deno.serve(async (req) => {
       token: tk.token, environment: tk.environment, titulo, cuerpo,
       // Abre el calendario POSICIONADO en el evento. No el home, no la lista completa.
       deeplink: `portiv://calendario/${encodeURIComponent(ev.id)}`,
-      logId: fila?.id, collapseId: `am-${et.fecha}`,
+      logId: fila?.id, tituloEvento: ev.titulo, collapseId: `am-${et.fecha}`,
     });
     if (res.ok) enviados++;
     else { fallos++; if (res.borrarToken) await borrarToken(tk.token, res.reason); }

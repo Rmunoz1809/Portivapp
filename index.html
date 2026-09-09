@@ -38064,7 +38064,10 @@ if (document.readyState === 'loading') {
     // tres transiciones "sin sesión → con sesión" (arranque con sesión persistida, login
     // y signup). No pide permiso: sólo re-registra si el usuario YA lo concedió, porque
     // el token de APNs puede cambiar entre arranques.
-    try { if (window._pvPush) window._pvPush.trasLogin(); } catch(e){}
+    try {
+      if (window._pvPush) window._pvPush.trasLogin();
+      else window.__pvPendingPush = true;   // el módulo aún no se parseó: lo recoge al cargar
+    } catch(e){}
 
     // Sesión autenticada lista → SharedNews ya puede ESCRIBIR en la nube (RLS exige auth).
     // Sin esto, la generación corría como anónimo, la escritura la bloqueaba RLS y nunca
@@ -45478,6 +45481,14 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
     catch(e){ return false; }
   }
   function sb(){ return window.sbClient || null; }
+  /* HOLDINGS se declara con `let` en el ámbito global léxico. Es alcanzable por
+     nombre desde este <script>, pero NO como window.HOLDINGS: `let` de nivel
+     superior no crea propiedad en window. Leerlo mal deja todo esto muerto en
+     silencio, que es justo lo que pasaba. */
+  function cartera(){
+    try { return (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS : []; }
+    catch(e){ return []; }
+  }
   function uid(){ try { return window.__pvUserId && window.__pvUserId !== 'local' ? window.__pvUserId : null; } catch(e){ return null; } }
   function log(){ try { console.log.apply(console, ['[push]'].concat([].slice.call(arguments))); } catch(e){} }
 
@@ -45508,10 +45519,9 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   function guardarToken(token){
     var c = sb(), u = uid();
     if (!c || !u || !token) return Promise.resolve(false);
-    return c.from('device_tokens').upsert({
-      user_id: u, token: token, platform: 'ios',
-      environment: entorno(), timezone: zona(), updated_at: new Date().toISOString()
-    }, { onConflict: 'token' }).then(function(r){
+    return c.rpc('registrar_device_token', {
+      p_token: token, p_environment: entorno(), p_timezone: zona()
+    }).then(function(r){
       if (r.error) { log('upsert falló', r.error.message); return false; }
       log('token guardado'); return true;
     }).catch(function(e){ log('upsert error', e); return false; });
@@ -45531,7 +45541,7 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
       try {
         var d = (ev && ev.notification && ev.notification.data) || {};
         if (d.log_id) marcarAbierta(d.log_id);
-        if (d.deeplink) abrirDeeplink(String(d.deeplink));
+        if (d.deeplink) abrirDeeplink(String(d.deeplink), d.titulo_evento || '');
       } catch(e){ log('deeplink', e); }
     });
   }
@@ -45544,23 +45554,43 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
      .eq('id', logId).then(function(){}, function(){});
   }
 
-  function abrirDeeplink(url){
+  function abrirDeeplink(url, tituloEvento){
     var m;
     if ((m = /^portiv:\/\/posicion\/([A-Z.\-]+)/i.exec(url))) {
-      if (typeof window.openDrawer === 'function') { window.openDrawer(m[1].toUpperCase()); return; }
-      if (typeof window.showTicker === 'function') { window.showTicker(m[1].toUpperCase()); return; }
-    }
-    if ((m = /^portiv:\/\/calendario\/(.+)$/i.exec(url))) {
-      var evId = decodeURIComponent(m[1]);
-      try { window.__pvPushEventoDestino = evId; } catch(e){}
-      if (typeof window.switchTab === 'function') { window.switchTab('noticias'); }
-      // El calendario se posiciona en el evento cuando termina de pintarse.
-      setTimeout(function(){
+      var tk = m[1].toUpperCase();
+      try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
+      // toggleDrawer recibe el ÍNDICE dentro de HOLDINGS, no el ticker.
+      var idx = cartera().findIndex(function(h){
+        return h && String(h.ticker).toUpperCase() === tk; });
+      if (idx >= 0) setTimeout(function(){
         try {
-          var el = document.querySelector('[data-evento-id="' + evId + '"]');
-          if (el && el.scrollIntoView) el.scrollIntoView({ behavior:'smooth', block:'center' });
+          if (typeof toggleDrawer === 'function') toggleDrawer(idx);
+          var fila = document.getElementById('drawer-' + idx);
+          if (fila && fila.scrollIntoView) fila.scrollIntoView({ behavior:'smooth', block:'center' });
         } catch(e){}
-      }, 600);
+      }, 350);
+      return;
+    }
+    if (/^portiv:\/\/calendario\//i.test(url)) {
+      try { if (typeof showTab === 'function') showTab('noticias'); } catch(e){}
+      // El calendario no marca los eventos con ningún atributo propio, así que se
+      // localiza por el TÍTULO que sí se pinta. Si no aparece, al menos queda en la
+      // pestaña correcta en vez de en el home.
+      if (!tituloEvento) return;
+      var buscar = function(intentos){
+        var cont = document.getElementById('tab-noticias');
+        var nodos = cont ? cont.querySelectorAll('*') : [];
+        for (var i = 0; i < nodos.length; i++) {
+          var n = nodos[i];
+          if (n.children.length === 0 && n.textContent &&
+              n.textContent.indexOf(tituloEvento) >= 0) {
+            try { n.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(e){}
+            return;
+          }
+        }
+        if (intentos > 0) setTimeout(function(){ buscar(intentos - 1); }, 500);
+      };
+      setTimeout(function(){ buscar(4); }, 400);
     }
   }
 
@@ -45622,9 +45652,11 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
        sola vez. Se llama desde renderAll(), que corre cuando hay cartera. */
     ofrecerSiToca: function(){
       if (!API.disponible()) return;
+      if (API._ofreciendo) return;      // renderAll corre muchas veces; una sola pantalla
+      API._ofreciendo = true;
       try { if (localStorage.getItem(LS_PEDIDO)) return; } catch(e){}
       if (!uid()) return;
-      if (!(window.HOLDINGS && window.HOLDINGS.length)) return;   // nunca en el primer arranque
+      if (!cartera().length) return;                              // nunca en el primer arranque
       var P = plugin();
       listeners();
       P.checkPermissions().then(function(r){
@@ -45636,7 +45668,8 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
             if (res && res.receive === 'granted') P.register();
           });
         });
-      }).catch(function(e){ log('ofrecerSiToca', e); });
+      }).catch(function(e){ log('ofrecerSiToca', e); })
+       .then(function(){ API._ofreciendo = false; }, function(){ API._ofreciendo = false; });
     },
 
     /* Snapshot de la cartera para el servidor: SÓLO pesos, nunca dinero.
@@ -45644,8 +45677,9 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
        y el patrimonio del usuario no sale nunca del teléfono. */
     subirSnapshot: function(){
       var c = sb(), u = uid();
-      if (!c || !u || !window.HOLDINGS || !window.HOLDINGS.length) return;
-      var vivos = window.HOLDINGS.filter(function(h){
+      var H = cartera();
+      if (!c || !u || !H.length) return;
+      var vivos = H.filter(function(h){
         return h && h.ticker && +h.qty > 0 && +h.price > 0; });
       var total = vivos.reduce(function(s,h){ return s + h.qty * h.price; }, 0);
       if (!(total > 0)) return;
@@ -45682,6 +45716,10 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   };
 
   window._pvPush = API;
+
+  /* Si el gate de sesión resolvió ANTES de que este bloque se parseara, la llamada
+     a trasLogin() se perdió. La bandera la deja puesta cloudLoadAndGate. */
+  try { if (window.__pvPendingPush) { window.__pvPendingPush = false; API.trasLogin(); } } catch(e){}
 
   /* Pantalla de ajustes de notificaciones. Sin verde ni rojo: reservados a datos
      financieros, jamás decorativos. */
