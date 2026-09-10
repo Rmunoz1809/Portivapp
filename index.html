@@ -5089,65 +5089,61 @@ window._pvAwaitIAP = function(totalMs){
     <!-- Precio objetivo / consenso (si hay) -->
     <div class="rating-rec" id="r-rec-block" style="margin-bottom:16px"></div>
 
-    <!-- Tu precio objetivo: número que fija el USUARIO (no consenso, no IA). Lo pinta
-         PV_TARGETS.renderFicha; vacío hasta que la ficha tiene ticker. Paleta neutra:
-         verde/rojo sólo en la distancia en %, que es dato financiero. -->
-    <div class="rating-rec pvt" id="r-mi-objetivo" style="margin-bottom:16px"></div>
+    <!-- Las tres tarjetas "Tu precio objetivo" (#r-mi-objetivo), "Salud financiera: F-Score y
+         Z-Score" (#r-fscore) y "Retornos de precio" (#r-retornos) ya NO viven aquí: son hosts
+         .px-card.pv-fin-card dentro de la pestaña Finanzas del análisis (_renderQualAnalysis → FI)
+         y las pintan PV_TARGETS.renderFicha, _pvPaintFScore y PV_RETURNS.paintFicha tras insertar
+         el panel. Aquí quedan sólo sus estilos: el marco (fondo, borde, radio, padding) lo pone
+         .px-card; estos cubren el interior. Los tokens son los --px-* del análisis (la tarjeta es
+         clara en ambos temas), no los --text/--border de la app. Paleta neutra: verde/rojo sólo
+         en distancias y retornos, que son dato financiero. -->
     <style id="pvt-style">
-      #tab-analizar #r-mi-objetivo:empty{display:none}
-      .pvt{border-radius:14px;border:1px solid var(--border);}
-      .pvt .pvt-title{font-size:13px;font-weight:700;color:var(--text);letter-spacing:.2px}
-      .pvt .pvt-cap{font-size:11.5px;color:var(--text3);line-height:1.5;margin-top:2px}
-      .pvt .pvt-head{margin-bottom:10px}
-      .pvt .pvt-row{padding:10px 0;border-top:1px solid var(--border)}
-      .pvt .pvt-dir{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);margin-bottom:3px}
-      .pvt .pvt-line{font-size:13px;color:var(--text2);line-height:1.55;font-variant-numeric:tabular-nums}
-      .pvt .pvt-hit{display:inline-block;margin-top:5px;font-size:11px;color:var(--text2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:2px 9px}
-      .pvt .pvt-note{font-size:12px;color:var(--text3);margin-top:4px;font-style:italic}
-      .pvt .pvt-actions{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
-      .pvt .pvt-btn{padding:9px 14px;border:none;border-radius:10px;background:var(--blue);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
-      .pvt .pvt-btn:disabled{opacity:.6;cursor:default}
-      .pvt .pvt-link{background:none;border:none;padding:0;font-size:12.5px;color:var(--text2);text-decoration:underline;cursor:pointer;font-family:inherit}
-      .pvt .pvt-empty{font-size:13px;color:var(--text2);margin-bottom:10px}
-      .pvt .pvt-form{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:8px}
-      .pvt .pvt-lbl{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
-      .pvt .pvt-lbl input,.pvt .pvt-lbl select{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;box-sizing:border-box}
-      .pvt .pvt-err{font-size:12px;color:var(--text2);min-height:14px}
-      .pvt .pvt-err:empty{display:none}
+      .pvx .pv-fin-card:empty{display:none}
+      /* El primer bloque tras la introducción respira; la fila lleva su propio separador arriba. */
+      .pv-fin-card .px-intro + *{margin-top:14px}
+      .pv-fin-card .pvt-row{padding:10px 0;border-top:1px solid var(--px-line)}
+      .pv-fin-card .pvt-dir{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--px-muted);margin-bottom:3px}
+      .pv-fin-card .pvt-line{font-size:13px;color:var(--px-ink-soft);line-height:1.55;font-variant-numeric:tabular-nums}
+      .pv-fin-card .pvt-line strong{color:var(--px-ink)}
+      .pv-fin-card .pvt-hit{display:inline-block;margin-top:5px;font-size:11px;color:var(--px-ink-soft);background:var(--px-card);border:1px solid var(--px-line);border-radius:999px;padding:2px 9px}
+      .pv-fin-card .pvt-note{font-size:12px;color:var(--px-muted);margin-top:4px;font-style:italic}
+      .pv-fin-card .pvt-cap{font-size:11.5px;color:var(--px-muted);line-height:1.5;margin-top:2px}
+      .pv-fin-card .pvt-actions{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      .pv-fin-card .pvt-btn{padding:9px 14px;border:none;border-radius:10px;background:var(--px-blue);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+      .pv-fin-card .pvt-btn:disabled{opacity:.6;cursor:default}
+      .pv-fin-card .pvt-link{background:none;border:none;padding:0;font-size:12.5px;color:var(--px-ink-soft);text-decoration:underline;cursor:pointer;font-family:inherit}
+      .pv-fin-card .pvt-empty{font-size:13px;color:var(--px-ink-soft);margin-bottom:10px}
+      .pv-fin-card .pvt-form{margin-top:10px;padding-top:10px;border-top:1px solid var(--px-line);display:grid;gap:8px}
+      .pv-fin-card .pvt-lbl{display:block;font-size:11px;color:var(--px-muted);text-transform:uppercase;letter-spacing:.5px}
+      .pv-fin-card .pvt-lbl input,.pv-fin-card .pvt-lbl select{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--px-line);border-radius:8px;background:var(--px-card);color:var(--px-ink);font-size:14px;font-family:inherit;box-sizing:border-box}
+      .pv-fin-card .pvt-err{font-size:12px;color:var(--px-red);min-height:14px}
+      .pv-fin-card .pvt-err:empty{display:none}
+      /* Distancia al objetivo (dato financiero): verde/rojo del análisis, legible sobre la tarjeta clara. */
+      .pv-fin-card .pos{color:var(--px-green-text)} .pv-fin-card .neg{color:var(--px-red)}
     </style>
-
-    <!-- Salud financiera: Piotroski F-Score y Altman Z-Score, con los 10-K reportados a la
-         SEC. Lo pinta _pvPaintFScore desde _renderResearch; vacío hasta que hay ticker.
-         Paleta neutra: los ✓/✗ y las zonas del Z no son datos financieros. -->
-    <div class="rating-rec pvt" id="r-fscore" style="margin-bottom:16px"></div>
     <style id="pvf-style">
-      #tab-analizar #r-fscore:empty{display:none}
-      .pvt .pvf-tests{margin-top:6px;display:grid;gap:3px}
-      .pvt .pvf-test{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--text2);line-height:1.45}
-      .pvt .pvf-mark{flex:0 0 14px;text-align:center;color:var(--text3);font-variant-numeric:tabular-nums}
-      .pvt .pvf-comp{justify-content:space-between;gap:12px}
-      .pvt .pvf-val{color:var(--text2);font-variant-numeric:tabular-nums;white-space:nowrap}
-      .pvt .pvf-nd{color:var(--text3);font-style:italic}
+      .pv-fin-card .pvf-tests{margin-top:6px;display:grid;gap:3px}
+      .pv-fin-card .pvf-test{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--px-ink-soft);line-height:1.45}
+      .pv-fin-card .pvf-mark{flex:0 0 14px;text-align:center;color:var(--px-muted);font-variant-numeric:tabular-nums}
+      .pv-fin-card .pvf-comp{justify-content:space-between;gap:12px}
+      .pv-fin-card .pvf-val{color:var(--px-ink-soft);font-variant-numeric:tabular-nums;white-space:nowrap}
+      .pv-fin-card .pvf-nd{color:var(--px-muted);font-style:italic}
     </style>
-
-    <!-- Retornos de precio: 1S…5A y distancia al máximo de 52 semanas, con cierres de Alpaca
-         ajustados por splits (sin dividendos: retorno de PRECIO). Lo pinta PV_RETURNS.paintFicha
-         desde _renderResearch; vacío hasta que hay ticker. Paleta neutra: verde/rojo sólo en
-         los valores de retorno, que son dato financiero. -->
-    <div class="rating-rec pvt" id="r-retornos" style="margin-bottom:16px"></div>
     <style id="pvr-style">
-      #tab-analizar #r-retornos:empty{display:none}
-      .pvt .pvr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:4px}
-      @media (min-width:560px){.pvt .pvr-grid{grid-template-columns:repeat(8,1fr)}}
-      .pvt .pvr-chip{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:7px 4px;text-align:center}
-      .pvt .pvr-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:3px}
-      .pvt .pvr-v{font-size:13px;font-weight:600;color:var(--text2);font-variant-numeric:tabular-nums;white-space:nowrap}
-      .pvt .pvr-line{font-size:13px;color:var(--text2);line-height:1.55;margin-top:10px;font-variant-numeric:tabular-nums}
-      .pvt .pvr-hi{color:var(--text3);font-size:12px}
+      .pv-fin-card .pvr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+      @media (min-width:560px){.pv-fin-card .pvr-grid{grid-template-columns:repeat(8,1fr)}}
+      .pv-fin-card .pvr-chip{background:var(--px-card);border:1px solid var(--px-line);border-radius:10px;padding:7px 4px;text-align:center}
+      .pv-fin-card .pvr-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--px-muted);margin-bottom:3px}
+      .pv-fin-card .pvr-v{font-size:13px;font-weight:600;color:var(--px-ink-soft);font-variant-numeric:tabular-nums;white-space:nowrap}
+      .pv-fin-card .pvr-line{font-size:13px;color:var(--px-ink-soft);line-height:1.55;margin-top:10px;font-variant-numeric:tabular-nums}
+      .pv-fin-card .pvr-hi{color:var(--px-muted);font-size:12px}
+      .pv-fin-card .pvr-up{color:var(--px-green-text)}
+      .pv-fin-card .pvr-dn{color:var(--px-red)}
+      .pv-fin-card .pvr-nd{color:var(--px-muted)}
+      /* Sección "Retornos de precio de la cartera" (pestaña Analizar, dentro de #port-deep-analysis): tema de la app. */
       .pvr-up{color:var(--green)}
       .pvr-dn{color:var(--red)}
       .pvr-nd{color:var(--text3)}
-      /* Sección "Retornos de precio de la cartera" (pestaña Analizar, dentro de #port-deep-analysis) */
       .pvr-wrap{margin-top:18px}
       .pvr-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
       .pvr-table{width:100%;border-collapse:collapse;min-width:640px}
@@ -18925,6 +18921,11 @@ function pvEsc(s){
   }[c]));
 }
 window.pvEsc = pvEsc;
+// Título de tarjeta del análisis por pestañas (.px-card). Es el mismo markup que el `stitle`
+// local de _renderQualAnalysis, expuesto para los pintores que viven fuera de esa función
+// (PV_TARGETS.renderFicha, _pvPaintFScore, PV_RETURNS.paintFicha).
+function _pvxStitle(t){ return '<h2 class="px-sec-title"><span class="t">' + pvEsc(t) + '</span></h2>'; }
+window._pvxStitle = _pvxStitle;
 
 // Overlay de modo debug: solo visible cuando pv_debug='1'. No afecta el diseño normal.
 function _pvRenderDebug(){
@@ -24847,8 +24848,9 @@ function _pvPaintFScore(ticker, info){
   const tk = String(ticker || '').toUpperCase().trim();
   if (!tk || (typeof _isEtfTicker === 'function' && _isEtfTicker(tk, info))) { el.innerHTML = ''; el.dataset.ticker = ''; return; }
   el.dataset.ticker = tk;
-  const head = '<div class="pvt-head"><div class="pvt-title">Salud financiera: F-Score y Z-Score</div>' +
-               '<div class="pvt-cap">Dos lecturas clásicas de los estados anuales. Descriptivas, no una recomendación de Portiv.</div></div>';
+  // Mismo patrón que las demás tarjetas del análisis: título .px-sec-title + <p class="px-intro">.
+  const head = _pvxStitle('Salud financiera: F-Score y Z-Score') +
+               '<p class="px-intro">Dos lecturas clásicas de los estados anuales. Descriptivas, no una recomendación de Portiv.</p>';
   el.innerHTML = head + '<div class="pvt-empty">Cargando estados financieros…</div>';
 
   // Capitalización actual en USD absolutos: info.marketCap ya viene en USD;
@@ -25135,8 +25137,9 @@ const PV_RETURNS = (function(){
     const tk = String(ticker || '').toUpperCase().trim();
     if (!tk) { el.innerHTML = ''; el.dataset.ticker = ''; return; }
     el.dataset.ticker = tk;
-    const head = '<div class="pvt-head"><div class="pvt-title">Retornos de precio</div>' +
-                 '<div class="pvt-cap">Variación del precio de cierre en cada horizonte y distancia al máximo de 52 semanas. Descriptivo, no una recomendación.</div></div>';
+    // Mismo patrón que las demás tarjetas del análisis: título .px-sec-title + <p class="px-intro">.
+    const head = (window._pvxStitle ? _pvxStitle('Retornos de precio') : '<h2 class="px-sec-title"><span class="t">Retornos de precio</span></h2>') +
+                 '<p class="px-intro">Variación del precio de cierre en cada horizonte y distancia al máximo de 52 semanas. Descriptivo, no una recomendación.</p>';
     const pintar = () => {
       if (el.dataset.ticker !== tk) return;
       const r = compute(tk, info);
@@ -27865,6 +27868,16 @@ function _renderQualAnalysis(a, el){
     </details></div>`;
   }
 
+  // 6d) SALUD FINANCIERA (F-Score/Z-Score), RETORNOS DE PRECIO y TU PRECIO OBJETIVO. Antes eran
+  //     tres bloques fijos de la tarjeta de rating con su propio marco; ahora son tarjetas
+  //     .px-card de esta pestaña. Van vacías en `h` y las rellenan sus pintores justo después
+  //     de insertar el panel (ver más abajo, tras `el.innerHTML = h`); mientras estén vacías,
+  //     .pv-fin-card:empty las oculta. Mismos ids de siempre para que _refreshResearchPrice
+  //     y los repintados de PV_TARGETS sigan encontrándolas.
+  FI += `<div id="r-fscore" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
+    <div id="r-retornos" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
+    <div id="r-mi-objetivo" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>`;
+
   // 7a) CRECIMIENTO RECIENTE — EPS reportado por trimestre + beat/miss + YoY real (datos reales).
   {
     const rg = a.recentGrowth || {};
@@ -28081,6 +28094,19 @@ function _renderQualAnalysis(a, el){
   h += `<div class="px-disclaimer">Análisis generado por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div>`;
 
   el.innerHTML = h;
+  // ① Las tres tarjetas de Finanzas (F-Score/Z-Score, retornos, tu precio objetivo) se
+  //    rellenan aquí, ya con sus hosts en el DOM. Los pintores son idempotentes y con caché
+  //    (SEC 7 días, barras de Alpaca en memoria, objetivos en memoria): repintar el análisis
+  //    no dispara descargas nuevas si ya se pidieron. El precio actual es el de la ficha.
+  try {
+    const _tkF = a.ticker;
+    const _infoF = (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[_tkF]) || null;
+    const _pxF = (typeof _researchCurPrice === 'number' && _researchCurPrice > 0) ? _researchCurPrice
+               : (_infoF && (_infoF.currentPrice || _infoF.regularMarketPrice)) || 0;
+    try { _pvPaintFScore(_tkF, _infoF); } catch(e){}
+    try { if (window.PV_RETURNS) PV_RETURNS.paintFicha(_tkF, _infoF); } catch(e){}
+    try { if (window.PV_TARGETS) PV_TARGETS.renderFicha(_tkF, _pxF); } catch(e){}
+  } catch(e){}
   // Detrás del candado va el análisis REAL, difuminado. Lo que NO se pide son los
   // dos rellenos LAZY de abajo: son las únicas llamadas de red de esta función
   // (competidores y barras diarias de Alpaca) y son POR USUARIO, no compartidas
@@ -46562,8 +46588,9 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
       if (!T) { el.innerHTML = ''; return; }
       var p = +currentPrice;
       var t = API.get(T);
-      var h = '<div class="pvt-head"><div class="pvt-title">Tu precio objetivo</div>' +
-              '<div class="pvt-cap">Un número que fijas tú para seguir esta acción. No es una recomendación de Portiv.</div></div>';
+      // Mismo patrón que las demás tarjetas del análisis: título .px-sec-title + <p class="px-intro">.
+      var h = (window._pvxStitle ? window._pvxStitle('Tu precio objetivo') : '<h2 class="px-sec-title"><span class="t">Tu precio objetivo</span></h2>') +
+              '<p class="px-intro">Un número que fijas tú para seguir esta acción. No es una recomendación de Portiv.</p>';
 
       if (!uid()) {
         h += '<div class="pvt-empty">Inicia sesión para guardar tu precio objetivo.</div>' +
