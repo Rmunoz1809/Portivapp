@@ -5060,7 +5060,7 @@ window._pvAwaitIAP = function(totalMs){
           <div class="rap-top">
             <div>
               <div class="rap-rec" id="r-rec-label">—</div>
-              <div class="rap-rec-cap">Lectura de la nota</div>
+              <div class="rap-rec-cap">Recomendación Analista</div>
             </div>
             <div class="rap-score-wrap">
               <div class="rap-score"><span id="r-rating-general">—</span><small>/10</small></div>
@@ -11963,7 +11963,7 @@ function _buildEtfAnalysis(ticker, info){
   return {
     isEtf:true, ticker:p.ticker, p, scores:S, rating,
     rating_label:_ratingLabel(rating),
-    rec: rating==null?'—' : _pvxNotaLabel(rating),   // misma lectura descriptiva que las acciones
+    rec: rating==null?'—' : rating>=8.5?'STRONG BUY' : rating>=7?'BUY' : rating>=5.5?'HOLD' : rating>=4?'REDUCE':'SELL',
     top10:t10, rest, concLabel, concCls, concTxt, costo10, costo20,
     momentum:mo, riesgos, rol, horizonte, peso,
   };
@@ -25372,27 +25372,27 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   // Recomendación derivada del rating de calidad
   // Lectura descriptiva de la nota (misma escala que antes; sin verbos de acción ni color
   // semafórico: una nota de calidad no es una subida ni una bajada).
-  const recL = _pvxNotaLabel(_gn);
-  const recC = _PVX_NOTA_LBL_COLOR;
+  const recL = _gn>=8.5?'STRONG BUY':_gn>=7?'BUY':_gn>=5.5?'HOLD':_gn>=4?'REDUCE':'SELL';
+  const recC = _gn>=7?'#34d399':_gn>=5.5?'#facc15':'#f87171';
   // Business Quality (calidad del negocio) desde ROE/márgenes/crecimiento
   let _bq=0;
   if(roe!=null)  _bq += roe>0.25?3:roe>0.15?2:roe>0.08?1:0;
   if(pm!=null)   _bq += pm>0.20?3:pm>0.10?2:pm>0?1:0;
   if(gm!=null)   _bq += gm>0.55?2:gm>0.35?1:0;
   if(revG!=null) _bq += revG>0.15?2:revG>0.05?1:0;
-  const bqLabel = _bq>=8?'Excepcional':_bq>=5?'Sólida':_bq>=3?'Moderada':'Limitada';
+  const bqLabel = _bq>=8?'Exceptional':_bq>=5?'Strong':_bq>=3?'Moderate':'Limited';
   const bqPct = Math.max(8, Math.min(100, Math.round(_bq/10*100)));
   // Valuation Score (P/E vs benchmark de sector; más alto = más atractivo)
   const _sec = info.sector || '';
   const _secPE = {Technology:28,'Financial Services':14,Healthcare:20,'Consumer Cyclical':22,'Consumer Defensive':18,Energy:12,Industrials:20,'Communication Services':22,'Basic Materials':16,'Real Estate':30,Utilities:18};
   const _mPE = _secPE[_sec]||22;
-  let valLabel='En línea con el sector', valPct=58;
+  let valLabel='Fair', valPct=58;
   if(pe!=null && pe>0){ const rr=pe/_mPE;
-    if(rr<0.8){valLabel='Múltiplo bajo vs. sector';valPct=88;}
-    else if(rr<1.1){valLabel='En línea con el sector';valPct=68;}
-    else if(rr<1.4){valLabel='Prima moderada';valPct=50;}
-    else if(rr<1.9){valLabel='Prima alta';valPct=32;}
-    else {valLabel='Prima muy alta';valPct=16;}
+    if(rr<0.8){valLabel='Undervalued';valPct=88;}
+    else if(rr<1.1){valLabel='Fair';valPct=68;}
+    else if(rr<1.4){valLabel='Fair Premium';valPct=50;}
+    else if(rr<1.9){valLabel='Premium';valPct=32;}
+    else {valLabel='Expensive';valPct=16;}
   } else { valLabel='N/D'; valPct=50; }
   // Nivel de riesgo
   let _rk=5;
@@ -25418,8 +25418,8 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
     const _er = (_e && _e.rating != null) ? _e.rating.toFixed(1) : gRating;
     const _en = parseFloat(_er);
     _set('r-rating-general', _er, _en>=8?'var(--green)':_en>=6?'var(--yellow)':_en>=4?'var(--text2)':'var(--red)');
-    _set('r-rec-label', (_e && _e.rec) || recL, _PVX_NOTA_LBL_COLOR);
-    window._PVX_RATING_FALLBACK = { ticker, rating:_er, recL:((_e&&_e.rec)||recL), recC:_PVX_NOTA_LBL_COLOR };
+    _set('r-rec-label', (_e && _e.rec) || recL, _en>=7?'#34d399':_en>=5.5?'#facc15':'#f87171');
+    window._PVX_RATING_FALLBACK = { ticker, rating:_er, recL:((_e&&_e.rec)||recL), recC:(_en>=7?'#34d399':_en>=5.5?'#facc15':'#f87171') };
     var _etfA = _e;   // se aplica más abajo, tras los _set genéricos de la tarjeta
   } else {
     const _rg = $('r-rating-general');
@@ -27209,16 +27209,6 @@ function _pvxRubricScores(info, a, ticker){
   return { moat:r1(moat), dims:r1(dims), datos:r1(datos), salud:r1(salud), prosRiesgos:r1(prosRiesgos), nota, n:vals.length };
 }
 
-// Lectura descriptiva de la nota general (0–10). Sustituye a las antiguas etiquetas de
-// acción en inglés (STRONG BUY … SELL) con la MISMA escala por nota; el color es neutro
-// porque describe calidad, no una variación financiera.
-const _PVX_NOTA_LBL_COLOR = 'rgba(255,255,255,.88)';
-function _pvxNotaLabel(n){
-  n = parseFloat(n);
-  if (!isFinite(n)) return '—';
-  return n>=8.5?'Calidad muy alta':n>=7?'Calidad alta':n>=5.5?'Calidad media':n>=4?'Calidad baja':'Calidad muy baja';
-}
-
 // Escribe bajo la nota el perfil sectorial y la posición frente a sus pares. Con r nulo
 // (ETF o empresa sin datos) la línea se oculta: nunca un texto inventado.
 function _pvxPaintSectorLine(r){
@@ -28152,8 +28142,8 @@ function _renderQualAnalysis(a, el){
                _g.style.color = _n>=8?'var(--green)':_n>=6?'var(--yellow)':_n>=4?'var(--text2)':'var(--red)'; }
       const _r = document.getElementById('r-rec-label');
       if (_r){ _r.classList.remove('rap-pending');
-               _r.textContent = _pvxNotaLabel(_n);
-               _r.style.color = _PVX_NOTA_LBL_COLOR; }
+               _r.textContent = _n>=8.5?'STRONG BUY':_n>=7?'BUY':_n>=5.5?'HOLD':_n>=4?'REDUCE':'SELL';
+               _r.style.color = _n>=7?'#34d399':_n>=5.5?'#facc15':'#f87171'; }
     } else {
       // Ningún rubro tenía datos suficientes → no hay nota honesta que dar. Se usa el rating
       // de respaldo antes que dejar la tarjeta vacía para siempre.
