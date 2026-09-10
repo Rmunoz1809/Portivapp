@@ -41,6 +41,10 @@ function ttlFor(path: string): number {
   if (p.startsWith("/calendar/earnings") || p.startsWith("/stock/earnings")) return 3600;
   if (p.startsWith("/stock/recommendation") || p.startsWith("/stock/price-target")) return 3600;
   if (p.startsWith("/stock/profile2") || p.startsWith("/stock/metric") || p.startsWith("/search")) return 86400; // ~static
+  // Estados financieros reportados a la SEC (10-K/10-Q): cambian una vez por trimestre como
+  // mucho, y la ficha sólo usa los anuales. Una semana de caché compartida basta y evita que
+  // cada apertura de ficha cueste una llamada upstream (el payload pesa cientos de KB).
+  if (p.startsWith("/stock/financials-reported")) return 7 * 86400;
   return 60;
 }
 
@@ -113,6 +117,7 @@ Deno.serve(async (req) => {
     "/quote", "/stock/candle", "/company-news", "/news", "/calendar/earnings",
     "/stock/earnings", "/stock/recommendation", "/stock/price-target",
     "/stock/profile2", "/stock/metric", "/search",
+    "/stock/financials-reported",   // Piotroski F-Score y Altman Z (ficha de la acción)
   ];
   if (!allowed.some((a) => path.toLowerCase().startsWith(a))) {
     return json({ error: "endpoint not allowed" }, 403);

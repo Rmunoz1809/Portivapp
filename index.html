@@ -551,6 +551,7 @@ window._ensureChartJs = (function(){
   }
 
   .sym { font-weight: 700; font-size: 13px; }
+  .pv-tgt-mark { font-size: 8px; color: var(--text3); margin-left: 5px; vertical-align: middle; cursor: help; } /* cruzó tu precio objetivo: neutro, sin verde/rojo */
   .sym-link { cursor: pointer; transition: color .15s; }
   .sym-link:hover { color: var(--blue); }
   .sym-sub { font-size: 10px; color: var(--text3); }
@@ -4958,6 +4959,17 @@ window._pvAwaitIAP = function(totalMs){
        completo de la tarjeta para que en móvil envuelva en vez de estrujar el número. */
     #tab-analizar .rap-sector{font-size:11.5px;line-height:1.4;color:rgba(255,255,255,.6);padding-top:12px;letter-spacing:.2px}
     #tab-analizar .rap-sector b{font-weight:700}
+    /* Desglose por pilar bajo la nota. Paleta neutra a propósito: un pilar alto o bajo no es
+       una subida ni una bajada, así que no lleva verde ni rojo. */
+    #tab-analizar .rap-pilares{padding-top:12px;display:grid;gap:6px}
+    #tab-analizar .rap-pil{display:grid;grid-template-columns:minmax(78px,1fr) minmax(56px,1.4fr) auto 30px;align-items:center;gap:8px;font-size:11.5px;line-height:1.3}
+    #tab-analizar .rap-pil-nom{color:rgba(255,255,255,.7);font-weight:600}
+    #tab-analizar .rap-pil-bar{height:5px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden}
+    #tab-analizar .rap-pil-fill{height:100%;border-radius:999px;background:rgba(255,255,255,.55);transition:width .5s ease}
+    #tab-analizar .rap-pil-lbl{color:rgba(255,255,255,.6);font-size:11px;white-space:nowrap}
+    #tab-analizar .rap-pil-num{color:#fff;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+    #tab-analizar .rap-pil.off .rap-pil-lbl,#tab-analizar .rap-pil.nd .rap-pil-lbl{grid-column:2 / span 3;text-align:right;color:rgba(255,255,255,.4);font-style:italic}
+    #tab-analizar .rap-pil-ctx{font-size:11px;line-height:1.45;color:rgba(255,255,255,.5);margin-top:4px}
     /* Estado de espera de la valoración: la nota no se escribe hasta que el análisis termina,
        así que mientras tanto se ve claramente "cargando" y no un número que luego cambia.
        .rap-rec baja de tamaño porque "Analizando…" es mucho más largo que "BUY". */
@@ -5048,7 +5060,7 @@ window._pvAwaitIAP = function(totalMs){
           <div class="rap-top">
             <div>
               <div class="rap-rec" id="r-rec-label">—</div>
-              <div class="rap-rec-cap">Recomendación Analista</div>
+              <div class="rap-rec-cap">Lectura de la nota</div>
             </div>
             <div class="rap-score-wrap">
               <div class="rap-score"><span id="r-rating-general">—</span><small>/10</small></div>
@@ -5056,6 +5068,9 @@ window._pvAwaitIAP = function(totalMs){
             </div>
           </div>
           <div class="rap-sector" id="r-sector-line" style="display:none"></div>
+          <!-- Desglose por pilar del motor sectorial (rentabilidad, crecimiento, solidez,
+               valoración, mercado). Lo pinta _pvxPaintPilares; oculto para ETF o sin datos. -->
+          <div class="rap-pilares" id="r-pilares" style="display:none"></div>
           <div class="rap-pills">
             <div class="rap-pill"><div class="rap-pill-lbl">Horizonte</div><div class="rap-pill-val" id="r-horizon">2-3 Años</div></div>
             <div class="rap-pill"><div class="rap-pill-lbl">Nivel de Riesgo</div><div class="rap-pill-val" id="r-risk-lvl">—</div></div>
@@ -5073,6 +5088,77 @@ window._pvAwaitIAP = function(totalMs){
 
     <!-- Precio objetivo / consenso (si hay) -->
     <div class="rating-rec" id="r-rec-block" style="margin-bottom:16px"></div>
+
+    <!-- Tu precio objetivo: número que fija el USUARIO (no consenso, no IA). Lo pinta
+         PV_TARGETS.renderFicha; vacío hasta que la ficha tiene ticker. Paleta neutra:
+         verde/rojo sólo en la distancia en %, que es dato financiero. -->
+    <div class="rating-rec pvt" id="r-mi-objetivo" style="margin-bottom:16px"></div>
+    <style id="pvt-style">
+      #tab-analizar #r-mi-objetivo:empty{display:none}
+      .pvt{border-radius:14px;border:1px solid var(--border);}
+      .pvt .pvt-title{font-size:13px;font-weight:700;color:var(--text);letter-spacing:.2px}
+      .pvt .pvt-cap{font-size:11.5px;color:var(--text3);line-height:1.5;margin-top:2px}
+      .pvt .pvt-head{margin-bottom:10px}
+      .pvt .pvt-row{padding:10px 0;border-top:1px solid var(--border)}
+      .pvt .pvt-dir{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);margin-bottom:3px}
+      .pvt .pvt-line{font-size:13px;color:var(--text2);line-height:1.55;font-variant-numeric:tabular-nums}
+      .pvt .pvt-hit{display:inline-block;margin-top:5px;font-size:11px;color:var(--text2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:2px 9px}
+      .pvt .pvt-note{font-size:12px;color:var(--text3);margin-top:4px;font-style:italic}
+      .pvt .pvt-actions{display:flex;gap:12px;align-items:center;margin-top:8px;flex-wrap:wrap}
+      .pvt .pvt-btn{padding:9px 14px;border:none;border-radius:10px;background:var(--blue);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+      .pvt .pvt-btn:disabled{opacity:.6;cursor:default}
+      .pvt .pvt-link{background:none;border:none;padding:0;font-size:12.5px;color:var(--text2);text-decoration:underline;cursor:pointer;font-family:inherit}
+      .pvt .pvt-empty{font-size:13px;color:var(--text2);margin-bottom:10px}
+      .pvt .pvt-form{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;gap:8px}
+      .pvt .pvt-lbl{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
+      .pvt .pvt-lbl input,.pvt .pvt-lbl select{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:14px;font-family:inherit;box-sizing:border-box}
+      .pvt .pvt-err{font-size:12px;color:var(--text2);min-height:14px}
+      .pvt .pvt-err:empty{display:none}
+    </style>
+
+    <!-- Salud financiera: Piotroski F-Score y Altman Z-Score, con los 10-K reportados a la
+         SEC. Lo pinta _pvPaintFScore desde _renderResearch; vacío hasta que hay ticker.
+         Paleta neutra: los ✓/✗ y las zonas del Z no son datos financieros. -->
+    <div class="rating-rec pvt" id="r-fscore" style="margin-bottom:16px"></div>
+    <style id="pvf-style">
+      #tab-analizar #r-fscore:empty{display:none}
+      .pvt .pvf-tests{margin-top:6px;display:grid;gap:3px}
+      .pvt .pvf-test{display:flex;gap:8px;align-items:baseline;font-size:12.5px;color:var(--text2);line-height:1.45}
+      .pvt .pvf-mark{flex:0 0 14px;text-align:center;color:var(--text3);font-variant-numeric:tabular-nums}
+      .pvt .pvf-comp{justify-content:space-between;gap:12px}
+      .pvt .pvf-val{color:var(--text2);font-variant-numeric:tabular-nums;white-space:nowrap}
+      .pvt .pvf-nd{color:var(--text3);font-style:italic}
+    </style>
+
+    <!-- Retornos de precio: 1S…5A y distancia al máximo de 52 semanas, con cierres de Alpaca
+         ajustados por splits (sin dividendos: retorno de PRECIO). Lo pinta PV_RETURNS.paintFicha
+         desde _renderResearch; vacío hasta que hay ticker. Paleta neutra: verde/rojo sólo en
+         los valores de retorno, que son dato financiero. -->
+    <div class="rating-rec pvt" id="r-retornos" style="margin-bottom:16px"></div>
+    <style id="pvr-style">
+      #tab-analizar #r-retornos:empty{display:none}
+      .pvt .pvr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:4px}
+      @media (min-width:560px){.pvt .pvr-grid{grid-template-columns:repeat(8,1fr)}}
+      .pvt .pvr-chip{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:7px 4px;text-align:center}
+      .pvt .pvr-h{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:3px}
+      .pvt .pvr-v{font-size:13px;font-weight:600;color:var(--text2);font-variant-numeric:tabular-nums;white-space:nowrap}
+      .pvt .pvr-line{font-size:13px;color:var(--text2);line-height:1.55;margin-top:10px;font-variant-numeric:tabular-nums}
+      .pvt .pvr-hi{color:var(--text3);font-size:12px}
+      .pvr-up{color:var(--green)}
+      .pvr-dn{color:var(--red)}
+      .pvr-nd{color:var(--text3)}
+      /* Sección "Retornos de precio de la cartera" (pestaña Analizar, dentro de #port-deep-analysis) */
+      .pvr-wrap{margin-top:18px}
+      .pvr-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+      .pvr-table{width:100%;border-collapse:collapse;min-width:640px}
+      .pvr-table th{text-align:left;font-size:11px;font-weight:600;color:var(--text3);padding:10px 10px;border-bottom:1px solid var(--border);white-space:nowrap;text-transform:uppercase;letter-spacing:.4px}
+      .pvr-table td{font-size:12.5px;color:var(--text2);padding:9px 10px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;white-space:nowrap}
+      .pvr-table tr:last-child td{border-bottom:none}
+      .pvr-table th.r,.pvr-table td.r{text-align:right}
+      .pvr-table tr.pvr-port td{font-weight:700;color:var(--text)}
+      .pvr-table .pvr-cob{font-size:10px;color:var(--text3);font-weight:400;margin-top:2px;white-space:normal;max-width:110px;margin-left:auto;line-height:1.3}
+      .pvr-note{font-size:11.5px;color:var(--text3);line-height:1.5;margin-top:8px}
+    </style>
 
     <!-- 4 métricas destacadas -->
     <div class="ra-metrics4">
@@ -8573,6 +8659,37 @@ function _anchorScore(x, anchors, dir) {
   return Math.max(0.4, Math.min(9.9, 5 + 2.05 * z));
 }
 
+// ── 5b. ETIQUETAS DE PILAR ──────────────────────────────────────────────────
+// Cada pilar sale de _anchorScore, donde estar EXACTAMENTE en la mediana del sector
+// da 5.0. Por eso 5.0 no es "aprobado justo": es un "Regular" alto (la mitad de los
+// pares está por debajo). Los cortes de abajo son una primera propuesta y conviene
+// contrastarlos con la distribución real de pilares en el universo de anclas.
+// REVISAR (Rafael): Débil < 3.5 · Regular 3.5–5.4 · Buena 5.5–6.9 · Muy buena 7.0–8.4 · Excelente ≥ 8.5
+const PILLAR_LABEL_THRESHOLDS = [
+  [8.5, 'Excelente'],
+  [7.0, 'Muy buena'],
+  [5.5, 'Buena'],
+  [3.5, 'Regular'],
+  [-Infinity, 'Débil'],
+];
+// Etiqueta descriptiva de un pilar (1–10). null / no numérico → 'No disponible'.
+function pillarLabel(score) {
+  if (typeof score !== 'number' || !isFinite(score)) return 'No disponible';
+  for (const [min, lbl] of PILLAR_LABEL_THRESHOLDS) if (score >= min) return lbl;
+  return 'Débil';
+}
+// Pilares que el perfil NO modela: sin ninguna métrica con peso > 0 en `m` para esa
+// clave, o con peso 0 en `w`. Se devuelven con las claves largas que usa `pilares`.
+const _PILAR_LARGO = { rent:'rentabilidad', crec:'crecimiento', soli:'solidez', valo:'valoracion', merc:'mercado' };
+function _pilaresOffDe(prof) {
+  if (!prof || !prof.m) return [];
+  const conMetrica = {};
+  for (const [, [pil, peso]] of Object.entries(prof.m)) if (peso > 0) conMetrica[pil] = true;
+  return Object.keys(_PILAR_LARGO)
+    .filter(k => !conMetrica[k] || !(prof.w && prof.w[k] > 0))
+    .map(k => _PILAR_LARGO[k]);
+}
+
 // ── 6. MOTOR ────────────────────────────────────────────────────────────────
 function computeSectorRating(ticker, info) {
   const { id: pid, p: prof } = _sectorProfileOf(ticker, info);
@@ -8734,6 +8851,7 @@ function computeSectorRating(ticker, info) {
       solidez:      _r1(pilar.soli), valoracion:  _r1(pilar.valo),
       mercado:      _r1(pilar.merc),
     },
+    pilaresOff: _pilaresOffDe(prof),   // pilares que este perfil no modela (UI: "No aplica en este sector")
     detalle, flags,
     etiqueta: percentil >= 90 ? 'Líder del sector' : percentil >= 70 ? 'Por encima de sus pares'
             : percentil >= 40 ? 'En línea con el sector' : percentil >= 20 ? 'Rezagada' : 'Muy rezagada',
@@ -9253,6 +9371,7 @@ function _computeGeneralRating({pe, fpe, roe, roa, revG, epsG, pm, de, beta, inf
                  (typeof window !== 'undefined' ? window._PVX_CUR_TICKER : '') || '';
   const r = computeSectorRating(ticker, info || {});
   if (!r || r.nota == null) return '5.5';
+  r.ticker = ticker;   // para que la ficha no pinte el sectorial de un ticker anterior
   if (typeof window !== 'undefined') window._PVX_LAST_SECTOR_RATING = r;
   return r.nota.toFixed(1);
 }
@@ -11848,7 +11967,7 @@ function _buildEtfAnalysis(ticker, info){
   return {
     isEtf:true, ticker:p.ticker, p, scores:S, rating,
     rating_label:_ratingLabel(rating),
-    rec: rating==null?'—' : rating>=8.5?'STRONG BUY' : rating>=7?'BUY' : rating>=5.5?'HOLD' : rating>=4?'REDUCE':'SELL',
+    rec: rating==null?'—' : _pvxNotaLabel(rating),   // misma lectura descriptiva que las acciones
     top10:t10, rest, concLabel, concCls, concTxt, costo10, costo20,
     momentum:mo, riesgos, rol, horizonte, peso,
   };
@@ -13567,6 +13686,9 @@ function renderDeepPortfolioAnalysis(T) {
   `;
 
   renderAssetDetailTable(T);
+  // Retornos de precio de la cartera: pinta desde caché; los tickers sin serie se piden una
+  // vez y `pv-returns-ready` repinta sólo esa sección (no renderAll). Sin fetch por tick.
+  try { if (window.PV_RETURNS) PV_RETURNS.paintCartera(); } catch(e){}
 }
 
 // ── Tabla "Detalle de Activos" (mockup Stitch) — usa HOLDINGS reales ──
@@ -15066,6 +15188,18 @@ function _pvSearchSym(h){
     return t;
   }catch(e){ return null; }
 }
+// Marca discreta y neutra junto al ticker cuando el precio ya cruzó un precio objetivo del
+// usuario (triggered_at, o cruce con el precio actual de la fila). evaluate() sólo escribe
+// en la tabla la primera vez que cambia el estado: llamarlo en cada render no cuesta red.
+function _pvTargetMark(h){
+  try {
+    const PT = window.PV_TARGETS; if (!PT || !h || !h.ticker) return '';
+    const t = PT.get(h.ticker); if (!t.above && !t.below) return '';
+    const px = +h.price;
+    if (px > 0) PT.evaluate(h.ticker, px);
+    return PT.crossed(h.ticker, px) ? '<span class="pv-tgt-mark" title="Cruzó tu precio objetivo" aria-label="Cruzó tu precio objetivo">&#9670;</span>' : '';
+  } catch(e){ return ''; }
+}
 function posRowHTML(h, idx, c, T) {
   // FIX: priceChg y día% derivan del MISMO prevClose que calcH → $ y % coherentes en la fila.
   const priceChg  = h.price - c.prevClose;
@@ -15088,8 +15222,8 @@ function posRowHTML(h, idx, c, T) {
       ${avatar}
       <div style="min-width:0">
         ${(() => { const _q = _pvSearchSym(h); return _q
-          ? `<div class="sym sym-link" onclick="quickSearch('${_q}')" title="Analizar ${_q}">${h.ticker}</div>`
-          : `<div class="sym" style="cursor:help" title="${h.ticker} cotiza fuera de EE. UU. y tu bróker no nos dice en qué bolsa: buscarlo abriría la empresa estadounidense que usa ese mismo símbolo.">${h.ticker}</div>`; })()}
+          ? `<div class="sym sym-link" onclick="quickSearch('${_q}')" title="Analizar ${_q}">${h.ticker}${_pvTargetMark(h)}</div>`
+          : `<div class="sym" style="cursor:help" title="${h.ticker} cotiza fuera de EE. UU. y tu bróker no nos dice en qué bolsa: buscarlo abriría la empresa estadounidense que usa ese mismo símbolo.">${h.ticker}${_pvTargetMark(h)}</div>`; })()}
         <div class="sym-sub">${pvEsc(h.name)}</div>
       </div>
     </div></div></td>
@@ -24110,6 +24244,7 @@ async function _refreshResearchPrice(ticker){
     const price = q.c, chg = (typeof q.d === 'number' ? q.d : 0), pct = (typeof q.dp === 'number' ? q.dp : 0);
     _researchCurPrice = price; _researchDayChg = chg; _researchDayChgPct = pct;
     try { _quoteCachePut(ticker, price, chg, pct, 'fh'); } catch(e){}
+    try { if (window.PV_TARGETS) window.PV_TARGETS.renderFicha(ticker, price); } catch(e){}   // distancia a tu precio objetivo al día
     const pEl = document.getElementById('r-price');
     if (pEl) pEl.textContent = `$${price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
     // El header (#r-change) respeta el PERÍODO ACTIVO: 1D → cambio del día; el resto →
@@ -24472,6 +24607,596 @@ function _renderProjections(ticker, info) {
   card.style.display = 'block';
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   SALUD FINANCIERA: Piotroski F-Score y Altman Z-Score (Feature 3)
+   Fuente: /stock/financials-reported (Finnhub, vía proxy) = estados anuales
+   reportados a la SEC (formulario 10-K), en USD absolutos y con tags us-gaap.
+   Regla de la casa: cero estimaciones. Si falta un insumo, la prueba o el
+   componente queda "No disponible"; nunca se sustituye un campo por otro
+   parecido. Las únicas derivaciones permitidas son identidades contables
+   exactas y quedan documentadas en `_tags` (prefijo "derivado:").
+   El bloque entre "inicio" y "fin" es puro (sin DOM, sin window) para poder
+   extraerlo con sed y verificarlo en node con los JSON reales.
+   ═══════════════════════════════════════════════════════════════════════════ */
+// ── F-Score / Z-Score: inicio
+// Tags us-gaap aceptados por campo, en orden de preferencia. Se busca por
+// `concept` sin el prefijo "us-gaap_", primero en el balance, luego en el
+// estado de resultados y por último en el flujo de caja.
+const _PV_FIN_TAGS = {
+  totalAssets:        ['Assets'],
+  totalLiabilities:   ['Liabilities'],                       // si falta → identidad Assets − Equity (ver abajo)
+  currentAssets:      ['AssetsCurrent'],
+  currentLiabilities: ['LiabilitiesCurrent'],
+  retainedEarnings:   ['RetainedEarningsAccumulatedDeficit'],
+  revenue:            ['Revenues', 'RevenueFromContractWithCustomerExcludingAssessedTax', 'SalesRevenueNet'],
+  grossProfit:        ['GrossProfit'],                       // si falta → identidad revenue − costo de ventas
+  costOfRevenue:      ['CostOfRevenue', 'CostOfGoodsAndServicesSold'],
+  netIncome:          ['NetIncomeLoss', 'ProfitLoss'],
+  operatingCashFlow:  ['NetCashProvidedByUsedInOperatingActivities'],
+  longTermDebt:       ['LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations', 'LongTermDebt'],
+  // Acciones: promedio ponderado del ejercicio (diluidas y, si no, básicas).
+  // No es el saldo al cierre; la prueba 7 compara el mismo concepto en ambos años.
+  shares:             ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic'],
+  ebit:               ['OperatingIncomeLoss'],               // no se reconstruye desde utilidad + intereses + impuestos
+  equity:             ['StockholdersEquity'],
+  equityTotal:        ['StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'],
+  liabilitiesAndEquity: ['LiabilitiesAndStockholdersEquity'],
+};
+
+// Extrae de un informe {year, endDate, report:{bs,ic,cf}} los campos que usan
+// ambos modelos. Ausente → null. `_tags` dice qué tag (o qué identidad) se usó.
+function _pvFinFields(rep) {
+  const r = (rep && rep.report) || {};
+  const filas = [].concat(r.bs || [], r.ic || [], r.cf || []);
+  const idx = {};
+  for (const f of filas) {
+    if (!f || typeof f.concept !== 'string') continue;
+    const k = f.concept.replace(/^us-gaap_/, '');
+    const v = (typeof f.value === 'number') ? f.value : Number(f.value);
+    if (!isFinite(v)) continue;
+    if (!(k in idx)) idx[k] = v;        // primera aparición gana (bs → ic → cf)
+  }
+  const tags = {};
+  const busca = (campo) => {
+    for (const t of _PV_FIN_TAGS[campo]) if (t in idx) { tags[campo] = t; return idx[t]; }
+    return null;
+  };
+  const out = {
+    year: rep ? (rep.year ?? null) : null,
+    endDate: rep ? String(rep.endDate || '').slice(0, 10) : '',
+    totalAssets:        busca('totalAssets'),
+    totalLiabilities:   busca('totalLiabilities'),
+    currentAssets:      busca('currentAssets'),
+    currentLiabilities: busca('currentLiabilities'),
+    retainedEarnings:   busca('retainedEarnings'),
+    revenue:            busca('revenue'),
+    grossProfit:        busca('grossProfit'),
+    netIncome:          busca('netIncome'),
+    operatingCashFlow:  busca('operatingCashFlow'),
+    longTermDebt:       busca('longTermDebt'),
+    shares:             busca('shares'),
+    ebit:               busca('ebit'),
+    equity:             busca('equity'),
+  };
+  // Identidad contable 1: Pasivo total = Activo − Patrimonio (incluyendo interés
+  // minoritario, o el patrimonio de la controladora si no se reporta el total).
+  // Sólo se aplica si el balance cuadra: LiabilitiesAndStockholdersEquity === Assets.
+  if (out.totalLiabilities == null && out.totalAssets != null) {
+    const lae = busca('liabilitiesAndEquity');
+    const eqT = busca('equityTotal');
+    const eq  = (eqT != null) ? eqT : out.equity;
+    const eqTag = (eqT != null) ? _PV_FIN_TAGS.equityTotal[0] : tags.equity;
+    if (lae != null && lae === out.totalAssets && eq != null) {
+      out.totalLiabilities = out.totalAssets - eq;
+      tags.totalLiabilities = 'derivado: Assets − ' + eqTag;
+    }
+  }
+  // Identidad contable 2: Utilidad bruta = Ventas − Costo de ventas.
+  if (out.grossProfit == null && out.revenue != null) {
+    const cor = busca('costOfRevenue');
+    if (cor != null) { out.grossProfit = out.revenue - cor; tags.grossProfit = 'derivado: ' + tags.revenue + ' − ' + tags.costOfRevenue; }
+  }
+  delete tags.costOfRevenue; delete tags.equityTotal; delete tags.liabilitiesAndEquity;
+  out._tags = tags;
+  return out;
+}
+
+// Razón a/b sólo si ambos existen y el denominador es positivo; si no, null.
+function _pvRazon(a, b) {
+  if (typeof a !== 'number' || typeof b !== 'number' || !isFinite(a) || !isFinite(b) || b <= 0) return null;
+  return a / b;
+}
+
+// Piotroski F-Score: 9 pruebas binarias con los dos últimos 10-K (t y t−1).
+// ok = true/false/null; null = "No disponible" y no suma ni resta.
+// Notas de definición (todas con activos totales del MISMO año, no promedio):
+//  3) ROA = utilidad neta / activos totales, t frente a t−1.
+//  5) Apalancamiento = deuda de largo plazo / activos totales, t frente a t−1;
+//     se considera cumplida si bajó, o si es cero en ambos años.
+//  7) Acciones = promedio ponderado del ejercicio (mismo tag en ambos años).
+//  9) Rotación = ventas / activos totales, t frente a t−1.
+function computePiotroski(t, t1) {
+  const T = t || {}, P = t1 || {};
+  const roaT  = _pvRazon(T.netIncome, T.totalAssets),  roaP  = _pvRazon(P.netIncome, P.totalAssets);
+  const levT  = _pvRazon(T.longTermDebt, T.totalAssets), levP = _pvRazon(P.longTermDebt, P.totalAssets);
+  const crT   = _pvRazon(T.currentAssets, T.currentLiabilities), crP = _pvRazon(P.currentAssets, P.currentLiabilities);
+  const gmT   = _pvRazon(T.grossProfit, T.revenue),    gmP   = _pvRazon(P.grossProfit, P.revenue);
+  const atoT  = _pvRazon(T.revenue, T.totalAssets),    atoP  = _pvRazon(P.revenue, P.totalAssets);
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+  const ocfT = num(T.operatingCashFlow), niT = num(T.netIncome);
+  const shT = num(T.shares), shP = num(P.shares);
+  const cmp = (a, b, f) => (a == null || b == null) ? null : f(a, b);
+  const tests = [
+    { key:'roa_pos',   texto:'La utilidad neta sobre activos fue positiva',                    a:roaT, b:null, ok: roaT == null ? null : roaT > 0 },
+    { key:'ocf_pos',   texto:'El flujo de caja operativo fue positivo',                        a:ocfT, b:null, ok: ocfT == null ? null : ocfT > 0 },
+    { key:'roa_mejor', texto:'La rentabilidad sobre activos mejoró respecto al año anterior',  a:roaT, b:roaP, ok: cmp(roaT, roaP, (x, y) => x > y) },
+    { key:'accrual',   texto:'El flujo de caja operativo superó a la utilidad neta',           a:ocfT, b:niT,  ok: cmp(ocfT, niT,  (x, y) => x > y) },
+    { key:'lev_baja',  texto:'La deuda de largo plazo sobre activos bajó',                     a:levT, b:levP, ok: cmp(levT, levP, (x, y) => x < y || (x === 0 && y === 0)) },
+    { key:'liq_mejor', texto:'La liquidez corriente mejoró',                                   a:crT,  b:crP,  ok: cmp(crT, crP,   (x, y) => x > y) },
+    { key:'sin_dilu',  texto:'No aumentó el número de acciones en circulación',                a:shT,  b:shP,  ok: cmp(shT, shP,   (x, y) => x <= y) },
+    { key:'gm_mejor',  texto:'El margen bruto mejoró',                                         a:gmT,  b:gmP,  ok: cmp(gmT, gmP,   (x, y) => x > y) },
+    { key:'ato_mejor', texto:'Las ventas por unidad de activo aumentaron',                     a:atoT, b:atoP, ok: cmp(atoT, atoP, (x, y) => x > y) },
+  ];
+  const validas = tests.filter(x => x.ok !== null).length;
+  const total   = tests.filter(x => x.ok === true).length;
+  return { total, validas, tests };
+}
+
+// Perfiles del motor sectorial donde la Z original no aplica: Altman (1968) la
+// calibró con manufactureras; bancos, aseguradoras, gestoras, pagos y REIT
+// tienen balances (capital de trabajo, apalancamiento) que la fórmula no modela.
+const ALTMAN_PERFILES_EXCLUIDOS = ['BANCO', 'SEGUROS', 'GESTOR_ACTIVOS', 'PAGOS', 'REIT', 'ETF'];
+
+// Zonas con copy neutro y descriptivo (sin "quiebra", sin "segura").
+function _pvAltmanZona(z) {
+  if (z == null) return null;
+  if (z > 2.99) return 'Zona de menor tensión financiera (Z > 2,99)';
+  if (z < 1.81) return 'Zona de mayor tensión financiera (Z < 1,81)';
+  return 'Zona intermedia (1,81 – 2,99)';
+}
+
+// Altman Z-Score (fórmula original): Z = 1,2·A + 1,4·B + 3,3·C + 0,6·D + 1,0·E.
+// A = capital de trabajo / activos; B = utilidades retenidas / activos;
+// C = EBIT (resultado operativo) / activos; D = valor de mercado del patrimonio / pasivos;
+// E = ventas / activos. `marketCapUSD` en USD absolutos (los estados vienen en USD
+// absolutos; Finnhub entrega la capitalización en MILLONES → el llamador multiplica
+// por 1e6 antes de pasarla). Falta algo o TA/TL ≤ 0 → z:null con motivo, pero se
+// devuelven los componentes que sí se pudieron calcular.
+function computeAltmanZ(t, marketCapUSD) {
+  const T = t || {};
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+  const TA = num(T.totalAssets), TL = num(T.totalLiabilities);
+  const wc = (num(T.currentAssets) != null && num(T.currentLiabilities) != null) ? T.currentAssets - T.currentLiabilities : null;
+  const mve = num(marketCapUSD);
+  const comp = (key, nombre, peso, n, d) => ({ key, nombre, peso, num: n, den: d, valor: _pvRazon(n, d) });
+  const componentes = [
+    comp('A', 'Capital de trabajo / Activos totales',        1.2, wc,                      TA),
+    comp('B', 'Utilidades retenidas / Activos totales',      1.4, num(T.retainedEarnings), TA),
+    comp('C', 'Resultado operativo (EBIT) / Activos totales', 3.3, num(T.ebit),             TA),
+    comp('D', 'Valor de mercado del patrimonio / Pasivos totales', 0.6, (mve != null && mve > 0) ? mve : null, TL),
+    comp('E', 'Ventas / Activos totales',                    1.0, num(T.revenue),          TA),
+  ];
+  let motivo = null;
+  if (TA == null || TA <= 0) motivo = 'Activos totales no disponibles o no positivos';
+  else if (TL == null || TL <= 0) motivo = 'Pasivos totales no disponibles o no positivos';
+  else if (mve == null || mve <= 0) motivo = 'Capitalización de mercado no disponible';
+  else {
+    const falta = componentes.find(c => c.valor == null);
+    if (falta) motivo = 'Componente sin datos: ' + falta.nombre;
+  }
+  if (motivo) return { z: null, zona: null, motivo, componentes, mve };
+  const z = componentes.reduce((s, c) => s + c.peso * c.valor, 0);
+  return { z, zona: _pvAltmanZona(z), motivo: null, componentes, mve };
+}
+// ── F-Score / Z-Score: fin
+
+// ── Descarga + caché de los campos extraídos de los 2 últimos 10-K ─────────
+// Se guardan SÓLO los campos (≈1 KB por ticker), nunca el payload (~200 KB).
+// TTL 7 días: un 10-K se publica una vez al año. Promesa en vuelo compartida
+// por ticker para no duplicar llamadas si la ficha se repinta.
+const _PV_FIN_LS  = 'pv_fin_reported_v1';
+const _PV_FIN_TTL = 7 * 24 * 60 * 60 * 1000;
+const _PV_FIN_MEM = {};       // { TICKER: {ts, t, t1} }
+const _PV_FIN_INFLIGHT = {};  // { TICKER: Promise }
+function _pvFinLsRead(){ try { return JSON.parse(localStorage.getItem(_PV_FIN_LS) || '{}') || {}; } catch(e){ return {}; } }
+function _pvFinLsWrite(tk, ent){
+  try { const all = _pvFinLsRead(); all[tk] = ent; localStorage.setItem(_PV_FIN_LS, JSON.stringify(all)); } catch(e){}
+}
+// Del payload de Finnhub toma los 10-K (formulario '10-K', también '10-K/A'),
+// ordenados por fecha de cierre descendente, y extrae t y t−1 de años distintos.
+function _pvFinPickAnnual(payload){
+  const data = Array.isArray(payload && payload.data) ? payload.data : [];
+  const ks = data.filter(d => d && /^10-K/i.test(String(d.form || '')) && d.report)
+                 .sort((a, b) => String(b.endDate || '').localeCompare(String(a.endDate || '')));
+  const t = ks[0] || null;
+  const t1 = t ? (ks.find(d => d.year != null ? d.year !== t.year : String(d.endDate || '').slice(0, 4) !== String(t.endDate || '').slice(0, 4)) || null) : null;
+  return { t, t1 };
+}
+function _pvFinancialsReported(ticker){
+  const tk = String(ticker || '').toUpperCase().trim();
+  if (!tk) return Promise.resolve(null);
+  const now = Date.now();
+  const mem = _PV_FIN_MEM[tk];
+  if (mem && (now - mem.ts) < _PV_FIN_TTL) return Promise.resolve({ t: mem.t, t1: mem.t1 });
+  const ls = _pvFinLsRead()[tk];
+  if (ls && ls.t && (now - (ls.ts || 0)) < _PV_FIN_TTL) { _PV_FIN_MEM[tk] = ls; return Promise.resolve({ t: ls.t, t1: ls.t1 }); }
+  if (_PV_FIN_INFLIGHT[tk]) return _PV_FIN_INFLIGHT[tk];
+  const p = fhFetch(`/stock/financials-reported?symbol=${encodeURIComponent(tk)}&freq=annual`, 20000)
+    .then(payload => {
+      const { t, t1 } = _pvFinPickAnnual(payload);
+      if (!t) return null;
+      const ent = { ts: Date.now(), t: _pvFinFields(t), t1: t1 ? _pvFinFields(t1) : null };
+      _PV_FIN_MEM[tk] = ent; _pvFinLsWrite(tk, ent);
+      return { t: ent.t, t1: ent.t1 };
+    })
+    .catch(() => null)
+    .finally(() => { delete _PV_FIN_INFLIGHT[tk]; });
+  _PV_FIN_INFLIGHT[tk] = p;
+  return p;
+}
+
+// ── Pintado de la tarjeta #r-fscore en la ficha ────────────────────────────
+// Asíncrona e idempotente por ticker: el contenedor guarda data-ticker y el
+// resultado se descarta si el usuario ya cambió de ficha. Paleta neutra: los
+// ✓/✗/— y las zonas no son datos financieros, así que no llevan verde/rojo.
+// TODO gate: sin entitlement por ahora; si se restringe, envolver aquí.
+const _pvNum2 = v => (typeof v === 'number' && isFinite(v)) ? v.toFixed(2).replace('.', ',') : 'No disponible';
+function _pvPaintFScore(ticker, info){
+  const el = document.getElementById('r-fscore');
+  if (!el) return;
+  const tk = String(ticker || '').toUpperCase().trim();
+  if (!tk || (typeof _isEtfTicker === 'function' && _isEtfTicker(tk, info))) { el.innerHTML = ''; el.dataset.ticker = ''; return; }
+  el.dataset.ticker = tk;
+  const head = '<div class="pvt-head"><div class="pvt-title">Salud financiera: F-Score y Z-Score</div>' +
+               '<div class="pvt-cap">Dos lecturas clásicas de los estados anuales. Descriptivas, no una recomendación de Portiv.</div></div>';
+  el.innerHTML = head + '<div class="pvt-empty">Cargando estados financieros…</div>';
+
+  // Capitalización actual en USD absolutos: info.marketCap ya viene en USD;
+  // info.__m.marketCapitalization (Finnhub) viene en millones → ×1e6.
+  let mcap = null;
+  if (info && typeof info.marketCap === 'number' && info.marketCap > 0) mcap = info.marketCap;
+  else if (info && info.__m && typeof info.__m.marketCapitalization === 'number' && info.__m.marketCapitalization > 0) mcap = info.__m.marketCapitalization * 1e6;
+
+  // Perfil sectorial para la exclusión del Z (financieras y REIT).
+  let perfilId = null;
+  try { perfilId = (typeof computeSectorRating === 'function') ? (computeSectorRating(tk, info || {}) || {}).perfilId || null : null; } catch(e){}
+  if (!perfilId) { try { const r = window._PVX_LAST_SECTOR_RATING; if (r && r.ticker === tk) perfilId = r.perfilId || null; } catch(e){} }
+
+  _pvFinancialsReported(tk).then(res => {
+    if (el.dataset.ticker !== tk) return;   // la ficha ya es de otro ticker
+    if (!res || !res.t) { el.innerHTML = head + '<div class="pvt-empty">No disponible</div>'; return; }
+    const { t, t1 } = res;
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+    let h = head;
+
+    // Piotroski
+    const f = computePiotroski(t, t1 || {});
+    const sinDatos = 9 - f.validas;
+    h += '<div class="pvt-row"><div class="pvt-dir">Piotroski F-Score</div>' +
+         '<div class="pvt-line"><strong>' + f.total + '/9</strong>' + (sinDatos ? ' · ' + sinDatos + (sinDatos === 1 ? ' prueba sin datos' : ' pruebas sin datos') : '') + '</div>' +
+         '<div class="pvf-tests">' +
+         f.tests.map(x => '<div class="pvf-test"><span class="pvf-mark">' + (x.ok === true ? '✓' : x.ok === false ? '✗' : '—') + '</span><span>' + esc(x.texto) + (x.ok === null ? ' <em class="pvf-nd">(No disponible)</em>' : '') + '</span></div>').join('') +
+         '</div></div>';
+
+    // Altman
+    h += '<div class="pvt-row"><div class="pvt-dir">Altman Z-Score</div>';
+    if (perfilId && ALTMAN_PERFILES_EXCLUIDOS.indexOf(perfilId) >= 0) {
+      h += '<div class="pvt-line">No aplica en este sector</div>';
+    } else {
+      const z = computeAltmanZ(t, mcap);
+      h += '<div class="pvt-line">' + (z.z != null ? '<strong>' + _pvNum2(z.z) + '</strong> · ' + esc(z.zona) : 'No disponible' + (z.motivo ? ' <em class="pvf-nd">(' + esc(z.motivo) + ')</em>' : '')) + '</div>' +
+           '<div class="pvf-tests">' +
+           z.componentes.map(c => '<div class="pvf-test pvf-comp"><span>' + esc(c.nombre) + '</span><span class="pvf-val">' + _pvNum2(c.valor) + '</span></div>').join('') +
+           '</div>';
+    }
+    h += '</div>';
+
+    const yT = t.year || (t.endDate || '').slice(0, 4), yP = t1 ? (t1.year || (t1.endDate || '').slice(0, 4)) : null;
+    h += '<div class="pvt-note" style="font-style:normal;margin-top:10px">Calculado con los estados anuales reportados a la SEC (formulario 10-K) de los ejercicios ' +
+         (yP ? esc(yP) + ' y ' : '') + esc(yT) + '. Sin ajustes ni estimaciones.</div>';
+    el.innerHTML = h;
+  }).catch(() => { if (el.dataset.ticker === tk) el.innerHTML = head + '<div class="pvt-empty">No disponible</div>'; });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  PV_RETURNS — retornos de PRECIO multi-horizonte y distancia al máximo de 52 semanas
+// ═══════════════════════════════════════════════════════════════════════════
+// Fuente: barras de Alpaca (_alpacaBars) con `adjustment=split` y `feed=iex`. Los cierres
+// vienen ajustados por splits pero NO por dividendos: todo lo que sale de aquí es RETORNO
+// DE PRECIO, no retorno total. Se dice en la UI y no se mezcla con nada que sí los incluya.
+// Series: una diaria de ~1 año ('1y', cubre 1S…1A y el máximo de 52 semanas) y una SEMANAL
+// de 5 años ('5y', cubre 3A y 5A; la barra semanal lleva el timestamp del lunes y el cierre
+// del viernes, así que la referencia de 3A/5A puede quedar hasta una semana antes de la
+// fecha objetivo). El proxy cachea 6/12 h; el cliente no cacheaba barras, así que aquí hay
+// caché propio memoria + localStorage con TTL 6 h y promesa en vuelo compartida por ticker.
+// Cero datos inventados: horizonte sin historia suficiente → null → "—".
+// TODO gate: sin entitlement por ahora; si se restringe, envolver paintFicha/paintCartera.
+const PV_RETURNS = (function(){
+  const HORIZONS = ['1S','1M','3M','6M','YTD','1A','3A','5A'];
+  const DAY = 86400000;
+
+  // ── Retornos: inicio
+  // Funciones PURAS (sin DOM ni red): reciben series {timestamps:[segundos], closes:[$]} y
+  // `nowMs`, devuelven números o null. verify.js las extrae entre estos dos comentarios.
+
+  // Resta n meses calendario en UTC sin desbordar el mes (31 ene − 1 mes = 28/29 feb).
+  function _pvrMinusMonths(ms, n){
+    const d = new Date(ms);
+    const day = d.getUTCDate();
+    d.setUTCDate(1);
+    d.setUTCMonth(d.getUTCMonth() - n);
+    const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+    d.setUTCDate(Math.min(day, last));
+    return d.getTime();
+  }
+  // Fecha objetivo (ms) por horizonte. YTD = 31 dic del año anterior a las 23:59:59 UTC, de
+  // modo que "último cierre ≤ objetivo" sea la última sesión del año pasado.
+  function _pvrTarget(h, nowMs){
+    switch (h) {
+      case '1S':  return nowMs - 7 * DAY;
+      case '1M':  return _pvrMinusMonths(nowMs, 1);
+      case '3M':  return _pvrMinusMonths(nowMs, 3);
+      case '6M':  return _pvrMinusMonths(nowMs, 6);
+      case '1A':  return _pvrMinusMonths(nowMs, 12);
+      case '3A':  return _pvrMinusMonths(nowMs, 36);
+      case '5A':  return _pvrMinusMonths(nowMs, 60);
+      case 'YTD': return Date.UTC(new Date(nowMs).getUTCFullYear() - 1, 11, 31, 23, 59, 59);
+    }
+    return null;
+  }
+  // Índice del ÚLTIMO cierre con timestamp ≤ objetivo (búsqueda binaria; serie ascendente).
+  // -1 si ninguno.
+  function _pvrRefIndex(timestamps, targetSec){
+    let lo = 0, hi = timestamps.length - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (timestamps[mid] <= targetSec) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return ans;
+  }
+  // Retorno de un horizonte: último cierre / cierre de referencia − 1. null si la serie no
+  // llega a la fecha objetivo o si el cierre de referencia queda a más de 10 días del
+  // objetivo (hueco en la serie). `lastClose` puede venir de otra serie más fresca (la diaria).
+  function _pvrRet(series, targetMs, lastClose){
+    if (!series || !Array.isArray(series.timestamps) || series.timestamps.length < 2) return null;
+    if (!(targetMs > 0) || !(lastClose > 0)) return null;
+    const i = _pvrRefIndex(series.timestamps, Math.floor(targetMs / 1000));
+    if (i < 0) return null;
+    if (targetMs - series.timestamps[i] * 1000 > 10 * DAY) return null;
+    const ref = series.closes[i];
+    if (!(ref > 0)) return null;
+    return { ret: lastClose / ref - 1, refTs: series.timestamps[i], refClose: ref };
+  }
+  // Máximo de 52 semanas propio: max(closes) de los últimos 365 días de la diaria. Sólo si
+  // la diaria tiene ≥ 240 sesiones en esa ventana; si no, null (el llamador puede caer a Finnhub).
+  function _pvrHigh52(daily, nowMs){
+    if (!daily || !Array.isArray(daily.timestamps)) return null;
+    const fromSec = Math.floor((nowMs - 365 * DAY) / 1000);
+    let n = 0, mx = -Infinity;
+    for (let i = daily.timestamps.length - 1; i >= 0 && daily.timestamps[i] >= fromSec; i--) {
+      const c = daily.closes[i];
+      if (c > 0) { n++; if (c > mx) mx = c; }
+    }
+    return (n >= 240 && mx > 0) ? mx : null;
+  }
+  // Todo junto para un ticker. `extHigh52` = máximo de 52 s externo (Finnhub) por si la
+  // diaria es corta. fromHigh52 nunca es > 0.
+  function _pvrComputeFromSeries(daily, weekly, nowMs, extHigh52){
+    const out = { ret: {}, refs: {}, fromHigh52: null, high52: null, high52Src: null, last: null, asOf: null, kind: 'precio' };
+    const dOk = daily && Array.isArray(daily.closes) && daily.closes.length >= 2;
+    const wOk = weekly && Array.isArray(weekly.closes) && weekly.closes.length >= 2;
+    const src = dOk ? daily : (wOk ? weekly : null);
+    if (!src) { HORIZONS.forEach(h => { out.ret[h] = null; }); return out; }
+    const last = src.closes[src.closes.length - 1];
+    out.last = last; out.asOf = src.timestamps[src.timestamps.length - 1];
+    HORIZONS.forEach(h => {
+      const s = (h === '3A' || h === '5A') ? (wOk ? weekly : null) : (dOk ? daily : null);
+      const r = _pvrRet(s, _pvrTarget(h, nowMs), last);
+      out.ret[h] = r ? r.ret : null;
+      out.refs[h] = r ? r.refTs : null;
+    });
+    let hi = dOk ? _pvrHigh52(daily, nowMs) : null;
+    if (hi) out.high52Src = 'alpaca';
+    else if (extHigh52 > 0) { hi = extHigh52; out.high52Src = 'finnhub'; }
+    if (hi > 0 && last > 0) { out.high52 = hi; out.fromHigh52 = Math.min(0, last / hi - 1); }
+    return out;
+  }
+  // Cartera: media ponderada por valor de mercado ACTUAL usando sólo las posiciones que
+  // tienen ese horizonte; `cobertura[h]` = fracción del valor total con dato (0–1).
+  // items = [{ ticker, value, ret:{h:x|null}, fromHigh52 }]. LIMITACIÓN (también en la UI):
+  // es el retorno de precio de las posiciones actuales con sus pesos de hoy, no el
+  // rendimiento histórico real del usuario: no considera aportes, ventas, dividendos ni
+  // cambios de peso.
+  function _pvrPortfolio(items){
+    const out = { ret: {}, cobertura: {}, fromHigh52: null, coberturaHigh52: 0, total: 0 };
+    const list = (items || []).filter(it => it && it.value > 0);
+    const total = list.reduce((a, it) => a + it.value, 0);
+    out.total = total;
+    if (!(total > 0)) { HORIZONS.forEach(h => { out.ret[h] = null; out.cobertura[h] = 0; }); return out; }
+    HORIZONS.forEach(h => {
+      let w = 0, acc = 0;
+      list.forEach(it => { const r = it.ret && it.ret[h]; if (typeof r === 'number' && isFinite(r)) { w += it.value; acc += it.value * r; } });
+      out.ret[h] = w > 0 ? acc / w : null;
+      out.cobertura[h] = w / total;
+    });
+    let w = 0, acc = 0;
+    list.forEach(it => { const r = it.fromHigh52; if (typeof r === 'number' && isFinite(r)) { w += it.value; acc += it.value * r; } });
+    out.fromHigh52 = w > 0 ? acc / w : null;
+    out.coberturaHigh52 = w / total;
+    return out;
+  }
+  // ── Retornos: fin
+
+  // ── Caché de series (memoria + localStorage, TTL 6 h) ───────────────────────
+  const LS_KEY = 'pv_returns_bars_v1';
+  const TTL = 6 * 60 * 60 * 1000;
+  const TTL_VACIO = 30 * 60 * 1000;   // ticker sin barras: no se reintenta en 30 min
+  const MEM = {};                     // TICKER → { d, w, ts }   (d/w = {timestamps, closes} | null)
+  const INFLIGHT = {};                // TICKER → Promise
+  (function hidratar(){
+    try {
+      const raw = JSON.parse(localStorage.getItem(LS_KEY) || '{}') || {};
+      const now = Date.now();
+      Object.keys(raw).forEach(tk => { const e = raw[tk]; if (e && (now - (e.ts || 0)) < TTL && (e.d || e.w)) MEM[tk] = e; });
+    } catch(e){}
+  })();
+  function persistir(){
+    try {
+      const out = {};
+      Object.keys(MEM).forEach(tk => { const e = MEM[tk]; if (e && (e.d || e.w)) out[tk] = e; });
+      localStorage.setItem(LS_KEY, JSON.stringify(out));
+    } catch(e){}   // cuota llena: la memoria sigue sirviendo esta sesión
+  }
+  function vigente(e){ return !!e && (Date.now() - (e.ts || 0)) < ((e.d || e.w) ? TTL : TTL_VACIO); }
+  function get(ticker){ const e = MEM[String(ticker || '').toUpperCase()]; return vigente(e) ? e : null; }
+
+  // Baja diaria (1y) y semanal (5y) en paralelo. Promesa compartida mientras está en vuelo.
+  function load(ticker){
+    const tk = String(ticker || '').toUpperCase().trim();
+    if (!tk) return Promise.resolve(null);
+    const e = get(tk); if (e) return Promise.resolve(e);
+    if (INFLIGHT[tk]) return INFLIGHT[tk];
+    if (typeof _alpacaBars !== 'function') return Promise.resolve(null);
+    const p = Promise.all([
+      _alpacaBars(tk, '1y').catch(() => null),
+      _alpacaBars(tk, '5y').catch(() => null)
+    ]).then(([d, w]) => {
+      const ent = { d: d || null, w: w || null, ts: Date.now() };
+      MEM[tk] = ent;
+      if (d || w) persistir();
+      return ent;
+    }).finally(() => { delete INFLIGHT[tk]; });
+    INFLIGHT[tk] = p;
+    return p;
+  }
+  // Asegura N tickers con a lo sumo 4 descargas en paralelo. Al terminar emite
+  // `pv-returns-ready` con los tickers que se pidieron (los que ya estaban no cuentan).
+  function ensure(tickers){
+    const pend = [...new Set((tickers || []).map(t => String(t || '').toUpperCase().trim()).filter(Boolean))].filter(tk => !get(tk));
+    if (!pend.length) return Promise.resolve([]);
+    let i = 0;
+    const worker = async () => { while (i < pend.length) { const tk = pend[i++]; try { await load(tk); } catch(e){} } };
+    return Promise.all([0,1,2,3].map(worker)).then(() => {
+      try { document.dispatchEvent(new CustomEvent('pv-returns-ready', { detail: { tickers: pend } })); } catch(e){}
+      return pend;
+    });
+  }
+
+  // Máximo de 52 s de Finnhub, sólo como respaldo cuando la diaria es corta.
+  function high52Ext(info){
+    if (!info) return null;
+    let v = +info.fiftyTwoWeekHigh;
+    if (!(v > 0) && info.__m) v = +info.__m['52WeekHigh'];
+    return v > 0 ? v : null;
+  }
+  // compute(ticker, info?) → resultado o null si no hay serie en caché (no dispara red).
+  function compute(ticker, info){
+    const e = get(ticker);
+    if (!e || !(e.d || e.w)) return null;
+    const inf = info || ((typeof _INFO_CACHE !== 'undefined') ? _INFO_CACHE[String(ticker).toUpperCase()] : null) || null;
+    return _pvrComputeFromSeries(e.d, e.w, Date.now(), high52Ext(inf));
+  }
+  // computePortfolio(holdings) → ponderado por valor de mercado actual (qty × price), sin
+  // efectivo ni money market (CASH y MONEY_MARKET son escalares fuera de HOLDINGS; por si
+  // algún origen mete filas tipo cash/money_market, también se saltan aquí).
+  const ES_CASH = h => /^(cash|money_market|money market|mm|efectivo)$/i.test(String((h && h.type) || ''));
+  function computePortfolio(holdings){
+    const items = [];
+    (holdings || []).forEach(h => {
+      if (!h || !h.ticker || ES_CASH(h)) return;
+      const value = (+h.qty || 0) * (+h.price || 0);
+      if (!(value > 0)) return;
+      const r = compute(h.ticker);
+      items.push({ ticker: String(h.ticker).toUpperCase(), value, ret: r ? r.ret : {}, fromHigh52: r ? r.fromHigh52 : null, res: r });
+    });
+    const p = _pvrPortfolio(items);
+    p.items = items;
+    return p;
+  }
+
+  // ── Formato ─────────────────────────────────────────────────────────────────
+  const fmtPct = v => {
+    if (typeof v !== 'number' || !isFinite(v)) return '—';
+    const p = v * 100, s = Math.abs(p).toFixed(1).replace('.', ',');
+    return (p > 0.05 ? '+' : (p < -0.05 ? '−' : '')) + s + ' %';
+  };
+  const clsPct = v => (typeof v !== 'number' || !isFinite(v)) ? 'pvr-nd' : (v > 0.0005 ? 'pvr-up' : (v < -0.0005 ? 'pvr-dn' : ''));
+  const fmtPx = v => (typeof v === 'number' && isFinite(v)) ? '$' + v.toFixed(2).replace('.', ',') : '—';
+  const esc = s => (typeof pvEsc === 'function') ? pvEsc(String(s == null ? '' : s)) : String(s == null ? '' : s);
+  const NOTA_PRECIO = 'Retorno de precio con cierres ajustados por splits, sin dividendos. Fuente: Alpaca (IEX).';
+  const NOTA_CARTERA = 'Retorno de precio de las posiciones actuales con sus pesos de hoy, no el rendimiento histórico real de tu cuenta: no considera aportes, ventas, dividendos ni cambios de peso. Excluye efectivo y money market.';
+
+  // ── UI ficha: #r-retornos ───────────────────────────────────────────────────
+  // Asíncrona e idempotente por data-ticker: si el usuario cambió de ficha antes de que
+  // llegue la serie, el resultado se descarta. Sólo pide red si no hay serie en caché.
+  function paintFicha(ticker, info){
+    const el = document.getElementById('r-retornos');
+    if (!el) return;
+    const tk = String(ticker || '').toUpperCase().trim();
+    if (!tk) { el.innerHTML = ''; el.dataset.ticker = ''; return; }
+    el.dataset.ticker = tk;
+    const head = '<div class="pvt-head"><div class="pvt-title">Retornos de precio</div>' +
+                 '<div class="pvt-cap">Variación del precio de cierre en cada horizonte y distancia al máximo de 52 semanas. Descriptivo, no una recomendación.</div></div>';
+    const pintar = () => {
+      if (el.dataset.ticker !== tk) return;
+      const r = compute(tk, info);
+      if (!r) { el.innerHTML = head + '<div class="pvt-empty">No disponible</div>'; return; }
+      const chips = HORIZONS.map(h => `<div class="pvr-chip"><div class="pvr-h">${h}</div><div class="pvr-v ${clsPct(r.ret[h])}">${fmtPct(r.ret[h])}</div></div>`).join('');
+      let hiLine;
+      if (typeof r.fromHigh52 === 'number') {
+        hiLine = `Desde el máximo de 52 semanas: <span class="${clsPct(r.fromHigh52)}">${fmtPct(r.fromHigh52)}</span> ` +
+                 `<span class="pvr-hi">(${fmtPx(r.high52)}${r.high52Src === 'finnhub' ? ', máximo según Finnhub' : ''})</span>`;
+      } else hiLine = 'Desde el máximo de 52 semanas: <span class="pvr-nd">—</span>';
+      el.innerHTML = head + `<div class="pvr-grid">${chips}</div><div class="pvr-line">${hiLine}</div>` +
+                     `<div class="pvt-note" style="font-style:normal;margin-top:10px">${NOTA_PRECIO}</div>`;
+    };
+    if (get(tk)) { pintar(); return; }
+    el.innerHTML = head + '<div class="pvt-empty">Cargando…</div>';
+    ensure([tk]).then(pintar, () => { if (el.dataset.ticker === tk) el.innerHTML = head + '<div class="pvt-empty">No disponible</div>'; });
+  }
+
+  // ── UI cartera: sección dentro de #port-deep-analysis ───────────────────────
+  // Se llama desde renderDeepPortfolioAnalysis (que ya sólo corre con la pestaña visible).
+  // Pinta con lo que hay en caché; los tickers sin serie se piden UNA vez (ensure) y el
+  // evento `pv-returns-ready` repinta sólo esta sección, sin renderAll().
+  const PEDIDOS = new Set();
+  function paintCartera(){
+    const host = document.getElementById('port-deep-analysis');
+    if (!host) return;
+    let el = document.getElementById('port-returns');
+    if (!el) { el = document.createElement('div'); el.id = 'port-returns'; el.className = 'pvr-wrap'; host.appendChild(el); }
+    const H = (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS : [];
+    const p = computePortfolio(H);
+    const head = '<div class="pda-section-lbl">Retornos de precio de la cartera</div>';
+    if (!p.items.length) { el.innerHTML = ''; return; }
+    const faltan = p.items.filter(it => !it.res && !get(it.ticker)).map(it => it.ticker).filter(tk => !PEDIDOS.has(tk));
+    if (faltan.length) { faltan.forEach(tk => PEDIDOS.add(tk)); ensure(faltan); }
+    const cargando = p.items.some(it => !it.res && INFLIGHT[it.ticker]);
+    const th = '<th>Activo</th>' + HORIZONS.map(h => `<th class="r">${h}</th>`).join('') + '<th class="r">Desde máx. 52 s</th>';
+    const celda = (v, cob) => {
+      let extra = '';
+      if (typeof v === 'number' && typeof cob === 'number' && cob < 0.999) extra = `<div class="pvr-cob">sobre el ${Math.round(cob * 100)} % de la cartera</div>`;
+      return `<td class="r"><span class="${clsPct(v)}">${fmtPct(v)}</span>${extra}</td>`;
+    };
+    const filaCart = '<tr class="pvr-port"><td>Cartera (ponderada)</td>' + HORIZONS.map(h => celda(p.ret[h], p.cobertura[h])).join('') + celda(p.fromHigh52, p.coberturaHigh52) + '</tr>';
+    const filas = p.items.map(it => {
+      const r = it.res;
+      const cells = HORIZONS.map(h => `<td class="r"><span class="${clsPct(r ? r.ret[h] : null)}">${fmtPct(r ? r.ret[h] : null)}</span></td>`).join('');
+      const hi = r && typeof r.fromHigh52 === 'number' ? r.fromHigh52 : null;
+      return `<tr><td>${esc(it.ticker)}</td>${cells}<td class="r"><span class="${clsPct(hi)}">${fmtPct(hi)}</span></td></tr>`;
+    }).join('');
+    el.innerHTML = head +
+      `<div class="pvr-scroll"><table class="pvr-table"><thead><tr>${th}</tr></thead><tbody>${filaCart}${filas}</tbody></table></div>` +
+      (cargando ? '<div class="pvr-note">Cargando series de precios…</div>' : '') +
+      `<div class="pvr-note">${NOTA_CARTERA}</div><div class="pvr-note">${NOTA_PRECIO} Horizonte sin historia suficiente: —.</div>`;
+  }
+  try { document.addEventListener('pv-returns-ready', ev => { try { ((ev && ev.detail && ev.detail.tickers) || []).forEach(tk => PEDIDOS.delete(tk)); if (document.getElementById('port-returns')) paintCartera(); } catch(e){} }); } catch(e){}
+
+  return { horizons: HORIZONS.slice(), get, load, ensure, compute, computePortfolio, paintFicha, paintCartera,
+           _pure: { _pvrMinusMonths, _pvrTarget, _pvrRefIndex, _pvrRet, _pvrHigh52, _pvrComputeFromSeries, _pvrPortfolio } };
+})();
+window.PV_RETURNS = PV_RETURNS;
+
 function _renderResearch(ticker, info, chartData, news, mbOverview) {
   _currentResearchTicker = ticker;
   _armResearchPriceTimer(ticker);   // refresca solo el precio cada 30 min mientras se ve (llamada barata)
@@ -24624,7 +25349,12 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   // ── Ratings
   window._PVX_CUR_TICKER = ticker;   // el clasificador sectorial necesita el ticker
   const gRating = _computeGeneralRating({pe,fpe,roe,roa,revG,epsG,pm,de,beta,info});
-  try { _pvxPaintSectorLine(_isEtfTicker(ticker, info) ? null : window._PVX_LAST_SECTOR_RATING); } catch(e){}
+  // Si el ticker actual no obtuvo nota, _PVX_LAST_SECTOR_RATING sigue siendo el del ticker
+  // anterior: sólo se pinta si coincide con la ficha.
+  try {
+    const _lsr = window._PVX_LAST_SECTOR_RATING;
+    _pvxPaintSectorLine((_isEtfTicker(ticker, info) || !_lsr || _lsr.ticker !== ticker) ? null : _lsr);
+  } catch(e){}
   // Si la empresa está en Candidatas, usar exactamente ese rating para ser coherentes.
   // Para cualquier otra empresa, calcularlo con el algoritmo GARP · Tech · 1-3 años.
   const _cand = CANDIDATES.find(c => c.ticker === ticker);
@@ -24637,27 +25367,29 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   // ── Tarjeta de rating profesional (oscura) — se llena igual para TODAS las acciones ──
   const _gn = parseFloat(gRating) || 0;
   // Recomendación derivada del rating de calidad
-  const recL = _gn>=8.5?'STRONG BUY':_gn>=7?'BUY':_gn>=5.5?'HOLD':_gn>=4?'REDUCE':'SELL';
-  const recC = _gn>=7?'#34d399':_gn>=5.5?'#facc15':'#f87171';
+  // Lectura descriptiva de la nota (misma escala que antes; sin verbos de acción ni color
+  // semafórico: una nota de calidad no es una subida ni una bajada).
+  const recL = _pvxNotaLabel(_gn);
+  const recC = _PVX_NOTA_LBL_COLOR;
   // Business Quality (calidad del negocio) desde ROE/márgenes/crecimiento
   let _bq=0;
   if(roe!=null)  _bq += roe>0.25?3:roe>0.15?2:roe>0.08?1:0;
   if(pm!=null)   _bq += pm>0.20?3:pm>0.10?2:pm>0?1:0;
   if(gm!=null)   _bq += gm>0.55?2:gm>0.35?1:0;
   if(revG!=null) _bq += revG>0.15?2:revG>0.05?1:0;
-  const bqLabel = _bq>=8?'Exceptional':_bq>=5?'Strong':_bq>=3?'Moderate':'Limited';
+  const bqLabel = _bq>=8?'Excepcional':_bq>=5?'Sólida':_bq>=3?'Moderada':'Limitada';
   const bqPct = Math.max(8, Math.min(100, Math.round(_bq/10*100)));
   // Valuation Score (P/E vs benchmark de sector; más alto = más atractivo)
   const _sec = info.sector || '';
   const _secPE = {Technology:28,'Financial Services':14,Healthcare:20,'Consumer Cyclical':22,'Consumer Defensive':18,Energy:12,Industrials:20,'Communication Services':22,'Basic Materials':16,'Real Estate':30,Utilities:18};
   const _mPE = _secPE[_sec]||22;
-  let valLabel='Fair', valPct=58;
+  let valLabel='En línea con el sector', valPct=58;
   if(pe!=null && pe>0){ const rr=pe/_mPE;
-    if(rr<0.8){valLabel='Undervalued';valPct=88;}
-    else if(rr<1.1){valLabel='Fair';valPct=68;}
-    else if(rr<1.4){valLabel='Fair Premium';valPct=50;}
-    else if(rr<1.9){valLabel='Premium';valPct=32;}
-    else {valLabel='Expensive';valPct=16;}
+    if(rr<0.8){valLabel='Múltiplo bajo vs. sector';valPct=88;}
+    else if(rr<1.1){valLabel='En línea con el sector';valPct=68;}
+    else if(rr<1.4){valLabel='Prima moderada';valPct=50;}
+    else if(rr<1.9){valLabel='Prima alta';valPct=32;}
+    else {valLabel='Prima muy alta';valPct=16;}
   } else { valLabel='N/D'; valPct=50; }
   // Nivel de riesgo
   let _rk=5;
@@ -24683,8 +25415,8 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
     const _er = (_e && _e.rating != null) ? _e.rating.toFixed(1) : gRating;
     const _en = parseFloat(_er);
     _set('r-rating-general', _er, _en>=8?'var(--green)':_en>=6?'var(--yellow)':_en>=4?'var(--text2)':'var(--red)');
-    _set('r-rec-label', (_e && _e.rec) || recL, _en>=7?'#34d399':_en>=5.5?'#facc15':'#f87171');
-    window._PVX_RATING_FALLBACK = { ticker, rating:_er, recL:((_e&&_e.rec)||recL), recC:(_en>=7?'#34d399':_en>=5.5?'#facc15':'#f87171') };
+    _set('r-rec-label', (_e && _e.rec) || recL, _PVX_NOTA_LBL_COLOR);
+    window._PVX_RATING_FALLBACK = { ticker, rating:_er, recL:((_e&&_e.rec)||recL), recC:_PVX_NOTA_LBL_COLOR };
     var _etfA = _e;   // se aplica más abajo, tras los _set genéricos de la tarjeta
   } else {
     const _rg = $('r-rating-general');
@@ -24721,6 +25453,12 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
         <div style="font-size:11px;color:var(--text3);margin-top:2px">${((tgtPrice/curPrice-1)*100)>=0?'+':''}${((tgtPrice/curPrice-1)*100).toFixed(1)}% consenso</div>
        </div>`
     : '';
+  // Tu precio objetivo (el del usuario, no el consenso): se pinta con el precio actual de la ficha.
+  try { if (window.PV_TARGETS) window.PV_TARGETS.renderFicha(ticker, curPrice); } catch(e){}
+  // Salud financiera (F-Score / Z-Score): asíncrona, con los 10-K de la SEC.
+  try { _pvPaintFScore(ticker, info); } catch(e){}
+  // Retornos de precio (1S…5A, máximo de 52 s): asíncrona, con barras de Alpaca en caché.
+  try { if (window.PV_RETURNS) PV_RETURNS.paintFicha(ticker, info); } catch(e){}
 
   // ── Company description (MarketBeat overview preferred, yfinance fallback) ──
   const descEl = $('r-company-desc');
@@ -26373,6 +27111,7 @@ function _pvxRubricScores(info, a, ticker){
     const _t = ticker || (info && (info.symbol || info.ticker)) || window._PVX_CUR_TICKER || '';
     const _sr = (typeof computeSectorRating === 'function') ? computeSectorRating(_t, info || {}) : null;
     if (_sr && _sr.nota != null && _sr.pilares) {
+      _sr.ticker = _t;   // misma marca que en _computeGeneralRating
       window._PVX_LAST_SECTOR_RATING = _sr;
       const P = _sr.pilares, _p1 = v => (typeof v === 'number' && isFinite(v)) ? Math.round(v*10)/10 : null;
       // "Ventajas competitivas" mide dimensiones cualitativas que el motor no modela: se
@@ -26467,6 +27206,16 @@ function _pvxRubricScores(info, a, ticker){
   return { moat:r1(moat), dims:r1(dims), datos:r1(datos), salud:r1(salud), prosRiesgos:r1(prosRiesgos), nota, n:vals.length };
 }
 
+// Lectura descriptiva de la nota general (0–10). Sustituye a las antiguas etiquetas de
+// acción en inglés (STRONG BUY … SELL) con la MISMA escala por nota; el color es neutro
+// porque describe calidad, no una variación financiera.
+const _PVX_NOTA_LBL_COLOR = 'rgba(255,255,255,.88)';
+function _pvxNotaLabel(n){
+  n = parseFloat(n);
+  if (!isFinite(n)) return '—';
+  return n>=8.5?'Calidad muy alta':n>=7?'Calidad alta':n>=5.5?'Calidad media':n>=4?'Calidad baja':'Calidad muy baja';
+}
+
 // Escribe bajo la nota el perfil sectorial y la posición frente a sus pares. Con r nulo
 // (ETF o empresa sin datos) la línea se oculta: nunca un texto inventado.
 function _pvxPaintSectorLine(r){
@@ -26476,6 +27225,37 @@ function _pvxPaintSectorLine(r){
   const c = r.percentil >= 70 ? '#34d399' : r.percentil >= 40 ? 'rgba(255,255,255,.75)' : r.percentil >= 20 ? '#facc15' : '#f87171';
   el.style.display = '';
   el.innerHTML = pvEsc(r.perfil) + ' · mejor que el <b style="color:' + c + '">' + r.percentil + '%</b> de sus pares';
+  try { _pvxPaintPilares(r); } catch(e){}
+}
+
+// Desglose por pilar debajo de la línea sectorial: nombre · barra (1–10) · etiqueta · nota.
+// Un pilar que el perfil no modela (r.pilaresOff) se dice tal cual; uno sin datos, "No
+// disponible". Con r nulo (ETF o sin nota) el bloque se oculta.
+const _PVX_PILARES_UI = [
+  ['rentabilidad', 'Rentabilidad'], ['crecimiento', 'Crecimiento'], ['solidez', 'Solidez'],
+  ['valoracion', 'Valoración'], ['mercado', 'Mercado'],
+];
+function _pvxPaintPilares(r){
+  const el = document.getElementById('r-pilares');
+  if (!el) return;
+  if (!r || r.nota == null || !r.pilares){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  const off = new Set(r.pilaresOff || []);
+  const filas = _PVX_PILARES_UI.map(([k, nom]) => {
+    const v = r.pilares[k];
+    if (off.has(k))
+      return '<div class="rap-pil off"><span class="rap-pil-nom">' + nom + '</span><span class="rap-pil-lbl">No aplica en este sector</span></div>';
+    if (typeof v !== 'number' || !isFinite(v))
+      return '<div class="rap-pil nd"><span class="rap-pil-nom">' + nom + '</span><span class="rap-pil-lbl">' + pillarLabel(null) + '</span></div>';
+    const pct = Math.max(4, Math.min(100, Math.round(v / 10 * 100)));
+    return '<div class="rap-pil"><span class="rap-pil-nom">' + nom + '</span>' +
+           '<span class="rap-pil-bar"><span class="rap-pil-fill" style="display:block;width:' + pct + '%"></span></span>' +
+           '<span class="rap-pil-lbl">' + pillarLabel(v) + '</span>' +
+           '<span class="rap-pil-num">' + v.toFixed(1) + '</span></div>';
+  });
+  filas.push('<div class="rap-pil-ctx">La nota general combina los pilares del negocio; la valoración entra solo como ajuste acotado. ' +
+             'Es habitual que una empresa con rentabilidad y solidez altas muestre una valoración baja: indica que el mercado paga múltiplos elevados por esa calidad, no un defecto del negocio.</div>');
+  el.innerHTML = filas.join('');
+  el.style.display = '';
 }
 
 // Red de seguridad de la tarjeta de rating: si el análisis no llega (ETF, red caída, o
@@ -27346,8 +28126,8 @@ function _renderQualAnalysis(a, el){
                _g.style.color = _n>=8?'var(--green)':_n>=6?'var(--yellow)':_n>=4?'var(--text2)':'var(--red)'; }
       const _r = document.getElementById('r-rec-label');
       if (_r){ _r.classList.remove('rap-pending');
-               _r.textContent = _n>=8.5?'STRONG BUY':_n>=7?'BUY':_n>=5.5?'HOLD':_n>=4?'REDUCE':'SELL';
-               _r.style.color = _n>=7?'#34d399':_n>=5.5?'#facc15':'#f87171'; }
+               _r.textContent = _pvxNotaLabel(_n);
+               _r.style.color = _PVX_NOTA_LBL_COLOR; }
     } else {
       // Ningún rubro tenía datos suficientes → no hay nota honesta que dar. Se usa el rating
       // de respaldo antes que dejar la tarjeta vacía para siempre.
@@ -38136,6 +38916,9 @@ if (document.readyState === 'loading') {
   //  estado inconsistente, y un token de una cuenta ya eliminada el servidor lo rechaza.)
   function _pvNukeLocalAll(){ _pvWipeLocal(true, true, true); }
   window._pvNukeLocalAll = _pvNukeLocalAll;
+  // Abre el login sin purgar nada (para botones "Iniciar sesión" dentro de la app, p. ej. la
+  // ficha de precio objetivo cuando no hay sesión).
+  window._pvShowLogin = function(){ try { showLogin('keep'); } catch(e){} };
 
   // ── Guard de entrada única ──────────────────────────────────────────────────
   // supabase-js v2 emite `INITIAL_SESSION` en cuanto uno se suscribe, ANTES de que resuelva
@@ -38229,6 +39012,11 @@ if (document.readyState === 'loading') {
     try {
       if (window._pvPush) window._pvPush.trasLogin();
       else window.__pvPendingPush = true;   // el módulo aún no se parseó: lo recoge al cargar
+    } catch(e){}
+    // Precio objetivo propio: se cargan los objetivos del usuario en cuanto hay sesión.
+    try {
+      if (window.PV_TARGETS) window.PV_TARGETS.load();
+      else window.__pvPendingTargets = true;   // mismo patrón que push: lo recoge al parsearse
     } catch(e){}
 
     // Sesión autenticada lista → SharedNews ya puede ESCRIBIR en la nube (RLS exige auth).
@@ -38838,6 +39626,7 @@ if (document.readyState === 'loading') {
   function showLogin(purge){
     session = null;
     window._pvAuthReady = false;
+    try { if (window.PV_TARGETS) window.PV_TARGETS.clear(); } catch(e){}   // objetivos del usuario anterior fuera de memoria
     // Antes: `if (purge === false) { …return; }` — o sea, CUALQUIER caller que pasara false
     // saltaba la limpieza. Y el caller de onAuthStateChange pasa false para todo lo que no
     // sea SIGNED_OUT/USER_DELETED, incluido el caso "la sesión se cayó a media" (refresh
@@ -45610,6 +46399,291 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   else aplicar();
   window.addEventListener('resize', aplicar, { passive: true });
   window.addEventListener('orientationchange', aplicar, { passive: true });
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════
+   Precio objetivo propio del usuario  (window.PV_TARGETS)
+   ─────────────────────────────────────────────────────────
+   El número lo fija el USUARIO. No es una recomendación, ni un consenso, ni
+   sale de ningún modelo: Portiv sólo lo compara con el precio actual y lo marca
+   cuando el precio lo cruza. Cero IA en esta ruta.
+
+   · Tabla: public.user_price_targets (RLS por user_id). Máximo dos por ticker
+     — uno "al alza" (above) y uno "a la baja" (below) — garantizado por el
+     UNIQUE (user_id, ticker, direction) + la UI, que sólo ofrece la dirección libre.
+   · Caché en memoria + localStorage (pv_price_targets_v1) para pintar al instante;
+     el logout borra el localStorage entero (_pvWipeLocal) y showLogin llama a clear().
+   · evaluate() escribe triggered_at UNA sola vez por objetivo: sólo cuando cambia el
+     estado. renderTable lo llama en cada fila con objetivo sin que eso dispare red.
+   · Sin sesión: load() devuelve lo que haya en caché sin error; set/remove rechazan.
+   ═══════════════════════════════════════ */
+(function(){
+  'use strict';
+
+  var LS = 'pv_price_targets_v1';
+  var _cache = null;            // array de filas tal como vienen de la tabla
+  var _pendiente = {};          // ids con update de triggered_at en vuelo
+  var _form = null;             // estado del mini-formulario de la ficha { ticker, direction, price, note }
+
+  function sb(){ return window.sbClient || null; }
+  function uid(){ try { return window.__pvUserId && window.__pvUserId !== 'local' ? window.__pvUserId : null; } catch(e){ return null; } }
+  function log(){ try { console.log.apply(console, ['[objetivo]'].concat([].slice.call(arguments))); } catch(e){} }
+  function norm(t){ return String(t || '').trim().toUpperCase(); }
+  function esc(s){ return (typeof window.pvEsc === 'function') ? window.pvEsc(s) : String(s == null ? '' : s); }
+
+  function leer(){
+    if (_cache) return _cache;
+    try { var raw = localStorage.getItem(LS); _cache = raw ? JSON.parse(raw) : []; } catch(e){ _cache = []; }
+    if (!Array.isArray(_cache)) _cache = [];
+    return _cache;
+  }
+  function escribir(rows){
+    _cache = Array.isArray(rows) ? rows : [];
+    try { localStorage.setItem(LS, JSON.stringify(_cache)); } catch(e){}
+    avisar();
+  }
+  /* Un solo canal de "cambió algo": la ficha se repinta y la cartera vuelve a
+     calcular sus marcas. */
+  function avisar(){
+    setTimeout(function(){ try { document.dispatchEvent(new CustomEvent('pv-targets-changed')); } catch(e){} }, 0);
+  }
+  function cruza(row, price){
+    var p = +price, t = +row.target_price;
+    if (!(p > 0) || !(t > 0)) return false;
+    return row.direction === 'above' ? p >= t : p <= t;
+  }
+  function fmtPx(n){
+    var v = +n; if (!isFinite(v)) return '—';
+    return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  function fmtFecha(ts){
+    try { return new Date(ts).toLocaleDateString('es-419', { day: 'numeric', month: 'short', year: 'numeric' }); }
+    catch(e){ return String(ts || '').slice(0, 10); }
+  }
+
+  var API = {
+    /* Trae todos los objetivos del usuario. Sin sesión → lo que haya en caché, sin error. */
+    load: function(){
+      var c = sb(), u = uid();
+      if (!c || !u) return Promise.resolve(leer());
+      return c.from('user_price_targets').select('*').eq('user_id', u)
+        .then(function(r){
+          if (r.error) { log('load', r.error.message); return leer(); }
+          escribir(r.data || []);
+          return _cache;
+        }, function(e){ log('load', e); return leer(); });
+    },
+
+    /* {above: fila|null, below: fila|null} para un ticker. Síncrono, desde caché. */
+    get: function(ticker){
+      var T = norm(ticker), out = { above: null, below: null };
+      leer().forEach(function(r){ if (norm(r.ticker) === T && (r.direction === 'above' || r.direction === 'below')) out[r.direction] = r; });
+      return out;
+    },
+
+    /* Crea o reemplaza el objetivo de esa dirección (upsert sobre user_id,ticker,direction).
+       Editar reinicia triggered_at: un objetivo nuevo es una meta nueva. */
+    set: function(ticker, direction, price, note){
+      var c = sb(), u = uid(), T = norm(ticker), p = +price;
+      if (!T) return Promise.reject(new Error('Falta el ticker.'));
+      if (direction !== 'above' && direction !== 'below') return Promise.reject(new Error('Dirección inválida.'));
+      if (!(p > 0)) return Promise.reject(new Error('Escribe un precio mayor que 0.'));
+      if (!c || !u) return Promise.reject(new Error('Inicia sesión para guardar tu precio objetivo.'));
+      var n = String(note || '').trim().slice(0, 80) || null;
+      var fila = { user_id: u, ticker: T, target_price: p, direction: direction, note: n,
+                   triggered_at: null, updated_at: new Date().toISOString() };
+      return c.from('user_price_targets').upsert(fila, { onConflict: 'user_id,ticker,direction' }).select().single()
+        .then(function(r){
+          if (r.error) throw new Error(r.error.message || 'No se pudo guardar.');
+          var rows = leer().filter(function(x){ return !(norm(x.ticker) === T && x.direction === direction); });
+          rows.push(r.data || fila);
+          escribir(rows);
+          return r.data || fila;
+        });
+    },
+
+    remove: function(ticker, direction){
+      var c = sb(), u = uid(), T = norm(ticker);
+      if (!c || !u) return Promise.reject(new Error('Inicia sesión para editar tu precio objetivo.'));
+      return c.from('user_price_targets').delete().eq('user_id', u).eq('ticker', T).eq('direction', direction)
+        .then(function(r){
+          if (r.error) throw new Error(r.error.message || 'No se pudo quitar.');
+          escribir(leer().filter(function(x){ return !(norm(x.ticker) === T && x.direction === direction); }));
+          return true;
+        });
+    },
+
+    /* ¿Ya cruzó? Síncrono, sin red: triggered_at no nulo o cruce con el precio dado. */
+    crossed: function(ticker, currentPrice){
+      var T = norm(ticker);
+      return leer().some(function(r){ return norm(r.ticker) === T && (r.triggered_at || cruza(r, currentPrice)); });
+    },
+
+    /* Marca triggered_at la PRIMERA vez que el precio cruza. Sólo escribe cuando cambia el
+       estado (objetivo sin triggered_at que ahora cruza), así renderTable puede llamarlo en
+       cada repintado sin coste. Devuelve las filas que acaban de cruzar. */
+    evaluate: function(ticker, currentPrice){
+      var T = norm(ticker), p = +currentPrice, nuevas = [];
+      if (!(p > 0)) return nuevas;
+      var c = sb(), u = uid();
+      leer().forEach(function(r){
+        if (norm(r.ticker) !== T || r.triggered_at || !cruza(r, p)) return;
+        if (r.id && _pendiente[r.id]) return;
+        var ahora = new Date().toISOString();
+        r.triggered_at = ahora;            // estado local primero: no se repite el intento en el siguiente render
+        nuevas.push(r);
+        // TODO push: aquí iría el aviso "cruzó tu precio objetivo" (fuera de alcance).
+        if (!c || !u || !r.id) return;     // sin sesión o fila sólo local → queda en caché
+        _pendiente[r.id] = true;
+        c.from('user_price_targets').update({ triggered_at: ahora }).eq('id', r.id).is('triggered_at', null)
+          .then(function(res){
+            delete _pendiente[r.id];
+            if (res.error) { r.triggered_at = null; log('evaluate', res.error.message); return; }
+            try { localStorage.setItem(LS, JSON.stringify(leer())); } catch(e){}
+          }, function(e){ delete _pendiente[r.id]; r.triggered_at = null; log('evaluate', e); });
+      });
+      if (nuevas.length) { try { localStorage.setItem(LS, JSON.stringify(leer())); } catch(e){} avisar(); }
+      return nuevas;
+    },
+
+    /* Cierre de sesión: nada del usuario anterior se queda en memoria. */
+    clear: function(){
+      _cache = []; _pendiente = {}; _form = null;
+      try { localStorage.removeItem(LS); } catch(e){}
+      repintar();   // sólo la ficha: al cerrar sesión no hay que repintar la cartera
+    },
+
+    /* ── Ficha de la acción: bloque "Tu precio objetivo" (#r-mi-objetivo) ────────── */
+    renderFicha: function(ticker, currentPrice){
+      var el = document.getElementById('r-mi-objetivo');
+      if (!el) return;
+      var T = norm(ticker);
+      if (!T) { el.innerHTML = ''; return; }
+      var p = +currentPrice;
+      var t = API.get(T);
+      var h = '<div class="pvt-head"><div class="pvt-title">Tu precio objetivo</div>' +
+              '<div class="pvt-cap">Un número que fijas tú para seguir esta acción. No es una recomendación de Portiv.</div></div>';
+
+      if (!uid()) {
+        h += '<div class="pvt-empty">Inicia sesión para guardar tu precio objetivo.</div>' +
+             '<button type="button" class="pvt-btn" onclick="try{window._pvShowLogin&&window._pvShowLogin()}catch(e){}">Iniciar sesión</button>';
+        el.innerHTML = h;
+        return;
+      }
+
+      if (p > 0) API.evaluate(T, p);   // el cruce se detecta también al abrir la ficha, no sólo en la cartera
+
+      ['above', 'below'].forEach(function(d){
+        var r = t[d]; if (!r) return;
+        var tp = +r.target_price;
+        var lbl = d === 'above' ? 'Al alza (por encima de)' : 'A la baja (por debajo de)';
+        var dist = (p > 0 && tp > 0) ? (tp / p - 1) * 100 : null;
+        // Distancia en %: dato financiero → verde/rojo por signo (única excepción de color aquí).
+        var distTxt = dist == null ? '—'
+          : '<span class="' + (dist >= 0 ? 'pos' : 'neg') + '">' + (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%</span>';
+        h += '<div class="pvt-row">' +
+               '<div class="pvt-dir">' + lbl + '</div>' +
+               '<div class="pvt-line">Tu precio objetivo: <strong>' + fmtPx(tp) + '</strong> · Precio actual: <strong>' + (p > 0 ? fmtPx(p) : '—') + '</strong> · Distancia: ' + distTxt + '</div>' +
+               (r.triggered_at ? '<div class="pvt-hit">Alcanzado el ' + fmtFecha(r.triggered_at) + '</div>' : '') +
+               (r.note ? '<div class="pvt-note">' + esc(r.note) + '</div>' : '') +
+               '<div class="pvt-actions">' +
+                 '<button type="button" class="pvt-link" onclick="PV_TARGETS._ui.editar(\'' + T + '\',\'' + d + '\')">Editar</button>' +
+                 '<button type="button" class="pvt-link" onclick="PV_TARGETS._ui.quitar(\'' + T + '\',\'' + d + '\')">Quitar</button>' +
+               '</div>' +
+             '</div>';
+      });
+
+      var libre = !t.above ? 'above' : (!t.below ? 'below' : null);
+      if (_form && _form.ticker === T) {
+        var d0 = _form.direction || libre || 'above';
+        var puedeAbove = !t.above || d0 === 'above', puedeBelow = !t.below || d0 === 'below';
+        h += '<form class="pvt-form" onsubmit="return PV_TARGETS._ui.guardar(event,\'' + T + '\')">' +
+               '<label class="pvt-lbl">Precio objetivo (USD)' +
+                 '<input type="number" inputmode="decimal" step="0.01" min="0.01" id="pvt-price" placeholder="' + (p > 0 ? fmtPx(p).replace('$', '') : '0.00') + '" value="' + (_form.price != null ? _form.price : '') + '" required></label>' +
+               '<label class="pvt-lbl">Dirección' +
+                 '<select id="pvt-dir">' +
+                   (puedeAbove ? '<option value="above"' + (d0 === 'above' ? ' selected' : '') + '>Al alza (por encima de)</option>' : '') +
+                   (puedeBelow ? '<option value="below"' + (d0 === 'below' ? ' selected' : '') + '>A la baja (por debajo de)</option>' : '') +
+                 '</select></label>' +
+               '<label class="pvt-lbl">Nota (opcional)' +
+                 '<input type="text" id="pvt-note" maxlength="80" placeholder="Por qué este número" value="' + esc(_form.note || '') + '"></label>' +
+               '<div class="pvt-err" id="pvt-err"></div>' +
+               '<div class="pvt-actions">' +
+                 '<button type="submit" class="pvt-btn" id="pvt-save">Guardar mi precio objetivo</button>' +
+                 '<button type="button" class="pvt-link" onclick="PV_TARGETS._ui.cerrar()">Cancelar</button>' +
+               '</div>' +
+             '</form>';
+      } else if (libre) {
+        h += '<button type="button" class="pvt-btn" onclick="PV_TARGETS._ui.abrir(\'' + T + '\')">' +
+             (t.above || t.below ? 'Fijar otro precio objetivo' : 'Fijar mi precio objetivo') + '</button>';
+      } else {
+        h += '<div class="pvt-cap">Ya tienes un objetivo al alza y otro a la baja para ' + T + '. Edita o quita uno para cambiarlo.</div>';
+      }
+      el.innerHTML = h;
+    },
+
+    _ui: {
+      abrir:  function(T){ _form = { ticker: norm(T), direction: null, price: null, note: '' }; repintar(); },
+      editar: function(T, d){
+        var r = API.get(T)[d]; if (!r) return;
+        _form = { ticker: norm(T), direction: d, price: +r.target_price, note: r.note || '' }; repintar();
+      },
+      cerrar: function(){ _form = null; repintar(); },
+      quitar: function(T, d){
+        API.remove(T, d).then(function(){
+          if (typeof showToast === 'function') showToast('Precio objetivo quitado');
+        }, function(e){ if (typeof showToast === 'function') showToast(e && e.message ? e.message : 'No se pudo quitar'); });
+      },
+      guardar: function(ev, T){
+        try { ev.preventDefault(); } catch(e){}
+        var pEl = document.getElementById('pvt-price'), dEl = document.getElementById('pvt-dir'),
+            nEl = document.getElementById('pvt-note'), eEl = document.getElementById('pvt-err'),
+            bEl = document.getElementById('pvt-save');
+        var price = pEl ? parseFloat(String(pEl.value).replace(',', '.')) : NaN;
+        var dir = dEl ? dEl.value : null;
+        if (!(price > 0)) { if (eEl) eEl.textContent = 'Escribe un precio mayor que 0.'; return false; }
+        if (bEl) { bEl.disabled = true; bEl.textContent = 'Guardando…'; }
+        API.set(T, dir, price, nEl ? nEl.value : '').then(function(){
+          _form = null; repintar();
+          if (typeof showToast === 'function') showToast('Tu precio objetivo quedó guardado');
+        }, function(e){
+          if (bEl) { bEl.disabled = false; bEl.textContent = 'Guardar mi precio objetivo'; }
+          if (eEl) eEl.textContent = (e && e.message) ? e.message : 'No se pudo guardar.';
+        });
+        return false;
+      }
+    }
+  };
+
+  /* Repinta el bloque de la ficha con el ticker y precio que la ficha tiene ahora.
+     _currentResearchTicker / _researchCurPrice son `let` de nivel superior: alcanzables
+     por nombre desde este <script>, NO como window.* */
+  function repintar(){
+    try {
+      var T = (typeof _currentResearchTicker !== 'undefined') ? _currentResearchTicker : null;
+      if (!T) return;
+      var p = 0;
+      try { if (typeof _researchCurPrice !== 'undefined' && +_researchCurPrice > 0) p = +_researchCurPrice; } catch(e){}
+      try { if (!(p > 0) && typeof _currentResearchInfo !== 'undefined' && _currentResearchInfo) p = +_currentResearchInfo.regularMarketPrice || 0; } catch(e){}
+      API.renderFicha(T, p);
+    } catch(e){}
+  }
+
+  window.PV_TARGETS = API;
+
+  /* Cambió el conjunto de objetivos (load, set, remove, evaluate, clear): ficha al día y,
+     si hay cartera, marcas de la tabla al día. */
+  document.addEventListener('pv-targets-changed', function(){
+    repintar();
+    try {
+      if (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS) && HOLDINGS.length && typeof renderAll === 'function') renderAll();
+    } catch(e){}
+  });
+
+  /* Si el gate de sesión resolvió ANTES de que este bloque se parseara, la llamada a
+     load() se perdió. La bandera la deja puesta cloudLoadAndGate. */
+  try { if (window.__pvPendingTargets) { window.__pvPendingTargets = false; API.load(); } } catch(e){}
 })();
 </script>
 <script>
