@@ -5139,20 +5139,6 @@ window._pvAwaitIAP = function(totalMs){
       .pv-fin-card .pvr-up{color:var(--px-green-text)}
       .pv-fin-card .pvr-dn{color:var(--px-red)}
       .pv-fin-card .pvr-nd{color:var(--px-muted)}
-      /* Sección "Retornos de precio de la cartera" (pestaña Analizar, dentro de #port-deep-analysis): tema de la app. */
-      .pvr-up{color:var(--green)}
-      .pvr-dn{color:var(--red)}
-      .pvr-nd{color:var(--text3)}
-      .pvr-wrap{margin-top:18px}
-      .pvr-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
-      .pvr-table{width:100%;border-collapse:collapse;min-width:640px}
-      .pvr-table th{text-align:left;font-size:11px;font-weight:600;color:var(--text3);padding:10px 10px;border-bottom:1px solid var(--border);white-space:nowrap;text-transform:uppercase;letter-spacing:.4px}
-      .pvr-table td{font-size:12.5px;color:var(--text2);padding:9px 10px;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums;white-space:nowrap}
-      .pvr-table tr:last-child td{border-bottom:none}
-      .pvr-table th.r,.pvr-table td.r{text-align:right}
-      .pvr-table tr.pvr-port td{font-weight:700;color:var(--text)}
-      .pvr-table .pvr-cob{font-size:10px;color:var(--text3);font-weight:400;margin-top:2px;white-space:normal;max-width:110px;margin-left:auto;line-height:1.3}
-      .pvr-note{font-size:11.5px;color:var(--text3);line-height:1.5;margin-top:8px}
     </style>
 
     <!-- 4 métricas destacadas -->
@@ -13681,9 +13667,8 @@ function renderDeepPortfolioAnalysis(T) {
   `;
 
   renderAssetDetailTable(T);
-  // Retornos de precio de la cartera: pinta desde caché; los tickers sin serie se piden una
-  // vez y `pv-returns-ready` repinta sólo esa sección (no renderAll). Sin fetch por tick.
-  try { if (window.PV_RETURNS) PV_RETURNS.paintCartera(); } catch(e){}
+  // (La sección "Retornos de precio de la cartera" se retiró: el retorno de precio de las
+  //  posiciones con pesos de hoy no es el rendimiento real de la cuenta y confundía.)
 }
 
 // ── Tabla "Detalle de Activos" (mockup Stitch) — usa HOLDINGS reales ──
@@ -17813,11 +17798,17 @@ window._updateCalendarCard = _updateCalendarCard;
 //  Coste API ≈ 1 generación/día global (no por usuario).
 // ═══════════════════════════════════════════════════════════════════════════
 const SharedNews = (function(){
-  // v2: invalida la copia vieja (prompt anterior traía noticias nicho/no verificadas, ej.
-  // cifras de caída inventadas) → fuerza UNA regeneración limpia con el prompt mejorado.
-  const CLOUD_KEY = '__NEWS_GENERAL_V2__';
-  const LOCK_KEY  = '__NEWS_LOCK_V2__';        // lock global anti doble-generación entre dispositivos
-  const LS_KEY    = 'shared_news_v2';
+  // v3 (2026-09-11): invalida la copia v2. Se comprobó que la copia global de ese día era
+  // INVENTADA (decía "el petróleo cae" el día que el WTI subió +6,7 %): el modelo -lite con
+  // razonamiento mínimo respondía SIN ejecutar la búsqueda web y el proxy, si Google
+  // rechazaba el grounding, reintentaba sin herramientas. Resultado: 8 titulares genéricos
+  // "de hoy" que se parecían todos los días. Ahora: modelo flash grande para esta llamada
+  // (1× cada 6 h global, coste despreciable) y se EXIGE que la respuesta venga con
+  // búsquedas reales (usage.server_tool_use.web_search_requests > 0); si no, no se publica.
+  const CLOUD_KEY = '__NEWS_GENERAL_V3__';
+  const LOCK_KEY  = '__NEWS_LOCK_V3__';        // lock global anti doble-generación entre dispositivos
+  const LS_KEY    = 'shared_news_v3';
+  const NEWS_MODEL = 'gemini-3.7-flash';       // -lite ignoraba el grounding → titulares inventados
   const TTL_TODAY = 6  * 60 * 60 * 1000;      // "hoy": máx 1 regeneración cada 6h (global)
   const TTL_WEEK  = 7  * 24 * 60 * 60 * 1000; // "esta/próxima semana": 1/semana
   const LOCK_TTL  = 90 * 1000;                // un lock caduca a los 90s (evita bloqueos zombies)
@@ -17988,15 +17979,20 @@ Devuelve SOLO JSON válido, sin texto extra ni bloques de código:
     // genera 1× cada 6h para TODO el mundo y los demás la LEEN de la nube. Sin este flag el
     // _aiFetch devolvía un 503 paid-skip y la IA de noticias "se desconectaba" en file:///pago.
     const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model:'gemini-3.1-flash-lite', max_tokens:3200,
-        system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código.',
+      body: JSON.stringify({ model:NEWS_MODEL, max_tokens:3200,
+        system:'Eres un analista financiero. Respondes ÚNICAMENTE con JSON válido en español, sin bloques de código. OBLIGATORIO: ejecuta la búsqueda web antes de responder; nunca respondas de memoria.',
         prompt: PROMPT, allowed_tools:['WebSearch','WebFetch'],
         // COSTO: 1 búsqueda amplia ("top US market news today") basta para 8 titulares; el
         // prompt ya completa con lo más relevante si viene corta. Antes max_uses:2 → duplicaba
         // la inyección de resultados (~10-30K tok/búsqueda), el grueso del gasto de entrada.
         tools:[{ type:'web_search_20250305', name:'web_search', max_uses:1 }] }) }, true);
     if(!res.ok) throw new Error('SharedNews gen '+res.status);
-    const j=await res.json(); try{ _tokAdd(j.usage,'gemini-3.1-flash-lite','news'); }catch(e){}
+    const j=await res.json(); try{ _tokAdd(j.usage,NEWS_MODEL,'news'); }catch(e){}
+    // Sin búsqueda real NO hay noticias: una respuesta "de memoria" son titulares inventados
+    // con la fecha de hoy. Se descarta (se conserva la copia anterior y se reintenta en el
+    // siguiente ciclo) en vez de publicarla a todos los usuarios como si fuera de hoy.
+    const _ws = (j.usage && j.usage.server_tool_use && j.usage.server_tool_use.web_search_requests) || 0;
+    if(!(_ws > 0) || j.grounded === false) throw new Error('SharedNews sin grounding (0 búsquedas web) — no se publica');
     const t=(j.text||'').trim(); const m=t.match(/\{[\s\S]*\}/); if(!m) throw new Error('SharedNews sin JSON');
     const raw=JSON.parse(m[0]);
     // Fin de semana: la ventana del prompt son 48h, así que se tolera un día más.
@@ -24911,7 +24907,7 @@ function _pvPaintFScore(ticker, info){
 // fecha objetivo). El proxy cachea 6/12 h; el cliente no cacheaba barras, así que aquí hay
 // caché propio memoria + localStorage con TTL 6 h y promesa en vuelo compartida por ticker.
 // Cero datos inventados: horizonte sin historia suficiente → null → "—".
-// TODO gate: sin entitlement por ahora; si se restringe, envolver paintFicha/paintCartera.
+// TODO gate: sin entitlement por ahora; si se restringe, envolver paintFicha.
 const PV_RETURNS = (function(){
   const HORIZONS = ['1S','1M','3M','6M','YTD','1A','3A','5A'];
   const DAY = 86400000;
@@ -25125,7 +25121,6 @@ const PV_RETURNS = (function(){
   const fmtPx = v => (typeof v === 'number' && isFinite(v)) ? '$' + v.toFixed(2).replace('.', ',') : '—';
   const esc = s => (typeof pvEsc === 'function') ? pvEsc(String(s == null ? '' : s)) : String(s == null ? '' : s);
   const NOTA_PRECIO = 'Retorno de precio con cierres ajustados por splits, sin dividendos. Fuente: Alpaca (IEX).';
-  const NOTA_CARTERA = 'Retorno de precio de las posiciones actuales con sus pesos de hoy, no el rendimiento histórico real de tu cuenta: no considera aportes, ventas, dividendos ni cambios de peso. Excluye efectivo y money market.';
 
   // ── UI ficha: #r-retornos ───────────────────────────────────────────────────
   // Asíncrona e idempotente por data-ticker: si el usuario cambió de ficha antes de que
@@ -25157,44 +25152,7 @@ const PV_RETURNS = (function(){
     ensure([tk]).then(pintar, () => { if (el.dataset.ticker === tk) el.innerHTML = head + '<div class="pvt-empty">No disponible</div>'; });
   }
 
-  // ── UI cartera: sección dentro de #port-deep-analysis ───────────────────────
-  // Se llama desde renderDeepPortfolioAnalysis (que ya sólo corre con la pestaña visible).
-  // Pinta con lo que hay en caché; los tickers sin serie se piden UNA vez (ensure) y el
-  // evento `pv-returns-ready` repinta sólo esta sección, sin renderAll().
-  const PEDIDOS = new Set();
-  function paintCartera(){
-    const host = document.getElementById('port-deep-analysis');
-    if (!host) return;
-    let el = document.getElementById('port-returns');
-    if (!el) { el = document.createElement('div'); el.id = 'port-returns'; el.className = 'pvr-wrap'; host.appendChild(el); }
-    const H = (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS : [];
-    const p = computePortfolio(H);
-    const head = '<div class="pda-section-lbl">Retornos de precio de la cartera</div>';
-    if (!p.items.length) { el.innerHTML = ''; return; }
-    const faltan = p.items.filter(it => !it.res && !get(it.ticker)).map(it => it.ticker).filter(tk => !PEDIDOS.has(tk));
-    if (faltan.length) { faltan.forEach(tk => PEDIDOS.add(tk)); ensure(faltan); }
-    const cargando = p.items.some(it => !it.res && INFLIGHT[it.ticker]);
-    const th = '<th>Activo</th>' + HORIZONS.map(h => `<th class="r">${h}</th>`).join('') + '<th class="r">Desde máx. 52 s</th>';
-    const celda = (v, cob) => {
-      let extra = '';
-      if (typeof v === 'number' && typeof cob === 'number' && cob < 0.999) extra = `<div class="pvr-cob">sobre el ${Math.round(cob * 100)} % de la cartera</div>`;
-      return `<td class="r"><span class="${clsPct(v)}">${fmtPct(v)}</span>${extra}</td>`;
-    };
-    const filaCart = '<tr class="pvr-port"><td>Cartera (ponderada)</td>' + HORIZONS.map(h => celda(p.ret[h], p.cobertura[h])).join('') + celda(p.fromHigh52, p.coberturaHigh52) + '</tr>';
-    const filas = p.items.map(it => {
-      const r = it.res;
-      const cells = HORIZONS.map(h => `<td class="r"><span class="${clsPct(r ? r.ret[h] : null)}">${fmtPct(r ? r.ret[h] : null)}</span></td>`).join('');
-      const hi = r && typeof r.fromHigh52 === 'number' ? r.fromHigh52 : null;
-      return `<tr><td>${esc(it.ticker)}</td>${cells}<td class="r"><span class="${clsPct(hi)}">${fmtPct(hi)}</span></td></tr>`;
-    }).join('');
-    el.innerHTML = head +
-      `<div class="pvr-scroll"><table class="pvr-table"><thead><tr>${th}</tr></thead><tbody>${filaCart}${filas}</tbody></table></div>` +
-      (cargando ? '<div class="pvr-note">Cargando series de precios…</div>' : '') +
-      `<div class="pvr-note">${NOTA_CARTERA}</div><div class="pvr-note">${NOTA_PRECIO} Horizonte sin historia suficiente: —.</div>`;
-  }
-  try { document.addEventListener('pv-returns-ready', ev => { try { ((ev && ev.detail && ev.detail.tickers) || []).forEach(tk => PEDIDOS.delete(tk)); if (document.getElementById('port-returns')) paintCartera(); } catch(e){} }); } catch(e){}
-
-  return { horizons: HORIZONS.slice(), get, load, ensure, compute, computePortfolio, paintFicha, paintCartera,
+  return { horizons: HORIZONS.slice(), get, load, ensure, compute, computePortfolio, paintFicha,
            _pure: { _pvrMinusMonths, _pvrTarget, _pvrRefIndex, _pvrRet, _pvrHigh52, _pvrComputeFromSeries, _pvrPortfolio } };
 })();
 window.PV_RETURNS = PV_RETURNS;

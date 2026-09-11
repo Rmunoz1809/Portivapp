@@ -257,11 +257,24 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Si el grounding no está disponible para el modelo/plan, reintentar SIN él
-    // (mismo comportamiento que anthropic-proxy con web_search).
+    // Si el grounding no está disponible para el modelo pedido, PRIMERO se reintenta en el
+    // flash GA CON grounding (el -lite lo rechazaba o lo ignoraba → titulares "de hoy"
+    // inventados en las noticias compartidas). Solo si eso también falla se reintenta sin
+    // herramientas, y la respuesta lo declara con `grounded:false` para que el cliente
+    // decida si un texto sin búsqueda le sirve (las noticias lo descartan).
+    let grounded = useWebSearch;
     if (status >= 400 && useWebSearch && /(search|tool|grounding|unsupported)/i.test(errMsg) && apiBody.tools) {
-      delete apiBody.tools;
-      ({ status, json: j } = await callGemini(model, apiBody));
+      const fb = MODEL_FALLBACK.flash;
+      if (fb !== model) {
+        model = fb;
+        ({ status, json: j } = await callGemini(model, apiBody));
+        errMsg = (j && j.error && j.error.message) || "";
+      }
+      if (status >= 400 && /(search|tool|grounding|unsupported)/i.test(errMsg)) {
+        delete apiBody.tools;
+        grounded = false;
+        ({ status, json: j } = await callGemini(model, apiBody));
+      }
     }
 
     if (status >= 400) {
@@ -273,8 +286,11 @@ Deno.serve(async (req) => {
     const out = textOf(j);
     const usage = usageOf(j);
 
+    // grounded: se pidió búsqueda y Gemini ejecutó al menos una query real. Sin esto el
+    // cliente no podía distinguir una respuesta buscada de una "de memoria".
+    if (useWebSearch) grounded = grounded && usage.server_tool_use.web_search_requests > 0;
     if (isCli) {
-      return json({ text: out.trim(), usage, model }, 200);
+      return json({ text: out.trim(), usage, model, grounded }, 200);
     }
     // Modo messages (visión): el cliente lee resp.content[0].text, NO resp.text.
     // Se devuelve con FORMA Anthropic para no tocar _visionCall ni su parser.
@@ -285,6 +301,7 @@ Deno.serve(async (req) => {
       content: [{ type: "text", text: out }],
       stop_reason: ((j.candidates || [])[0] || {}).finishReason === "MAX_TOKENS" ? "max_tokens" : "end_turn",
       usage,
+      grounded,
     }, 200);
   } catch (e) {
     return json({ error: { message: String((e && (e as Error).message) || e) } }, 502);
