@@ -230,24 +230,35 @@ async function presentPaywall() {
   }
   // Asegura que el offering "default" (con sus packages) esté cargado antes de presentar.
   if (!state.offering) { try { await loadOfferings(); } catch (e) {} }
-  try {
-    const opts = { displayCloseButton: true };
-    if (state.offering) opts.offering = state.offering;
-    const { result } = await RevenueCatUI.presentPaywall(opts);
-    await refresh(); // relee entitlements → sincroniza state.isPro tras compra/restore
-    return {
-      result,
-      purchased:    result === PAYWALL_RESULT.PURCHASED,
-      restored:     result === PAYWALL_RESULT.RESTORED,
-      cancelled:    result === PAYWALL_RESULT.CANCELLED,
-      error:        result === PAYWALL_RESULT.ERROR,
-      notPresented: result === PAYWALL_RESULT.NOT_PRESENTED,
-      isPro:        state.isPro,
-    };
-  } catch (e) {
-    console.warn('[PortivIAP] presentPaywall falló', e);
-    return { result: 'ERROR', purchased: false, restored: false, cancelled: false, error: true, notPresented: false, isPro: state.isPro };
+  // Dos intentos: primero con el offering ya cargado (más rápido), y si el SDK responde
+  // ERROR/NOT_PRESENTED se repite SIN offering para que RevenueCatUI lo baje fresco él
+  // mismo. Un offering cacheado con una revisión de paywall que este SDK no sabe pintar
+  // era una de las formas de acabar en "Something went wrong". Si aun así falla, se
+  // devuelve error:true y index.html abre su propio paywall de respaldo (Purchases +
+  // StoreKit directo), así que la compra nunca depende de la hoja prehecha.
+  let lastErr = null;
+  const intentos = state.offering ? [{ displayCloseButton: true, offering: state.offering }, { displayCloseButton: true }]
+                                  : [{ displayCloseButton: true }];
+  for (const opts of intentos) {
+    try {
+      const { result } = await RevenueCatUI.presentPaywall(opts);
+      const error = result === PAYWALL_RESULT.ERROR, notPresented = result === PAYWALL_RESULT.NOT_PRESENTED;
+      if (error || notPresented) { lastErr = 'result=' + result; console.warn('[PortivIAP] presentPaywall', result, opts.offering ? '(con offering)' : '(sin offering)'); continue; }
+      await refresh(); // relee entitlements → sincroniza state.isPro tras compra/restore
+      return {
+        result,
+        purchased:    result === PAYWALL_RESULT.PURCHASED,
+        restored:     result === PAYWALL_RESULT.RESTORED,
+        cancelled:    result === PAYWALL_RESULT.CANCELLED,
+        error: false, notPresented: false,
+        isPro:        state.isPro,
+      };
+    } catch (e) {
+      lastErr = (e && (e.message || e.code)) || String(e);
+      console.warn('[PortivIAP] presentPaywall falló', e);
+    }
   }
+  return { result: 'ERROR', purchased: false, restored: false, cancelled: false, error: true, notPresented: false, isPro: state.isPro, errorMessage: lastErr };
 }
 
 // ── Auto-cableado OPCIONAL de la UI por atributos data-* (no invasivo) ──

@@ -9612,6 +9612,47 @@ const _PV_AI_CONSENT = {
   // se usa para el espejo en la nube y para detectar un cambio de cuenta.
   KEY: 'pv_ai_consent',
   UIDKEY: 'pv_ai_consent_uid',
+  // Tercera copia, y la que de verdad sobrevive: UserDefaults del iPhone vía
+  // @capacitor/preferences. localStorage y cookies viven en el WKWebView y una
+  // actualización de la app (o iOS limpiando espacio) los puede vaciar; ahí estaba
+  // el permiso volviendo a preguntarse tras cada versión nueva. UserDefaults sólo se
+  // pierde al desinstalar. En web (sin plugin) todo esto es un no-op silencioso.
+  _nat(){
+    try {
+      var C = window.Capacitor;
+      if (!C || !C.isNativePlatform || !C.isNativePlatform()) return null;
+      if (C.Plugins && C.Plugins.Preferences) return C.Plugins.Preferences;
+      if (typeof C.registerPlugin === 'function') { this._natP = this._natP || C.registerPlugin('Preferences'); return this._natP; }
+    } catch(e){}
+    return null;
+  },
+  _natSet(k, v){
+    try { var P = this._nat(); if (P) P.set({ key: k, value: v }).then(function(){}, function(){}); } catch(e){}
+  },
+  _natDel(k){
+    try { var P = this._nat(); if (P) P.remove({ key: k }).then(function(){}, function(){}); } catch(e){}
+  },
+  async _natGet(k){
+    try { var P = this._nat(); if (!P) return null; var r = await P.get({ key: k }); return (r && r.value) || null; } catch(e){ return null; }
+  },
+  // Baja la copia nativa a localStorage si el WebView la perdió. Se llama al arrancar
+  // y antes de abrir el modal; ambas vías son idempotentes.
+  _natPrimed: null,
+  async _natPrime(){
+    if (!this._nat()) return;
+    if (this._natPrimed) return this._natPrimed;
+    var self = this;
+    this._natPrimed = (async function(){
+      var v = await self._natGet(self.KEY);
+      if (v === 'yes' || v === 'no') {
+        var local = null; try { local = localStorage.getItem(self.KEY); } catch(e){}
+        if (local !== 'yes' && local !== 'no') { try { localStorage.setItem(self.KEY, v); } catch(e){} self._cookieSet(v); }
+      }
+      var u = await self._natGet(self.UIDKEY);
+      if (u) { var lu = null; try { lu = localStorage.getItem(self.UIDKEY); } catch(e){} if (!lu) { try { localStorage.setItem(self.UIDKEY, u); } catch(e){} } }
+    })();
+    return this._natPrimed;
+  },
   // Claves del esquema viejo, para no volver a preguntar a quien ya aceptó.
   _viejas(){
     const ks = ['pv_ai_consent_local'];
@@ -9651,10 +9692,11 @@ const _PV_AI_CONSENT = {
   set(v){
     try { localStorage.setItem(this.KEY, v); } catch(e){}
     this._cookieSet(v);
+    this._natSet(this.KEY, v);
     // El esquema viejo se limpia: si quedara, una lectura futura podría resucitar
     // una respuesta anterior a esta.
     try { this._viejas().forEach(function(k){ localStorage.removeItem(k); }); } catch(e){}
-    try { if (window.__pvUserId && window.__pvUserId !== 'local') localStorage.setItem(this.UIDKEY, window.__pvUserId); } catch(e){}
+    try { if (window.__pvUserId && window.__pvUserId !== 'local') { localStorage.setItem(this.UIDKEY, window.__pvUserId); this._natSet(this.UIDKEY, window.__pvUserId); } } catch(e){}
     // Espejo en la nube. Best-effort a propósito: un fallo aquí NO invalida la decisión
     // que el usuario acaba de tomar, solo hace que otro dispositivo vuelva a preguntar.
     try {
@@ -9690,8 +9732,10 @@ const _PV_AI_CONSENT = {
           localStorage.removeItem('pv_ai_consent_pend');
           document.cookie = 'pv_ai_consent=;path=/;max-age=0';
         } catch(e){}
+        this._natDel(this.KEY);
       }
       try { localStorage.setItem(this.UIDKEY, uid); } catch(e){}
+      this._natSet(this.UIDKEY, uid);
       // Empujar la decisión tomada antes de tener sesión (ver set()).
       try {
         const pend = localStorage.getItem('pv_ai_consent_pend');
@@ -9702,10 +9746,13 @@ const _PV_AI_CONSENT = {
         }
       } catch(e){}
       if (this.get()) return;
+      try { await this._natPrime(); } catch(e){}
+      if (this.get()) return;
       const { data, error } = await sb.from('profiles').select('ai_consent').eq('id', uid).maybeSingle();
       if (error || !data || data.ai_consent == null) return;
       try { localStorage.setItem(this.KEY, data.ai_consent ? 'yes' : 'no'); } catch(e){}
       this._cookieSet(data.ai_consent ? 'yes' : 'no');
+      this._natSet(this.KEY, data.ai_consent ? 'yes' : 'no');
     } catch(e){}
   },
   // Punto de entrada del gate. Devuelve true si se puede llamar a la IA.
@@ -9727,6 +9774,9 @@ const _PV_AI_CONSENT = {
   // en local y el modal no llega a abrirse. Sin sesión hydrate() vuelve al instante, así
   // que esto no añade espera a quien de verdad no ha contestado nunca.
   async _resolver(){
+    try { await this._natPrime(); } catch(e){}
+    if (this.get() === 'yes') return true;
+    if (this.get() === 'no')  return false;
     try { await this.hydrate(); } catch(e){}
     const v = this.get();
     if (v === 'yes') return true;
@@ -9813,6 +9863,9 @@ const _PV_AI_CONSENT = {
   }
 };
 window._pvAiConsent = _PV_AI_CONSENT;
+// Al arrancar en la app nativa se baja la copia de UserDefaults ANTES de que nadie
+// pregunte: así Ajustes y el gate ven "Permitido" desde el primer frame tras actualizar.
+try { _PV_AI_CONSENT._natPrime(); } catch(e){}
 // Interruptor de Ajustes. Revocar es inmediato y no pregunta nada (nadie necesita que le
 // insistan para dejar de compartir sus datos). Volver a permitir sí reabre el modal
 // completo: el usuario tiene que leer otra vez qué se envía antes de decir que sí, que es
@@ -40245,9 +40298,92 @@ document.addEventListener('DOMContentLoaded', function(){
           // salida y el usuario se quedaba con el cuestionario abierto debajo y la
           // entrada manual tapada. Si el muro venía del cuestionario, se entra al plan
           // gratuito igual que por la X del overlay web.
+          // La hoja prehecha de RevenueCat no pudo abrirse ("Something went wrong").
+          // Antes esto se tragaba en silencio y el botón parecía roto. Ahora se abre
+          // el paywall de RESPALDO: StoreKit directo vía Purchases, sin RevenueCatUI.
+          else if (res && (res.error || res.notPresented)) { _pvFallbackPaywall(iap, res); }
           else if (window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} }
-        }).catch(function(){});
+        }).catch(function(e){ _pvFallbackPaywall(iap, { errorMessage: e && e.message }); });
       } catch(e){}
+    }
+
+    // Paywall de RESPALDO nativo. Sólo se abre si RevenueCatUI falla. Usa el mismo
+    // SDK de Purchases (getOfferings + purchasePackage + restorePurchases) con los
+    // productos aprobados en App Store, así que la compra es la misma; lo único que
+    // cambia es quién pinta la pantalla. Guideline 3.1.1: sigue siendo IAP, nada de
+    // Paddle aquí. Construido en JS para no tocar el markup y no pesar hasta usarse.
+    function _pvFallbackPaywall(iap, res){
+      try { console.warn('[Portiv] paywall RC falló → respaldo', res && res.errorMessage); } catch(e){}
+      var old = document.getElementById('pvPaywallFallback'); if (old) old.remove();
+      var dark = false; try { dark = document.body.classList.contains('dark-theme'); } catch(e){}
+      var cBg = dark ? 'rgba(4,10,20,.78)' : 'rgba(4,22,44,.55)';
+      var cCard = dark ? '#13233a' : '#FFFFFF', cTxt = dark ? '#E8EDF5' : '#04162c';
+      var cTxt2 = dark ? '#9AA8BD' : '#5B6B80', cLine = dark ? '#243650' : '#E3E8F2';
+      var wrap = document.createElement('div');
+      wrap.id = 'pvPaywallFallback';
+      wrap.setAttribute('role','dialog'); wrap.setAttribute('aria-modal','true');
+      wrap.style.cssText = 'position:fixed;inset:0;z-index:13000;background:'+cBg+';display:flex;align-items:flex-end;justify-content:center;padding:0;';
+      var pad = 'padding:22px 20px calc(22px + env(safe-area-inset-bottom));';
+      wrap.innerHTML =
+        '<div style="width:100%;max-width:520px;background:'+cCard+';border-radius:22px 22px 0 0;'+pad+'font-family:inherit;color:'+cTxt+'">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+        +   '<div style="font:800 20px/1.25 inherit">Portiv Pro</div>'
+        +   '<button type="button" id="pvFbClose" aria-label="Cerrar" style="border:0;background:transparent;font:600 26px/1 inherit;color:'+cTxt2+';cursor:pointer;padding:4px 8px">&times;</button>'
+        + '</div>'
+        + '<div style="font:400 14px/1.5 inherit;color:'+cTxt2+';margin-bottom:16px">Conecta tu broker, análisis con IA y proyecciones. Cancela cuando quieras desde Ajustes de Apple.</div>'
+        + '<div id="pvFbBody" style="font:500 14px/1.5 inherit;color:'+cTxt2+';text-align:center;padding:14px 0">Cargando planes…</div>'
+        + '<button type="button" id="pvFbRestore" style="width:100%;height:44px;border:0;background:transparent;color:'+cTxt2+';font:600 14px inherit;cursor:pointer;margin-top:6px">Restaurar compras</button>'
+        + '</div>';
+      document.body.appendChild(wrap);
+      var body = wrap.querySelector('#pvFbBody');
+      function _close(){ try { wrap.remove(); } catch(e){} if (window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} } }
+      function _ok(){
+        try { wrap.remove(); } catch(e){}
+        try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
+        setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 400);
+      }
+      wrap.querySelector('#pvFbClose').addEventListener('click', _close);
+      wrap.querySelector('#pvFbRestore').addEventListener('click', function(){
+        body.textContent = 'Restaurando…';
+        Promise.resolve().then(function(){ return iap.restore(); }).then(function(ok){
+          if (ok) { _ok(); return; }
+          try { showToast('No se encontraron compras activas.', 'var(--text3)'); } catch(e){}
+          _render();
+        });
+      });
+      function _btn(id, label, sub){
+        return '<button type="button" data-fb-buy="'+id+'" style="width:100%;min-height:54px;border:1px solid '+cLine+';border-radius:14px;background:'+(id==='annual'?'#04162c':'transparent')+';color:'+(id==='annual'?'#fff':cTxt)+';font:700 15px inherit;cursor:pointer;margin-bottom:10px;padding:10px 16px;text-align:left;display:flex;justify-content:space-between;align-items:center"><span>'+label+'</span><span style="font-weight:600;opacity:.85">'+sub+'</span></button>';
+      }
+      function _render(){
+        var info = null; try { info = iap.getPackagesInfo(); } catch(e){}
+        var m = info && info.monthly, a = info && info.annual;
+        if (!m && !a) {
+          body.innerHTML = '<div style="margin-bottom:12px">No pudimos cargar los planes desde la App Store. Revisa tu conexión y que las compras dentro de la app estén permitidas en Ajustes.</div>'
+            + '<button type="button" id="pvFbRetry" style="height:44px;padding:0 18px;border:1px solid '+cLine+';border-radius:12px;background:transparent;color:'+cTxt+';font:600 14px inherit;cursor:pointer">Reintentar</button>';
+          wrap.querySelector('#pvFbRetry').addEventListener('click', _load);
+          return;
+        }
+        body.style.textAlign = 'left'; body.style.padding = '0';
+        body.innerHTML = (a ? _btn('annual', 'Anual', a.priceString + ' / año') : '') + (m ? _btn('monthly', 'Mensual', m.priceString + ' / mes') : '');
+        Array.prototype.forEach.call(body.querySelectorAll('[data-fb-buy]'), function(b){
+          b.addEventListener('click', function(){
+            var k = b.getAttribute('data-fb-buy');
+            Array.prototype.forEach.call(body.querySelectorAll('button'), function(x){ x.disabled = true; x.style.opacity = '.6'; });
+            Promise.resolve().then(function(){ return iap.purchase(k); }).then(function(r){
+              if (r && r.success) { _ok(); return; }
+              if (r && r.reason === 'cancelled') { _render(); return; }
+              var msg = 'No se pudo completar la compra.' + (r && r.error && r.error.message ? ' ' + r.error.message : '');
+              try { showToast(msg, 'var(--red)'); } catch(e){}
+              _render();
+            });
+          });
+        });
+      }
+      function _load(){
+        body.style.textAlign = 'center'; body.style.padding = '14px 0'; body.textContent = 'Cargando planes…';
+        Promise.resolve().then(function(){ return iap.loadOfferings(); }).then(_render, _render);
+      }
+      _load();
     }
 
     if (_nat) {
