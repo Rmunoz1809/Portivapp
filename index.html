@@ -4961,15 +4961,17 @@ window._pvAwaitIAP = function(totalMs){
     #tab-analizar .rap-sector b{font-weight:700}
     /* Desglose por pilar bajo la nota. Paleta neutra a propósito: un pilar alto o bajo no es
        una subida ni una bajada, así que no lleva verde ni rojo. */
-    #tab-analizar .rap-pilares{padding-top:12px;display:grid;gap:6px}
+    /* Desglose por pilares: vive en una px-card de la pestaña Finanzas (fuera del cuadro de la nota,
+       que Rafael quiere del tamaño original). Tokens claros de .pvx, no los blancos del cuadro oscuro. */
+    #tab-analizar .rap-pilares{display:grid;gap:8px;margin-top:14px}
     #tab-analizar .rap-pil{display:grid;grid-template-columns:minmax(78px,1fr) minmax(56px,1.4fr) auto 30px;align-items:center;gap:8px;font-size:11.5px;line-height:1.3}
-    #tab-analizar .rap-pil-nom{color:rgba(255,255,255,.7);font-weight:600}
-    #tab-analizar .rap-pil-bar{height:5px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden}
-    #tab-analizar .rap-pil-fill{height:100%;border-radius:999px;background:rgba(255,255,255,.55);transition:width .5s ease}
-    #tab-analizar .rap-pil-lbl{color:rgba(255,255,255,.6);font-size:11px;white-space:nowrap}
-    #tab-analizar .rap-pil-num{color:#fff;font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
-    #tab-analizar .rap-pil.off .rap-pil-lbl,#tab-analizar .rap-pil.nd .rap-pil-lbl{grid-column:2 / span 3;text-align:right;color:rgba(255,255,255,.4);font-style:italic}
-    #tab-analizar .rap-pil-ctx{font-size:11px;line-height:1.45;color:rgba(255,255,255,.5);margin-top:4px}
+    #tab-analizar .rap-pil-nom{color:var(--px-ink);font-weight:600}
+    #tab-analizar .rap-pil-bar{height:6px;border-radius:999px;background:var(--px-line);overflow:hidden}
+    #tab-analizar .rap-pil-fill{height:100%;border-radius:999px;background:var(--px-muted);transition:width .5s ease}
+    #tab-analizar .rap-pil-lbl{color:var(--px-ink-soft);font-size:11px;white-space:nowrap}
+    #tab-analizar .rap-pil-num{color:var(--px-ink);font-weight:700;text-align:right;font-variant-numeric:tabular-nums}
+    #tab-analizar .rap-pil.off .rap-pil-lbl,#tab-analizar .rap-pil.nd .rap-pil-lbl{grid-column:2 / span 3;text-align:right;color:var(--px-muted);font-style:italic}
+    #tab-analizar .rap-pil-ctx{font-size:12px;line-height:1.5;color:var(--px-ink-soft);margin-top:10px}
     /* Estado de espera de la valoración: la nota no se escribe hasta que el análisis termina,
        así que mientras tanto se ve claramente "cargando" y no un número que luego cambia.
        .rap-rec baja de tamaño porque "Analizando…" es mucho más largo que "BUY". */
@@ -5068,9 +5070,6 @@ window._pvAwaitIAP = function(totalMs){
             </div>
           </div>
           <div class="rap-sector" id="r-sector-line" style="display:none"></div>
-          <!-- Desglose por pilar del motor sectorial (rentabilidad, crecimiento, solidez,
-               valoración, mercado). Lo pinta _pvxPaintPilares; oculto para ETF o sin datos. -->
-          <div class="rap-pilares" id="r-pilares" style="display:none"></div>
           <div class="rap-pills">
             <div class="rap-pill"><div class="rap-pill-lbl">Horizonte</div><div class="rap-pill-val" id="r-horizon">2-3 Años</div></div>
             <div class="rap-pill"><div class="rap-pill-lbl">Nivel de Riesgo</div><div class="rap-pill-val" id="r-risk-lvl">—</div></div>
@@ -27232,6 +27231,9 @@ function _pvxPaintPilares(r){
   const el = document.getElementById('r-pilares');
   if (!el) return;
   if (!r || r.nota == null || !r.pilares){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  // El host es una px-card de la pestaña Finanzas: si el rating guardado es de otro ticker
+  // (cambio rápido de ficha), no se pinta el desglose ajeno.
+  if (r.ticker && el.dataset.tk && String(r.ticker).toUpperCase() !== String(el.dataset.tk).toUpperCase()){ el.style.display = 'none'; el.innerHTML = ''; return; }
   const off = new Set(r.pilaresOff || []);
   const filas = _PVX_PILARES_UI.map(([k, nom]) => {
     const v = r.pilares[k];
@@ -27247,7 +27249,9 @@ function _pvxPaintPilares(r){
   });
   filas.push('<div class="rap-pil-ctx">La nota general combina los pilares del negocio; la valoración entra solo como ajuste acotado. ' +
              'Es habitual que una empresa con rentabilidad y solidez altas muestre una valoración baja: indica que el mercado paga múltiplos elevados por esa calidad, no un defecto del negocio.</div>');
-  el.innerHTML = filas.join('');
+  el.innerHTML = (typeof _pvxStitle === 'function' ? _pvxStitle('Desglose de la nota por pilares') : '') +
+                 '<p class="px-intro">Cada pilar se puntúa de 1 a 10 frente a las empresas de su mismo sector. Descriptivo, no una recomendación.</p>' +
+                 '<div class="rap-pilares">' + filas.join('') + '</div>';
   el.style.display = '';
 }
 
@@ -27864,7 +27868,8 @@ function _renderQualAnalysis(a, el){
   //     de insertar el panel (ver más abajo, tras `el.innerHTML = h`); mientras estén vacías,
   //     .pv-fin-card:empty las oculta. Mismos ids de siempre para que _refreshResearchPrice
   //     y los repintados de PV_TARGETS sigan encontrándolas.
-  FI += `<div id="r-fscore" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
+  FI += `<div id="r-pilares" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
+    <div id="r-fscore" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
     <div id="r-retornos" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
     <div id="r-mi-objetivo" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>`;
 
@@ -28093,6 +28098,7 @@ function _renderQualAnalysis(a, el){
     const _infoF = (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[_tkF]) || null;
     const _pxF = (typeof _researchCurPrice === 'number' && _researchCurPrice > 0) ? _researchCurPrice
                : (_infoF && (_infoF.currentPrice || _infoF.regularMarketPrice)) || 0;
+    try { const _sr = window._PVX_LAST_SECTOR_RATING; _pvxPaintPilares(_sr && _sr.ticker === _tkF ? _sr : null); } catch(e){}
     try { _pvPaintFScore(_tkF, _infoF); } catch(e){}
     try { if (window.PV_RETURNS) PV_RETURNS.paintFicha(_tkF, _infoF); } catch(e){}
     try { if (window.PV_TARGETS) PV_TARGETS.renderFicha(_tkF, _pxF); } catch(e){}
