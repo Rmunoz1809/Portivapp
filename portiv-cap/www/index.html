@@ -43962,7 +43962,14 @@ document.addEventListener('DOMContentLoaded', function(){
       // Conexión caída/expirada/no encontrada (p.ej. 410) → banner limpio "reconecta",
       // nunca un toast crudo con el volcado de headers. En refresh manual (no silencioso),
       // aviso corto y limpio.
-      if(/broken/i.test(_m) || _st===410 || /\b410\b|not found|does not exist|expired|revok/i.test(_m)) _render('broken');
+      // Sólo un 410 o un error que hable EXPLÍCITAMENTE de la conexión del broker es "rota".
+      // Antes bastaba con que el texto del error llevara "expired", "not found" o "does not
+      // exist" —cosas que también dicen un JWT caducado, una columna que falta o un 5xx de
+      // paso— para pintar "Reconecta tu broker" sobre una conexión perfectamente sana: el
+      // usuario "se desconectaba" sin que nada se hubiera desconectado. Cualquier otro fallo
+      // del servidor es 'unavailable': se conserva la conexión y se reintenta solo.
+      if(_st===410 || /broken|\b410\b/i.test(_m) || (/connection|authorization|broker/i.test(_m) && /not found|does not exist|expired|revok|disabled/i.test(_m))) _render('broken');
+      else if((_st>=500 || !_st) && /^(connected|syncing|broken|unavailable|unknown)$/.test(_state)){ _render('unavailable'); }
       else if(!(opts&&opts.silent)) toast('No se pudieron actualizar tus posiciones. Intenta de nuevo.');
       return null;
     }).finally(function(){ _busy=false; _setRefreshBtn(false); })

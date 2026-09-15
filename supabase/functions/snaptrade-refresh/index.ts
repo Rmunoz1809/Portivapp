@@ -29,6 +29,7 @@ import {
   resolveIbkrSlugs,
   fxRatesFor,
 } from "../_shared/snaptrade.ts";
+import { verifyEntitlementWithStore, healSubscriptionRow } from "../_shared/entitlement.ts";
 
 const CACHE_MS = 60 * 60 * 1000; // 60 minutes
 
@@ -127,9 +128,25 @@ Deno.serve(async (req) => {
 
     const userId = await requireUser(req, admin, body?.userId);
     const force = body?.force === true;   // el usuario pulsó "Sincronizar ahora"
-    const entitled = await isEntitled(admin, userId);
+    let entitled = await isEntitled(admin, userId);
     const profile = await loadProfile(admin, userId);
     const reason = profile?.snaptrade_disconnected_reason ?? null;
+
+    // Fila apagada pero broker ENLAZADO: antes de decirle al cliente "sin suscripción" (que
+    // borra su estado local y pinta "Tu broker se desconectó") se confirma con la tienda.
+    // Una fila apagada por un evento desordenado o un retraso de RevenueCat no debe
+    // parecer una desconexión: si la tienda dice que paga, se repara la fila y se sigue.
+    if (!entitled && profile?.snaptrade_user_id) {
+      try {
+        const v = await verifyEntitlementWithStore(admin, userId);
+        if (v.active === true) {
+          await healSubscriptionRow(admin, userId, v);
+          entitled = true;
+        }
+      } catch (e) {
+        console.warn("[snaptrade-refresh] verificación con la tienda falló:", String(e));
+      }
+    }
 
     // No active subscription → do NOT serve broker data, and tell the client WHY so the
     // UI can show "Tu prueba terminó — suscríbete para reconectar" (reason stamped by
@@ -230,9 +247,11 @@ Deno.serve(async (req) => {
     // el webhook CONNECTION_BROKEN era el ÚNICO camino por el que nos enterábamos — si ese
     // evento se perdía, nadie volvía a preguntar. Ahora se comprueba en cada lectura.
     let conns: any[] = [];
+    let connsErr = false;
     try {
       conns = ((await st.connections.listBrokerageAuthorizations(sid)).data as any[]) ?? [];
     } catch (e: any) {
+      connsErr = true;
       console.warn("[snaptrade-refresh] listBrokerageAuthorizations falló:",
         (e?.response?.data?.detail ?? e?.message ?? String(e)).toString().slice(0, 200));
     }
@@ -780,6 +799,37 @@ Deno.serve(async (req) => {
             needsConnection: false,
             unavailable: true,          // ← el cliente NO debe borrar pv_broker_* ni parar el poll
             upstreamStatus: st2 || null,
+            holdings: null,
+            accountId: null,
+            fromCache: false,
+          });
+        }
+        // Hay una autorización VIVA en SnapTrade pero todavía ninguna cuenta: es la ventana
+        // entre CONNECTION_ADDED y la aparición de las cuentas (o un broker en mantenimiento).
+        // Responder needsConnection aquí hacía que el cliente borrase pv_broker_* y pintase
+        // "Conecta tu broker" a alguien que ACABA de conectarlo — y que lo conectara otra vez.
+        // Es un sync en curso: se conserva lo que haya y se sigue sondeando.
+        if (anyLive) {
+          return jsonResponse(req, {
+            connected: true,
+            broken: false,
+            syncing: true,
+            settled: false,
+            holdings: profile.snaptrade_holdings ?? [],
+            accountId: profile.snaptrade_account_id ?? null,
+            lastSync: profile.snaptrade_last_refresh ?? null,
+            brokerSlugs: await ibkrSlug(),
+            rates: await ratesFor(profile.snaptrade_holdings),
+            fromCache: false,
+          });
+        }
+        // No pudimos listar las autorizaciones: no sabemos si hay broker. Igual que con
+        // listUserAccounts, un fallo de transporte NO es "nunca conectaste".
+        if (connsErr) {
+          return jsonResponse(req, {
+            connected: false,
+            needsConnection: false,
+            unavailable: true,
             holdings: null,
             accountId: null,
             fromCache: false,

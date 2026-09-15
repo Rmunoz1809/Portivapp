@@ -50,6 +50,7 @@
 // Deploy: supabase functions deploy snaptrade-cleanup --no-verify-jwt
 
 import { adminClient } from "../_shared/snaptrade.ts";
+import { verifyEntitlementWithStore, blocksRevocation, healSubscriptionRow } from "../_shared/entitlement.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -216,8 +217,17 @@ Deno.serve(async (req) => {
       .limit(batch);
     if (onlyUser) q = q.eq("id", onlyUser);
 
-    const { data: linked, error: pErr } = await q;
-    if (pErr) throw new Error(`profiles: ${pErr.message}`);
+    // PostgREST devuelve "Gateway Timeout" de vez en cuando (visto en la bitácora: 13 runs
+    // fallidos en septiembre por eso). Un fallo aquí no cuesta dinero al usuario, pero sí
+    // deja pasar una hora entera sin barrer: se reintenta un par de veces antes de rendirse.
+    let linked: any[] | null = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const { data, error: pErr } = await q;
+      if (!pErr) { linked = data ?? []; break; }
+      if (attempt === 3) throw new Error(`profiles: ${pErr.message}`);
+      console.warn(`[snaptrade-cleanup] profiles (${attempt}/3): ${pErr.message} — reintento`);
+      await new Promise((r) => setTimeout(r, 1500 * attempt));
+    }
 
     if (!linked?.length) {
       await admin.from("snaptrade_cleanup_runs").insert({
@@ -328,7 +338,26 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // 3.c Delegar en la ÚNICA implementación de la baja (maneja el fallo
+      // 3.c LA TIENDA MANDA. La fila puede estar apagada por un evento desordenado, un
+      //     webhook de renovación perdido o un retraso de RevenueCat con Apple. Antes de
+      //     cerrar el broker se confirma con RevenueCat / Paddle; si la tienda dice que
+      //     paga, se repara la fila y se pasa de largo. Si la tienda no responde, se
+      //     espera al ciclo siguiente (snaptrade-disconnect vuelve a comprobarlo igual:
+      //     doble candado, porque esta baja no tiene vuelta atrás para el usuario).
+      const sv = await verifyEntitlementWithStore(admin, uid, sub?.store ?? null);
+      if (blocksRevocation(sv)) {
+        if (sv.active === true) await healSubscriptionRow(admin, uid, sv, sub?.store ?? null);
+        skipped++;
+        toStamp.push(uid);
+        results.push({
+          id: uid,
+          skipped: sv.active === true ? "store_says_active" : "store_unavailable",
+          source: sv.source, detail: sv.detail,
+        });
+        continue;
+      }
+
+      // 3.d Delegar en la ÚNICA implementación de la baja (maneja el fallo
       //     transitorio correctamente: sólo limpia si SnapTrade confirma).
       try {
         const r = await fetch(`${SUPABASE_URL}/functions/v1/snaptrade-disconnect`, {
@@ -346,10 +375,15 @@ Deno.serve(async (req) => {
           disconnected++;
           await stampAttempt(admin, uid, { snaptrade_cleanup_retry_count: 0 });
           results.push({ id: uid, disconnected: true, anchor_kind: anchorKind, cut_by: cutBy, reason });
+        } else if (j?.skipped === "still_entitled") {
+          // snaptrade-disconnect volvió a preguntar a la tienda y ésta dijo que paga.
+          skipped++;
+          await stampAttempt(admin, uid, { snaptrade_cleanup_retry_count: 0 });
+          results.push({ id: uid, disconnected: false, skipped: "store_says_active", source: j?.source, detail: j?.detail });
         } else if (j?.retry || !r.ok) {
           failed++;
           await bumpRetry(admin, uid); // fallo aguas arriba → se reintenta el ciclo siguiente
-          results.push({ id: uid, disconnected: false, retry: true, error: j?.error ?? `http_${r.status}` });
+          results.push({ id: uid, disconnected: false, retry: true, error: j?.error ?? j?.detail ?? `http_${r.status}` });
         } else {
           // ok:true sin enlace vivo aguas arriba (ya estaba borrado) → hecho.
           await stampAttempt(admin, uid, { snaptrade_cleanup_retry_count: 0 });

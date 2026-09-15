@@ -28,6 +28,7 @@
 //   (o el bloque pg_cron comentado en sql/01-subscriptions-ios.sql)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { verifyEntitlementWithStore, blocksRevocation, healSubscriptionRow } from "../_shared/entitlement.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -90,6 +91,22 @@ Deno.serve(async (req) => {
     }
 
     const reason = `subscription_ended_${row.store ?? "appstore"}:sweeper_expired`;
+
+    // La fecha vencida en NUESTRA fila puede ser sólo un webhook de RENEWAL perdido: este
+    // barrido existe para cazar EXPIRATION perdidos, pero sin esta comprobación castigaba
+    // igual al que renovó y cuyo evento no llegó — le apagaba el acceso y una hora después
+    // snaptrade-cleanup le borraba el broker. Se pregunta a la tienda: si dice que paga,
+    // se repara la fila (fecha nueva) en vez de revocar. Si no responde, mañana.
+    const v = await verifyEntitlementWithStore(admin, row.user_id, row.store ?? null);
+    if (blocksRevocation(v)) {
+      if (v.active === true && !dryRun) await healSubscriptionRow(admin, row.user_id, v, row.store ?? null);
+      results.push({
+        id: row.user_id,
+        skipped: v.active === true ? "store_says_active" : "store_unavailable",
+        source: v.source, detail: v.detail, store_expires_at: v.expiresAt,
+      });
+      continue;
+    }
 
     if (dryRun) {
       results.push({ id: row.user_id, would_revoke: true, expires_at: row.expires_at, reason });

@@ -24,6 +24,7 @@
 //         en los que SÍ queremos que Paddle reintente.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { verifyEntitlementWithStore, blocksRevocation } from "../_shared/entitlement.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -448,6 +449,27 @@ Deno.serve(async (req) => {
     return json({ ok: true, skipped: "stale_event", type: eventType });
   }
 
+  // ── La tienda tiene la última palabra antes de retirar el acceso ────────────
+  // Un `subscription.canceled` / `paused` / `updated` puede llegar desordenado, repetido o
+  // referirse a una suscripción vieja del mismo cliente que ya tiene otra viva. Antes de
+  // apagar la fila (y con ella el broker) se le pregunta a Paddle si este usuario tiene
+  // alguna suscripción con acceso. Si la tiene, se escribe viva; si Paddle no responde,
+  // no se escribe nada y el barrido diario lo reverifica.
+  let expiresOut = expiresAt;
+  if (!active) {
+    const v = await verifyEntitlementWithStore(admin, userId, "paddle");
+    if (blocksRevocation(v)) {
+      if (v.active !== true) {
+        console.warn("[paddle-webhook] revocación aplazada, Paddle no disponible:", userId, v.detail);
+        return json({ ok: true, skipped: "store_unavailable", type: eventType });
+      }
+      console.log("[paddle-webhook] revocación anulada: Paddle dice", v.detail, userId);
+      active = true;
+      status = v.detail === "past_due" ? "past_due" : "active";
+      if (v.expiresAt) expiresOut = v.expiresAt;
+    }
+  }
+
   // 1) Tabla autoritativa de entitlement (la que leen has_active_entitlement, el cliente
   //    y el cron snaptrade-cleanup). rc_app_user_id queda NULL: no hay usuario de RC.
   const { error: subErr } = await admin.from("subscriptions").upsert({
@@ -458,7 +480,7 @@ Deno.serve(async (req) => {
     product_id: productId,
     store: "paddle",
     environment,
-    expires_at: expiresAt,
+    expires_at: expiresOut,
     will_renew: willRenew,
     last_event: eventType,
     // Se guarda la hora del EVENTO (no now()) para que la comparación de arriba sea

@@ -27,6 +27,9 @@ import { preflight, jsonResponse } from "../_shared/cors.ts";
 // Tiene que coincidir con rc-webhook y con portiv-cap/src/iap.js.
 const ENTITLEMENT_ID = "Portiv Pro";
 const BILLING_GRACE_DAYS = 18;
+// Retraso tolerado entre el vencimiento que muestra RevenueCat y la renovación real de
+// Apple. Mismo valor que has_active_entitlement() (SQL) y _shared/entitlement.ts.
+const RENEWAL_LAG_HOURS = 48;
 
 // Tiendas de Apple. Si el entitlement viene de otra (Paddle web), esta función
 // no escribe nada: manda el webhook de esa tienda.
@@ -129,11 +132,48 @@ Deno.serve(async (req) => {
   const expiresMs = expiresIso ? Date.parse(expiresIso) : null;
   // Un entitlement no vitalicio está activo mientras no haya vencido.
   // expires_date null = compra no renovable / lifetime → activo.
-  const active = !!ent && (expiresMs === null || expiresMs > Date.now());
+  let active = !!ent && (expiresMs === null || expiresMs > Date.now());
 
   const productId: string | null = ent?.product_identifier ?? null;
   const subRow = productId ? sub?.subscriptions?.[productId] ?? null : null;
   const store: string = String(subRow?.store ?? "app_store").toLowerCase();
+
+  // ── Vencida según RevenueCat ≠ vencida de verdad ────────────────────────────
+  // Esta función corre en CADA arranque y en cada vuelta a la app. Con la regla de
+  // arriba a secas, el minuto en que Apple renueva y RevenueCat aún no lo ha registrado
+  // (pasa: Apple avisa con retraso) el sync apagaba la fila y cerraba el broker de un
+  // cliente que acababa de pagar otro mes. Mismo colchón que has_active_entitlement()
+  // en SQL y que _shared/entitlement.ts:
+  //   · fallo de cobro detectado → gracia de BILLING_GRACE_DAYS
+  //   · sin cancelación y vencida hace < RENEWAL_LAG_HOURS → renovación en curso
+  let lagStatus: string | null = null;
+  if (ent && !active && expiresMs !== null && !subRow?.refunded_at) {
+    const age = Date.now() - expiresMs;
+    if (subRow?.billing_issues_detected_at && age < BILLING_GRACE_DAYS * 86400000) {
+      active = true; lagStatus = "past_due";
+    } else if (!subRow?.unsubscribe_detected_at && age < RENEWAL_LAG_HOURS * 3600000) {
+      active = true; lagStatus = "active";
+    }
+  }
+
+  // RevenueCat "no conoce" la compra (la API v1 crea un subscriber vacío al consultarlo)
+  // pero nuestra fila —escrita por un webhook REAL de RevenueCat— dice que el acceso sigue
+  // vigente: es un desfase de alias (compra anónima aún sin enlazar al uid), no una baja.
+  // Apagar aquí cerraba el broker del usuario nada más abrir la app. Se conserva la fila
+  // mientras su fecha de fin no haya pasado; si de verdad venció, el barrido diario lo
+  // resuelve (también contra la tienda).
+  if (!ent && prev?.entitlement_active === true && prev?.expires_at &&
+      Date.parse(prev.expires_at) > Date.now()) {
+    log("rc sin entitlement pero fila vigente hasta", prev.expires_at, "— se conserva", uid);
+    return jsonResponse(req, {
+      ok: true,
+      stale: true,
+      entitlement_active: true,
+      status: prev?.status ?? "active",
+      expires_at: prev?.expires_at ?? null,
+      will_renew: prev?.will_renew ?? null,
+    });
+  }
 
   // Sólo se gobiernan las tiendas de Apple desde aquí.
   if (subRow && !APPLE_STORES.has(store)) {
@@ -179,6 +219,7 @@ Deno.serve(async (req) => {
 
   let status: string;
   if (!ent) status = "never";
+  else if (lagStatus) status = lagStatus;
   else if (!active) status = billingIssue ? "past_due" : "expired";
   else if (billingIssue) status = "past_due";
   else if (unsubscribed) status = "canceled";     // acceso hasta expires_at

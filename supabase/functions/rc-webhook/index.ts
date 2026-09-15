@@ -29,6 +29,7 @@
 //   = Se conserva el gate de entorno SANDBOX, que el diseño original no tenía.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { verifyEntitlementWithStore, blocksRevocation } from "../_shared/entitlement.ts";
 
 // ── Configuración de negocio ───────────────────────────────────────────────
 // Identificador del entitlement en RevenueCat (case-sensitive). Verificado en
@@ -236,7 +237,7 @@ async function applyPlan(
 ): Promise<{ skipped?: string; error?: string }> {
   const { data: current } = await admin
     .from("subscriptions")
-    .select("store, expires_at, entitlement_active")
+    .select("store, expires_at, entitlement_active, environment")
     .eq("user_id", uid)
     .maybeSingle();
 
@@ -249,8 +250,51 @@ async function applyPlan(
   }
 
   const expMs = Number(ev.expiration_at_ms ?? 0);
-  const expiresAt = expMs > 0
-    ? new Date(expMs).toISOString()
+
+  // ── Tres candados más antes de retirar el acceso (y con él, el broker) ──────
+  // Cualquiera de estos tres casos apagaba la fila de alguien que paga, y una hora
+  // después snaptrade-cleanup le borraba la conexión del broker. "Se me desconecta solo".
+  if (plan.revoke) {
+    // 1) Un evento SANDBOX jamás toca una fila de PRODUCCIÓN. Con RC_ACCEPT_SANDBOX
+    //    activo (pruebas en TestFlight), las suscripciones de sandbox caducan cada pocas
+    //    horas y disparan EXPIRATION tras EXPIRATION; si el mismo uid tiene una compra
+    //    real, ese ruido le mataba el acceso real.
+    const curEnv = String(current?.environment ?? "").toUpperCase();
+    if (env === "SANDBOX" && curEnv && curEnv !== "SANDBOX") {
+      log("sandbox revoke blocked (fila de producción)", uid, type);
+      return { skipped: "sandbox_vs_production" };
+    }
+    // 2) Evento VIEJO. RevenueCat reintenta y puede entregar desordenado: un EXPIRATION
+    //    del periodo anterior llegando después del RENEWAL del siguiente. Si la fila ya
+    //    conoce un fin de acceso POSTERIOR al que trae el evento, el evento está caducado.
+    const curExp = current?.expires_at ? Date.parse(current.expires_at) : NaN;
+    if (expMs > 0 && Number.isFinite(curExp) && curExp > expMs + 60_000) {
+      log("stale revoke blocked", uid, type, "evento", new Date(expMs).toISOString(), "< fila", current!.expires_at);
+      return { skipped: "stale_event" };
+    }
+    // 3) La tienda tiene la última palabra. Se le pregunta a RevenueCat AHORA: si dice
+    //    que el acceso sigue vivo (renovado, en gracia de cobro, vitalicio), no se
+    //    revoca: se escribe el estado vivo. Si RevenueCat no responde, no se toca nada —
+    //    el barrido y el cron reverifican más tarde, ambos contra la tienda también.
+    const v = await verifyEntitlementWithStore(admin, uid, store);
+    if (blocksRevocation(v)) {
+      if (v.active !== true) {
+        log("revoke deferred (tienda no disponible)", uid, type, v.detail);
+        return { skipped: "store_unavailable" };
+      }
+      log("revoke overridden by store", uid, type, "→", v.detail);
+      plan = {
+        active: true,
+        status: v.detail === "billing_grace" ? "past_due" : "active",
+        revoke: false,
+        graceDays: v.detail === "billing_grace" ? BILLING_GRACE_DAYS : undefined,
+      };
+      if (v.expiresAt) ev = { ...ev, expiration_at_ms: Date.parse(v.expiresAt) };
+    }
+  }
+  const expMs2 = Number(ev.expiration_at_ms ?? 0);
+  const expiresAt = expMs2 > 0
+    ? new Date(expMs2).toISOString()
     : plan.active
     ? current?.expires_at ?? null
     : new Date().toISOString();
