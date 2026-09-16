@@ -4913,6 +4913,25 @@ window._pvAwaitIAP = function(totalMs){
     #tab-analizar .ra-subline{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--st-on-surf-var)}
     #tab-analizar .ra-subline:empty{display:none}
     #tab-analizar .ra-head-actions{display:flex;gap:10px;flex-wrap:wrap}
+    /* Precio objetivo en el header: botón de estado + tira desplegable a ancho completo */
+    #tab-analizar .ra-btn-tgt.has{border-color:var(--st-primary);color:var(--st-primary)}
+    #tab-analizar .ra-btn-tgt.hit{background:var(--st-surface-cont);border-color:var(--st-surface-highest);color:var(--st-primary)}
+    #tab-analizar .ra-btn-tgt .tgt-hit{font-size:11px;font-weight:600;opacity:.75;margin-left:2px}
+    #tab-analizar .ra-tgt-strip{flex-basis:100%;width:100%;background:#fff;border:1px solid var(--st-surface-highest);border-radius:14px;padding:12px 14px;font-size:13px;color:var(--st-on-surf-var);line-height:1.5;box-sizing:border-box}
+    #tab-analizar .ra-tgt-strip strong{color:var(--st-primary);font-variant-numeric:tabular-nums}
+    #tab-analizar .ra-tgt-strip .tgt-msg{margin-bottom:8px}
+    #tab-analizar .ra-tgt-strip .tgt-form{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    #tab-analizar .ra-tgt-strip .tgt-form input{flex:1 1 120px;min-width:0;padding:9px 11px;border:1px solid var(--st-surface-highest);border-radius:10px;font-size:15px;font-family:var(--font);background:#fff;color:var(--st-primary);box-sizing:border-box}
+    #tab-analizar .ra-tgt-strip .tgt-form input:focus{outline:none;border-color:var(--st-primary)}
+    #tab-analizar .ra-tgt-strip .ra-btn{padding:9px 14px;font-size:13px}
+    #tab-analizar .ra-tgt-strip .tgt-link{background:none;border:none;padding:0;font-size:12.5px;color:var(--st-on-surf-var);text-decoration:underline;cursor:pointer;font-family:var(--font)}
+    #tab-analizar .ra-tgt-strip .tgt-actions{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:6px}
+    #tab-analizar .ra-tgt-strip .tgt-err{font-size:12px;color:var(--px-red,#c1443e);flex-basis:100%}
+    #tab-analizar .ra-tgt-strip .tgt-err:empty{display:none}
+    body.dark-theme #tab-analizar .ra-tgt-strip{background:var(--surface2);border-color:var(--border);color:var(--text2)}
+    body.dark-theme #tab-analizar .ra-tgt-strip strong{color:var(--text)}
+    body.dark-theme #tab-analizar .ra-tgt-strip .tgt-form input{background:var(--surface);border-color:var(--border);color:var(--text)}
+    body.dark-theme #tab-analizar .ra-btn-tgt.hit{background:var(--surface2)!important;border-color:var(--border)!important;color:var(--text)!important}
     #tab-analizar .ra-btn{display:inline-flex;align-items:center;gap:6px;font-size:14px;font-weight:600;padding:11px 20px;border-radius:12px;cursor:pointer;border:1px solid transparent;font-family:var(--font);transition:all .15s;white-space:nowrap}
     #tab-analizar .ra-btn-outline{background:#fff;border-color:var(--st-surface-highest);color:var(--st-primary)}
     #tab-analizar .ra-btn-outline:hover{background:var(--st-surface-low)}
@@ -5035,7 +5054,13 @@ window._pvAwaitIAP = function(totalMs){
         <button class="ra-btn ra-btn-dark" onclick="document.getElementById('r-analysis-card').scrollIntoView({behavior:'smooth',block:'start'})">
           <span class="material-symbols-outlined" style="font-size:18px">monitoring</span> Analizar
         </button>
+        <!-- Precio objetivo del usuario: el botón muestra el número fijado y, si el precio ya
+             lo cruzó, lo dice. Lo pinta PV_TARGETS.renderHead (mismo módulo que la tarjeta). -->
+        <button id="tgtHeadBtn" class="ra-btn ra-btn-outline ra-btn-tgt" onclick="try{PV_TARGETS._ui.headTap()}catch(e){}">
+          <span class="material-symbols-outlined" style="font-size:18px">trending_up</span> Precio objetivo
+        </button>
       </div>
+      <div id="r-tgt-strip" class="ra-tgt-strip" style="display:none"></div>
     </div>
 
     <!-- Chart + ratings -->
@@ -33390,7 +33415,9 @@ key_themes = exactamente 3 temas clave.`;
       // con los earnings de megacaps/bancos ANTES de construir el seed; si no, el cuadro sale sin
       // "X reporta resultados". (_buildWeekCatalysts arma ambas semanas en una pasada.)
       try{ if(typeof _buildWeekCatalysts === 'function') await _buildWeekCatalysts(); }catch(e){}
-      const data = _buildFallbackOutlookData(off);
+      // `let`: más abajo se reasigna con _cleanAIDeep (con const lanzaba TypeError
+      // silenciado y la limpieza nunca se aplicaba).
+      let data = _buildFallbackOutlookData(off);
       data._weekKey = wk; data.ts = Date.now(); data._shared = true;
       const narr = await _genNarr(data, off);
       if(narr){
@@ -40593,6 +40620,17 @@ document.addEventListener('DOMContentLoaded', function(){
 
   var _last = null;      // último estado conocido (evita repintar en cada recheck)
 
+  // Mismo bypass que has_active_entitlement() en SQL. Se duplica a propósito: sin esto
+  // el dueño vería el candado visual aunque el servidor le contestara. Estos correos ya
+  // viajan en un HTML público: publicarlos no concede nada, el servidor valida igual.
+  // (Se cayeron al borrar el muro en a31579c y _isOwner() lanzaba ReferenceError →
+  // el bypass devolvía siempre false.)
+  var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
+  // Estados que SIGUEN dando acceso pero merecen aviso: past_due (Paddle/Apple
+  // reintentan el cobro) y canceled (renovación cancelada, periodo ya pagado).
+  // Sin esta tabla _pvSubGate reventaba justo antes de pintar/retirar el banner.
+  var STATUS_WARN  = { past_due:1, canceled:1 };
+
   // Cuentas de DEMO/REVIEW: acceso concedido a mano en `subscriptions`
   // (store='promotional'), sin pasar por StoreKit ni por Paddle. Se listan aquí
   // sólo para saltarles el quiz y el paywall en el cliente; el acceso real lo
@@ -46548,6 +46586,7 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   var _cache = null;            // array de filas tal como vienen de la tabla
   var _pendiente = {};          // ids con update de triggered_at en vuelo
   var _form = null;             // estado del mini-formulario de la ficha { ticker, direction, price, note }
+  var _head = null;             // estado de la tira del header { ticker, open, form, focus }
 
   function sb(){ return window.sbClient || null; }
   function uid(){ try { return window.__pvUserId && window.__pvUserId !== 'local' ? window.__pvUserId : null; } catch(e){ return null; } }
@@ -46672,13 +46711,88 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
 
     /* Cierre de sesión: nada del usuario anterior se queda en memoria. */
     clear: function(){
-      _cache = []; _pendiente = {}; _form = null;
+      _cache = []; _pendiente = {}; _form = null; _head = null;
       try { localStorage.removeItem(LS); } catch(e){}
       repintar();   // sólo la ficha: al cerrar sesión no hay que repintar la cartera
     },
 
+    /* ── Header de la ficha: botón "Precio objetivo" junto a Analizar + tira ─────────
+       Estados del botón:
+         · sin objetivo      → "Precio objetivo"            (tap: formulario)
+         · objetivo vigente  → "Objetivo $150.00"           (tap: tira con detalle)
+         · objetivo cruzado  → "Objetivo $150.00 · alcanzado" (tap: "ya pasó, fija uno nuevo")
+       La dirección se infiere del número: por encima del precio actual → al alza,
+       por debajo → a la baja. Al fijar uno nuevo se retiran los ya alcanzados. */
+    renderHead: function(ticker, currentPrice){
+      var btn = document.getElementById('tgtHeadBtn'), strip = document.getElementById('r-tgt-strip');
+      if (!btn || !strip) return;
+      var T = norm(ticker), p = +currentPrice;
+      var ico = '<span class="material-symbols-outlined" style="font-size:18px">trending_up</span> ';
+      if (!T) { btn.innerHTML = ico + 'Precio objetivo'; btn.className = 'ra-btn ra-btn-outline ra-btn-tgt'; strip.style.display = 'none'; return; }
+      if (_head && _head.ticker !== T) _head = null;   // cambió de acción: la tira se cierra
+      var t = API.get(T);
+      if (p > 0 && uid()) API.evaluate(T, p);
+      var rows = [t.above, t.below].filter(Boolean);
+      var vivos = rows.filter(function(r){ return !r.triggered_at && !cruza(r, p); });
+      var hits  = rows.filter(function(r){ return r.triggered_at || cruza(r, p); });
+      var show = vivos[0] || hits[0] || null;
+      var hit = !!(show && hits.indexOf(show) >= 0);
+
+      if (!uid() || !show) {
+        btn.innerHTML = ico + 'Precio objetivo';
+        btn.className = 'ra-btn ra-btn-outline ra-btn-tgt';
+      } else {
+        btn.innerHTML = ico + 'Objetivo <strong>' + fmtPx(show.target_price) + '</strong>' + (hit ? '<span class="tgt-hit">· alcanzado</span>' : '');
+        btn.className = 'ra-btn ra-btn-outline ra-btn-tgt ' + (hit ? 'hit' : 'has');
+      }
+      btn.setAttribute('aria-expanded', _head && _head.open ? 'true' : 'false');
+
+      if (!_head || !_head.open) { strip.style.display = 'none'; strip.innerHTML = ''; return; }
+
+      var h = '';
+      if (!uid()) {
+        h = '<div class="tgt-msg">Inicia sesión para guardar tu precio objetivo.</div>' +
+            '<div class="tgt-actions"><button type="button" class="ra-btn ra-btn-dark" onclick="try{window._pvShowLogin&&window._pvShowLogin()}catch(e){}">Iniciar sesión</button>' +
+            '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headClose()">Cerrar</button></div>';
+      } else if (_head.form) {
+        h = '<div class="tgt-msg">' + (hit ? 'Fija un precio objetivo nuevo para ' + T + '.' : 'Un número que fijas tú para seguir ' + T + '. No es una recomendación de Portiv.') + '</div>' +
+            '<form class="tgt-form" onsubmit="return PV_TARGETS._ui.headSave(event,\'' + T + '\')">' +
+              '<input type="number" inputmode="decimal" step="0.01" min="0.01" id="tgt-head-price" placeholder="' + (p > 0 ? fmtPx(p).replace('$', '') : '0.00') + '" required autocomplete="off">' +
+              '<button type="submit" class="ra-btn ra-btn-dark" id="tgt-head-save">Guardar</button>' +
+              '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headClose()">Cancelar</button>' +
+              '<div class="tgt-err" id="tgt-head-err"></div>' +
+            '</form>';
+      } else if (hit) {
+        h = '<div class="tgt-msg">El precio ya pasó tu objetivo de <strong>' + fmtPx(show.target_price) + '</strong>' +
+              (show.triggered_at ? ' (el ' + fmtFecha(show.triggered_at) + ')' : '') +
+              (p > 0 ? ' · precio actual <strong>' + fmtPx(p) + '</strong>' : '') + '. Fija uno nuevo.</div>' +
+            '<div class="tgt-actions">' +
+              '<button type="button" class="ra-btn ra-btn-dark" onclick="PV_TARGETS._ui.headForm(\'' + T + '\')">Fijar uno nuevo</button>' +
+              '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headRemove(\'' + T + '\',\'' + show.direction + '\')">Quitar</button>' +
+              '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headClose()">Cerrar</button>' +
+            '</div>';
+      } else {
+        var tp = +show.target_price, dist = (p > 0 && tp > 0) ? (tp / p - 1) * 100 : null;
+        h = '<div class="tgt-msg">Tu objetivo: <strong>' + fmtPx(tp) + '</strong> (' + (show.direction === 'above' ? 'al alza' : 'a la baja') + ')' +
+              (p > 0 ? ' · precio actual <strong>' + fmtPx(p) + '</strong>' : '') +
+              (dist != null ? ' · distancia <span class="' + (dist >= 0 ? 'pos' : 'neg') + '">' + (dist >= 0 ? '+' : '') + dist.toFixed(2) + '%</span>' : '') + '</div>' +
+            '<div class="tgt-actions">' +
+              '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headForm(\'' + T + '\')">Cambiar</button>' +
+              '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headRemove(\'' + T + '\',\'' + show.direction + '\')">Quitar</button>' +
+              '<button type="button" class="tgt-link" onclick="PV_TARGETS._ui.headClose()">Cerrar</button>' +
+            '</div>';
+      }
+      strip.innerHTML = h;
+      strip.style.display = 'block';
+      if (_head.form && _head.focus) {
+        _head.focus = false;
+        setTimeout(function(){ try { var i = document.getElementById('tgt-head-price'); if (i) i.focus(); } catch(e){} }, 30);
+      }
+    },
+
     /* ── Ficha de la acción: bloque "Tu precio objetivo" (#r-mi-objetivo) ────────── */
     renderFicha: function(ticker, currentPrice){
+      try { API.renderHead(ticker, currentPrice); } catch(e){ log('renderHead', e); }
       var el = document.getElementById('r-mi-objetivo');
       if (!el) return;
       var T = norm(ticker);
@@ -46748,6 +46862,49 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
     },
 
     _ui: {
+      /* ── header ── */
+      headTap: function(){
+        var T = tickerActual(); if (!T) return;
+        if (_head && _head.ticker === T && _head.open) { _head = null; repintar(); return; }
+        var t = API.get(T), hay = !!(t.above || t.below);
+        _head = { ticker: T, open: true, form: !hay, focus: !hay };
+        repintar();
+      },
+      headForm:  function(T){ _head = { ticker: norm(T), open: true, form: true, focus: true }; repintar(); },
+      headClose: function(){ _head = null; repintar(); },
+      headRemove: function(T, d){
+        API.remove(T, d).then(function(){
+          _head = null;
+          if (typeof showToast === 'function') showToast('Precio objetivo quitado');
+        }, function(e){ if (typeof showToast === 'function') showToast(e && e.message ? e.message : 'No se pudo quitar'); });
+      },
+      headSave: function(ev, T){
+        try { ev.preventDefault(); } catch(e){}
+        T = norm(T);
+        var pEl = document.getElementById('tgt-head-price'), eEl = document.getElementById('tgt-head-err'),
+            bEl = document.getElementById('tgt-head-save');
+        var price = pEl ? parseFloat(String(pEl.value).replace(',', '.')) : NaN;
+        if (!(price > 0)) { if (eEl) eEl.textContent = 'Escribe un precio mayor que 0.'; return false; }
+        var p = precioActual();
+        if (p > 0 && Math.abs(price - p) < 0.005) { if (eEl) eEl.textContent = 'Ese es el precio actual: escribe uno distinto.'; return false; }
+        var dir = (p > 0 && price < p) ? 'below' : 'above';
+        if (bEl) { bEl.disabled = true; bEl.textContent = 'Guardando…'; }
+        // Un objetivo nuevo sustituye a los ya alcanzados: se quitan antes de guardar.
+        var t = API.get(T), viejos = [];
+        ['above', 'below'].forEach(function(d){
+          var r = t[d]; if (r && d !== dir && (r.triggered_at || cruza(r, p))) viejos.push(API.remove(T, d).catch(function(){}));
+        });
+        Promise.all(viejos).then(function(){ return API.set(T, dir, price, ''); }).then(function(){
+          _head = { ticker: T, open: true, form: false, focus: false };
+          repintar();
+          if (typeof showToast === 'function') showToast('Tu precio objetivo quedó guardado');
+        }, function(e){
+          if (bEl) { bEl.disabled = false; bEl.textContent = 'Guardar'; }
+          if (eEl) eEl.textContent = (e && e.message) ? e.message : 'No se pudo guardar.';
+        });
+        return false;
+      },
+      /* ── tarjeta ── */
       abrir:  function(T){ _form = { ticker: norm(T), direction: null, price: null, note: '' }; repintar(); },
       editar: function(T, d){
         var r = API.get(T)[d]; if (!r) return;
@@ -46783,14 +46940,20 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   /* Repinta el bloque de la ficha con el ticker y precio que la ficha tiene ahora.
      _currentResearchTicker / _researchCurPrice son `let` de nivel superior: alcanzables
      por nombre desde este <script>, NO como window.* */
+  function tickerActual(){
+    try { return (typeof _currentResearchTicker !== 'undefined' && _currentResearchTicker) ? norm(_currentResearchTicker) : null; } catch(e){ return null; }
+  }
+  function precioActual(){
+    var p = 0;
+    try { if (typeof _researchCurPrice !== 'undefined' && +_researchCurPrice > 0) p = +_researchCurPrice; } catch(e){}
+    try { if (!(p > 0) && typeof _currentResearchInfo !== 'undefined' && _currentResearchInfo) p = +_currentResearchInfo.regularMarketPrice || 0; } catch(e){}
+    return p;
+  }
   function repintar(){
     try {
-      var T = (typeof _currentResearchTicker !== 'undefined') ? _currentResearchTicker : null;
+      var T = tickerActual();
       if (!T) return;
-      var p = 0;
-      try { if (typeof _researchCurPrice !== 'undefined' && +_researchCurPrice > 0) p = +_researchCurPrice; } catch(e){}
-      try { if (!(p > 0) && typeof _currentResearchInfo !== 'undefined' && _currentResearchInfo) p = +_currentResearchInfo.regularMarketPrice || 0; } catch(e){}
-      API.renderFicha(T, p);
+      API.renderFicha(T, precioActual());
     } catch(e){}
   }
 
@@ -46919,16 +47082,20 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
     if ((m = /^portiv:\/\/posicion\/([A-Z.\-]+)/i.exec(url))) {
       var tk = m[1].toUpperCase();
       try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
-      // toggleDrawer recibe el ÍNDICE dentro de HOLDINGS, no el ticker.
-      var idx = cartera().findIndex(function(h){
-        return h && String(h.ticker).toUpperCase() === tk; });
-      if (idx >= 0) setTimeout(function(){
+      // toggleDrawer recibe el ÍNDICE dentro de HOLDINGS, no el ticker. En arranque
+      // en frío desde el tap, HOLDINGS todavía se está cargando de la nube: se
+      // reintenta hasta ~8 s antes de rendirse (queda al menos en la pestaña).
+      var abrirPosicion = function(intentos){
+        var idx = cartera().findIndex(function(h){
+          return h && String(h.ticker).toUpperCase() === tk; });
+        if (idx < 0) { if (intentos > 0) setTimeout(function(){ abrirPosicion(intentos - 1); }, 500); return; }
         try {
           if (typeof toggleDrawer === 'function') toggleDrawer(idx);
           var fila = document.getElementById('drawer-' + idx);
           if (fila && fila.scrollIntoView) fila.scrollIntoView({ behavior:'smooth', block:'center' });
         } catch(e){}
-      }, 350);
+      };
+      setTimeout(function(){ abrirPosicion(16); }, 350);
       return;
     }
     if (/^portiv:\/\/calendario\//i.test(url)) {
@@ -47013,10 +47180,13 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
     ofrecerSiToca: function(){
       if (!API.disponible()) return;
       if (API._ofreciendo) return;      // renderAll corre muchas veces; una sola pantalla
-      API._ofreciendo = true;
       try { if (localStorage.getItem(LS_PEDIDO)) return; } catch(e){}
       if (!uid()) return;
       if (!cartera().length) return;                              // nunca en el primer arranque
+      // La bandera se pone DESPUÉS de las guardas. Antes se ponía al entrar y el
+      // primer renderAll (cartera aún vacía) la dejaba atascada en true para
+      // siempre: la pantalla de pre-permiso no salía jamás.
+      API._ofreciendo = true;
       var P = plugin();
       listeners();
       P.checkPermissions().then(function(r){
