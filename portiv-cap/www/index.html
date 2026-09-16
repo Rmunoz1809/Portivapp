@@ -91,10 +91,30 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
     return o.offsetHeight > 0;
   }
 
+  function offline(){ try { return navigator.onLine === false; } catch(e){ return false; } }
+
+  /* Reinicio DE VERDAD: navegar a la misma página con un sello nuevo en la query.
+     location.reload() en el WKWebView de Capacitor a veces devolvía la misma vista
+     colgada (y el panel volvía a los 10 s como si el botón no hiciera nada).
+     replace() sin historial + sello → arranque limpio; reload() queda de respaldo. */
+  function reiniciar(){
+    var d = document.getElementById('pvBootFail');
+    if (d) {
+      var b = d.querySelector('button'); if (b) { b.disabled = true; b.textContent = 'Reiniciando…'; }
+      setTimeout(function(){ try { d.parentNode && d.parentNode.removeChild(d); } catch(e){} }, 150);
+    }
+    try {
+      var u = location.origin + location.pathname + '?boot=' + Date.now() + (location.hash || '');
+      location.replace(u);
+    } catch(e){}
+    setTimeout(function(){ try { location.reload(); } catch(e){} }, 800);
+  }
+
   function panel(){
     if (document.getElementById('pvBootFail')) return;
-    var why = lastErr
-      ? lastErr
+    var sin = offline();
+    var why = sin ? 'Sin conexión a internet.'
+      : lastErr ? lastErr
       : (!window.supabase ? 'No se cargó la librería de sesión.' : 'El arranque no terminó.');
     var d = document.createElement('div');
     d.id = 'pvBootFail';
@@ -108,15 +128,17 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
     box.setAttribute('style', 'max-width:340px;width:100%;text-align:center;');
     var h = document.createElement('div');
     h.setAttribute('style', 'font-size:19px;font-weight:700;margin-bottom:10px;');
-    h.textContent = 'No pudimos abrir Portiv';
+    h.textContent = sin ? 'Sin conexión' : 'No pudimos abrir Portiv';
     var p = document.createElement('div');
     p.setAttribute('style', 'font-size:14px;line-height:1.5;color:#9fb0cc;margin-bottom:22px;');
-    p.textContent = 'Revisa tu conexión y vuelve a intentarlo.';
+    p.textContent = sin
+      ? 'Portiv necesita internet para abrir. Se reiniciará solo cuando vuelva la conexión.'
+      : 'Revisa tu conexión y vuelve a intentarlo.';
     var b = document.createElement('button');
     b.setAttribute('style', 'width:100%;height:50px;border:none;border-radius:12px;'
       + 'background:#04162c;color:#ffffff;font-size:16px;font-weight:700;cursor:pointer;');
     b.textContent = 'Reintentar';
-    b.onclick = function(){ try { location.reload(); } catch(e){} };
+    b.onclick = reiniciar;
     // Motivo técnico en pequeño: es lo que convierte "no abre" en un reporte accionable.
     var s = document.createElement('div');
     s.setAttribute('style', 'font-size:11px;color:#5f7090;margin-top:16px;word-break:break-word;');
@@ -125,6 +147,16 @@ window.PV_SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS
     d.appendChild(box);
     // Al <html>, no al <body>: si el parser se colgó en el <head>, <body> aún no existe.
     (document.body || document.documentElement).appendChild(d);
+
+    // Vuelve la red → reinicio automático, sin que el usuario tenga que tocar nada.
+    window.addEventListener('online', function(){ setTimeout(reiniciar, 400); }, { once: true });
+    // Si el arranque termina tarde (la app se revela o aparece el login), el panel sobra.
+    var vig = setInterval(function(){
+      var ok = !document.documentElement.classList.contains('app-locked') || overlayVisible();
+      if (!ok) return;
+      clearInterval(vig);
+      try { d.parentNode && d.parentNode.removeChild(d); } catch(e){}
+    }, 1000);
   }
 
   setTimeout(function(){
