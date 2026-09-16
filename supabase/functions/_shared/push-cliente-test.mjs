@@ -90,6 +90,23 @@ P._l['pushNotificationActionPerformed']({ notification: { data: {
 await new Promise(r => setTimeout(r, 60));
 t('calendario: abre la pestaña noticias', llamadas.showTab.includes('noticias'), JSON.stringify(llamadas.showTab));
 
+console.log('\n── pre-permiso ──');
+// Regresión: el primer renderAll corre con la cartera vacía. Antes eso dejaba la
+// bandera _ofreciendo en true para siempre y la pantalla no salía nunca.
+{
+  const guardada = ctx.HOLDINGS;
+  ctx.HOLDINGS = [];
+  API.ofrecerSiToca();                      // cartera vacía → no ofrece, pero NO se atasca
+  ctx.HOLDINGS = guardada;
+  let pantalla = 0;
+  const crear = ctx.document.createElement;
+  ctx.document.createElement = () => { pantalla++; return el(); };
+  API.ofrecerSiToca();                      // ahora sí hay cartera → pantalla
+  await new Promise(r => setTimeout(r, 30));
+  ctx.document.createElement = crear;
+  t('con cartera vacía primero, la pantalla sale igual al llegar posiciones', pantalla > 0);
+}
+
 console.log('\n── registro del token ──');
 P._l['registration']({ value: 'TOKEN-ABC' });
 await new Promise(r => setTimeout(r, 30));

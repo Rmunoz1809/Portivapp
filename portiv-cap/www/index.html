@@ -47082,16 +47082,20 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
     if ((m = /^portiv:\/\/posicion\/([A-Z.\-]+)/i.exec(url))) {
       var tk = m[1].toUpperCase();
       try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
-      // toggleDrawer recibe el ÍNDICE dentro de HOLDINGS, no el ticker.
-      var idx = cartera().findIndex(function(h){
-        return h && String(h.ticker).toUpperCase() === tk; });
-      if (idx >= 0) setTimeout(function(){
+      // toggleDrawer recibe el ÍNDICE dentro de HOLDINGS, no el ticker. En arranque
+      // en frío desde el tap, HOLDINGS todavía se está cargando de la nube: se
+      // reintenta hasta ~8 s antes de rendirse (queda al menos en la pestaña).
+      var abrirPosicion = function(intentos){
+        var idx = cartera().findIndex(function(h){
+          return h && String(h.ticker).toUpperCase() === tk; });
+        if (idx < 0) { if (intentos > 0) setTimeout(function(){ abrirPosicion(intentos - 1); }, 500); return; }
         try {
           if (typeof toggleDrawer === 'function') toggleDrawer(idx);
           var fila = document.getElementById('drawer-' + idx);
           if (fila && fila.scrollIntoView) fila.scrollIntoView({ behavior:'smooth', block:'center' });
         } catch(e){}
-      }, 350);
+      };
+      setTimeout(function(){ abrirPosicion(16); }, 350);
       return;
     }
     if (/^portiv:\/\/calendario\//i.test(url)) {
@@ -47176,10 +47180,13 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
     ofrecerSiToca: function(){
       if (!API.disponible()) return;
       if (API._ofreciendo) return;      // renderAll corre muchas veces; una sola pantalla
-      API._ofreciendo = true;
       try { if (localStorage.getItem(LS_PEDIDO)) return; } catch(e){}
       if (!uid()) return;
       if (!cartera().length) return;                              // nunca en el primer arranque
+      // La bandera se pone DESPUÉS de las guardas. Antes se ponía al entrar y el
+      // primer renderAll (cartera aún vacía) la dejaba atascada en true para
+      // siempre: la pantalla de pre-permiso no salía jamás.
+      API._ofreciendo = true;
       var P = plugin();
       listeners();
       P.checkPermissions().then(function(r){
