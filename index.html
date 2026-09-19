@@ -27993,11 +27993,10 @@ function _renderQualAnalysis(a, el){
       <div class="lbl" style="color:${clr}">${esc(a.rating_label)}</div>
       <div class="sub">NOTA / 10</div>
     </div>
-    <div class="px-rating-desc">${a.bio ? esc(a.bio) : ''}
-      ${a.rating != null ? `<div class="px-hint">${(a.scores && a.scores.sectorial)
-        ? `La nota mide el NEGOCIO: lo que gana hoy y lo que ha ganado de media en cinco años, si mejora o se deteriora, cómo crece y qué tan sólido es su balance, con las métricas que de verdad definen a su sector. Se mide dos veces —contra sus pares directos y contra el mercado entero— porque ser el menos rentable de una industria excelente no es ser mediocre. El precio no manda: cotizar caro o barato ajusta la nota como mucho un punto arriba o abajo.`
-        : `La nota evalúa a la empresa en conjunto con todo lo que publica: rentabilidad, crecimiento, valoración, deuda y liquidez. Lo que no tiene dato no se califica ni se rellena con un número inventado.`}</div>` : ''}</div>
+    <div class="px-rating-desc">${(a.bio || a.bioFallback) ? esc(a.bio || a.bioFallback) : `<span class="px-empty">Preparando el resumen de la empresa…</span>`}</div>
   </div>`;
+  // (Se quitó el párrafo fijo que explicaba cómo se calcula la nota: salía en TODAS las
+  //  acciones y ocupaba el sitio del resumen. Aquí va siempre el resumen de la empresa.)
 
   // La tarjeta de la NOTA sale del flujo de `h` y se pinta en #r-rating-host, que
   // está FUERA del candado de Pro. Todo lo que se acumule en `h` a partir de aquí
@@ -30304,6 +30303,30 @@ function _pvxApplyScores(a, info, ticker){
   return a;
 }
 
+// Resumen de respaldo cuando no hay ficha editorial ni ha llegado la narrativa de IA:
+// se arma SOLO con lo que publica esta empresa (sector, industria, tamaño, ventas,
+// margen, crecimiento). No es una plantilla: cada frase lleva su dato o no se escribe.
+function _pvxBioFallback(ticker, info){
+  try {
+    if (!info) return '';
+    const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+    const name = info.longName || info.shortName || ticker;
+    const mc = num(info.marketCap), ps = num(info.priceToSales), pm = num(info.profitMargins),
+          rg = num(info.revenueGrowth), gm = num(info.grossMargins), de = num(info.debtToEquity);
+    const bil = v => v >= 1e12 ? `$${(v/1e12).toFixed(1)} billones` : v >= 1e9 ? `$${(v/1e9).toFixed(0)} mil millones` : v >= 1e6 ? `$${(v/1e6).toFixed(0)} millones` : null;
+    const ind = info.industry || info.finnhubIndustry || '', sec = info.sector || '';
+    const tam = mc ? (mc >= 2e11 ? 'una de las grandes' : mc >= 1e10 ? 'una empresa mediana-grande' : mc >= 2e9 ? 'una empresa mediana' : 'una empresa pequeña') : null;
+    const F = [];
+    let f1 = `${name} es` + (tam ? ` ${tam}` : ' una empresa') + (ind ? ` de la industria ${ind}` : sec ? ` del sector ${sec}` : '') + (info.country && info.country !== 'United States' ? ` (${info.country})` : '') + (mc && bil(mc) ? `, con un valor en bolsa de ${bil(mc)}` : '') + '.';
+    F.push(f1);
+    const rev = (mc && ps && ps > 0) ? mc / ps : null;
+    if (rev && bil(rev)) F.push(`Vende unos ${bil(rev)} al año` + (rg != null ? `, ${rg >= 0 ? 'creciendo' : 'cayendo'} un ${Math.abs(rg*100).toFixed(0)}% frente al año pasado` : '') + (pm != null ? `, y ${pm >= 0 ? `convierte ${(pm*100).toFixed(0)} de cada 100 en ganancia` : 'todavía pierde dinero'}` : '') + '.');
+    else if (pm != null) F.push(pm >= 0 ? `Convierte ${(pm*100).toFixed(0)} de cada 100 de venta en ganancia.` : 'Todavía pierde dinero.');
+    if (gm != null && de != null) F.push(`Margen bruto del ${(gm*100).toFixed(0)}%` + (de < 50 ? ' y balance con poca deuda.' : de > 150 ? ` y deuda de ${(de/100).toFixed(1)}× su capital.` : ' y apalancamiento moderado.'));
+    return F.join(' ');
+  } catch(e){ return ''; }
+}
+
 // ── Parte DETERMINISTA del análisis: cero IA, cero red ───────────────────────────
 // Es el 90% de lo que se ve (nota, puntos clave, valoración, salud, proyecciones,
 // crecimiento reciente, catalizadores) y se calcula en milisegundos con lo que ya está
@@ -30332,6 +30355,7 @@ async function _assembleBase(ticker, info){
     valoracion_full: (base.valText||'') + ' ' + _valVerdict(base.valLabel),
     moatFactors: _moatFactorBreakdown(info, base.moat, (base.moat_bullets||[])),
     earningsReaction: null,            // null → la sección no se pinta (sin placeholders)
+    bioFallback: _pvxBioFallback(ticker, info),
   });
   try { Object.assign(a, await _pvxExtras(ticker, info)); } catch(e){}
   // Si la lectura del trimestre YA está en este dispositivo, viaja con el primer pintado:
@@ -30427,7 +30451,9 @@ async function _upgradeAnalysisToAI(ticker, info){
     // re-entradas seguidas). Sin spinner: si algo cambió, se re-pinta sin que el usuario lo note.
     const _ent = _qualLoad()[ticker];
     const _fresh = _ent && (Date.now() - (_ent.ts || 0) < 30 * 60 * 1000);
-    if (_fresh) return;
+    // Sin resumen (la narrativa falló o no llegó la vez anterior) se reintenta aunque el
+    // caché sea reciente: la tarjeta de la nota no puede quedarse sin la empresa.
+    if (_fresh && cached.bio) return;
     _assembleAnalysis(ticker, info).then(a => {
       if (!a) return;
       // El refresco NO genera la lectura del trimestre (sólo la lee). Si el caché ya la
@@ -30468,6 +30494,20 @@ async function _upgradeAnalysisToAI(ticker, info){
   const _cambió = (narr || (eqr && !a.earningsReaction));
   if (eqr) a.earningsReaction = eqr;
   if (narr) _applyNarrative(a, info, ticker, narr);
+  else if (!a.bio) {
+    // La narrativa no llegó (red, proxy o respuesta rota): un solo reintento, sin bloquear
+    // la pantalla. Si llega, se injerta y se repinta; si no, queda el resumen de respaldo.
+    setTimeout(async () => {
+      try {
+        const n2 = await _getStockNarrative(ticker, info, _stockFactsForPrompt(ticker, info));
+        if (!n2) return;
+        _applyNarrative(a, info, ticker, n2);
+        _qualSet(ticker, a, eKey);
+        const c2 = document.getElementById('r-analysis');
+        if (c2 && c2.dataset.tk === ticker) _pvxRepaint(a, c2);
+      } catch(e){}
+    }, 4000);
+  }
   // Se guarda ANTES de mirar la pantalla: el análisis es válido aunque el usuario ya se
   // haya ido a otra acción, y así la próxima apertura lo pinta de una en vez de rehacerlo.
   _qualSet(ticker, a, eKey);
