@@ -32334,24 +32334,44 @@ async function refreshWatchlistPrices() {
 }
 
 // ── Search autocomplete ────────────────────────────────────────────────────
+let _wlRemTimer = null;
 function onWlInput(val) {
   const dd = $('wlDropdown');
   val = val.trim().toUpperCase();
+  if (_wlRemTimer) clearTimeout(_wlRemTimer);
   if (!val) { dd.style.display = 'none'; return; }
 
   _wlSuggestions = STOCK_DB.filter(s =>
     s[0].startsWith(val) || s[1].toUpperCase().includes(val)
   ).slice(0, 8);
 
-  if (!_wlSuggestions.length) { dd.style.display = 'none'; return; }
-
-  dd.style.display = 'block';
-  dd.innerHTML = _wlSuggestions.map((s, i) => `
+  // Mismo patrón que los buscadores de análisis: locales al instante y a los
+  // 220 ms se repinta con lo que devuelva Finnhub (cualquier acción fuera de
+  // STOCK_DB era invisible aquí, p. ej. EFOR). Sin locales, "Buscando…" en vez
+  // de cerrar el desplegable.
+  const pintar = rows => {
+    dd.style.display = 'block';
+    dd.innerHTML = rows.map((s, i) => `
     <div class="wl-suggest" onclick="selectWlSuggestion(${i})">
-      <span style="font-weight:700;color:var(--text);font-size:12px;min-width:50px;">${s[0]}</span>
-      <span style="color:var(--text2);font-size:11px;flex:1;">${s[1]}</span>
-      <span style="font-size:9px;color:var(--text3);background:var(--surface3);padding:1px 7px;border-radius: 0;flex-shrink:0;">${s[2]}</span>
+      <span style="font-weight:700;color:var(--text);font-size:12px;min-width:50px;">${pvEsc(s[0])}</span>
+      <span style="color:var(--text2);font-size:11px;flex:1;">${pvEsc(s[1])}</span>
+      <span style="font-size:9px;color:var(--text3);background:var(--surface3);padding:1px 7px;border-radius: 0;flex-shrink:0;">${pvEsc(s[2]||'')}</span>
     </div>`).join('');
+  };
+  if (_wlSuggestions.length) pintar(_wlSuggestions);
+  else { dd.style.display = 'block'; dd.innerHTML = `<div class="wl-suggest" style="cursor:default;opacity:.6"><span style="color:var(--text2);font-size:11px;">Buscando…</span></div>`; }
+
+  const loc = _wlSuggestions;
+  _wlRemTimer = setTimeout(async () => {
+    try {
+      const rem = await _searchStocksRemoto(val);
+      if (rem === null) return;
+      if (($('wlInput').value || '').trim().toUpperCase() !== val) return;
+      const todo = _unirLocalesRemotos(loc, rem, 10, val);
+      if (todo.length) { _wlSuggestions = todo; pintar(todo); }
+      else dd.style.display = 'none';
+    } catch(e) { if (!loc.length) dd.style.display = 'none'; }
+  }, 220);
 }
 
 function selectWlSuggestion(i) {
