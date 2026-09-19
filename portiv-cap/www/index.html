@@ -23933,21 +23933,77 @@ function _searchStocks(q) {
   ].slice(0, 9);
 }
 
+// Búsqueda remota (Finnhub /search) para los buscadores de análisis. STOCK_DB sólo
+// tiene ~850 valores: cualquier acción fuera de esa lista era invisible aunque la API
+// la conociera. Mismos filtros que onAddTickerInput (sin '.' ni ':', sólo acciones/ETF,
+// sin duplicados, prefijo primero, tope 10) y mismo contador de secuencia para
+// descartar respuestas que llegan tarde. Devuelve filas [ticker, nombre, sector] como
+// _searchStocks, que sigue siendo el filtro local puro.
+let _remSugSeq = 0;
+async function _searchStocksRemoto(q) {
+  const seq = ++_remSugSeq;
+  const r = await fhFetch('/search?q=' + encodeURIComponent(q));
+  if (seq !== _remSugSeq) return null;   // llegó una búsqueda más nueva
+  const qu = q.toUpperCase();
+  const seen = new Set();
+  return ((r && r.result) || [])
+    .filter(x => x.symbol && !/[.:]/.test(x.symbol))
+    .filter(x => !x.type || /common stock|etf|etp|reit/i.test(x.type))
+    .filter(x => { const k = x.symbol.toUpperCase(); if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a,b) => (b.symbol.toUpperCase().startsWith(qu)?1:0) - (a.symbol.toUpperCase().startsWith(qu)?1:0))
+    .slice(0, 10)
+    .map(x => [x.symbol.toUpperCase(), x.description || '', /etf|etp/i.test(x.type||'') ? 'ETF' : '']);
+}
+// Une locales con remotos sin repetir tickers. Orden: el ticker exacto siempre
+// primero (escribir "TEM" y que Enter abra VEEV porque "Veeva SysTEMs" contiene las
+// letras era un bug), luego los que empiezan por lo escrito (locales antes que
+// remotos) y por último las coincidencias parciales, también locales primero.
+function _unirLocalesRemotos(loc, rem, tope, q) {
+  const qu = (q || '').toUpperCase();
+  const ya = new Set(loc.map(r => r[0].toUpperCase()));
+  const todo = loc.concat((rem || []).filter(r => !ya.has(r[0].toUpperCase())));
+  const rango = r => {
+    const t = r[0].toUpperCase(), local = ya.has(t);
+    if (t === qu) return 0;
+    if (t.startsWith(qu)) return local ? 1 : 2;
+    return local ? 3 : 4;
+  };
+  return todo.map((r, i) => [rango(r), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]).slice(0, tope);
+}
+
+let _searchRemTimer = null;
 function onSearchInput(val) {
   _dropSelIdx = -1;
   const results = _searchStocks(val.trim());
   const dd = $('searchDropdown');
-  if (!results.length || !val.trim()) { dd.classList.remove('open'); return; }
+  if (_searchRemTimer) clearTimeout(_searchRemTimer);
+  if (!val.trim()) { dd.classList.remove('open'); return; }
   const q = val.trim();
-  dd.innerHTML = results.map(([t, n, sec], i) =>
-    `<div class="sdrop-item" data-ticker="${pvEsc(t)}">
-      <span class="sdrop-tk">${_highlight(t, q.toUpperCase())}</span>
-      <span class="sdrop-nm">${_highlight(n, q)}</span>
-      <span class="sdrop-sector">${pvEsc(sec||'')}</span>
-    </div>`
-  ).join('');
+  const pintar = rows => {
+    dd.innerHTML = rows.map(([t, n, sec], i) =>
+      `<div class="sdrop-item" data-ticker="${pvEsc(t)}">
+        <span class="sdrop-tk">${_highlight(t, q.toUpperCase())}</span>
+        <span class="sdrop-nm">${_highlight(n, q)}</span>
+        <span class="sdrop-sector">${pvEsc(sec||'')}</span>
+      </div>`
+    ).join('');
+  };
+  // Locales al instante; si no hay, el dropdown se queda abierto con "Buscando…"
+  // en vez de cerrarse mientras llega lo remoto.
+  if (results.length) pintar(results);
+  else dd.innerHTML = `<div class="sdrop-wait" style="padding:10px 14px;opacity:.6"><span class="sdrop-nm">Buscando…</span></div>`;
   _bindPickDelegation(dd, pickStock);
   dd.classList.add('open');
+  _searchRemTimer = setTimeout(async () => {
+    try {
+      const rem = await _searchStocksRemoto(q);
+      if (rem === null) return;
+      if ($('researchInput').value.trim() !== q) return;
+      const todo = _unirLocalesRemotos(results, rem, 10, q);
+      if (todo.length) pintar(todo);
+      else dd.classList.remove('open');
+    } catch(e) { if (!results.length) dd.classList.remove('open'); }
+  }, 220);
 }
 
 function onSearchKey(e) {
@@ -24040,40 +24096,69 @@ function _hlMark(str, q) {
   return str.slice(0, idx) + '<mark class="search-modal-mark">' + str.slice(idx, idx + q.length) + '</mark>' + str.slice(idx + q.length);
 }
 
+let _navRemTimer = null;
 function onNavSearchInput(val) {
   _navSelIdx = -1;
   const container = $('navSearchResults');
   const q = val.trim();
+  if (_navRemTimer) clearTimeout(_navRemTimer);
   if (!q) {
     container.innerHTML = _navSearchEmptyHTML();
     _bindPickDelegation(container, pickNavStock);
     return;
   }
   const results = _searchStocks(q);
-  if (!results.length) {
+  // Sin resultados nunca es un callejón sin salida: siempre hay una fila para
+  // analizar lo escrito tal cual (el ticker puede existir aunque no esté en la lista).
+  const filaAnalizar = `<div class="search-modal-item" data-idx="0" data-ticker="${pvEsc(q.toUpperCase())}">
+      <span class="search-modal-tk">${pvEsc(q.toUpperCase())}</span>
+      <span class="search-modal-nm">Analizar “${pvEsc(q)}”</span>
+    </div>`;
+  const pintarVacio = (buscando) => {
     container.innerHTML = `<div class="search-modal-hint">
       <div class="search-modal-hint-ico">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="8.5" y1="11" x2="13.5" y2="11"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       </div>
-      <div class="search-modal-hint-t">Sin resultados para “${pvEsc(q)}”</div>
+      <div class="search-modal-hint-t">${buscando ? 'Buscando…' : `Sin resultados para “${pvEsc(q)}”`}</div>
       <div class="search-modal-hint-s">Prueba con el ticker (AAPL) o con el nombre completo de la empresa.</div>
-    </div>`;
-    return;
-  }
-  container.innerHTML = results.map(([t, n, sec], i) =>
-    `<div class="search-modal-item" data-idx="${i}" data-ticker="${pvEsc(t)}">
-      <span class="search-modal-tk">${_hlMark(t, q.toUpperCase())}</span>
-      <span class="search-modal-nm">${_hlMark(n, q)}</span>
-      ${sec ? `<span class="search-modal-sec">${pvEsc(sec)}</span>` : ''}
-    </div>`
-  ).join('');
-  _bindPickDelegation(container, pickNavStock);
+    </div>` + filaAnalizar;
+    _bindPickDelegation(container, pickNavStock);
+  };
+  const pintar = rows => {
+    container.innerHTML = rows.map(([t, n, sec], i) =>
+      `<div class="search-modal-item" data-idx="${i}" data-ticker="${pvEsc(t)}">
+        <span class="search-modal-tk">${_hlMark(t, q.toUpperCase())}</span>
+        <span class="search-modal-nm">${_hlMark(n, q)}</span>
+        ${sec ? `<span class="search-modal-sec">${pvEsc(sec)}</span>` : ''}
+      </div>`
+    ).join('');
+    _bindPickDelegation(container, pickNavStock);
+  };
+  if (results.length) pintar(results); else pintarVacio(true);
+  _navRemTimer = setTimeout(async () => {
+    try {
+      const rem = await _searchStocksRemoto(q);
+      if (rem === null) return;
+      if ($('navSearchInput').value.trim() !== q) return;
+      const todo = _unirLocalesRemotos(results, rem, 10, q);
+      if (todo.length) pintar(todo); else pintarVacio(false);
+    } catch(e) { if (!results.length) pintarVacio(false); }
+  }, 220);
 }
 
 function onNavSearchKey(e) {
   const items = $('navSearchResults').querySelectorAll('.search-modal-item');
   if (e.key === 'Escape') { closeSearchOverlay(); return; }
-  if (!items.length) { if (e.key === 'Enter') { closeSearchOverlay(); } return; }
+  if (!items.length) {
+    // Antes Enter cerraba el buscador a secas aunque el texto fuera un ticker válido.
+    // Ahora se analiza lo escrito tal cual.
+    if (e.key === 'Enter') {
+      const raw = ($('navSearchInput').value || '').trim().toUpperCase();
+      closeSearchOverlay();
+      if (raw) quickSearch(raw);
+    }
+    return;
+  }
   if (e.key === 'ArrowDown') {
     e.preventDefault();
     _navSelIdx = Math.min(_navSelIdx + 1, items.length - 1);
