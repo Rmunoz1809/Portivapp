@@ -12544,7 +12544,10 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   if (m.top3W > p.top3Cap + 0.03) {
     flags++;
     concTxt = ` Tus 3 mayores posiciones pesan <strong>${pctf(m.top3W)}</strong> — por encima del ${pctf(p.top3Cap)} ideal para ti; un mal trimestre de una sola empresa mueve toda tu cartera.`;
-    recs.push({i:'balance', t:`Reduce la concentración: recorta gradualmente las posiciones que superen ~10-12% del total y reparte hacia tus convicciones de menor peso.`});
+    // El techo por posición es el MISMO que aplica el motor de rebalanceo (12/9/7 % según
+    // perfil): antes esta frase decía "10-12 %" para todos y la tabla de abajo recortaba a 7 %.
+    const _maxPos = /agres|alto/i.test(p.riskLabel || '') ? 12 : /conserv|baj/i.test(p.riskLabel || '') ? 7 : 9;
+    recs.push({i:'balance', t:`Reduce la concentración: recorta gradualmente las posiciones que superen ~${_maxPos}% del total (el techo por posición de tu perfil) y reparte hacia tus convicciones de menor peso.`});
   }
 
   // 4) Énfasis según objetivo
@@ -12554,6 +12557,28 @@ function _pvAdvisorBlock(m, techWeight, perfil){
     recs.push({i:'rocket_launch', t:`Tu perfil de crecimiento a largo plazo te permite mantener (y comprar en caídas) tus posiciones de mayor convicción sin reaccionar al ruido de corto plazo.`});
   }
   if (!recs.length) recs.push({i:'check_circle', t:`Tu portafolio refleja bien tu perfil. Mantén el rumbo y revisa el rebalanceo trimestralmente.`});
+
+  // 5) El mercado de hoy, en una línea determinista: qué régimen hay y qué implica para
+  //    ESTE perfil. Sin esto el diagnóstico era idéntico con el índice en máximos y en caída.
+  let mktTxt = '';
+  try {
+    const mk = (typeof PORTIV_MKT !== 'undefined') ? PORTIV_MKT.now() : null;
+    if (mk){
+      const cons = /conserv|baj/i.test(p.riskLabel || ''), agres = /agres|alto/i.test(p.riskLabel || '');
+      let impl;
+      if (mk.trend === 'bajista' || mk.vol === 'estres')
+        impl = cons ? 'Para tu perfil, es momento de no añadir volatilidad: si mueves algo, que sea hacia lo que menos cae.'
+             : agres ? 'Para tu horizonte, las caídas de calidad son oportunidades: compra por tramos, no de golpe.'
+                     : 'Para tu perfil, conviene mover por tramos y priorizar los negocios sólidos que más han caído.';
+      else if (mk.trend === 'correccion')
+        impl = cons ? 'Una corrección no obliga a vender: revisa que ninguna posición pese más de lo que toleras.'
+                    : 'Una corrección es cuando rebalancear hacia tus mejores negocios sale más barato.';
+      else
+        impl = (mk.offHigh > -0.02) ? 'Con el índice en máximos, evita perseguir lo que más subió y rebalancea con calma.'
+                                    : 'Mercado constructivo: los ajustes pueden hacerse sin prisa.';
+      mktTxt = `<p style="margin-top:8px"><strong>Mercado hoy:</strong> ${PORTIV_MKT.text(mk)} ${impl}</p>`;
+    }
+  } catch(e){}
 
   const verdict = flags === 0 ? {cls:'aligned', icon:'check_circle', txt:'Portafolio alineado con tu perfil'}
                 : flags === 1 ? {cls:'partial', icon:'info', txt:'Parcialmente alineado — 1 ajuste sugerido'}
@@ -12570,6 +12595,7 @@ function _pvAdvisorBlock(m, techWeight, perfil){
       <ul class="pv-advisor-recs">
         ${recs.map(r=>`<li><span class="material-symbols-outlined">${r.i}</span><span>${r.t}</span></li>`).join('')}
       </ul>
+      ${mktTxt}
       <div class="pv-advisor-verdict ${verdict.cls}"><span class="material-symbols-outlined" style="font-size:16px">${verdict.icon}</span>${verdict.txt}</div>
       <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.5">Lectura instantánea por reglas. El <b>Análisis del asesor</b> (más abajo) la amplía con IA y sigue la misma dirección.</div>
     </div>
@@ -12834,7 +12860,7 @@ const PV_AI = {
   // Versión de la LÓGICA del análisis. Al cambiarla se invalida cualquier análisis
   // cacheado y se regenera 1 vez con el prompt nuevo (evita servir un análisis viejo
   // que contradiga al asesor determinista). Súbela cuando cambie el prompt/bandas.
-  _VER: 'advisor-v5-nombres',
+  _VER: 'advisor-v6-mercado',
   _busy: false,
   _key(){ return 'pv_profile_ai_' + (window.__pvUserId || 'local') + '_' + (typeof getLang==='function'?getLang():'es'); },
   load(){ try { return JSON.parse(localStorage.getItem(this._key()) || 'null'); } catch(e){ return null; } },
@@ -12858,7 +12884,18 @@ const PV_AI = {
     const empty = !m.items.length || T.mkt <= 0;
     const techW = this._techWeight(m);
 
-    let ctx = '── PERFIL DE RIESGO ──\n';
+    // Fecha y régimen del mercado, sin cifras (este texto se cachea semanas). Sin la fecha el
+    // modelo escribía como si estuviera en el año de su entrenamiento.
+    let ctx = '';
+    try {
+      const iso = (typeof PORTIV_SYNC !== 'undefined' && PORTIV_SYNC._todayET) ? PORTIV_SYNC._todayET() : new Date().toISOString().slice(0,10);
+      const mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+      const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      ctx += `Hoy es ${mm ? `${+mm[3]} de ${MESES[+mm[2]-1]} de ${mm[1]}` : iso}.\n`;
+      const mk = (typeof PORTIV_MKT !== 'undefined') ? PORTIV_MKT.now() : null;
+      if (mk) ctx += `── SITUACIÓN DEL MERCADO HOY (úsala para decidir CÓMO y CUÁNDO ejecutar, no cites cifras) ──\n${PORTIV_MKT.regimeText(mk)}\n\n`;
+    } catch(e){}
+    ctx += '── PERFIL DE RIESGO ──\n';
     if (p){
       ctx += `Capacidad (objetiva): ${p.capScore}/100 → ${p.capLabel}\n`;
       ctx += `Disposición (psicológica): ${p.dispScore}/100 → ${p.dispLabel}\n`;
@@ -12977,7 +13014,11 @@ const PV_AI = {
 
   SYSTEM: `Eres un gestor de fondos con veinte años en Wall Street y tu propia firma de inversión. Le escribes a un cliente tuyo: es TU lectura de su cartera, con criterio y franqueza, no un reporte automático. Escribe como le hablarías sentado frente a él en tu despacho — profesional, con oficio, directo y humano. Tu trabajo aquí es JUZGAR la cartera: qué apuesta está haciendo, si esa apuesta está bien construida y qué harías tú con ella.
 
-QUÉ RECIBES: su PERFIL DE RIESGO (con los TOPES/BANDAS concretos de ESE perfil), su PORTAFOLIO REAL con métricas ya calculadas, y un VEREDICTO DETERMINISTA de encaje. Esos datos son tu única fuente: no inventes cifras ni bandas.
+QUÉ RECIBES: la FECHA de hoy, la SITUACIÓN DEL MERCADO (en qué régimen está el S&P 500: tendencia y volatilidad), su PERFIL DE RIESGO (con los TOPES/BANDAS concretos de ESE perfil), su PORTAFOLIO REAL con métricas ya calculadas, y un VEREDICTO DETERMINISTA de encaje. Esos datos son tu única fuente: no inventes cifras ni bandas. Tu conocimiento puede ser anterior a la fecha de hoy: no afirmes hechos recientes (resultados, lanzamientos, litigios) que no vengan en el contexto.
+
+EL MERCADO DE HOY (úsalo, pero sin cifras):
+- El régimen del mercado entra en "Lo que haría yo": decide CÓMO ejecutar (de golpe o por tramos), QUÉ va primero y si es momento de perseguir lo que está en máximos o de aprovechar lo que ha caído. Un gestor no rebalancea igual con el índice en máximos que en corrección.
+- Descríbelo con palabras ("con el mercado en corrección", "con la volatilidad tranquila"); nunca inventes niveles, porcentajes ni fechas del mercado: no los tienes y este texto se lee durante semanas.
 
 COHERENCIA (lo más importante — que todo cuadre entre sí y con su perfil):
 - Mide el encaje SOLO con las "BANDAS OBJETIVO DE ESTE PERFIL" y el "VEREDICTO DETERMINISTA" del contexto. Prohibido usar bandas genéricas de libro (tech 25-35%, beta 0.95-1.10, cash 15-25%): esas son de un perfil moderado y aquí no aplican.
@@ -13137,6 +13178,15 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       const staleVer = !!(cached && cached.text && cached.ver !== this._VER);
       // staleRebal: el plan de rebalanceo cambió de dirección desde que se generó → incoherente.
       const staleRebal = !!(cached && cached.text && (cached.rebalSig || '') !== curPlanSig);
+      // Sin régimen de mercado todavía (arranque en frío, 1ª vez), la firma del plan lleva
+      // "mkt:na" y cambiaría en segundos al llegar: se espera a conocerlo —o a que falle—
+      // antes de disparar la generación, para no pagar dos análisis por sesión.
+      const _mktReady = (typeof PORTIV_MKT === 'undefined') || !!PORTIV_MKT.now() || PORTIV_MKT._failed;
+      if (!_mktReady && (noCache || staleProfile || stalePort || staleVer || staleRebal)) {
+        host.innerHTML = `<div class="pv-ai-loading"><span class="pv-ai-spin"></span>${noCache ? 'Generando' : 'Actualizando'} tu análisis con IA…</div>`;
+        try { PORTIV_MKT.get().then(() => { try { this.render(); } catch(e){} }); } catch(e){}
+        return;
+      }
       if ((noCache || staleProfile || stalePort || staleVer || staleRebal) && this._autoKey !== curKey) {
         this._autoKey = curKey;                       // evita re-disparos en el mismo estado
         host.innerHTML = `<div class="pv-ai-loading"><span class="pv-ai-spin"></span>${noCache ? 'Generando' : 'Actualizando'} tu análisis con IA…</div>`;
@@ -13271,7 +13321,10 @@ function _buildRebalPlan(m){
     // Firma de DIRECCIONES + TRIMESTRE (para invalidar caché). Con la fecha del último
     // reporte dentro, publicar resultados invalida el plan cacheado y el análisis con IA
     // que se apoya en él, que es exactamente cuando deben rehacerse.
-    const sig = rows.map(r => r.ticker + ':' + r.action + '@' + _pvEarnKey(r.ticker)).join('|');
+    // …y el régimen de mercado: si cambia de bucket (pocas veces al año), el plan y el
+    // análisis del asesor se rehacen; mientras no cambie, no se paga nada nuevo.
+    const _mkB = (typeof PORTIV_MKT !== 'undefined' && PORTIV_MKT.now()) ? PORTIV_MKT.now().bucket : 'na';
+    const sig = rows.map(r => r.ticker + ':' + r.action + '@' + _pvEarnKey(r.ticker)).join('|') + '|mkt:' + _mkB;
     return { rows, text, sig };
   } catch(e){ return { rows: [], text: '(no disponible)', sig: '' }; }
 }
@@ -13322,6 +13375,14 @@ function renderDeepPortfolioAnalysis(T) {
   // Fundamentales que le faltan al motor de rebalanceo para poder calificar (no bloquea el
   // render: cuando llegan, repinta). Sin esto la tabla salía entera en MANTENER.
   try { _pvxEnsureFundamentals(HOLDINGS.map(h => h.ticker)); } catch(e){}
+  // Régimen de mercado (SPY): una serie por sesión, cacheada. Al llegar, se repinta UNA vez.
+  try {
+    if (typeof PORTIV_MKT !== 'undefined' && !PORTIV_MKT.fresh() && !PORTIV_MKT._asked){
+      PORTIV_MKT._asked = true;
+      const _b0 = PORTIV_MKT.now() ? PORTIV_MKT.now().bucket : null;
+      PORTIV_MKT.get().then(o => { if (o && o.bucket !== _b0) { try { renderDeepPortfolioAnalysis(calcTotals()); } catch(e){} } });
+    }
+  } catch(e){}
 
   // ── 1) ANÁLISIS PROFUNDO ───────────────────────────────────────────────────
   const _sectorEntries = Object.entries(m.bySector).sort((a,b)=>b[1]-a[1]);
@@ -13545,6 +13606,20 @@ function renderDeepPortfolioAnalysis(T) {
         + (_cambio ? `${_bi.before.toFixed(2)} → <b>${_bi.after.toFixed(2)}</b>` : `<b>${_bi.after.toFixed(2)}</b>`)
         + ` con el plan aplicado, frente al ${_bl.toFixed(2)}–${_bh.toFixed(2)} que tolera tu perfil`
         + (_dentro ? ' — dentro de banda.' : ' — todavía por encima: la tabla de abajo propone con qué amortiguarla.');
+    }
+  } catch(e){}
+  // EL MERCADO EN EL QUE SE EJECUTA EL PLAN. Un plan que ignora si el índice está en máximos
+  // o en corrección recomienda lo mismo en los dos casos; aquí se dice qué régimen leyó el
+  // motor y hacia dónde inclinó por él, con las cifras de hoy (esta tarjeta se repinta).
+  try {
+    const _mk = (typeof PORTIV_MKT !== 'undefined') ? PORTIV_MKT.now() : null;
+    if (_mk){
+      _rblFreshHTML += ` <b style="color:var(--text2)">Mercado hoy:</b> ${PORTIV_MKT.text(_mk)}`
+        + (_mk.trend !== 'alcista'
+            ? ' Con el índice lejos de máximos, el plan inclina algo más hacia los negocios sólidos que el mercado ha castigado y sugiere entrar por tramos.'
+            : (_mk.vol === 'calma' && _mk.offHigh > -0.02
+                ? ' Con el índice en máximos y en calma, el plan es más exigente con las cíclicas que ya subieron.'
+                : ''));
     }
   } catch(e){}
   if (_rblFreshHTML)
@@ -13838,6 +13913,91 @@ function renderAssetDetailTable(T) {
 // Honestidad: si no se puede calificar al menos la mitad de la cartera, no se mueve ningún
 // peso y se dice por qué. Un ticker sin fundamentales publicados nunca se recorta "por las
 // dudas": se deja en MANTENER con el motivo escrito.
+// ══════════════════════════════════════════════════════════════════════════════════
+//  RÉGIMEN DE MERCADO — determinista, con fuentes licenciadas (Alpaca IEX + Finnhub)
+//  ---------------------------------------------------------------------------------
+//  El plan de rebalanceo, el diagnóstico y el análisis del asesor juzgaban la cartera como
+//  si el mercado no existiera: la misma recomendación con el S&P 500 en máximos y en plena
+//  corrección. Aquí se lee, con UNA serie diaria de SPY (1 año, cacheada en el proxy para
+//  todos los usuarios) y la cotización de Finnhub, en qué régimen está el mercado hoy:
+//    • tendencia: alcista / corrección / bajista  (distancia al máximo de 52 s. y media 200)
+//    • volatilidad: calma / nervioso / estrés     (volatilidad realizada de 20 sesiones)
+//  Cero IA: no cuesta un token. Se guarda 4 h en el dispositivo y se sirve el valor viejo
+//  mientras se refresca (stale-while-revalidate), así el bucket que entra en la firma del
+//  plan no salta de "na" a un valor real en cada arranque en frío — eso regeneraría (y
+//  cobraría) el análisis del asesor dos veces por sesión.
+//  Yahoo NO se usa (retirado por licencia, App Review 5C). Sin datos → null y todo lo
+//  demás sigue como antes: el régimen ajusta, nunca es requisito.
+// ══════════════════════════════════════════════════════════════════════════════════
+const PORTIV_MKT = {
+  _LS: 'pv_mkt_regime_v1',
+  _TTL: 4 * 60 * 60 * 1000,
+  _inflight: null, _asked: false, _failed: false,
+  cur: null,
+  _load(){
+    if (this.cur) return this.cur;
+    try { const o = JSON.parse(localStorage.getItem(this._LS) || 'null'); if (o && o.at && o.bucket) this.cur = o; } catch(e){}
+    return this.cur;
+  },
+  // Sincrónico: lo último conocido (aunque haya vencido). null si nunca se calculó.
+  now(){ return this._load(); },
+  fresh(){ const o = this.now(); return !!(o && Date.now() - o.at < this._TTL); },
+  async get(){
+    if (this.fresh()) return this.cur;
+    if (this._inflight) return this._inflight;
+    this._inflight = this._compute().finally(() => { this._inflight = null; });
+    return this._inflight;
+  },
+  async _compute(){
+    try {
+      if (typeof _alpacaBars !== 'function') { this._failed = true; return this.now(); }
+      const s = await _alpacaBars('SPY', '1y', 10000);
+      if (!s || !Array.isArray(s.closes) || s.closes.length < 60) { this._failed = true; return this.now(); }
+      const closes = s.closes.slice();
+      // La barra diaria de Alpaca es el cierre de ayer hasta que termina la sesión: si Finnhub
+      // ya tiene precio de hoy, ese manda (mismo endpoint que usa toda la app; 4 s de memo).
+      try { if (typeof fhFetch === 'function'){ const q = await fhFetch('/quote?symbol=SPY', 6000); if (q && typeof q.c === 'number' && q.c > 0) closes[closes.length - 1] = q.c; } } catch(e){}
+      const n = closes.length, px = closes[n - 1];
+      const sma = k => n >= k ? closes.slice(n - k).reduce((a, b) => a + b, 0) / k : null;
+      const sma50 = sma(50), sma200 = sma(200);
+      const hi = Math.max.apply(null, closes), lo = Math.min.apply(null, closes);
+      const rets = []; for (let i = Math.max(1, n - 21); i < n; i++) rets.push(Math.log(closes[i] / closes[i - 1]));
+      const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
+      const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) * (b - mean), 0) / Math.max(1, rets.length - 1));
+      const vol20 = sd * Math.sqrt(252);
+      const ret = k => n > k ? px / closes[n - 1 - k] - 1 : null;
+      const r1m = ret(21), r3m = ret(63);
+      const offHigh = px / hi - 1;
+      const vol   = vol20 >= 0.25 ? 'estres' : vol20 >= 0.15 ? 'nervioso' : 'calma';
+      const trend = (offHigh <= -0.15 && sma200 != null && px < sma200) ? 'bajista'
+                  : (offHigh <= -0.05 || (sma200 != null && px < sma200)) ? 'correccion' : 'alcista';
+      const o = { at: Date.now(), px, hi, lo, offHigh, sma50, sma200, vol20, r1m, r3m, vol, trend, bucket: vol + '-' + trend };
+      this.cur = o; this._failed = false;
+      try { localStorage.setItem(this._LS, JSON.stringify(o)); } catch(e){}
+      return o;
+    } catch(e){ this._failed = true; return this.now(); }
+  },
+  // Una frase con los números del día. Para las tarjetas, que se repintan a diario.
+  text(o){
+    o = o || this.now(); if (!o) return '';
+    const p = v => (v >= 0 ? '+' : '−') + Math.abs(v * 100).toFixed(1) + '%';
+    const T = { alcista:'en tendencia alcista', correccion:'en corrección', bajista:'en mercado bajista' };
+    const V = { calma:'con volatilidad baja', nervioso:'con volatilidad elevada', estres:'bajo estrés' };
+    return `S&P 500 ${T[o.trend]} ${V[o.vol]}: ${p(o.offHigh)} frente a su máximo de 52 semanas, ${p(o.r1m)} en el último mes`
+         + (o.r3m != null ? ` y ${p(o.r3m)} en tres` : '') + `, volatilidad realizada del ${(o.vol20 * 100).toFixed(0)}% anualizado.`;
+  },
+  // Sin cifras: para prompts que se cachean semanas (una cifra escrita envejece; el régimen no).
+  regimeText(o){
+    o = o || this.now(); if (!o) return '';
+    const T = { alcista:'El S&P 500 está en tendencia alcista, cerca de sus máximos del año',
+                correccion:'El S&P 500 está en corrección, claramente por debajo de sus máximos del año',
+                bajista:'El S&P 500 está en mercado bajista, muy lejos de sus máximos del año' };
+    const V = { calma:'con la volatilidad tranquila', nervioso:'con la volatilidad elevada', estres:'con el mercado bajo estrés' };
+    return `${T[o.trend]}, ${V[o.vol]}.`;
+  },
+};
+window.PORTIV_MKT = PORTIV_MKT;
+
 function _pvxRebalEngine(m, T){
   // Se limpia de entrada: el motor tiene varias salidas tempranas (cartera vacía, una
   // sola posición, sin fundamentales suficientes) y si no se borrase, la tarjeta seguiría
@@ -13862,6 +14022,17 @@ function _pvxRebalEngine(m, T){
   // Y cuánto se descuenta a una cíclica en la parte alta de su ciclo: el conservador es el
   // que menos puede permitirse comprar el pico.
   const CYCMAX = risk === 'alto' ? 1.0 : risk === 'bajo' ? 2.0 : 1.5;
+  // ── EL MERCADO DE HOY AJUSTA (no decide) ─────────────────────────────────────
+  // Mismo negocio y mismo perfil, distinto tamaño según el régimen: en corrección un buen
+  // negocio castigado merece algo más de inclinación (es cuando se compra calidad barata);
+  // con el índice en máximos y en calma, cargar una cíclica que ya subió merece algo más
+  // de castigo; y bajo estrés, al conservador le pesa más la volatilidad de cada nombre.
+  // Todo acotado en décimas de nota: el régimen nunca da la vuelta a lo que dice el negocio.
+  const MKT = (typeof PORTIV_MKT !== 'undefined') ? PORTIV_MKT.now() : null;
+  const mktStress = !!(MKT && (MKT.vol === 'estres' || MKT.trend === 'bajista'));
+  const mktCorr   = !!(MKT && MKT.trend !== 'alcista');
+  const mktHot    = !!(MKT && MKT.trend === 'alcista' && MKT.vol === 'calma' && MKT.offHigh > -0.02);
+  try { window._pvxLastPlanMkt = MKT; } catch(e){}
 
   const infoOf = tk => (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[tk]) ? _INFO_CACHE[tk] : null;
 
@@ -13975,9 +14146,9 @@ function _pvxRebalEngine(m, T){
     const mo = r.mom; if (!mo) return 0;
     let t = 0;
     // Buen negocio castigado por el mercado: el negocio no cambió y el precio sí.
-    if (q >= 7 && mo.pos <= 0.30) t += 0.45;
+    if (q >= 7 && mo.pos <= 0.30) t += 0.45 + (mktCorr ? 0.15 : 0);
     // Cíclica en máximos: comprar el pico del ciclo es el error caro de un rebalanceo.
-    if (mo.pos >= 0.90 && (r.cycPeak || isCyc(r.it.sector))) t -= 0.45;
+    if (mo.pos >= 0.90 && (r.cycPeak || isCyc(r.it.sector))) t -= 0.45 + (mktHot ? 0.15 : 0);
     // Negocio flojo que además ya subió: pagar más por lo que menos lo sostiene.
     if (q < 5.5 && mo.pos >= 0.85) t -= 0.35;
     // Consenso por debajo del precio actual: el mercado ya descontó más de lo que se espera.
@@ -14119,7 +14290,7 @@ function _pvxRebalEngine(m, T){
       if (pm  != null && pm < 0)      { t -= 1.5; r.fit = 'no gana dinero todavía'; }
       if (de  != null && de > 100)    { t -= 0.8; r.fit = r.fit || `debe ${(de/100).toFixed(1)}× su capital`; }
       if (fcf != null && fcf < 0)     { t -= 0.8; r.fit = r.fit || 'quema caja'; }
-      if (beta != null && beta > 1.3) { t -= Math.min(1.2, (beta-1.3)*1.5); r.fit = r.fit || `se mueve ${beta.toFixed(1)}× lo que el mercado`; }
+      if (beta != null && beta > 1.3) { t -= Math.min(1.2, (beta-1.3)*1.5) * (mktStress ? 1.3 : 1); r.fit = r.fit || `se mueve ${beta.toFixed(1)}× lo que el mercado`; }
       if (pe  != null && pe > 45)     { t -= 0.6; r.fit = r.fit || `cotiza a ${pe.toFixed(0)}× ganancias`; }
       // Un balance limpio NO convierte a una cíclica en un valor defensivo: una memoria en
       // el pico del ciclo tiene caja y poca deuda justo el año antes de que se dé vuelta.
@@ -14139,7 +14310,7 @@ function _pvxRebalEngine(m, T){
     } else {
       if (pm != null && pm < 0)   { t -= 1.2; r.fit = 'todavía no gana dinero'; }
       if (de != null && de > 150) { t -= 0.6; r.fit = r.fit || `debe ${(de/100).toFixed(1)}× su capital`; }
-      if (beta != null && beta > 1.6) t -= 0.4;
+      if (beta != null && beta > 1.6) t -= mktStress ? 0.6 : 0.4;
       if (r.cycPeak) t -= 0.4;
       else if (fcf != null && fcf > 0 && revG != null && revG > 0.10) t += 0.5;
     }
@@ -14561,7 +14732,11 @@ function _pvxRebalEngine(m, T){
       const up   = `subir ${dpp} pp${money}`;
       const revG = num(r.inf,'revenueGrowth'), fcf = num(r.inf,'freeCashflow'), de = num(r.inf,'debtToEquity');
       const bta  = num(r.inf,'beta') != null ? num(r.inf,'beta') : (typeof r.it.beta === 'number' ? r.it.beta : null);
-      if (cur < MINW)
+      // El mercado manda la frase solo cuando de verdad cambió la decisión: un buen negocio
+      // en la zona baja de su rango con el índice en corrección. Y se dice CÓMO ejecutarlo.
+      if (mktCorr && r.mom && r.mom.pos <= 0.30 && (r.qEff || 0) >= 7 && !r.warn)
+        move = `Buen negocio con el precio castigado en un mercado en corrección: ${up}${with_} Mejor por tramos que de golpe.`;
+      else if (cur < MINW)
         // Con el aviso de ciclo justo antes, "el negocio aguanta más peso" se lee como si
         // el motor no hubiera leído su propia frase anterior. Se reconoce el descuento.
         move = r.cycPeak
@@ -15027,85 +15202,9 @@ function _genericRebalReason(i) {
 // dato de cuenta, y con el nombre viejo `rebal_ai_notes_v3` no encajaba en ningún patrón de
 // limpieza y sobrevivía intacta al cambio de cuenta. El `_v4` fuerza además que la caché
 // heredada de la versión anterior no se reutilice.
-const _REBAL_AI_KEY = 'pv_rebal_ai_notes_v4';
-const _rebalAIPending = new Set(); // evita llamadas duplicadas en vuelo
-
-function _rebalAILoad() {
-  try { return JSON.parse(localStorage.getItem(_REBAL_AI_KEY) || '{}'); } catch { return {}; }
-}
-function _rebalAISave(cache) {
-  try { localStorage.setItem(_REBAL_AI_KEY, JSON.stringify(cache)); } catch {}
-}
-
-async function _genRebalNote(item) {
-  if (_rebalAIPending.has(item.ticker)) return;
-  const cache = _rebalAILoad();
-  const ttl = 7 * 24 * 60 * 60 * 1000;
-  if (cache[item.ticker] && (Date.now() - (cache[item.ticker].at || 0)) < ttl) return;
-  _rebalAIPending.add(item.ticker);
-
-  const profile = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
-  const profTxt = profile
-    ? `${profile.label} · horizonte ${profile.horizonLabel} · tolerancia al riesgo ${profile.riskLabel}`
-    : 'Moderado-agresivo · horizonte 10+ años · alta tolerancia al riesgo';
-
-  // Contexto del portafolio completo para que el análisis sea relativo
-  const portCtx = (typeof HOLDINGS !== 'undefined' ? HOLDINGS : [])
-    .filter(h => h && h.ticker && h.ticker !== item.ticker)
-    .map(h => {
-      const c = typeof calcH === 'function' ? calcH(h) : { mktVal: h.qty * h.price };
-      const T = typeof calcTotals === 'function' ? calcTotals() : { mkt: 1 };
-      const w = T.mkt > 0 ? (c.mktVal / T.mkt * 100).toFixed(1) : '?';
-      return `${h.ticker} ${w}%`;
-    }).join(', ');
-
-  const SYSTEM = `Eres un analista financiero senior de renta variable con 20 años de experiencia en Wall Street. Escribes análisis de inversión concisos, directos y con datos fundamentales reales. Tu estilo es como el de un memo interno de Goldman Sachs: sin relleno, sin frases motivacionales, solo hechos, métricas y razonamiento. Responde ÚNICAMENTE con JSON válido, sin markdown, sin texto fuera del JSON.`;
-
-  const EXAMPLE = `Ejemplo de calidad esperada para GOOGL:
-{"sug":8,"note":"La mejor opcionalidad asimétrica del portafolio — P/E 22x cuando NVDA está a 50x. Search se estabiliza con AI Overviews (25% de queries ya), Cloud crece +28%, Waymo + Gemini sin valuar. El riesgo antitrust (posible venta de Chrome) ya está descontado. El objetivo ~8% captura el re-rating si Search no se erosiona."}`;
-
-  const prompt = `Genera un análisis de rebalanceo para ${item.ticker} en el siguiente contexto:
-
-PORTAFOLIO ACTUAL (otros holdings): ${portCtx || 'N/A'}
-DATOS DE ${item.ticker}: sector=${item.sector||'N/A'} · beta=${(item.beta||1).toFixed(2)} · crecimiento anual esperado=${item.growth?(item.growth*100).toFixed(0)+'%':'estimar con datos reales'} · peso actual=${(item.weight*100).toFixed(1)}%
-PERFIL DEL INVERSIONISTA: ${profTxt}
-
-${EXAMPLE}
-
-Instrucciones para la "note" (igual de concisa que el ejemplo GOOGL — NO más larga):
-- EXACTAMENTE 3 oraciones, máximo 55 palabras en total. Denso, sin relleno.
-- Oración 1: tesis principal con 1-2 métricas clave (P/E, PEG, crecimiento, margen)
-- Oración 2: contexto en el portafolio (overlap o diversificación) + riesgo principal concreto
-- Oración 3: justificación del peso objetivo (ej. "El objetivo ~X% captura...")
-- Sin mencionar el % actual ni las palabras AUMENTAR/REDUCIR/MANTENER. Datos reales 2024-2025.
-
-Responde SOLO con JSON: {"sug":<entero 0-25, peso objetivo en % respecto al total de posiciones>,"note":"<análisis fundamental>"}`;
-
-  try {
-    if (typeof _aiFetch !== 'function') { _rebalAIPending.delete(item.ticker); return; }
-    const res = await _aiFetch( {
-      method: 'POST', headers: {'content-type': 'application/json'},
-      // Right-sizing → Haiku basta aquí: la salida es JSON corto y muy acotado (sug entero +
-      // "note" de EXACTAMENTE 3 oraciones / ≤55 palabras), es extracción/formato siguiendo un
-      // ejemplo, no razonamiento abierto. max_tokens acotado evita defaults sueltos sin recortar.
-      body: JSON.stringify({ model: AI_MODELS.structured, max_tokens: 320, system: SYSTEM, prompt })
-    });
-    if (!res.ok) { _rebalAIPending.delete(item.ticker); return; }
-    const data = await res.json();
-    try{ _tokAdd(data.usage, AI_MODELS.structured, 'rebalanceo'); }catch(e){}
-    const text = (data.text || '').trim();
-    const match = text.match(/\{[\s\S]*?\}/);
-    if (!match) { _rebalAIPending.delete(item.ticker); return; }
-    const parsed = JSON.parse(match[0]);
-    if (parsed.note) {
-      const cache2 = _rebalAILoad();
-      cache2[item.ticker] = { note: parsed.note, sug: typeof parsed.sug === 'number' ? parsed.sug : null, at: Date.now() };
-      _rebalAISave(cache2);
-      try { renderDeepPortfolioAnalysis(calcTotals()); } catch {}
-    }
-  } catch {}
-  _rebalAIPending.delete(item.ticker);
-}
+// (Se eliminó _genRebalNote: pedía a la IA inventar un peso objetivo y una nota "con datos
+//  2024-2025" sin pasarle fundamentales, y no lo llamaba nadie. El peso y el motivo salen
+//  del motor determinista _pvxRebalEngine, que sí usa los números publicados.)
 
 function renderHeader(T) {
   // FIX: día$ y día% del hero desde la fuente única (_calcRealDayChange) → idénticos al resto.
@@ -26434,10 +26533,13 @@ function _buildQualAnalysis(ticker, info){
     else                valLabel='Cara';
     valText = `PEG ${peg.toFixed(2)}` + (fpe!=null?`, P/E fwd ${fpe.toFixed(1)}x`:'') + (evEb!=null?`, EV/EBITDA ${evEb.toFixed(1)}x`:'') + '. ';
   } else if (pe != null){
+    // Mismos cortes (15/25/40) que la lectura "barata / valuación justa / premium / exigente"
+    // de la fila P/E de abajo: antes un P/E de 16x salía "Barata" arriba y "valuación
+    // justa" en la tabla, en la misma tarjeta.
     if (pe<=0)      valLabel='En pérdidas (sin P/E)';
-    else if (pe<18) valLabel='Barata';
-    else if (pe<30) valLabel='Precio razonable';
-    else if (pe<50) valLabel='Algo cara';
+    else if (pe<15) valLabel='Barata';
+    else if (pe<25) valLabel='Precio razonable';
+    else if (pe<40) valLabel='Algo cara';
     else            valLabel='Cara';
     valText = (pe>0?`P/E ${pe.toFixed(1)}x`:'En pérdidas') + (fpe!=null?`, fwd ${fpe.toFixed(1)}x`:'') + '. ';
   } else { valLabel='Datos insuficientes'; valText=''; }
@@ -28330,7 +28432,7 @@ function _valVerdict(valLabel){
 // v2: sube con qbio:v2 de la nube. Esta caché local se consulta ANTES que la compartida
 // y devuelve de inmediato, así que sin subirla el usuario que ya abrió una acción seguiría
 // leyendo la narrativa escrita con el prompt genérico aunque la nube ya tenga la sectorial.
-const _NARR_LS = 'portiv_stock_narrative_v3';
+const _NARR_LS = 'portiv_stock_narrative_v4';   // v4: prompt con fecha + veredicto determinista
 const _NARR_TTL = 120 * 24 * 60 * 60 * 1000;   // 120 días
 function _narrLoad(){ try { return JSON.parse(localStorage.getItem(_NARR_LS)||'{}')||{}; } catch(e){ return {}; } }
 function _narrGetLocal(tk, eKey){
@@ -28367,11 +28469,37 @@ async function _fetchNarrativeAI(ticker, info, facts){
                || (typeof _aiSbOn === 'function' && _aiSbOn());
   if (!_canGen) return null;
   const name = info.longName || info.shortName || ticker;
-  const SYSTEM = `Eres un analista de inversiones. Respondes SOLO con un objeto JSON válido en ESPAÑOL, sin markdown ni texto extra. Esquema exacto:
-{"que_es":"1-2 frases: qué hace la empresa en lenguaje llano","como_gana_dinero":"1-2 frases: de dónde vienen sus ingresos y su ventaja competitiva","pros":["3-4 fortalezas concretas y específicas"],"riesgos":["3-4 riesgos específicos de esta empresa, no genéricos"],"valoracion_text":"2-3 frases explicando si la acción está cara o barata y POR QUÉ, con conocimiento real del negocio y sus perspectivas"}
-Sé concreto, honesto y directo. Sin relleno, sin disclaimers legales.`;
-  const prompt = `Empresa: ${name} (${ticker})
-Datos financieros: ${facts || '(limitados)'}
+  const SYSTEM = `Eres un analista de inversiones senior. Respondes SOLO con un objeto JSON válido en ESPAÑOL, sin markdown ni texto extra. Esquema exacto:
+{"que_es":"1-2 frases: qué hace la empresa en lenguaje llano","como_gana_dinero":"1-2 frases: de dónde vienen sus ingresos y cuál es su ventaja competitiva concreta","pros":["3-4 fortalezas concretas y específicas de ESTA empresa"],"riesgos":["3-4 riesgos específicos de ESTA empresa y su sector: qué tendría que pasar para que la tesis se rompa"],"valoracion_text":"2-3 frases: POR QUÉ el precio actual es caro, razonable o barato para lo que el negocio entrega, en la misma dirección que el veredicto calculado que recibes"}
+REGLAS:
+- Coherencia: la app enseña junto a tu texto un veredicto de valoración calculado con los múltiplos publicados. Tu "valoracion_text" va en ESA dirección y explica el porqué (calidad, crecimiento, riesgo); no lo contradigas ni lo repitas literalmente.
+- Números: usa solo los que vienen en los datos; no inventes cifras, fechas ni cuotas de mercado. No repitas los números: interprétalos.
+- Fecha: te decimos qué día es hoy. Tu conocimiento puede ser anterior: no afirmes hechos recientes (resultados, lanzamientos, litigios, directivos) que no puedas dar por seguros.
+- Pros y riesgos: nada genérico ("competencia intensa", "riesgo regulatorio", "condiciones macro") sin el detalle concreto que aplica a este negocio.
+- Sé concreto, honesto y directo. Sin relleno, sin disclaimers legales.`;
+  // Veredicto determinista (el mismo que ve el usuario en la tarjeta) + valor razonable +
+  // posición en el rango del año. Sin esto la narrativa podía decir "cara" bajo una
+  // etiqueta que decía "barata para su crecimiento": dos veredictos en la misma pantalla.
+  let _ver = '';
+  try {
+    const b = (typeof _buildQualAnalysis === 'function') ? _buildQualAnalysis(ticker, info) : null;
+    if (b && b.valLabel && !/insuficientes/i.test(b.valLabel)) _ver += `VEREDICTO DE VALORACIÓN CALCULADO (tu texto va en esta dirección): ${b.valLabel}. ${b.valText || ''}\n`;
+    const fv = (typeof _pvxFairValue === 'function') ? _pvxFairValue(info) : null;
+    if (fv) _ver += `Valor razonable por ${fv.models.length} modelos (DCF, poder de ganancias, múltiplos justificados): $${fv.avg.toFixed(2)}, ${fv.upPct >= 0 ? '+' : ''}${fv.upPct.toFixed(0)}% frente al precio; incertidumbre entre modelos: ${fv.unc.label.toLowerCase()}`
+                 + (fv.unc.cls === 'red' ? ' (los modelos se contradicen: es solo orientativo, no lo uses para llevar la contraria al veredicto)' : '') + `.\n`;
+    const hi = info.fiftyTwoWeekHigh, lo = info.fiftyTwoWeekLow, px = info.regularMarketPrice;
+    if (hi > 0 && lo > 0 && hi > lo && px > 0) _ver += `Precio al ${(px / hi * 100).toFixed(0)}% de su máximo de 52 semanas.\n`;
+  } catch(e){}
+  let _hoy = '';
+  try {
+    const iso = (typeof PORTIV_SYNC !== 'undefined' && PORTIV_SYNC._todayET) ? PORTIV_SYNC._todayET() : new Date().toISOString().slice(0,10);
+    const mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+    const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    _hoy = mm ? `${+mm[3]} de ${MESES[+mm[2]-1]} de ${mm[1]}` : iso;
+  } catch(e){}
+  const prompt = `Hoy es ${_hoy}.
+Empresa: ${name} (${ticker})
+${_ver}Datos financieros: ${facts || '(limitados)'}
 Devuelve el JSON.`;
   try {
     const res = await _aiFetch( {
@@ -28400,7 +28528,7 @@ async function _getStockNarrative(ticker, info, facts){
   // de métricas para todos. Ahora el prompt lleva las métricas propias del sector con su
   // mediana al lado y prohíbe hablar de las que no aplican. Sin subir la versión, a un banco
   // se le seguiría explicando el margen bruto durante los días que dure la caché compartida.
-  const key = 'qbio:v3:' + ticker;
+  const key = 'qbio:v4:' + ticker;   // v4: coherencia con el veredicto calculado, fecha, sin inventos
   const local = _narrGetLocal(ticker, eKey);
   if (local) {
     // Ya está local → úsala al instante. Y en segundo plano ASEGURA que exista en la nube
@@ -35197,6 +35325,9 @@ function _chatMarketCtx(){
         L.push(`FECHA Y MERCADO: hoy es ${fecha} (hora de Nueva York). Mercado: ${ST[st]||st||'—'}.`);
       }
     }catch(e){}
+    // (a2) Régimen del S&P 500 (determinista, ya calculado para el rebalanceo): la respuesta
+    // de opinión debe saber si el índice está en máximos o en corrección.
+    try{ const mk=(typeof PORTIV_MKT!=='undefined')?PORTIV_MKT.now():null; if(mk) L.push('RÉGIMEN DEL MERCADO: '+PORTIV_MKT.text(mk)); }catch(e){}
 
     // (b) Movimiento del día de la cartera, ya en $ y %.
     // Base del % = valor a mercado de AYER (T.mkt - T.day). Dividir entre T.total metería
