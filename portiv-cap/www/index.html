@@ -28629,7 +28629,7 @@ Usa las cifras que ya te doy; no las contradigas. Si un dato no lo encuentras, o
 Trimestres previos: ${(epsFacts.history||[]).map(q => `${q.label} real $${_n(q.actual)} vs. est. $${_n(q.estimate)}`).join(' · ') || '(sin histórico)'}
 Contexto financiero: ${(typeof _stockFactsForPrompt === 'function' ? (_stockFactsForPrompt(ticker, info) || '') : '') || '(limitado)'}
 
-Busca en internet SOLO dos cosas: (1) cómo reaccionó el mercado y la acción a este reporte, (2) qué dijo la dirección sobre la guía hacia adelante. Con eso y las cifras de arriba, devuelve el JSON.
+Haz UNA sola búsqueda en internet (por ejemplo "${ticker} earnings ${epsFacts.label || epsFacts.date} stock reaction guidance") para saber dos cosas: (1) cómo reaccionó el mercado y la acción a este reporte, (2) qué dijo la dirección sobre la guía hacia adelante. Con eso y las cifras de arriba, devuelve el JSON.
 Recuerda: "malo" no puede ir vacío, y el JSON lleva EXACTAMENTE los cinco campos del esquema.`;
   try {
     const res = await _aiFetch({
@@ -28642,7 +28642,9 @@ Recuerda: "malo" no puede ir vacío, y el JSON lleva EXACTAMENTE los cinco campo
         // y la espera correspondiente. Con cinco campos, 1200 sobra sin truncar.
         model: AI_MODELS.narrative, max_tokens: 1200, system: SYSTEM, prompt,
         allowed_tools: ['WebSearch','WebFetch'],
-        tools: [{ type:'web_search_20250305', name:'web_search', max_uses:2 }]
+        // max_uses 1 (antes 2): cada búsqueda son 5-10 s de espera en la apertura de la
+        // acción, y una sola con reacción + guía cubre lo que pide el prompt.
+        tools: [{ type:'web_search_20250305', name:'web_search', max_uses:1 }]
       })
     }, true);
     if (!res.ok) return null;
@@ -30486,17 +30488,21 @@ async function _upgradeAnalysisToAI(ticker, info){
     if (!n) { await new Promise(r => setTimeout(r, 2500)); n = await _getStockNarrative(ticker, info, _stockFactsForPrompt(ticker, info)).catch(() => null); }
     return n;
   };
+  // Lectura del trimestre: se GENERA aquí si hace falta (nube primero; si nadie la tiene,
+  // este usuario paga una vez) para que "Resultados" abra ya con ella. Es la llamada más
+  // lenta (búsqueda web + ~1.000 tokens), así que arranca YA, en paralelo con los números
+  // y la narrativa: la espera total es la de la más lenta, no la suma de las tres. Si la
+  // empresa no tiene reporte o no se puede generar, no hay nada que esperar.
+  const _eqrPend = _pvxEqrPendiente(ticker, cached) && typeof _getEarningsReaction === 'function';
+  const _eqrP = _eqrPend ? _getEarningsReaction(ticker, info).catch(() => null) : Promise.resolve(null);
   const [a, narr] = await Promise.all([ _assembleBase(ticker, info).catch(() => null), _narrP() ]);
   let cur = document.getElementById('r-analysis');
   if (!cur || cur.dataset.tk !== ticker) return;                 // el usuario cambió de acción
   if (!a) { cur.innerHTML=''; cur.style.display='none'; try{_pvxRatingFallback(ticker);}catch(e){} return; }
   if (narr) _applyNarrative(a, info, ticker, narr);
-  // Lectura del trimestre: se GENERA aquí si hace falta (nube primero; si nadie la tiene,
-  // este usuario paga una vez) para que "Resultados" abra ya con ella. Si la empresa no
-  // tiene reporte o no se puede generar, no hay nada que esperar.
-  if (_pvxEqrPendiente(ticker, a) && typeof _getEarningsReaction === 'function') {
+  if (_eqrPend && !a.earningsReaction) {
     _spin(`Leyendo el último reporte de ${ticker}…`);
-    try { a.earningsReaction = await _getEarningsReaction(ticker, info); } catch(e){ a.earningsReaction = null; }
+    a.earningsReaction = await _eqrP;
     // Si la generación falla se anota la hora: las re-entradas de la siguiente media hora
     // pintan de caché (con el aviso y su botón "Reintentar") en vez de repetir el spinner y
     // pagar otra llamada cada vez que se abre la acción.
