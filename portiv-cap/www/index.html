@@ -30445,15 +30445,17 @@ async function _upgradeAnalysisToAI(ticker, info){
 
   // ── RE-ENTRADA INSTANTÁNEA: hay análisis ensamblado del MISMO earnings → píntalo YA ──
   const cached = _qualGet(ticker, eKey);
-  if (cached) {
+  // Sólo se pinta de caché si está COMPLETO: con resumen de la empresa y con la lectura del
+  // trimestre (cuando la empresa tiene reporte y se puede generar). Un caché a medias se
+  // trata como primera apertura: spinner hasta tenerlo todo, en vez de pintar un análisis
+  // incompleto y corregirlo a la vista del usuario.
+  if (cached && cached.bio && !_pvxEqrPendiente(ticker, cached)) {
     try { _renderQualAnalysis(cached, el); } catch(e){ try{_pvxRatingFallback(ticker);}catch(e2){} }
     // Refresco silencioso en 2º plano SOLO si el caché ya tiene >30 min (evita gastar red en
     // re-entradas seguidas). Sin spinner: si algo cambió, se re-pinta sin que el usuario lo note.
     const _ent = _qualLoad()[ticker];
     const _fresh = _ent && (Date.now() - (_ent.ts || 0) < 30 * 60 * 1000);
-    // Sin resumen (la narrativa falló o no llegó la vez anterior) se reintenta aunque el
-    // caché sea reciente: la tarjeta de la nota no puede quedarse sin la empresa.
-    if (_fresh && cached.bio) return;
+    if (_fresh) return;
     _assembleAnalysis(ticker, info).then(a => {
       if (!a) return;
       // El refresco NO genera la lectura del trimestre (sólo la lee). Si el caché ya la
@@ -30461,6 +30463,7 @@ async function _upgradeAnalysisToAI(ticker, info){
       // se conserva: repintar sin ella BORRARÍA de la pantalla una tarjeta que el usuario
       // podía estar leyendo.
       if (!a.earningsReaction && cached.earningsReaction) a.earningsReaction = cached.earningsReaction;
+      if (!a.earningsReaction && cached.eqrFalloTs) a.eqrFalloTs = cached.eqrFalloTs;
       _qualSet(ticker, a, eKey);
       if (JSON.stringify(a) === JSON.stringify(cached)) return;   // nada cambió → no re-pintar (evita parpadeo)
       const cur = document.getElementById('r-analysis');
@@ -30469,51 +30472,53 @@ async function _upgradeAnalysisToAI(ticker, info){
     return;
   }
 
-  // ── 1ª vez (o tras un reporte nuevo): pintado PROGRESIVO ─────────────────────
-  // Antes se esperaba a TODA la IA con un "Analizando…" en pantalla, y la tarjeta más lenta
-  // —la lectura del trimestre, con dos búsquedas web— marcaba el ritmo: entre 15 y 30 s de
-  // spinner para un análisis cuyo 90% (nota, puntos clave, valoración, salud, proyecciones,
-  // crecimiento reciente) ya estaba calculado sin tocar la red.
-  // Ahora se pinta esa parte de una y la narrativa se injerta encima cuando llega.
-  el.innerHTML = `<div class="rax-sec" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:40px 24px"><span class="pv-ai-spin"></span><span style="font-size:14px;font-weight:600;color:var(--text2)">Analizando ${esc0(ticker)}…</span></div>`;
-  const a = await _assembleBase(ticker, info).catch(() => null);
+  // ── 1ª vez (o tras un reporte nuevo, o caché incompleto): TODO antes de pintar ──────
+  // Se pintaba progresivo (números primero, narrativa y lectura del trimestre después) y
+  // el usuario veía durante segundos un resumen de respaldo y una pestaña "Resultados"
+  // con spinner que luego cambiaban delante de él. Ahora el spinner dura hasta tener el
+  // análisis completo —nota, narrativa y lectura del último reporte— y se pinta UNA vez.
+  const _spin = (txt) => { el.innerHTML = `<div class="rax-sec" style="display:flex;align-items:center;justify-content:center;gap:12px;padding:40px 24px"><span class="pv-ai-spin"></span><span style="font-size:14px;font-weight:600;color:var(--text2)">${esc0(txt)}</span></div>`; };
+  _spin(`Analizando ${ticker}…`);
+  const _narrP = async () => {
+    // Un reintento si la narrativa no llega (red, proxy o respuesta rota) ANTES de pintar,
+    // para no mostrar el resumen de respaldo si se puede evitar.
+    let n = await _getStockNarrative(ticker, info, _stockFactsForPrompt(ticker, info)).catch(() => null);
+    if (!n) { await new Promise(r => setTimeout(r, 2500)); n = await _getStockNarrative(ticker, info, _stockFactsForPrompt(ticker, info)).catch(() => null); }
+    return n;
+  };
+  const [a, narr] = await Promise.all([ _assembleBase(ticker, info).catch(() => null), _narrP() ]);
   let cur = document.getElementById('r-analysis');
   if (!cur || cur.dataset.tk !== ticker) return;                 // el usuario cambió de acción
   if (!a) { cur.innerHTML=''; cur.style.display='none'; try{_pvxRatingFallback(ticker);}catch(e){} return; }
-  _renderQualAnalysis(a, cur);
-
-  // Narrativa (bio, pros, riesgos, veredicto de valoración) y —sólo si ya existe en la nube,
-  // sin generarla— la lectura del trimestre. En paralelo: son dos redes independientes.
-  const [narr, eqr] = await Promise.all([
-    _getStockNarrative(ticker, info, _stockFactsForPrompt(ticker, info)).catch(() => null),
-    a.earningsReaction ? Promise.resolve(a.earningsReaction)
-      : (typeof _getEarningsReaction === 'function'
-          ? _getEarningsReaction(ticker, info, { noGen:true }).catch(() => null)
-          : Promise.resolve(null)),
-  ]);
-  const _cambió = (narr || (eqr && !a.earningsReaction));
-  if (eqr) a.earningsReaction = eqr;
   if (narr) _applyNarrative(a, info, ticker, narr);
-  else if (!a.bio) {
-    // La narrativa no llegó (red, proxy o respuesta rota): un solo reintento, sin bloquear
-    // la pantalla. Si llega, se injerta y se repinta; si no, queda el resumen de respaldo.
-    setTimeout(async () => {
-      try {
-        const n2 = await _getStockNarrative(ticker, info, _stockFactsForPrompt(ticker, info));
-        if (!n2) return;
-        _applyNarrative(a, info, ticker, n2);
-        _qualSet(ticker, a, eKey);
-        const c2 = document.getElementById('r-analysis');
-        if (c2 && c2.dataset.tk === ticker) _pvxRepaint(a, c2);
-      } catch(e){}
-    }, 4000);
+  // Lectura del trimestre: se GENERA aquí si hace falta (nube primero; si nadie la tiene,
+  // este usuario paga una vez) para que "Resultados" abra ya con ella. Si la empresa no
+  // tiene reporte o no se puede generar, no hay nada que esperar.
+  if (_pvxEqrPendiente(ticker, a) && typeof _getEarningsReaction === 'function') {
+    _spin(`Leyendo el último reporte de ${ticker}…`);
+    try { a.earningsReaction = await _getEarningsReaction(ticker, info); } catch(e){ a.earningsReaction = null; }
+    // Si la generación falla se anota la hora: las re-entradas de la siguiente media hora
+    // pintan de caché (con el aviso y su botón "Reintentar") en vez de repetir el spinner y
+    // pagar otra llamada cada vez que se abre la acción.
+    if (!a.earningsReaction) a.eqrFalloTs = Date.now();
   }
   // Se guarda ANTES de mirar la pantalla: el análisis es válido aunque el usuario ya se
   // haya ido a otra acción, y así la próxima apertura lo pinta de una en vez de rehacerlo.
   _qualSet(ticker, a, eKey);
   cur = document.getElementById('r-analysis');
   if (!cur || cur.dataset.tk !== ticker) return;                 // cambió de acción mientras tanto
-  if (_cambió) _pvxRepaint(a, cur);
+  _renderQualAnalysis(a, cur);
+}
+// ¿Falta la lectura del trimestre pudiendo existir? Sólo cuenta como pendiente cuando la
+// empresa tiene reporte con cifras y hay con qué generarla; si no hay reporte o la IA está
+// bloqueada, la sección no se espera (se pinta su aviso).
+function _pvxEqrPendiente(ticker, a){
+  try {
+    if (a && a.earningsReaction) return false;
+    if (a && a.eqrFalloTs && Date.now() - a.eqrFalloTs < 30 * 60 * 1000) return false;
+    const m = (typeof _pvxEqrMotivo === 'function') ? _pvxEqrMotivo(ticker) : 'sinreporte';
+    return m === 'fallo';
+  } catch(e){ return false; }
 }
 function esc0(s){ return pvEsc(s); }   // delegado al escape único de la app
 
