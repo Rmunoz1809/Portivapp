@@ -62,3 +62,7 @@ export const ETF_AMPLIOS: Set<string>;
 export const FACTOR_ETF_AMPLIO: number;
 export const RAREZA: Record<string, number>;
 export const PROHIBIDOS: string[];
+export function proximoMacro(fechaISO: string, dias?: number): { evento: EventoPush; dias: number } | null;
+export function textoMatutinoSinEventos(
+  fechaISO: string, proximo: { evento: EventoPush; dias: number } | null,
+): { titulo: string; cuerpo: string };

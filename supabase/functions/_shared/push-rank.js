@@ -493,3 +493,55 @@ export function violacionesDeCopy(texto) {
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(texto)) malas.push('emoji');
   return malas;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Respaldo de la matutina — días sin nada en el calendario
+//  ───────────────────────────────────────────────────────────────────────────
+//  El aviso de antes de la apertura pasó a ser DIARIO en día de mercado
+//  (decisión de producto del 2026-09-22). Hay días hábiles en los que el
+//  calendario de EE.UU. no publica nada: el lunes 2026-09-21 fue uno y el log
+//  quedó en `sin_eventos_elegibles`. En vez de callar, se cuenta qué viene.
+// ═══════════════════════════════════════════════════════════════════════════
+const DIAS_ES = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+
+/** Ordena candidatos macro por rareza y luego por impacto. Determinista. */
+const ORDEN_IMP = { high: 3, medium: 2, low: 1 };
+function mejorMacro(lista) {
+  return (lista || []).slice().sort((a, b) =>
+    (rarezaDe(b.key) - rarezaDe(a.key)) ||
+    ((ORDEN_IMP[b.imp] ?? 0) - (ORDEN_IMP[a.imp] ?? 0)) ||
+    (minutosDe(a.time) - minutosDe(b.time)) ||
+    (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] || null;
+}
+
+/**
+ * Evento macro más relevante de los próximos `dias` días naturales tras `fechaISO`.
+ * El tope son 6 días a propósito: con 7 el nombre del día se repetiría y
+ * "el martes" sería ambiguo.
+ * @returns {{evento:object, dias:number}|null}
+ */
+export function proximoMacro(fechaISO, dias = 6) {
+  const base = fromISO(fechaISO);
+  for (let d = 1; d <= Math.min(dias, 6); d++) {
+    const f = iso(addDays(base, d));
+    const ev = mejorMacro(macroEventsForDay(f));
+    if (ev) return { evento: ev, dias: d };
+  }
+  return null;
+}
+
+/**
+ * Texto de la matutina en un día sin eventos. Mismo tono que `textoMatutino`:
+ * descriptivo, hecho verificable, cero prosa generada.
+ */
+export function textoMatutinoSinEventos(fechaISO, proximo) {
+  const titulo = 'Hoy: sin datos en el calendario';
+  const base = 'El calendario económico de EE.UU. no publica datos hoy.';
+  if (!proximo) return { titulo, cuerpo: `${base} Tampoco en los próximos días.` };
+  const e = proximo.evento;
+  const nombre = e.push_titulo || e.titulo.split(' — ')[0];
+  const cuando = proximo.dias === 1
+    ? 'Mañana'
+    : `El ${DIAS_ES[fromISO(e.fecha).getUTCDay()]}`;
+  return { titulo, cuerpo: `${base} ${cuando}: ${nombre}, ${e.time}.` };
+}

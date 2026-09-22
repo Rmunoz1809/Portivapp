@@ -14,7 +14,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 // @deno-types="../_shared/push-rank.d.ts"
 import {
-  macroEventsForDay, eventoDeResultados, pvNewsRank, umbralPara, textoMatutino,
+  macroEventsForDay, eventoDeResultados, pvNewsRank, textoMatutino,
+  proximoMacro, textoMatutinoSinEventos,
 } from "../_shared/push-rank.js";
 import type { EventoPush } from "../_shared/push-rank.d.ts";
 import {
@@ -23,6 +24,16 @@ import {
 } from "../_shared/push-common.ts";
 
 const HORA_ET = 8;               // el cron corre al minuto 30 → cae 8:30 ET (apertura 9:30)
+
+/* Umbral de la matutina: NINGUNO. Decisión de producto del 2026-09-22.
+   El umbral de 45 (`umbralPara()`) silenciaba casi todos los días: el dryRun ya
+   avisaba de 0.9–1.6 avisos por semana, y el 22-sep el mejor candidato del día
+   sacó 31.53 — el log quedó en `bajo_umbral(31.53<45)` y no salió nada.
+   El aviso de antes de la apertura pasa a ser DIARIO en día de mercado: el
+   ranking ya no decide SI se manda, sólo QUÉ se manda. Los días en que el
+   calendario no publica nada los cubre `textoMatutinoSinEventos()`.
+   `umbralPara()` y `UMBRAL_BASE` siguen en el motor para el arnés de calibración. */
+const UMBRAL_MATUTINO = 0;
 
 Deno.serve(async (req) => {
   if (!await autorizado(req)) return new Response("forbidden", { status: 403 });
@@ -68,7 +79,7 @@ Deno.serve(async (req) => {
   const macro = macroEventsForDay(et.fecha);
   const earnings = await earningsDelDia(et.fecha);
 
-  let enviados = 0, silencios = 0, fallos = 0;
+  let enviados = 0, respaldos = 0, fallos = 0;
   for (const tk of enVentana) {
     const cart = porUsuario.get(tk.user_id);
     // Cartera desconectada → se manda igual: el calendario es información pública y
@@ -87,41 +98,56 @@ Deno.serve(async (req) => {
     // misma hora volvía a puntuar, el anti-duplicado descartaba sólo el evento ya
     // enviado, ganaba el SEGUNDO mejor y el usuario recibía dos notificaciones.
     if (historial.some((h) => h.fecha === et.fecha && h.enviado)) { continue; }
-    const umbral = umbralPara(historial);
-    const r = pvNewsRank({ fechaISO: et.fecha, eventos, holdings, historial, umbral });
+    const r = pvNewsRank({
+      fechaISO: et.fecha, eventos, holdings, historial, umbral: UMBRAL_MATUTINO });
 
-    if (!r.enviado || !r.ganador) {
-      silencios++;
-      // El silencio también se registra: sin esto no se puede responder "¿por qué
-      // hoy no mandó nada?" ni recalibrar los pesos.
-      await admin.from("push_selection_log").upsert({
-        user_id: tk.user_id, fecha: et.fecha, enviado: false,
-        motivo_no_envio: r.motivo, candidatos: r.candidatos,
-      }, { onConflict: "user_id,fecha" });
-      continue;
+    let titulo: string, cuerpo: string, deeplinkId: string, tituloEvento: string;
+    let logRow: Record<string, unknown>;
+
+    if (r.enviado && r.ganador) {
+      const ev = r.ganador.evento;
+      ({ titulo, cuerpo } = textoMatutino(r.ganador, holdings));
+      deeplinkId = ev.id;
+      tituloEvento = ev.titulo;
+      logRow = {
+        ganador_id: ev.id, ganador_score: r.ganador.score,
+        ganador_tickers: r.ganador.pista === "B" ? [ev.ticker!] : (ev.tickers ?? []),
+        ganador_tipo: ev.key, ganador_pista: r.ganador.pista,
+        candidatos: r.candidatos,
+      };
+    } else {
+      // Sin candidatos hoy (o todos descartados por el anti-duplicado de 7 días).
+      // Se cuenta qué viene, que es información real, en vez de callar.
+      respaldos++;
+      const prox = proximoMacro(et.fecha);
+      ({ titulo, cuerpo } = textoMatutinoSinEventos(et.fecha, prox));
+      // El deeplink apunta al PRÓXIMO evento, pero el log NO guarda su id: el
+      // anti-duplicado de 7 días lo daría por enviado y lo tacharía el día que
+      // de verdad toca. Por eso un id sintético que no colisiona con ninguno.
+      deeplinkId = prox ? prox.evento.id : "";
+      tituloEvento = prox ? prox.evento.titulo : "";
+      logRow = {
+        ganador_id: `sinev_${et.fecha}`, ganador_score: 0,
+        ganador_tickers: [], ganador_tipo: "sin_eventos", ganador_pista: "A",
+        candidatos: r.candidatos, motivo_no_envio: r.motivo,
+      };
     }
 
-    const { titulo, cuerpo } = textoMatutino(r.ganador, holdings);
-    const ev = r.ganador.evento;
     const { data: fila } = await admin.from("push_selection_log").upsert({
-      user_id: tk.user_id, fecha: et.fecha,
-      ganador_id: ev.id, ganador_score: r.ganador.score,
-      ganador_tickers: r.ganador.pista === "B" ? [ev.ticker!] : (ev.tickers ?? []),
-      ganador_tipo: ev.key, ganador_pista: r.ganador.pista,
-      candidatos: r.candidatos, enviado: true,
+      user_id: tk.user_id, fecha: et.fecha, enviado: true, ...logRow,
     }, { onConflict: "user_id,fecha" }).select("id").single();
 
     const res = await enviarConFallback({
       token: tk.token, environment: tk.environment, titulo, cuerpo,
       // Abre el calendario POSICIONADO en el evento. No el home, no la lista completa.
-      deeplink: `portiv://calendario/${encodeURIComponent(ev.id)}`,
-      logId: fila?.id, tituloEvento: ev.titulo, collapseId: `am-${et.fecha}`,
+      deeplink: `portiv://calendario/${encodeURIComponent(deeplinkId)}`,
+      logId: fila?.id, tituloEvento, collapseId: `am-${et.fecha}`,
     });
     if (res.ok) enviados++;
     else { fallos++; if (res.borrarToken) await borrarToken(tk.token, res.reason); }
   }
 
-  return json({ fecha: et.fecha, enVentana: enVentana.length, enviados, silencios, fallos });
+  return json({ fecha: et.fecha, enVentana: enVentana.length, enviados, respaldos, fallos });
 });
 
 /** Resultados del día desde Finnhub. Una sola llamada para todos los usuarios. */
