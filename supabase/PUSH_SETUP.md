@@ -96,20 +96,39 @@ acepta cualquiera de los dos— pero no es la fuente de verdad.
 > token es de sandbox o de producción. Si Apple responde `BadDeviceToken`, el servidor
 > reintenta solo en el otro host y **corrige la fila**. No hay que tocar nada a mano.
 
-## 6 · Decisión pendiente antes de encender  ⚠️
+## 6 · Decisión tomada: la matutina es DIARIA  (2026-09-22)
 
-El `dryRun` de 30 días × 3 carteras da **0.9 – 1.6 notificaciones por semana**.
-El diseño esperaba **2 – 4**. Según los criterios del propio diseño, eso significa
-que **el umbral de 45 está alto** para este calendario.
+El `dryRun` avisaba de **0.9 – 1.6 notificaciones por semana** frente a las 2 – 4
+del diseño, y se dejó sin decidir. En producción salió peor de lo previsto: el
+`push_selection_log` real muestra **cero matutinas**, con estos motivos:
 
-Es una decisión de producto, no un bug, y por eso no se tocó nada:
+| Día | `motivo_no_envio` |
+|---|---|
+| 2026-09-21 | `sin_eventos_elegibles` (esa semana no tenía macro el lunes) |
+| 2026-09-22 | `bajo_umbral(31.53<45)` |
 
-- Bajar `UMBRAL_BASE` de 45 a ~38 sube la frecuencia sin tocar los pesos.
-- Subir el peso de `E` (exposición) favorece a quien tiene cartera concentrada.
-- Dejarlo como está y aceptar ~1.5/semana también es una opción defendible: la
-  regla era "hay que merecer la interrupción".
+El cron, el token y APNs estaban bien — la de cierre llegaba. El que callaba era
+el motor. Se resolvió así:
 
-Reproducir la tabla:
+- **Umbral fuera.** `push-morning` pasa `umbral: 0` (`UMBRAL_MATUTINO`). El ranking
+  ya no decide SI se manda, sólo QUÉ. `umbralPara()` y `UMBRAL_BASE` siguen en el
+  motor para el arnés de calibración; no los borres creyendo que son código muerto.
+- **Respaldo para los días sin calendario.** `proximoMacro()` +
+  `textoMatutinoSinEventos()`: en vez de callar, se cuenta qué viene
+  ("El calendario económico de EE.UU. no publica datos hoy. Mañana: IPC, 8:30 AM ET.").
+  Mira 6 días como mucho, para que el nombre del día no sea ambiguo.
+- El respaldo guarda un id **sintético** `sinev_<fecha>`, nunca el id del próximo
+  evento: el anti-duplicado de 7 días lo daría por enviado y lo tacharía el día
+  que de verdad toca.
+
+Cobertura comprobada sobre los 251 días hábiles de NYSE de 2026 × 7 perfiles de
+cartera (`push-cobertura-test.mjs`): **1757 de 1757 casos con notificación**.
+El reparto es 71 % por evento y **29 % de respaldo** — o sea unas **77 veces al año**
+el aviso dice "hoy no hay datos". Es contenido flojo y sigue siendo una decisión de
+producto abierta: si molesta, la salida natural es que esos días compita la cartera
+del usuario (pista B) en vez del calendario.
+
+Reproducir:
 
 ```bash
 cd /Users/rafael/Portiv
@@ -173,8 +192,13 @@ de bloqueo, dentro del límite de caracteres.
 ```bash
 TZ=America/New_York node supabase/functions/_shared/push-tests.mjs        # 23 casos borde y copy
 TZ=America/New_York node supabase/functions/_shared/push-drift-test.mjs   # calendario app vs push
-node supabase/functions/_shared/push-cliente-test.mjs                     # 12 del módulo del cliente
+node supabase/functions/_shared/push-cliente-test.mjs                     # 13 del módulo del cliente
+TZ=America/New_York node supabase/functions/_shared/push-cobertura-test.mjs  # 1757: un año × 7 carteras
 ```
+
+El de **cobertura** defiende la promesa de la §6: que la matutina sale todos los
+días hábiles para cualquier cartera. Si alguien vuelve a poner un umbral, o toca
+el respaldo, ese test lo caza.
 
 El de **drift** es el importante a largo plazo: el motor del push tiene su propia
 copia del calendario macro (corre en el servidor y no puede importar nada de
@@ -192,3 +216,25 @@ calendarios distintos.
   `ios/App/App/public/`. El plugin se dio de alta a mano en `CapApp-SPM/Package.swift`
   (este proyecto usa Swift Package Manager; **no existe ningún Podfile**, así que no
   hubo `pod install` que correr).
+
+## 9 · Caducidad del calendario  ⚠️ (detectado el 2026-09-22)
+
+Dos tablas están escritas a mano y **sólo llegan hasta 2027**. No es una regresión
+del cambio de la §6, pero ahora que la matutina es diaria conviene tenerlo a la vista:
+
+| Dato | Dónde | Hasta |
+|---|---|---|
+| Reuniones del FOMC | `FOMC_2026` en `push-rank.js` | **2026** |
+| Feriados de NYSE | `FERIADOS_NYSE` en `push-common.ts` | **2027** |
+
+Consecuencias, comprobadas corriendo el calendario año por año:
+
+- **Desde 2027** desaparecen los 16 eventos de FOMC del año (decisión + actas).
+  El evento de mayor impacto del calendario deja de existir en silencio: no falla
+  nada, simplemente gana otro candidato.
+- **Desde 2028** `mercadoAbierto()` devuelve `false` para *todos* los días del año
+  (año no cargado → no adivinar), así que **se apagan las dos notificaciones**,
+  matutina y de cierre. Es un corte seco, no una degradación.
+
+Hay que añadir `FOMC_2027` antes de enero de 2027 y los feriados de 2028 antes de
+enero de 2028.
