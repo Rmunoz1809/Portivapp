@@ -45,21 +45,20 @@ export function enZona(d: Date, tz: string) {
 
 export const esFinDeSemana = (w: string) => w === "Sat" || w === "Sun";
 
-// Feriados de NYSE. Si falta el año en curso, `mercadoAbierto` devuelve false para
-// TODO ese año: preferimos no mandar nada a mandar un cierre en un día sin cierre.
-export const FERIADOS_NYSE: Record<string, string[]> = {
-  "2026": ["2026-01-01","2026-01-19","2026-02-16","2026-04-03","2026-05-25","2026-06-19",
-           "2026-07-03","2026-09-07","2026-11-26","2026-12-25"],
-  "2027": ["2027-01-01","2027-01-18","2027-02-15","2027-03-26","2027-05-31","2027-06-18",
-           "2027-07-05","2027-09-06","2027-11-25","2027-12-24"],
-};
+/* Los feriados de NYSE viven en push-rank.js — es JS puro, lo importan Deno y Node
+   por igual, y así el arnés push-calendario-test.mjs los puede comprobar. Antes
+   eran una tabla literal que sólo llegaba a 2027: en enero de 2028 `mercadoAbierto`
+   habría devuelto false TODO el año y apagado las dos notificaciones sin un error. */
+import { feriadosNYSE } from "./push-rank.js";
+export { feriadosNYSE };
 
+// Caché por año: `mercadoAbierto()` corre una vez por token y por hora.
+const cacheFeriados = new Map<number, string[]>();
 export function mercadoAbierto(fechaET: string, diaSemana: string): boolean {
   if (esFinDeSemana(diaSemana)) return false;
-  const anio = fechaET.slice(0, 4);
-  const lista = FERIADOS_NYSE[anio];
-  if (!lista) return false;                       // año no cargado → silencio, no adivinar
-  return !lista.includes(fechaET);
+  const anio = +fechaET.slice(0, 4);
+  if (!cacheFeriados.has(anio)) cacheFeriados.set(anio, feriadosNYSE(anio));
+  return !cacheFeriados.get(anio)!.includes(fechaET);
 }
 
 /** Cotizaciones del día en LOTE: una llamada por ticker único de TODOS los usuarios. */

@@ -193,11 +193,12 @@ de bloqueo, dentro del límite de caracteres.
 TZ=America/New_York node supabase/functions/_shared/push-tests.mjs        # 23 casos borde y copy
 TZ=America/New_York node supabase/functions/_shared/push-drift-test.mjs   # calendario app vs push
 node supabase/functions/_shared/push-cliente-test.mjs                     # 13 del módulo del cliente
-TZ=America/New_York node supabase/functions/_shared/push-cobertura-test.mjs  # 1757: un año × 7 carteras
+TZ=America/New_York node supabase/functions/_shared/push-cobertura-test.mjs  # 17570: 10 años × 7 carteras
+TZ=America/New_York node supabase/functions/_shared/push-calendario-test.mjs # feriados y FOMC sin caducidad
 ```
 
 El de **cobertura** defiende la promesa de la §6: que la matutina sale todos los
-días hábiles para cualquier cartera. Si alguien vuelve a poner un umbral, o toca
+días hábiles de 2026 a 2035 para cualquier cartera. Si alguien vuelve a poner un umbral, o toca
 el respaldo, ese test lo caza.
 
 El de **drift** es el importante a largo plazo: el motor del push tiene su propia
@@ -217,24 +218,40 @@ calendarios distintos.
   (este proyecto usa Swift Package Manager; **no existe ningún Podfile**, así que no
   hubo `pod install` que correr).
 
-## 9 · Caducidad del calendario  ⚠️ (detectado el 2026-09-22)
+## 9 · El calendario ya no caduca  (2026-09-22)
 
-Dos tablas están escritas a mano y **sólo llegan hasta 2027**. No es una regresión
-del cambio de la §6, pero ahora que la matutina es diaria conviene tenerlo a la vista:
+Dos tablas estaban escritas a mano y vencían. Ninguna requiere ya que nadie teclee
+nada nunca.
 
-| Dato | Dónde | Hasta |
+| Dato | Antes | Ahora |
 |---|---|---|
-| Reuniones del FOMC | `FOMC_2026` en `push-rank.js` | **2026** |
-| Feriados de NYSE | `FERIADOS_NYSE` en `push-common.ts` | **2027** |
+| Feriados de NYSE | tabla literal hasta **2027** | `feriadosNYSE(anio)` en `push-rank.js` — **calculados** |
+| Reuniones del FOMC | `FOMC_2026`, hasta **2026** | tabla `fomc_calendar`, que llena `fomc-sync` desde la Fed |
 
-Consecuencias, comprobadas corriendo el calendario año por año:
+Lo que estaba a punto de pasar: en enero de **2028** `mercadoAbierto()` habría
+devuelto `false` para *todos* los días del año (año no cargado → no adivinar) y se
+habrían **apagado las dos notificaciones** de golpe, sin error y sin aviso. Y desde
+enero de 2027 habrían desaparecido los 16 eventos de FOMC del año.
 
-- **Desde 2027** desaparecen los 16 eventos de FOMC del año (decisión + actas).
-  El evento de mayor impacto del calendario deja de existir en silencio: no falla
-  nada, simplemente gana otro candidato.
-- **Desde 2028** `mercadoAbierto()` devuelve `false` para *todos* los días del año
-  (año no cargado → no adivinar), así que **se apagan las dos notificaciones**,
-  matutina y de cierre. Es un corte seco, no una degradación.
+**Feriados — calculados.** Los diez cierres de NYSE son reglas de calendario, no
+datos: enésimo lunes del mes, último lunes de mayo, Viernes Santo por el algoritmo
+de Meeus, y la regla de observancia (sábado → viernes, domingo → lunes). Año Nuevo
+es la excepción y va en los dos sentidos: si cae domingo se observa el lunes 2, y si
+cae **sábado no se observa en absoluto** — NYSE abre ese 31 de diciembre y el año
+se queda con nueve cierres. `push-calendario-test.mjs` comprueba que el cálculo
+reproduce exactamente las dos listas que estaban escritas a mano.
 
-Hay que añadir `FOMC_2027` antes de enero de 2027 y los feriados de 2028 antes de
-enero de 2028.
+**FOMC — sincronizado.** Las fechas las decide el Comité, no se calculan, pero la
+Fed las publica en `federalreserve.gov/json/calendar.json`. `fomc-sync` lo lee el
+día 3 de cada mes y llena `fomc_calendar`; `push-morning` la usa y, si la consulta
+falla, cae a `FOMC_2026` — preferimos un FOMC viejo a un calendario sin FOMC.
+La Fed publica el año siguiente a mediados de año, así que 2027 entrará solo.
+Verificado: el parseo reproduce `FOMC_2026` fecha por fecha, incluidas las actas
+(regla fija de tres semanas después del anuncio).
+
+```bash
+supabase functions deploy fomc-sync --no-verify-jwt   # ya desplegada
+```
+
+Estado al 2026-09-22: 63 reuniones en la tabla (2017–2026), cron `fomc-sync`
+activo (`0 12 3 * *`). 2027 todavía no está publicado por la Fed; entrará solo.

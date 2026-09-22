@@ -19,11 +19,13 @@
 import {
   macroEventsForDay, eventoDeResultados, pvNewsRank, textoMatutino,
   proximoMacro, textoMatutinoSinEventos, violacionesDeCopy, iso, fromISO,
+  feriadosNYSE,
 } from './push-rank.js';
 
-const FERIADOS = ['2026-01-01','2026-01-19','2026-02-16','2026-04-03','2026-05-25',
-  '2026-06-19','2026-07-03','2026-09-07','2026-11-26','2026-12-25'];
 const LIM_TITULO = 35, LIM_CUERPO = 110;
+// Diez años, no uno: el punto del cambio del 2026-09-22 es que el calendario deje
+// de caducar. Antes, `mercadoAbierto()` apagaba las dos notificaciones en 2028.
+const ANIOS = [2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035];
 
 /* Siete perfiles. Cubren los casos que cambian el resultado del motor: sin datos,
    sólo ETF amplio (descuento 0.3), concentración total, tickers que ningún macro
@@ -39,13 +41,14 @@ const PERFILES = [
   { nombre: 'con resultados propios', holdings: mk(['AAPL','NVDA','KO']), earnings: ['AAPL','NVDA','KO'] },
 ];
 
-/** Días hábiles de NYSE de 2026 (mismo criterio que mercadoAbierto()). */
-function diasHabiles2026() {
+/** Días hábiles de NYSE de un año (mismo criterio exacto que mercadoAbierto()). */
+function diasHabiles(anio) {
+  const feriados = new Set(feriadosNYSE(anio));
   const out = [];
-  for (let d = fromISO('2026-01-01'); d.getUTCFullYear() === 2026; d = new Date(d.getTime() + 86400000)) {
+  for (let d = fromISO(anio + '-01-01'); d.getUTCFullYear() === anio; d = new Date(d.getTime() + 86400000)) {
     const dow = d.getUTCDay();
     const f = iso(d);
-    if (dow === 0 || dow === 6 || FERIADOS.includes(f)) continue;
+    if (dow === 0 || dow === 6 || feriados.has(f)) continue;
     out.push(f);
   }
   return out;
@@ -64,7 +67,7 @@ function earningsDe(perfil, fecha) {
     .map((t) => eventoDeResultados({ ticker: t, fechaISO: fecha, cuando: 'bmo' }));
 }
 
-const dias = diasHabiles2026();
+const dias = ANIOS.flatMap(diasHabiles);
 let casos = 0, fallos = 0, respaldos = 0, porEvento = 0;
 const motivosRespaldo = new Map();
 const err = (f, p, msg) => { fallos++; if (fallos <= 15) console.log(`  ✗ ${f} · ${p} · ${msg}`); };
@@ -110,10 +113,10 @@ for (const perfil of PERFILES) {
   console.log(`  · ${perfil.nombre.padEnd(24)} ${dias.length} días, ${dias.length - resPerfil} por evento, ${resPerfil} de respaldo`);
 }
 
-console.log(`\nDías hábiles NYSE 2026: ${dias.length} · perfiles: ${PERFILES.length} · casos: ${casos}`);
+console.log(`\nDías hábiles NYSE ${ANIOS[0]}–${ANIOS[ANIOS.length-1]}: ${dias.length} · perfiles: ${PERFILES.length} · casos: ${casos}`);
 console.log(`Por evento: ${porEvento} (${(100*porEvento/casos).toFixed(1)}%) · de respaldo: ${respaldos} (${(100*respaldos/casos).toFixed(1)}%)`);
 console.log('Motivos del respaldo:', [...motivosRespaldo].map(([k,n]) => `${k}=${n}`).join(', ') || '—');
 console.log(fallos === 0
-  ? `\n✓ ${casos} casos: sale notificación TODOS los días hábiles, para los ${PERFILES.length} perfiles`
+  ? `\n✓ ${casos} casos: sale notificación TODOS los días hábiles de ${ANIOS.length} años, para los ${PERFILES.length} perfiles`
   : `\n✗ ${fallos} fallos de ${casos} casos`);
 process.exit(fallos === 0 ? 0 : 1);

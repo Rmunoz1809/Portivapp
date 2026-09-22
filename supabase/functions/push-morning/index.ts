@@ -76,7 +76,14 @@ Deno.serve(async (req) => {
   // ── Fan-out por EVENTO: el calendario macro es una función pura (una vez) y los
   // resultados del día son UNA llamada a Finnhub para todos los usuarios. El costo
   // escala con eventos, no con usuarios.
-  const macro = macroEventsForDay(et.fecha);
+  // Reuniones de la Fed desde `fomc_calendar`, que `fomc-sync` mantiene al día.
+  // Si la consulta falla se pasa `undefined` y el motor usa su lista de respaldo:
+  // preferimos un FOMC de 2026 desactualizado a un calendario sin FOMC.
+  const { data: filasFomc } = await admin.from("fomc_calendar")
+    .select("decision,minutes").order("decision");
+  const fomc = filasFomc?.length ? filasFomc : undefined;
+
+  const macro = macroEventsForDay(et.fecha, fomc);
   const earnings = await earningsDelDia(et.fecha);
 
   let enviados = 0, respaldos = 0, fallos = 0;
@@ -119,7 +126,7 @@ Deno.serve(async (req) => {
       // Sin candidatos hoy (o todos descartados por el anti-duplicado de 7 días).
       // Se cuenta qué viene, que es información real, en vez de callar.
       respaldos++;
-      const prox = proximoMacro(et.fecha);
+      const prox = proximoMacro(et.fecha, 6, fomc);
       ({ titulo, cuerpo } = textoMatutinoSinEventos(et.fecha, prox));
       // El deeplink apunta al PRÓXIMO evento, pero el log NO guarda su id: el
       // anti-duplicado de 7 días lo daría por enviado y lo tacharía el día que

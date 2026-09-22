@@ -41,8 +41,10 @@ export function iso(d: Date): string;
 export function fromISO(s: string): Date;
 export function mondayOf(d: Date): Date;
 export function minutosDe(hora: string): number;
-export function macroEventsForWeek(monday: Date): EventoPush[];
-export function macroEventsForDay(fechaISO: string): EventoPush[];
+export interface ReunionFOMC { decision: string; minutes: string }
+export const FOMC_2026: ReunionFOMC[];
+export function macroEventsForWeek(monday: Date, fomc?: ReunionFOMC[]): EventoPush[];
+export function macroEventsForDay(fechaISO: string, fomc?: ReunionFOMC[]): EventoPush[];
 export function eventoDeResultados(o: { ticker: string; fechaISO: string; cuando?: string }): EventoPush;
 export function pesosDeCartera(h: Holding[]): { pesos: Map<string, number>; top3: Set<string>; total: number };
 export function exposicionEfectiva(tickers: string[], pesos: Map<string, number>): number;
@@ -62,7 +64,8 @@ export const ETF_AMPLIOS: Set<string>;
 export const FACTOR_ETF_AMPLIO: number;
 export const RAREZA: Record<string, number>;
 export const PROHIBIDOS: string[];
-export function proximoMacro(fechaISO: string, dias?: number): { evento: EventoPush; dias: number } | null;
+export function proximoMacro(fechaISO: string, dias?: number, fomc?: ReunionFOMC[]): { evento: EventoPush; dias: number } | null;
 export function textoMatutinoSinEventos(
   fechaISO: string, proximo: { evento: EventoPush; dias: number } | null,
 ): { titulo: string; cuerpo: string };
+export function feriadosNYSE(anio: number): string[];

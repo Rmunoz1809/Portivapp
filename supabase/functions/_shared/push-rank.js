@@ -79,7 +79,11 @@ export const PENA_PISTA_5D    = 12;
 //  Si alguien toca el calendario en index.html, ese test falla. No lo ignores:
 //  significa que el push y la app estarían mostrando calendarios distintos.
 // ═══════════════════════════════════════════════════════════════════════════
-const FOMC_2026 = [
+/* Las fechas oficiales de 2026. NO se borran ni se dejan caducar: son el respaldo
+   de `fomc-sync`, que refresca la tabla `fomc_calendar` desde el propio calendario
+   de la Fed. Si la sincronización falla o el año todavía no está publicado, el
+   motor sigue funcionando con esta lista. */
+export const FOMC_2026 = [
   { decision: '2026-01-28', minutes: '2026-02-18' },
   { decision: '2026-03-18', minutes: '2026-04-08' },
   { decision: '2026-04-29', minutes: '2026-05-20' },
@@ -95,7 +99,7 @@ const FOMC_2026 = [
  * Devuelve el mismo conjunto que la app, más `key` (para rareza y anti-repetición)
  * y `push_linea` (la línea corta y factual que va al push).
  */
-export function macroEventsForWeek(monday) {
+export function macroEventsForWeek(monday, fomc) {
   const ev = [];
   const mk = (dayIdx, key, titulo, push_titulo, push_linea, tickers, imp, time) => {
     const d = addDays(monday, dayIdx - 1);
@@ -204,7 +208,7 @@ export function macroEventsForWeek(monday) {
     for (let i = 1; i <= 5; i++) if (iso(addDays(monday, i - 1)) === s) return i;
     return null;
   };
-  for (const { decision, minutes } of FOMC_2026) {
+  for (const { decision, minutes } of (fomc && fomc.length ? fomc : FOMC_2026)) {
     let di2;
     if ((di2 = dayIdxForISO(decision))) mk(di2, 'FOMC',
       'Decisión de tasas de la Fed (FOMC) + conferencia de prensa',
@@ -222,8 +226,8 @@ export function macroEventsForWeek(monday) {
 }
 
 /** Eventos macro de un día concreto (ISO 'YYYY-MM-DD'). */
-export function macroEventsForDay(fechaISO) {
-  return macroEventsForWeek(mondayOf(fromISO(fechaISO))).filter((e) => e.fecha === fechaISO);
+export function macroEventsForDay(fechaISO, fomc) {
+  return macroEventsForWeek(mondayOf(fromISO(fechaISO)), fomc).filter((e) => e.fecha === fechaISO);
 }
 
 // ── Eventos de posición (pista B) ────────────────────────────────────────────
@@ -520,11 +524,11 @@ function mejorMacro(lista) {
  * "el martes" sería ambiguo.
  * @returns {{evento:object, dias:number}|null}
  */
-export function proximoMacro(fechaISO, dias = 6) {
+export function proximoMacro(fechaISO, dias = 6, fomc) {
   const base = fromISO(fechaISO);
   for (let d = 1; d <= Math.min(dias, 6); d++) {
     const f = iso(addDays(base, d));
-    const ev = mejorMacro(macroEventsForDay(f));
+    const ev = mejorMacro(macroEventsForDay(f, fomc));
     if (ev) return { evento: ev, dias: d };
   }
   return null;
@@ -545,3 +549,75 @@ export function textoMatutinoSinEventos(fechaISO, proximo) {
     : `El ${DIAS_ES[fromISO(e.fecha).getUTCDay()]}`;
   return { titulo, cuerpo: `${base} ${cuando}: ${nombre}, ${e.time}.` };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Feriados de NYSE — CALCULADOS, no escritos a mano
+//  ───────────────────────────────────────────────────────────────────────────
+//  Antes era una tabla literal con 2026 y 2027. `mercadoAbierto()` devuelve false
+//  para TODO un año que no esté en la tabla, así que en enero de 2028 se habrían
+//  apagado las dos notificaciones de golpe, sin error y sin aviso.
+//  Las diez fechas de NYSE son reglas fijas del calendario, no datos: se calculan.
+//  El arnés push-calendario-test.mjs comprueba que este código reproduce exacta-
+//  mente las listas que estaban escritas a mano para 2026 y 2027.
+// ═══════════════════════════════════════════════════════════════════════════
+const isoUTC = (d) => d.toISOString().slice(0, 10);
+const diaUTC = (y, m, d) => new Date(Date.UTC(y, m - 1, d));
+
+/** N-ésimo `dow` (0=Dom) del mes. */
+function nEsimoDia(y, mes, dow, n) {
+  const primero = diaUTC(y, mes, 1);
+  const salto = (dow - primero.getUTCDay() + 7) % 7;
+  return diaUTC(y, mes, 1 + salto + (n - 1) * 7);
+}
+/** Último `dow` del mes. */
+function ultimoDia(y, mes, dow) {
+  const fin = new Date(Date.UTC(y, mes, 0));            // día 0 del siguiente = último de éste
+  return new Date(fin.getTime() - ((fin.getUTCDay() - dow + 7) % 7) * 86400000);
+}
+/** Domingo de Pascua (algoritmo de Meeus/Jones/Butcher, calendario gregoriano). */
+function pascua(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return diaUTC(y, mes, dia);
+}
+/** Feriado de fecha fija: sábado → se observa el viernes; domingo → el lunes. */
+function observado(d) {
+  const dow = d.getUTCDay();
+  if (dow === 6) return new Date(d.getTime() - 86400000);
+  if (dow === 0) return new Date(d.getTime() + 86400000);
+  return d;
+}
+
+/**
+ * Los días en que NYSE cierra, para cualquier año. Sin tabla que caduque.
+ * Normalmente son diez. Año Nuevo es la excepción y va en los dos sentidos: si
+ * cae domingo se observa el lunes 2, pero si cae SÁBADO no se observa en absoluto
+ * — NYSE abre ese 31 de diciembre y el año se queda con nueve cierres.
+ */
+export function feriadosNYSE(anio) {
+  const enero1 = diaUTC(anio, 1, 1);
+  const dowEnero1 = enero1.getUTCDay();
+  const anioNuevo = dowEnero1 === 0 ? new Date(enero1.getTime() + 86400000)
+                  : dowEnero1 === 6 ? null            // sábado → ese año no hay
+                  : enero1;
+  const viernesSanto = new Date(pascua(anio).getTime() - 2 * 86400000);
+  return [
+    ...(anioNuevo ? [anioNuevo] : []),
+    nEsimoDia(anio, 1, 1, 3),                 // Martin Luther King Jr. — 3er lunes de enero
+    nEsimoDia(anio, 2, 1, 3),                 // Washington's Birthday — 3er lunes de febrero
+    viernesSanto,
+    ultimoDia(anio, 5, 1),                    // Memorial Day — último lunes de mayo
+    observado(diaUTC(anio, 6, 19)),           // Juneteenth
+    observado(diaUTC(anio, 7, 4)),            // Independence Day
+    nEsimoDia(anio, 9, 1, 1),                 // Labor Day — 1er lunes de septiembre
+    nEsimoDia(anio, 11, 4, 4),                // Thanksgiving — 4º jueves de noviembre
+    observado(diaUTC(anio, 12, 25)),          // Christmas
+  ].map(isoUTC).filter((f) => f.slice(0, 4) === String(anio)).sort();
+}
+
