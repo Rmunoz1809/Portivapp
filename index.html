@@ -45104,8 +45104,15 @@ body:not(.dark-theme) .ai-chat-inputarea { border-top-color: var(--pvr-line); }
   body:not(.dark-theme) #tab-analizar .research-search-bar .research-btn svg { stroke: var(--pvr-navy) !important; }
   body:not(.dark-theme) #tab-aianalyst .ai-chat-header { border-bottom: none !important; }
 }
-/* iPad (html.pv-ipad, viewport 1024, sin sidebar): mismas reglas, 900–1200px. */
-@media (min-width: 900px) and (max-width: 1200px) {
+/* iPad (html.pv-ipad, sin sidebar): mismas reglas desde 900px y SIN tope.
+   Antes el bloque paraba en 1200px porque se daba por hecho que el iPad siempre
+   maqueta a 1024. Eso sólo es cierto en vertical: en apaisado el viewport pasa a
+   1366 (1376 en el 13" M4/M5) y la app en ventana del Mac o de Stage Manager
+   puede medir cualquier cosa. Por encima de 1200 no se aplicaba nada de esto: la
+   cabecera del valor volvía al diseño de escritorio y la barra navy quedaba
+   separada de ella. Todo el bloque va con el prefijo html.pv-ipad, así que un
+   navegador de escritorio ancho no se entera del cambio. */
+@media (min-width: 900px) {
 
   html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-header,
   html.pv-ipad body:not(.dark-theme) #tab-noticias .sn-header,
@@ -45752,6 +45759,117 @@ body:not(.dark-theme) .stitch-viewall-btn {
   }
   body:not(.dark-theme) .bottom-tab { color: #96A2B2 !important; font-weight: 600 !important; }
   body:not(.dark-theme) .bottom-tab.active { color: var(--pvr-navy) !important; }
+}
+
+/* ── 30. iPad, cualquier ancho: la barra y el navy de la cabecera, unidos ───
+   La curva de la barra se quitaba con body:has(#tab-X.page.active), una regla
+   por pestaña y por tramo de ancho. En la app de iPad abierta en el Mac
+   (ventana de unos 950px) esa regla no llegó a aplicarse: la barra se quedó con
+   las esquinas redondeadas y entre ella y el bloque del valor asomaban dos
+   muescas del fondo claro. En iPad las seis pestañas abren con el bloque navy
+   pegado a la barra en todos los anchos, así que no hay ningún caso en el que
+   la curva deba verse: se quita siempre, sin :has() y con !important para que
+   ninguna regla de un tramo concreto la devuelva. Los 3px de navy por debajo
+   tapan la hebra clara que deja el antialiasing cuando el borde entre las dos
+   superficies cae en una coordenada fraccionaria. */
+html.pv-ipad body:not(.dark-theme) .m-topbar {
+  border-radius: 0 !important;
+  box-shadow: 0 3px 0 0 var(--pvr-navy-bar) !important;
+}
+
+/* La app de iPad en el Mac (y el iPad con ratón o trackpad) pinta la barra de
+   scroll clásica de 10px que la app define para escritorio: una columna gris
+   con el navy del lienzo detrás, pegada al borde derecho. En iPad lo único que
+   hay es el indicador flotante del sistema, así que la del documento se quita:
+   el navy llega al borde y 100vw vuelve a medir lo mismo que la página, que es
+   lo que dan por hecho los márgenes calc(50% - 50vw) de las cabeceras. */
+/* En apaisado (1366) quien hace scroll no es el documento sino la propia
+   pestaña (.page con overflow-y:auto), así que su barra también cuenta: robaba
+   10px a la columna de contenido y las cabeceras navy quedaban corridas 5px a
+   la izquierda, con una hebra clara en el borde derecho. */
+@media (hover: hover) and (pointer: fine) {
+  html.pv-ipad,
+  html.pv-ipad .page { scrollbar-width: none; }
+  html.pv-ipad::-webkit-scrollbar,
+  html.pv-ipad body::-webkit-scrollbar,
+  html.pv-ipad .page::-webkit-scrollbar { display: none; width: 0; height: 0; }
+}
+
+/* El bloque 29 (tipografía y curva del navy de tablet) acaba en 1200px y el iPad
+   apaisado maqueta a 1366/1376: sin esta copia, al girar el iPad la cifra del
+   portafolio bajaba de 48 a 34px y la pastilla verde perdía su fondo sobre el
+   navy. Mismas reglas, con el prefijo html.pv-ipad para no tocar el escritorio. */
+@media (min-width: 1201px) {
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-header,
+  html.pv-ipad body:not(.dark-theme) #tab-noticias .sn-header,
+  html.pv-ipad body:not(.dark-theme) #tab-watchlist > div:first-child,
+  html.pv-ipad body:not(.dark-theme) #tab-analizar .research-search-bar,
+  html.pv-ipad body:not(.dark-theme) #tab-aianalyst .ai-chat-header,
+  html.pv-ipad body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    border-radius: 0 0 var(--pvr-r-hero) var(--pvr-r-hero) !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-val,
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-val.pos,
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-val.neg {
+    font-size: 48px !important;
+    font-weight: 600 !important;
+    letter-spacing: -.6px !important;
+    line-height: 1.05 !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-val-label {
+    font-size: 15px !important; font-weight: 600 !important;
+    letter-spacing: .3px !important; margin-bottom: 8px !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-val-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-badge {
+    font-size: 15px !important; font-weight: 600 !important;
+    padding: 9px 15px !important; border-radius: 999px !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .stitch-badge.pos {
+    background: var(--pvr-green-soft) !important;
+    color: var(--pvr-green-ink) !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .period-btn {
+    padding: 11px 18px !important;
+    font-size: 14px !important;
+    font-weight: 700 !important;
+    color: #3B4A5C !important;
+  }
+  html.pv-ipad body:not(.dark-theme) #tab-portfolio .period-btn.active { color: #fff !important; }
+  html.pv-ipad body:not(.dark-theme) .stitch-card-title { font-size: 24px !important; font-weight: 600 !important; letter-spacing: -.2px !important; }
+  html.pv-ipad body:not(.dark-theme) #tab-noticias .sn-title {
+    font-size: 38px !important; font-weight: 600 !important;
+    line-height: 1.08 !important; letter-spacing: -.2px !important;
+  }
+  html.pv-ipad body:not(.dark-theme) .sn-read-btn {
+    background: var(--pvr-navy) !important; color: #fff !important;
+    border-radius: 18px !important; box-shadow: none !important;
+  }
+  html.pv-ipad body:not(.dark-theme) .bottom-tab { color: #96A2B2 !important; font-weight: 600 !important; }
+  html.pv-ipad body:not(.dark-theme) .bottom-tab.active { color: var(--pvr-navy) !important; }
+
+  /* Noticias: por encima de 1200 su columna (.sn-layout) se centra con un tope
+     de 1100px y 24px de padding, así que los 52px fijos dejaban el título 105px
+     a la izquierda de las tarjetas. Se alinea con la columna real; el max() deja
+     los 52 del vertical si la columna llegara a ocupar todo el ancho. */
+  html.pv-ipad body:not(.dark-theme) #tab-noticias .sn-header {
+    padding-left:  max(52px, calc((100vw - 1100px) / 2 + 24px)) !important;
+    padding-right: max(52px, calc((100vw - 1100px) / 2 + 24px)) !important;
+  }
+}
+
+/* Girar el iPad de apaisado a vertical: Chart.js deja en el <canvas> el ancho en
+   línea que tenía a 1366, y la pista `1fr` de una sola columna (≤1100px) no puede
+   encoger por debajo de ese min-content. La columna quedaba 8px más ancha que la
+   pantalla y la cabecera navy, que se centra con calc(50% - 50vw) sobre ella, se
+   corría 4px a la derecha con scroll lateral. Es el mismo arreglo que ya lleva la
+   grilla de dos columnas: minmax(0, 1fr). */
+@media (max-width: 1100px) {
+  html.pv-ipad .stitch-layout { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
