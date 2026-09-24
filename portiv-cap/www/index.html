@@ -41748,6 +41748,180 @@ document.addEventListener('DOMContentLoaded', function(){
     .pvs-back{ width:56px; height:56px; border-radius:18px; font-size:19px; }
     .pvs-next{ height:56px; padding:0 32px; border-radius:18px; font-size:17px; }
   }
+
+  /* Barra superior de ESCRITORIO dentro del aparato (logo en placa blanca,
+     pestañas en pastillas, Ajustes y Soporte a la derecha). _phone() la emite
+     siempre, pero sólo el bloque de escritorio de abajo la muestra: en el
+     iPhone y en el iPad no existe a efectos visuales. */
+  .pvs-dtop{ display:none; }
+  .pvs-dt-brand{ display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .pvs-dt-logo{ display:block; width:28px; height:28px; border-radius:9px; overflow:hidden; background:#fff; }
+  .pvs-dt-logo svg{ display:block; width:28px; height:28px; }
+  .pvs-dt-name{ font-size:15px; font-weight:700; color:#fff; letter-spacing:-.02em; }
+  .pvs-dt-nav{
+    display:flex; align-items:center; gap:2px; margin-left:22px; padding:3px;
+    background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.07); border-radius:999px;
+  }
+  .pvs-dt-i{
+    display:flex; align-items:center; gap:5px; padding:6px 11px; border-radius:999px; white-space:nowrap;
+    font-size:10.5px; font-weight:600; letter-spacing:-.01em; color:rgba(255,255,255,.72);
+  }
+  .pvs-dt-i.on{ background:#fff; color:#0b1c30; }
+  .pvs-dt-r{ margin-left:auto; display:flex; gap:6px; flex-shrink:0; }
+  .pvs-dt-b{
+    display:flex; align-items:center; gap:5px; height:28px; padding:0 11px; border-radius:10px; white-space:nowrap;
+    background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.08);
+    color:rgba(255,255,255,.82); font-size:10px; font-weight:600;
+  }
+  .pvs-dt-b.on{ background:#fff; border-color:#fff; color:#0b1c30; }
+
+  /* ══ ESCRITORIO (web en computadora y app de Mac «Designed for iPad») ═══════
+     En computadora el aparato es un PORTÁTIL y dentro se ve la app de escritorio:
+     barra superior navy con pastillas, hero navy con curva y el contenido en una
+     columna centrada — no el teléfono ni el marco de iPad, que además se salía
+     por abajo en ventanas de ~650-750 px de alto.
+
+     Detección: el iPad lleva html.pv-ipad (por UA); la web de computadora y la
+     app de Mac no. Con el alto mínimo de 560 el iPhone apaisado (~430) queda
+     fuera. html:not(.pv-ipad) sube la especificidad para ganar a las reglas del
+     iPad, que también aplican a estas ventanas cuando miden >=700 de alto.
+
+     Tamaño: el escenario es un contenedor (container-type:size) y el portátil
+     se calcula con su alto y su ancho (cqh/cqw), así que SIEMPRE cabe entero:
+     pantalla 16:10 + base, sin salirse por abajo ni tocar los controles, que
+     van debajo en su propia franja reservada (padding-bottom de .pvs-wrap).
+
+     Interior: se maqueta a 900 px lógicos (ancho de escritorio) y se escala con
+     el mismo truco que el iPad (--pvs-z). El factor lo fija el JS (_fitDesk)
+     midiendo el hueco real de la pantalla; el biselado va en proporción al
+     ancho (--lw), así que el alto lógico de la pantalla es siempre el mismo y
+     el recorrido del scroll simulado no cambia al redimensionar la ventana. */
+  @media (min-width:900px) and (min-height:560px){
+    html:not(.pv-ipad) .pvs-wrap{
+      max-width:1180px; padding:calc(26px + env(safe-area-inset-top)) 40px 88px;
+    }
+    html:not(.pv-ipad) .pvs-skip{
+      top:calc(18px + env(safe-area-inset-top)); right:max(40px, calc(50% - 440px));
+      font-size:14px; padding:6px 4px;
+    }
+    html:not(.pv-ipad) .pvs-skip:hover{ color:#5b6b7d; }
+    /* Composición centrada: título, texto y puntos al centro, sobre el portátil,
+       en una columna de 880 px; «Saltar» y los controles se alinean con ella.
+       El padding lateral simétrico deja sitio a «Saltar» sin descentrar el título. */
+    html:not(.pv-ipad) .pvs-head{ width:100%; max-width:880px; margin:0 auto; padding:0 64px; text-align:center; }
+    html:not(.pv-ipad) .pvs-head::before{ display:none; }
+    html:not(.pv-ipad) .pvs-title{ font-size:clamp(34px,3vw,40px); margin-bottom:8px; }
+    html:not(.pv-ipad) .pvs-text{ font-size:16px; line-height:1.55; max-width:700px; margin:0 auto; text-wrap:balance; }
+    html:not(.pv-ipad) .pvs-dots{ justify-content:center; margin-top:12px; }
+    html:not(.pv-ipad) .pvs-dot{ height:5px; width:18px; }
+    html:not(.pv-ipad) .pvs-dot.on{ width:42px; }
+    /* Los puntos de la lista, en tres columnas: una sola franja baja en vez de
+       tres filas que le roban alto al portátil. */
+    html:not(.pv-ipad) .pvs-bul{
+      flex-direction:row; gap:28px; width:100%; max-width:900px; margin:0 auto; padding:14px 0 0;
+    }
+    html:not(.pv-ipad) .pvs-b{ flex:1 1 0; min-width:0; }
+    html:not(.pv-ipad) .pvs-b-t{ font-size:14px; }
+    html:not(.pv-ipad) .pvs-b-s{ font-size:13px; margin-top:2px; }
+
+    html:not(.pv-ipad) .pvs-stage{
+      container-type:size; margin-top:18px; align-items:center; overflow:visible;
+    }
+    /* ── el portátil: la tapa es .pvs-phone, la base es su ::after ──
+       --lw = ancho de la tapa. Tres topes: el ancho del escenario (con margen
+       para la base, que es un 14% más ancha), su alto (la tapa es 16:10 y bajo
+       ella van la base y su sombra: 26 px) y 1000 px en pantallas grandes. */
+    html:not(.pv-ipad) .pvs-phone{
+      --lw:min(86cqw, calc((100cqh - 26px) * 1.6), 1000px);
+      position:relative; width:var(--lw); height:calc(var(--lw) * .625);
+      margin-bottom:calc(var(--lw) * .018 + 6px);   /* la base, dentro del centrado */
+      padding:calc(var(--lw) * .024) calc(var(--lw) * .02) calc(var(--lw) * .022);
+      border-radius:calc(var(--lw) * .026) calc(var(--lw) * .026) calc(var(--lw) * .006) calc(var(--lw) * .006);
+      background:linear-gradient(180deg,#1b2433,#0a0f18 30%);
+      box-shadow:0 0 0 1px #b4bcc8, inset 0 0 0 1px rgba(255,255,255,.06), 0 34px 60px -34px rgba(4,22,44,.5);
+      transform-origin:50% 100%;
+      animation:pvsRiseDesk .6s cubic-bezier(.22,1,.36,1) both;
+    }
+    /* cámara */
+    html:not(.pv-ipad) .pvs-phone::before{
+      content:''; position:absolute; left:50%; top:calc(var(--lw) * .012 - 2.5px);
+      width:5px; height:5px; margin-left:-2.5px; border-radius:50%;
+      background:#27313f; box-shadow:inset 0 0 0 1px #3a4657;
+    }
+    /* base: más ancha que la pantalla, aluminio, con la muesca para abrir la tapa */
+    html:not(.pv-ipad) .pvs-phone::after{
+      content:''; position:absolute; top:100%; left:-7%; right:-7%;
+      height:calc(var(--lw) * .018 + 6px);
+      border-radius:2px 2px 18px 18px / 2px 2px 80% 80%;
+      background:
+        radial-gradient(ellipse 50% 100% at 50% 0, #9aa3b0 96%, transparent 100%) 50% 0 / 13% 45% no-repeat,
+        linear-gradient(180deg,#f0f3f7 0%,#d6dce4 40%,#a9b2be 100%);
+      box-shadow:0 16px 24px -14px rgba(4,22,44,.45);
+    }
+    html:not(.pv-ipad) .pvs-screen{
+      --pvs-z:.7;
+      /* margen lateral de la columna central (900 lógicos → 740 de columna) */
+      --pvs-col:max(18px, calc(50% - 370px));
+      width:calc(100% / var(--pvs-z)); height:calc(100% / var(--pvs-z));
+      transform:scale(var(--pvs-z)); transform-origin:top left;
+      border-radius:calc(3px / var(--pvs-z));
+      background:#eef1f8;
+    }
+
+    /* ── interior: la app de escritorio ── */
+    html:not(.pv-ipad) .pvs-notch,
+    html:not(.pv-ipad) .pvs-bn,
+    html:not(.pv-ipad) .pvs-status,
+    html:not(.pv-ipad) .pvs-tb{ display:none; }
+    html:not(.pv-ipad) .pvs-dtop{
+      display:flex; align-items:center; flex-shrink:0; height:56px; padding:0 22px; background:#0b1c30;
+    }
+    /* El navy continúa bajo la barra y cierra en curva; en las pestañas sin hero
+       queda sólo esa curva. */
+    html:not(.pv-ipad) .pvs-navy{
+      background:#0b1c30; border-radius:0 0 30px 30px; padding:18px var(--pvs-col) 38px;
+    }
+    html:not(.pv-ipad) .pvs-navy.pvs-navy-e{ padding:0; height:24px; border-radius:0 0 24px 24px; }
+    html:not(.pv-ipad) .pvs-hero-lbl{ font-size:12px; margin-top:0; }
+    html:not(.pv-ipad) .pvs-hero-val{ font-size:40px; margin-top:4px; }
+    html:not(.pv-ipad) .pvs-badge{ font-size:11.5px; padding:5px 12px; margin-top:10px; }
+    html:not(.pv-ipad) .pvs-chips{ flex-wrap:nowrap; gap:6px; padding:0 var(--pvs-col); margin-top:-15px; }
+    html:not(.pv-ipad) .pvs-chip{ flex:0 0 auto; font-size:10.5px; padding:7px 15px; }
+    /* columna centrada (el inline de cada pantalla fija el padding de arriba) */
+    html:not(.pv-ipad) .pvs-app{
+      padding-left:var(--pvs-col) !important; padding-right:var(--pvs-col) !important;
+    }
+    html:not(.pv-ipad) .pvs-c,
+    html:not(.pv-ipad) .pvs-k,
+    html:not(.pv-ipad) .pvs-dsec,
+    html:not(.pv-ipad) .pvs-hs,
+    html:not(.pv-ipad) .pvs-key,
+    html:not(.pv-ipad) .pvs-ec,
+    html:not(.pv-ipad) .pvs-day,
+    html:not(.pv-ipad) .pvs-wk-s{ border-radius:18px; border-color:#e2e7f0; }
+    html:not(.pv-ipad) .pvs-c{ padding:13px 16px; margin-bottom:10px; }
+    html:not(.pv-ipad) .pvs-chart{ height:118px; }
+    html:not(.pv-ipad) .pvs-col-d,
+    html:not(.pv-ipad) .pvs-col-g{ width:96px; }
+    html:not(.pv-ipad) .pvs-kebab{ width:26px; }
+    html:not(.pv-ipad) .pvs-kg{ grid-template-columns:repeat(4,1fr); }
+    html:not(.pv-ipad) .pvs-eg{ grid-template-columns:repeat(3,1fr); }
+    html:not(.pv-ipad) .pvs-sr-b{ width:220px; }
+    html:not(.pv-ipad) .pvs-hm-b{ width:180px; }
+    html:not(.pv-ipad) .pvs-ch{ margin-top:14px; border:1px solid #e2e7f0; border-radius:18px; }
+    /* Los ocho periodos en una sola fila, como en el escritorio (en el teléfono van 6 + 2). */
+    html:not(.pv-ipad) .pvs-seg{ flex-wrap:nowrap; }
+    html:not(.pv-ipad) .pvs-seg span{ flex:1 1 0; }
+
+    /* ── controles: franja propia bajo el portátil, sin degradado encima ── */
+    html:not(.pv-ipad) .pvs-ctrl{
+      max-width:880px; margin:0 auto; justify-content:center; align-items:center; background:none;
+      padding:0 40px calc(22px + env(safe-area-inset-bottom));
+    }
+    html:not(.pv-ipad) .pvs-back{ width:48px; height:48px; border-radius:15px; font-size:17px; }
+    html:not(.pv-ipad) .pvs-next{ height:48px; padding:0 34px; border-radius:15px; font-size:15.5px; }
+  }
+  @keyframes pvsRiseDesk{ from{ opacity:0; transform:translateY(26px) scale(.975) } to{ opacity:1; transform:none } }
 </style>
 
 <div class="pvs-ov" id="pvSlidesOv" role="dialog" aria-modal="true">
@@ -41780,9 +41954,26 @@ document.addEventListener('DOMContentLoaded', function(){
       ['aianalyst','Portiv IA','<path d="M21 14a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/>'],
       ['settings','Ajustes','<circle cx="12" cy="12" r="3"/><path d="M19.1 14.5a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1A2 2 0 1 1 4.1 17l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8L4.1 7A2 2 0 1 1 7 4.1l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1A2 2 0 1 1 19.9 7l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/>'],
     ];
+    // Barra superior de escritorio: sólo la muestra el CSS de escritorio (en el
+    // iPhone y el iPad va oculta). Las cinco pestañas de la barra real; Ajustes
+    // y Soporte van aparte, a la derecha, como en la app.
+    const _ic = p => `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+    const DTOP = `
+      <div class="pvs-dtop">
+        <span class="pvs-dt-brand">
+          <span class="pvs-dt-logo"><svg viewBox="0 0 48 48"><rect width="48" height="48" fill="#fff"/><g fill="#0b1c30"><rect x="11" y="28" width="5" height="9" rx="1.5"/><rect x="19" y="23" width="5" height="14" rx="1.5"/><rect x="27" y="26" width="5" height="11" rx="1.5"/><rect x="35" y="19" width="5" height="18" rx="1.5"/></g><polyline points="12,22 20,17 27,20 37,12" fill="none" stroke="#0b1c30" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="37.5" cy="11.5" r="2.6" fill="#0b1c30"/></svg></span>
+          <span class="pvs-dt-name">Portiv</span>
+        </span>
+        <span class="pvs-dt-nav">${NAV.slice(0,5).map(n=>`<span class="pvs-dt-i${n[0]===tab?' on':''}">${_ic(n[2])}${n[1]}</span>`).join('')}</span>
+        <span class="pvs-dt-r">
+          <span class="pvs-dt-b${tab==='settings'?' on':''}">${_ic(NAV[5][2])}Ajustes</span>
+          <span class="pvs-dt-b">${_ic('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.5"/><path d="M12 17h.01"/>')}Soporte</span>
+        </span>
+      </div>`;
     return `
     <div class="pvs-phone"><div class="pvs-screen">
       <div class="pvs-notch"></div>
+      ${DTOP}
       ${inner}
       <div class="pvs-bn">
         ${NAV.map(n=>`<div class="pvs-bn-i${n[0]===tab?' on':''}">
@@ -41793,8 +41984,9 @@ document.addEventListener('DOMContentLoaded', function(){
   }
 
   // Cabecera navy: barra de estado + topbar (iguales en toda la app) + cuerpo variable.
+  // pvs-navy-e = sin cuerpo: en escritorio queda sólo la curva bajo la barra.
   const _navy = body => `
-    <div class="pvs-navy">
+    <div class="pvs-navy${body.trim() ? '' : ' pvs-navy-e'}">
       <div class="pvs-status">
         <span>9:41</span>
         <span style="display:flex;align-items:center;gap:5px">
@@ -42383,6 +42575,26 @@ document.addEventListener('DOMContentLoaded', function(){
   let _i = 0, _done = null;
   const $ = id => document.getElementById(id);
 
+  // ── Escritorio: portátil con la app de escritorio dentro ──
+  // Misma condición que el bloque CSS de escritorio. El interior se maqueta a
+  // _DESK_W px lógicos y se escala (--pvs-z) al hueco real de la pantalla.
+  const _DESK_W = 900;
+  let _wasDesk = null;   // modo del último pintado (para el resize)
+  const _desk = () => {
+    try { return !document.documentElement.classList.contains('pv-ipad')
+                 && window.matchMedia('(min-width:900px) and (min-height:560px)').matches; }
+    catch(e){ return false; }
+  };
+  function _fitDesk(){
+    const scr = $('pvsStage') && $('pvsStage').querySelector('.pvs-screen');
+    if (!scr) return;
+    if (!_desk()){ scr.style.removeProperty('--pvs-z'); return; }
+    const ph = scr.parentElement, cs = getComputedStyle(ph);
+    // clientWidth no se ve afectado por el transform de la animación de entrada
+    const w = ph.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    if (w > 0) scr.style.setProperty('--pvs-z', (w / _DESK_W).toFixed(4));
+  }
+
   function _render(){
     const s = SLIDES[_i];
     $('pvsHead').innerHTML =
@@ -42396,6 +42608,8 @@ document.addEventListener('DOMContentLoaded', function(){
     bul.innerHTML = (s.bullets || []).map(b =>
       `<div class="pvs-b"><span class="pvs-b-d"></span><div><div class="pvs-b-t">${b[0]}</div><div class="pvs-b-s">${b[1]}</div></div></div>`).join('');
     $('pvsStage').innerHTML = _phone(s.screen, s.tab);
+    _fitDesk();   // antes de medir el recorrido del scroll
+    _wasDesk = _desk();
     // El cuerpo de la app se envuelve en .pvs-scroll: la animación lo baja y lo
     // sube sola, como si alguien estuviera usando la app.
     const app = $('pvsStage').querySelector('.pvs-app');
@@ -42419,6 +42633,14 @@ document.addEventListener('DOMContentLoaded', function(){
         ph.style.animation = anim;
         const alto = w.getBoundingClientRect().height;
         if (util > 0 && alto > 0) sc = Math.max(0, Math.round(alto - util));
+        // En escritorio el interior está escalado y el translate se aplica en px
+        // lógicos: se mide en px de layout (clientHeight/offsetHeight no ven
+        // transforms, ni el escalado ni el de la animación de entrada). La
+        // pantalla del portátil no sangra: el cuerpo acaba dentro del escenario.
+        if (_desk()){
+          const utilL = app.clientHeight - pt, altoL = w.offsetHeight;
+          if (utilL > 0 && altoL > 0) sc = Math.max(0, Math.round(altoL - utilL));
+        }
       } catch(e){}
       const largo = sc > 1200;
       w.className = 'pvs-scroll' + (largo ? ' long' : '');
@@ -42440,6 +42662,17 @@ document.addEventListener('DOMContentLoaded', function(){
     $('pvSlidesOv').classList.add('open');
     _render();
   };
+
+  // Al redimensionar la ventana (app de Mac, navegador) el portátil cambia de
+  // tamaño con el CSS; aquí sólo se reajusta la escala del interior. Si se cruza
+  // el umbral escritorio ↔ teléfono/iPad se vuelve a pintar la diapositiva para
+  // rehacer también la medida del scroll.
+  window.addEventListener('resize', ()=>{
+    if (!$('pvSlidesOv').classList.contains('open')) return;
+    const d = _desk();
+    if (_wasDesk !== null && d !== _wasDesk) _render(); else _fitDesk();
+    _wasDesk = d;
+  });
 
   $('pvsNext').onclick = ()=>{ if (_i < SLIDES.length-1){ _i++; _render(); } else _close(); };
   $('pvsBack').onclick = ()=>{ if (_i > 0){ _i--; _render(); } };
@@ -47504,6 +47737,65 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   html:not(.pv-ipad) body .navbar .brand,
   html:not(.pv-ipad) body .navbar .nav-bottom-links { display: flex !important; }
   html:not(.pv-ipad) body .navbar .nav-link { flex-direction: row !important; flex: 0 1 auto !important; }
+}
+/* Escritorio A TODO EL ANCHO (web y app de Mac; el iPad no entra).
+   Antes el contenido vivía en una columna centrada de 1320 px: en ventanas
+   anchas quedaban márgenes enormes a los lados. Ahora la barra superior, el
+   navy de cabecera y cada pestaña llegan a los bordes con un margen lateral
+   uniforme de 24–48 px (3vw). Sólo en monitores muy anchos (>1856 px) aparece
+   un tope de 1760 px de contenido, centrado.
+   Todo lo que ya usa --pvd-pad (barra, pestañas, bloques navy a sangre, chat)
+   se mueve solo; aquí se quitan además las columnas estrechas propias de
+   Portiv IA y Ajustes. html:not(.pv-ipad) empata con los :root de los tramos
+   v8 (0,1,1) y gana por ir después. */
+@media (min-width: 900px) and (min-height: 560px) {
+  html:not(.pv-ipad) { --pvd-pad: max(clamp(24px, 3vw, 48px), calc((100vw - 1760px) / 2)); }
+
+  /* Ajustes: las tarjetas y el título del navy, al ancho de la columna. */
+  html:not(.pv-ipad) body:not(.dark-theme) #tab-settings .set-wrap > :not(:first-child) {
+    max-width: none !important;
+    align-self: stretch !important;
+  }
+  html:not(.pv-ipad) body:not(.dark-theme) #tab-settings .set-wrap > div:first-child {
+    padding-left: var(--pvd-pad) !important;
+    padding-right: var(--pvd-pad) !important;
+  }
+  /* Portiv IA: el chat, los chips y la barra de entrada van a todo el ancho;
+     cada burbuja, con un tope de lectura de 900 px. */
+  html:not(.pv-ipad) #tab-aianalyst .ai-msg-bot,
+  html:not(.pv-ipad) #tab-aianalyst .ai-msg-user { max-width: min(82%, 900px); }
+}
+/* Watchlist VACÍA en escritorio (web y app de Mac, 900–1920).
+   La regla «filas en dos columnas» (#wlCards > div en rejilla) también cogía el
+   estado vacío, que es el único div hijo de #wlCards: el icono, la ayuda y el pie
+   caían a la izquierda y el título con las tarjetas a la derecha, todo pequeño.
+   Aquí vuelve a ser UNA columna centrada (icono, título, ayuda, tarjetas en fila,
+   pie) con tamaños de escritorio. div.wl2-empty empata en especificidad con esa
+   regla (1,2,3) y gana por ir después. La watchlist con elementos no se toca. */
+@media (min-width: 900px) and (min-height: 560px) {
+  html:not(.pv-ipad) body #wlCards > div.wl2-empty {
+    display: flex !important; flex-direction: column !important; align-items: center !important;
+    grid-template-columns: none !important; gap: 0 !important;
+    width: 100% !important; max-width: 1000px !important; margin: 0 auto !important;
+    padding: 36px 20px 28px !important; text-align: center !important;
+  }
+  html:not(.pv-ipad) body #wlCards .wl2-empty-icon { width: 112px !important; height: 112px !important; margin: 0 0 22px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-empty-icon svg { width: 52px !important; height: 52px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-empty-title { font-size: 28px !important; line-height: 1.2 !important; letter-spacing: -.4px !important; margin: 0 0 10px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-empty-desc { font-size: 16px !important; line-height: 1.6 !important; max-width: 520px !important; margin: 0 0 34px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-feature-cards {
+    display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 18px !important; width: 100% !important; max-width: 960px !important;
+  }
+  html:not(.pv-ipad) body #wlCards .wl2-feat { display: block !important; padding: 26px 24px !important; border-radius: 22px !important; text-align: left !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-feat-ico { width: 48px !important; height: 48px !important; border-radius: 14px !important; margin: 0 0 16px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-feat-ico svg { width: 22px !important; height: 22px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-feat-title { font-size: 17px !important; margin: 0 0 6px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-feat-desc { font-size: 15px !important; line-height: 1.55 !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-footer { width: 100% !important; max-width: 960px !important; margin-top: 28px !important; padding-top: 20px !important; }
+  html:not(.pv-ipad) body #wlCards .wl2-footer-left,
+  html:not(.pv-ipad) body #wlCards .wl2-footer-market,
+  html:not(.pv-ipad) body #wlCards .wl2-footer-link { font-size: 13px !important; }
 }
 /* ▲ v8-escritorio ▲ */
 </style>
