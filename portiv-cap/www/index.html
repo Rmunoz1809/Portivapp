@@ -6769,7 +6769,7 @@ window._pvAwaitIAP = function(totalMs){
            que la guideline exige que exista y sea accesible. El subtítulo lo escribe
            renderSettings() con el estado real. -->
       <button class="set-legal-item" id="setAiConsent" onclick="_pvAiConsentToggle()">
-        <span class="sl-txt"><b>Análisis con inteligencia artificial</b><i id="setAiConsentSub">Compartir datos de tu cartera con Anthropic (Claude).</i></span>
+        <span class="sl-txt"><b>Análisis con inteligencia artificial</b><i id="setAiConsentSub">Compartir datos de tu cartera con un proveedor de IA de terceros.</i></span>
         <span class="sl-arrow" aria-hidden="true"></span>
       </button>
       <button class="set-legal-item" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
@@ -7276,10 +7276,10 @@ async function renderSettings(){
     if (_ac && window._pvAiConsent) {
       const _v = window._pvAiConsent.get();
       _ac.textContent = _v === 'yes'
-        ? 'Permitido — compartes datos de tu cartera con Anthropic (Claude). Toca para revocarlo.'
+        ? 'Permitido — compartes datos de tu cartera con un proveedor de IA de terceros. Toca para revocarlo.'
         : (_v === 'no'
             ? 'Desactivado — no se comparte nada con la IA. Toca para permitirlo.'
-            : 'Se te pedirá permiso antes de compartir datos de tu cartera con Anthropic (Claude).');
+            : 'Se te pedirá permiso antes de compartir datos de tu cartera con un proveedor de IA de terceros.');
     }
   } catch(e){}
   const isDark = document.body.classList.contains('dark-theme');
@@ -9891,7 +9891,7 @@ const _PV_AI_CONSENT = {
         '<div style="font:800 19px/1.3 inherit;color:' + cTxt + ';margin-bottom:8px" id="pvAiConsentTitle">Análisis con inteligencia artificial</div>'
       + '<div style="font:500 14px/1.65 inherit;color:' + cTxt2 + ';margin-bottom:16px">'
       +   'Para generar los análisis, el chat y los resúmenes, Portiv envía datos de tu cartera a '
-      +   '<b style="color:' + cTxt + '">Anthropic (Claude)</b>, un proveedor de inteligencia artificial de terceros.'
+      +   '<b style="color:' + cTxt + '">un proveedor de inteligencia artificial de terceros</b>.'
       + '</div>'
       + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:12px">'
       +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ SE ENVÍA</div>'
@@ -40993,20 +40993,11 @@ document.addEventListener('DOMContentLoaded', function(){
       try{ if(typeof window._pvShowPaywall==='function'){ window._pvShowPaywall(); return; } }catch(e){}
       try{ window.snapConnect(); }catch(e){} // fallback si no hay paywall
     };
-    const _pqGoPaywall = ()=>{
-      const _muro = _pqMuro;
-      // El permiso de IA se pide AQUÍ: una sola vez, con las preguntas ya
-      // contestadas y antes del muro. Queda guardado y no se vuelve a mostrar —
-      // el gate perezoso de _aiFetch sigue existiendo sólo como red para quien
-      // nunca pasó por el cuestionario (cuentas viejas, demo).
-      try {
-        const c = window._pvAiConsent;
-        // ensure() y no _ask(): si otra parte de la app ya tiene un modal en vuelo,
-        // ensure() devuelve esa misma promesa en lugar de abrir un segundo.
-        if (c && c.get() == null) { c.ensure().then(_muro, _muro); return; }
-      } catch(e){}
-      _muro();
-    };
+    // El botón hace SU acción primero (el muro / conectar el broker), sin el permiso de
+    // IA por delante: ese modal tapaba el resultado y retrasaba lo que el usuario pidió.
+    // El permiso sale DESPUÉS, en el primer uso real de la IA, por el gate de _aiFetch
+    // — que sigue bloqueando cualquier envío de datos hasta que haya un sí (5.1.2(i)).
+    const _pqGoPaywall = ()=>{ _pqMuro(); };
     document.getElementById('pqFinish').onclick = _pqGoPaywall;
     // El muro sale SOLO al terminar las preguntas, no únicamente al pulsar el CTA: el
     // resultado queda pintado detrás y el precio se ve sin tener que buscarlo. El CTA
