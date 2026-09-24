@@ -39732,31 +39732,7 @@ document.addEventListener('DOMContentLoaded', function(){
       try {
         // Vincula la compra al usuario Supabase (si hay sesión) → atribución del webhook.
         try{ if(window.__pvUserId && window.__pvUserId!=='local' && iap.login) iap.login(window.__pvUserId); }catch(e){}
-        // Entrada con transición: un velo navy funde la app (~280 ms) y sobre él sube la hoja
-        // de RevenueCat. Sin esto, en iPad y en la app de Mac el paywall aparecía de golpe.
-        // Al volver (compra, cierre o error) el velo se desvanece.
-        _pvPayVeil(true);
-        setTimeout(function(){ _present2(iap); }, 280);
-      } catch(e){ _pvPayVeil(false); }
-    }
-    function _pvPayVeil(on){
-      try {
-        var v = document.getElementById('pvPayVeil');
-        if (!v) {
-          if (!on) return;
-          v = document.createElement('div'); v.id = 'pvPayVeil';
-          v.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#0b1c30;opacity:0;transition:opacity .28s ease;pointer-events:none';
-          document.body.appendChild(v); void v.offsetWidth;
-        }
-        v.style.opacity = on ? '1' : '0';
-        v.style.pointerEvents = on ? 'auto' : 'none';
-        if (!on) setTimeout(function(){ if (v.style.opacity === '0' && v.parentNode) v.parentNode.removeChild(v); }, 320);
-      } catch(e){}
-    }
-    function _present2(iap){
-      try {
         iap.presentPaywall().then(function(res){
-          _pvPayVeil(false);
           if (res && (res.purchased || res.restored || res.isPro)){
             // Pago OK → pantalla "Conectando con SnapTrade" (llena) para que NUNCA quede la pantalla
             // vacía. Espera a que la hoja del paywall termine de cerrarse ANTES de abrir el navegador
@@ -39774,8 +39750,8 @@ document.addEventListener('DOMContentLoaded', function(){
           // el paywall de RESPALDO: StoreKit directo vía Purchases, sin RevenueCatUI.
           else if (res && (res.error || res.notPresented)) { _pvFallbackPaywall(iap, res); }
           else if (window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} }
-        }).catch(function(e){ _pvPayVeil(false); _pvFallbackPaywall(iap, { errorMessage: e && e.message }); });
-      } catch(e){ _pvPayVeil(false); }
+        }).catch(function(e){ _pvFallbackPaywall(iap, { errorMessage: e && e.message }); });
+      } catch(e){}
     }
 
     // Paywall de RESPALDO nativo. Sólo se abre si RevenueCatUI falla. Usa el mismo
