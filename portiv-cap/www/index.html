@@ -10112,7 +10112,24 @@ window._pvFitLockCards = _pvFitLockCards;
   // hueco de cada candado vivo, en vez de apostar por un temporizador.
   try {
     if (typeof MutationObserver === 'function'){
-      new MutationObserver(pase).observe(document.documentElement, { childList: true, subtree: true });
+      // Sólo cuando lo que entra ES un candado, lo CONTIENE o cae DENTRO de uno. Antes
+      // cualquier mutación del documento —cada tick de precio, cada re-render de tabla—
+      // disparaba la re-medición completa (getBoundingClientRect + scrollHeight por
+      // candado = layouts forzados) y, en cuentas con candados, eso eran tirones
+      // periódicos. El cambio de TAMAÑO del hueco lo sigue cubriendo el ResizeObserver.
+      var _tocaCandado = function(n){
+        if (!n || n.nodeType !== 1) return false;
+        if (n.classList.contains('pv-lock-ov')) return true;
+        if (n.firstElementChild && n.querySelector('.pv-lock-ov')) return true;
+        var pa = n.parentElement;
+        return !!(pa && pa.closest && pa.closest('.pv-lock-ov'));
+      };
+      new MutationObserver(function(muts){
+        for (var i = 0; i < muts.length; i++) {
+          var ad = muts[i].addedNodes;
+          for (var j = 0; j < ad.length; j++) { if (_tocaCandado(ad[j])) { pase(); return; } }
+        }
+      }).observe(document.documentElement, { childList: true, subtree: true });
     }
   } catch(e){}
   try {
@@ -19130,8 +19147,17 @@ var PV_MOTION = {
   // así que el mismo escalonado que en el móvil se lee como una página que
   // tarda en cargar: se ve medio lienzo vacío mientras la cola entra. Mismo
   // gesto, más apretado.
-  wide: { dur: 460, step: 55, maxStep: 3 }
+  // Escritorio (2026-09-26): 460 ms + 55 ms de escalonado dejaban la pestaña ~0,6 s
+  // "llegando". Con ratón y pantalla grande se lee como lentitud, no como suavidad:
+  // ahora entra en ~0,3 s y con menos recorrido — mismo gesto, más ágil.
+  wide: { dur: 280, step: 30, maxStep: 3, dist: 8, distHead: 6 }
 };
+
+/* ¿Interfaz ancha (escritorio / ventana de Mac)? La misma frontera que el CSS
+   (@media min-width:900px = barra lateral). Se consulta en el momento, no se cachea:
+   la ventana del Mac se puede estrechar. */
+function _pvWideUI(){ try { return window.innerWidth >= 900; } catch(e){ return false; } }
+if (typeof window !== 'undefined') window._pvWideUI = _pvWideUI;
 
 function _pvReducedMotion(){
   try { return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches); }
@@ -19170,7 +19196,7 @@ function _pvTabEnter(pg){
   var M = PV_MOTION;
   if (window.innerWidth >= 900) {
     M = { dur: M.wide.dur, step: M.wide.step, maxStep: M.wide.maxStep,
-          dist: M.dist, distHead: M.distHead, ease: M.ease };
+          dist: M.wide.dist || M.dist, distHead: M.wide.distHead || M.distHead, ease: M.ease };
   }
 
   /* Ancla navy de cada pestaña. Watchlist y Ajustes no tienen clase propia
@@ -21454,12 +21480,15 @@ function initPerfChart() {
       // Sin puntos estáticos sobre la línea en ningún período (incl. 1D "hoy").
       // El dot de hover sigue activo vía pointHoverRadius del dataset.
       elements: { point: { radius: 0, hitRadius: 8 } },
-      animation: { duration: 700, easing: 'easeInOutCubic' },
+      // Escritorio: el lienzo es 3-4 veces más grande que en el móvil y Chart.js lo repinta
+      // entero en cada fotograma del hilo principal; 700 ms de dibujo inicial competían con
+      // el resto del arranque. En ≥900px, casi la mitad.
+      animation: { duration: _pvWideUI() ? 380 : 700, easing: 'easeInOutCubic' },
       transitions: {
         active: { animation: { duration: 0 } },
         // Transición corta y "clean" al cambiar de período (1D/1W/1M/…): ni el salto brusco
         // de 'active' (0ms) ni los 700ms del dibujo inicial — un fundido/deslizamiento breve.
-        periodChange: { animation: { duration: 380, easing: 'easeOutQuad' } },
+        periodChange: { animation: { duration: _pvWideUI() ? 260 : 380, easing: 'easeOutQuad' } },
       },
       hover: { mode: 'dayIndex', intersect: false },
       interaction: { mode: 'dayIndex', intersect: false, axis: 'x' },
@@ -21883,7 +21912,7 @@ function _pvRunMorph(snap, period) {
 
   const step = (now) => {
     _pvZoomRAF = null;
-    const t = Math.min(1, Math.max(0, ((now || Date.now()) - t0) / _PV_MORPH_MS));
+    const t = Math.min(1, Math.max(0, ((now || Date.now()) - t0) / (_pvWideUI() ? 340 : _PV_MORPH_MS)));
     const e = 1 - Math.pow(1 - t, 3);                          // ease-out, sin rebote
     const vals = new Array(N);
     for (let i = 0; i < N; i++) vals[i] = +(fromN[i] + (toN[i] - fromN[i]) * e).toFixed(2);
@@ -30290,10 +30319,10 @@ function _drawResearchChart(chartData, isPos) {
         chart.options.layout = { padding: { top: 6, bottom: 2, left: 0, right: 4 } };
       } catch(e){} },
       elements: { point: { radius: 0, hitRadius: 8 } },
-      animation:{duration:700,easing:'easeInOutCubic'},
+      animation:{duration:_pvWideUI()?380:700,easing:'easeInOutCubic'},
       transitions:{
         active:{animation:{duration:0}},
-        periodChange:{animation:{duration:380,easing:'easeOutQuad'}},
+        periodChange:{animation:{duration:_pvWideUI()?260:380,easing:'easeOutQuad'}},
       },
       hover:{mode:'index',intersect:false},
       interaction:{mode:'index',intersect:false,axis:'x'},
@@ -37525,6 +37554,9 @@ if (document.readyState === 'loading') {
      existir: si no se ve, no bloquea. `display` pasa a ser solo limpieza cosmética. */
   #authOverlay[data-visible="0"]{opacity:0;pointer-events:none;}
   #authOverlay[data-visible="1"]{opacity:1;pointer-events:auto;}
+  /* Escritorio: la cortina de "Cargando…" se retira en 0,2 s en vez de 0,34 s — la app
+     aparece antes y no se superpone tanto con la entrada de la pestaña. */
+  @media (min-width:900px){ #authOverlay{transition-duration:.2s;} }
   #authCard{animation:pvCardIn .45s cubic-bezier(.2,.7,.2,1) both;}
   #authOverlay .pv-form{animation:pvFormIn .3s cubic-bezier(.2,.7,.2,1) both;}
 
