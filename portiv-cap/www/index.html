@@ -15826,6 +15826,9 @@ function renderDonut(T) {
   const ctx = $('donutChart').getContext('2d');
   donutChart = new Chart(ctx, {
     type:'doughnut',
+    // Blindaje Retina (escala en cada dibujo + repintado al volver a verse): la dona también
+    // puede quedarse encogida a 1/dpr en WebKit.
+    plugins: (typeof portivRetinaGuard !== 'undefined') ? [portivRetinaGuard] : [],
     data:{ labels:HOLDINGS.map(h=>h.ticker), datasets:[{ data: equal, backgroundColor:CHART_COLORS, borderColor: document.body.classList.contains('dark-theme') ? '#0b111c' : '#FFFFFF', borderWidth:3 }] },
     options:{ cutout:'68%', plugins:{ legend:{display:false}, tooltip:{enabled:false} }, animation:{duration:300} }
   });
@@ -21274,15 +21277,6 @@ var portivEndDot = {
   }
 };
 
-// ── Blindaje Retina ──────────────────────────────────────────────────────────
-// iOS puede descartar el búfer de un <canvas> (presión de memoria, volver de
-// segundo plano, restaurar desde bfcache). Al recuperarlo el bitmap conserva su
-// tamaño en píxeles de dispositivo, pero el CONTEXTO vuelve a la matriz
-// identidad — y Chart.js sólo aplica setTransform cuando CAMBIA el tamaño. Con
-// devicePixelRatio 3 el siguiente repintado salía a un tercio, encogido arriba a
-// la izquierda y con el resto de la tarjeta en blanco. Aquí se comprueba la
-// escala real antes de cada dibujo y se restituye si se perdió. Medido: sin esto
-// el dibujo ocupa 33.1% x 32.6% del bitmap; con esto, 99.4% x 98.2%.
 // ── Degradados en el PRIMER frame ────────────────────────────────────────────
 // borderColor/backgroundColor son funciones scriptables que necesitan el chartArea real.
 // En el primer update Chart.js las evalúa ANTES de maquetar: sin área devuelven el color
@@ -21306,18 +21300,133 @@ var portivGradientBind = {
   }
 };
 
+// ── Blindaje Retina ──────────────────────────────────────────────────────────
+// Síntoma (web, iPhone, iPad y Mac): la gráfica sale a 1/dpr —a la mitad en Retina—,
+// encogida arriba a la izquierda y con el resto de la tarjeta en blanco. El lienzo conserva
+// su tamaño en píxeles de dispositivo pero el dibujo va sin la escala Retina, y Chart.js
+// sólo llama a setTransform cuando CAMBIA el tamaño: el fallo se queda hasta recargar.
+// La primera versión preguntaba a getTransform() y sólo corregía si la escala difería. En
+// WebKit (Safari y el WKWebView de la app de iPhone, iPad y Mac) ese valor es el estado que
+// el contexto guarda en JS; cuando el motor recrea el búfer del lienzo en el proceso GPU
+// —volver de segundo plano, presión de memoria, ventana tapada en el Mac— ese estado sigue
+// diciendo "escala 2" mientras el dibujo real va a escala 1, así que la guarda no veía nada
+// que corregir y el fallo volvía. Ahora son tres capas y ninguna se fía de getTransform():
+//  1. Antes de CADA dibujo se re-aplica la escala sin preguntar. setTransform pasa por
+//     resetTransform + transform, que siempre llegan al contexto real: re-sincroniza ambos.
+//  2. Después de dibujar se mira el resultado en PÍXELES, lo único que no miente: en las
+//     gráficas de línea el último tramo y el punto final llegan al borde derecho del área.
+//     Si la tinta acaba donde acabaría a escala 1, se tira el búfer (tamaño 0) y Chart.js lo
+//     recrea con tamaño y escala correctos y repinta. Como mucho 2 veces por episodio.
+//  3. Al volver a verse (pestaña, ventana, app en primer plano, contexto restaurado) se
+//     repinta y se verifica: un frame roto no se queda en pantalla esperando al próximo tick.
+// Aplica a las tres gráficas de Chart.js: portafolio, Análisis y la dona (ésta sin la capa 2).
+
+// ¿El dibujo quedó encogido a 1/dpr? true/false, o null si ahora no se puede juzgar
+// (lienzo oculto, serie de menos de 2 puntos).
+function _pvChartShrunk(chart) {
+  const cv = chart.canvas, a = chart.chartArea, c = chart.ctx;
+  if (!cv || !a || !c || !c.getImageData) return null;
+  if (!chart.config || chart.config.type !== 'line') return false;
+  const r = chart.currentDevicePixelRatio || 1;
+  if (r < 1.25) return false;                          // 1x: perder la escala no cambia nada
+  if (cv.offsetParent === null || !(cv.width > 0) || !(cv.height > 0)) return null;
+  const s0 = chart.data && chart.data.datasets && chart.data.datasets[0];
+  if (!s0 || !Array.isArray(s0.data) || s0.data.length < 2) return null;
+  const W = cv.width, H = cv.height;
+  // ¿Hay tinta en la franja de 24 px que acaba en el borde derecho del área, a escala k?
+  const tinta = (k) => {
+    const x0 = Math.max(0, Math.floor((a.right - 24) * k));
+    const x1 = Math.min(W, Math.ceil((a.right - 1) * k));
+    if (x1 - x0 < 1) return false;
+    const d = c.getImageData(x0, 0, x1 - x0, H).data;
+    for (let i = 3; i < d.length; i += 8) if (d[i] > 8) return true;
+    return false;
+  };
+  if (tinta(r)) return false;                          // llega al borde: escala correcta
+  return tinta(1);                                     // tinta justo donde acaba a escala 1
+}
+
+// Búfer nuevo: con el lienzo a tamaño 0 el motor suelta el bitmap y su contexto, y
+// currentDevicePixelRatio=0 obliga a retinaScale de Chart.js a re-aplicar tamaño y escala.
+function _pvHealChart(chart) {
+  const cv = chart && chart.canvas;
+  if (!cv) return;
+  const now = Date.now();
+  if (now - (chart._pvHealT || 0) > 30000) chart._pvHealN = 0;
+  if ((chart._pvHealN || 0) >= 2) return;              // nunca en bucle
+  chart._pvHealN = (chart._pvHealN || 0) + 1;
+  chart._pvHealT = now;
+  cv.width = 0; cv.height = 0;
+  chart.currentDevicePixelRatio = 0;
+  chart._pvCheckArmed = true;                          // y se re-verifica tras ese repintado
+  chart.resize();
+  chart.update('none');
+}
+
+// Repinta (y deja armada la verificación de) todas las gráficas vivas. Las ocultas se
+// repintan al volver a verse, vía su IntersectionObserver.
+var _pvLiveCharts = new Set();
+function _pvRepaintCharts() {
+  _pvLiveCharts.forEach(function (ch) {
+    try {
+      ch._pvCheckArmed = true;
+      if (ch.canvas && ch.canvas.offsetParent !== null) ch.render();
+    } catch (e) {}
+  });
+}
+window.addEventListener('pageshow', _pvRepaintCharts, { passive: true });
+window.addEventListener('focus', _pvRepaintCharts, { passive: true });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) _pvRepaintCharts(); }, { passive: true });
+
 var portivRetinaGuard = {
   id: 'portivRetinaGuard',
+  afterInit(chart) {
+    try {
+      _pvLiveCharts.add(chart);
+      const cv = chart.canvas;
+      // Pestaña que vuelve a mostrarse con el mismo tamaño: Chart.js no repinta (su
+      // ResizeObserver no ve cambio) y se quedaría el bitmap viejo, roto o vacío.
+      if (typeof IntersectionObserver === 'function') {
+        chart._pvIO = new IntersectionObserver(function (ents) {
+          for (const e of ents) {
+            if (e.isIntersecting && chart.canvas) { chart._pvCheckArmed = true; try { chart.render(); } catch (_) {} }
+          }
+        });
+        chart._pvIO.observe(cv);
+      }
+      // Contexto 2D perdido y restaurado (Chrome lo notifica): bitmap en blanco y estado de
+      // fábrica → mismo arreglo que el búfer nuevo.
+      chart._pvOnRestore = function () {
+        try { chart.currentDevicePixelRatio = 0; chart._pvCheckArmed = true; chart.resize(); chart.update('none'); } catch (_) {}
+      };
+      cv.addEventListener('contextrestored', chart._pvOnRestore);
+    } catch (e) {}
+  },
   beforeDraw(chart) {
     try {
       const c = chart.ctx;
-      if (!c || !c.getTransform) return;
+      if (!c) return;
       const r = chart.currentDevicePixelRatio || window.devicePixelRatio || 1;
-      const t = c.getTransform();
-      if (Math.abs(t.a - r) > 0.01 || Math.abs(t.d - r) > 0.01) {
-        c.setTransform(r, 0, 0, r, 0, 0);
-      }
+      c.setTransform(r, 0, 0, r, 0, 0);
     } catch (e) {}
+  },
+  // Tras cada dibujo completo. Verificar lee píxeles (una copia GPU→CPU): se hace cuando algo
+  // la arma (creación, volver a verse, ventana, heal) y si no, como mucho cada 15 s.
+  afterRender(chart) {
+    const now = Date.now();
+    if (!chart._pvCheckArmed && now - (chart._pvCheckT || 0) < 15000) return;
+    let roto = null;
+    try { roto = _pvChartShrunk(chart); } catch (e) { roto = false; }
+    if (roto === null) return;                         // no se puede juzgar aún: sigue armada
+    chart._pvCheckArmed = false;
+    chart._pvCheckT = now;
+    if (roto) setTimeout(function () { try { _pvHealChart(chart); } catch (e) {} }, 0);
+  },
+  beforeDestroy(chart) {
+    try { if (chart.canvas && chart._pvOnRestore) chart.canvas.removeEventListener('contextrestored', chart._pvOnRestore); } catch (e) {}
+    try { if (chart._pvIO) chart._pvIO.disconnect(); } catch (e) {}
+    chart._pvIO = null;
+    _pvLiveCharts.delete(chart);
   }
 };
 
@@ -21589,19 +21698,15 @@ function initPerfChart() {
           perfChart.resize(); // re-evalúa _PERF_MOB() en onResize; repinta sin regenerar datos
         }
       } catch(e){}
+      // Cambio de pantalla/escala (ventana del Mac entre monitores, rotación): repintar y
+      // verificar con píxeles todas las gráficas (ver Blindaje Retina).
+      try { _pvRepaintCharts(); } catch(e){}
     }, 160);
   }
   window.addEventListener('resize', _pvOnViewportChange, { passive: true });
   window.addEventListener('orientationchange', _pvOnViewportChange, { passive: true });
-  // El búfer del canvas se pierde al volver de segundo plano o de bfcache; el frame roto
-  // se queda en pantalla hasta que algo repinta. Al recuperar visibilidad se fuerza un
-  // repintado: portivRetinaGuard restituye la escala en ese mismo dibujo.
-  function _pvRepaintCharts(){
-    try { if (perfChart && perfChart.canvas && perfChart.canvas.offsetParent !== null) perfChart.render(); } catch(e){}
-    try { if (researchChartInst && researchChartInst.canvas && researchChartInst.canvas.offsetParent !== null) researchChartInst.render(); } catch(e){}
-  }
-  window.addEventListener('pageshow', _pvRepaintCharts, { passive: true });
-  document.addEventListener('visibilitychange', function(){ if (!document.hidden) _pvRepaintCharts(); }, { passive: true });
+  // Volver de segundo plano / bfcache / ventana tapada: lo cubre _pvRepaintCharts (Blindaje
+  // Retina), que se engancha a pageshow, focus y visibilitychange para TODAS las gráficas.
 })();
 
 // ─── ZOOM CINEMÁTICO ENTRE PERÍODOS ─────────────────────────────────────────────
