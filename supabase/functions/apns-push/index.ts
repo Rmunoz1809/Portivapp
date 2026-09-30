@@ -9,7 +9,7 @@
 //                                PUSH_CRON_SECRET="…"
 // ═══════════════════════════════════════════════════════════════════════════
 import { enviarPush } from "../_shared/apns.ts";
-import { admin, autorizado, borrarToken } from "../_shared/push-common.ts";
+import { admin, autorizado, borrarToken, enviarConFallback } from "../_shared/push-common.ts";
 
 Deno.serve(async (req) => {
   if (!await autorizado(req)) return new Response("forbidden", { status: 403 });
@@ -21,16 +21,30 @@ Deno.serve(async (req) => {
   const deeplink = String(body?.deeplink ?? "portiv://home");
   if (!titulo || !cuerpo) return json({ error: "titulo y cuerpo son obligatorios" }, 400);
 
-  // Destino: un token explícito, o todos los de un usuario.
+  // Destino: un token explícito, todos los de un usuario, o TODOS los dispositivos
+  // (`todos: true`, p. ej. el aviso de versión nueva). `dry_run: true` sólo cuenta.
   let filas: { token: string; environment: "sandbox" | "production" }[] = [];
-  if (body?.token) {
+  if (body?.todos === true) {
+    const { data } = await admin.from("device_tokens").select("token,environment");
+    filas = (data ?? []) as typeof filas;
+    if (body?.dry_run === true) return json({ destinatarios: filas.length, titulo, cuerpo, deeplink });
+    let enviados = 0, fallidos = 0;
+    // Lotes de 10 en paralelo: APNs aguanta mucho más, pero así un fallo no se lleva todo.
+    for (let i = 0; i < filas.length; i += 10) {
+      await Promise.all(filas.slice(i, i + 10).map(async (f) => {
+        const r = await enviarConFallback({ token: f.token, environment: f.environment, titulo, cuerpo, deeplink });
+        if (r.ok) enviados++; else { fallidos++; if (r.borrarToken) await borrarToken(f.token, r.reason); }
+      }));
+    }
+    return json({ destinatarios: filas.length, enviados, fallidos });
+  } else if (body?.token) {
     filas = [{ token: String(body.token), environment: body.environment === "production" ? "production" : "sandbox" }];
   } else if (body?.user_id) {
     const { data } = await admin.from("device_tokens")
       .select("token,environment").eq("user_id", String(body.user_id));
     filas = (data ?? []) as typeof filas;
   } else {
-    return json({ error: "hace falta token o user_id" }, 400);
+    return json({ error: "hace falta token, user_id o todos" }, 400);
   }
   if (!filas.length) return json({ error: "sin destinatarios" }, 404);
 
