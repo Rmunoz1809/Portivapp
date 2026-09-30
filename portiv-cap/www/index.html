@@ -1035,6 +1035,9 @@ window._ensureChartJs = (function(){
   .nm-sent-badge.su { background:rgba(206,164,92,.16);border-color:rgba(206,164,92,.38);color:#e7cd9a; }
   .nm-sent-badge.su::before { background:#cea45c;box-shadow:0 0 0 3px rgba(206,164,92,.25); }
   .nm-byline { font-size:12.5px;color:rgba(255,255,255,.62);font-weight:500; }
+  #newsModal .nm-photo { margin: 0 0 22px; }
+  #newsModal .nm-photo img { width: 100%; max-height: 420px; aspect-ratio: 16/9; object-fit: cover; border-radius: 16px; display: block; background: #e9edf3; }
+  #newsModal .nm-photo figcaption { font-size: 11px; color: #6b7280; margin-top: 6px; }
   .nm-headline { font-size:29px;font-weight:800;line-height:1.2;letter-spacing:-.03em;color:#fff;margin:0;text-wrap:balance; }
   @media(max-width:700px){ .nm-headline{font-size:24px;} }
   /* ── cuerpo ── */
@@ -2462,6 +2465,8 @@ window._ensureChartJs = (function(){
   }
   .sn-card:hover { box-shadow: 0 16px 40px -10px rgba(11,28,48,0.10); border-color: #cfd6e4; }
   .sn-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sn-card-thumb { aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; background: var(--st-surface-highest, #e9edf3); }
+  .sn-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .sn-card-ticker {
     background: var(--st-primary); color: #fff;
     font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
@@ -16477,6 +16482,20 @@ function _newsImgCandidates(n) {
   return [];
 }
 
+// Descarta URLs que no son foto del artículo: logo de Yahoo (yimg.com), logos/sprites/svg
+// genéricos y miniaturas diminutas (≤99px en la URL).
+function _newsImgJunk(u){
+  if (!u || !/^https?:\/\//.test(u)) return true;
+  if (/s\.yimg\.com|yimg\.com/i.test(u)) return true;
+  if (/placeholder|sprite|logo\.svg|\/logo\.|\.svg(\?|$)/i.test(u)) return true;
+  if (/[_\-x](\d{1,2}|[1-9]\d)x(\d{1,2}|[1-9]\d)[_\-\.]/i.test(u)) return true;
+  return false;
+}
+// Foto real de la noticia (Finnhub) lista para <img>, o '' si no hay ninguna utilizable.
+function _newsImgReal(n){
+  return (n ? _newsImgCandidates(n) : []).find(u => !_newsImgJunk(u)) || '';
+}
+
 // Enlace a la noticia original. Si la fuente entregó una URL real (Finnhub/Yahoo/
 // Reuters/etc.) se usa directamente; si no, se construye una búsqueda en Google
 // News del titular + fuente para llegar al artículo original.
@@ -16685,6 +16704,10 @@ function openNewsModal(idx, src) {
   });
   if (!bodyHtml.includes('nmAiInline')) bodyHtml += _aiAnchor;
   if (!bodyHtml) bodyHtml = _aiAnchor + '<p>Información no disponible para esta noticia.</p>';
+  // Foto de la noticia (Finnhub) arriba del texto, dentro de la tarjeta: en móvil el modal
+  // es una rejilla con filas fijas y un bloque suelto no tendría fila. Si no carga, se quita.
+  const _photo = _newsImgReal(n);
+  if (_photo) bodyHtml = `<figure class="nm-photo"><img src="${pvEsc(_photo)}" alt="" decoding="async" referrerpolicy="no-referrer" onerror="this.parentNode.remove()">${rawSrc ? `<figcaption>Imagen: ${pvEsc(rawSrc)}</figcaption>` : ''}</figure>` + bodyHtml;
   html('nmText', bodyHtml);
 
   // ── Enlace original: OCULTO (a petición del usuario) ─────────────────────────
@@ -18342,6 +18365,7 @@ function rebuildNewsFromHoldings() {
         impact: n.impact || h.ticker,
         ext:    n.ext || '',
         link:   n.link || '',
+        img:    n.img || n.image || '',
       });
     });
   });
@@ -18409,7 +18433,9 @@ function _snCard(n, idx) {
   // "2h"/"3d" → relativo (añade "ago"); "Hoy"/"24 jul" → tal cual. Sin fecha se deja VACÍO:
   // antes ponía "Recent", que afirmaba frescura sobre noticias que podían ser de hace semanas.
   const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : '';
+  const _thumb = _newsImgReal(n);
   return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
+    ${_thumb ? `<div class="sn-card-thumb"><img src="${pvEsc(_thumb)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"></div>` : ''}
     <div class="sn-card-top">
       <span class="sn-card-time">${pvEsc(timeAgo)}</span>
     </div>
@@ -18494,14 +18520,7 @@ function _snSetFeatured(n, idx) {
     // - yimg.com → CDN de Yahoo Finance que sirve su propio logo/thumbnail de marca
     // - dimensiones pequeñas en la URL (logos ≤ 200px)
     // - patrones genéricos de logo/placeholder/sprite
-    const _junk = u => {
-      if (!u || !/^https?:\/\//.test(u)) return true;
-      if (/s\.yimg\.com|yimg\.com/i.test(u)) return true;           // logo Yahoo Finance
-      if (/placeholder|sprite|logo\.svg|\/logo\.|\.svg(\?|$)/i.test(u)) return true;
-      if (/[_\-x](\d{1,2}|[1-9]\d)x(\d{1,2}|[1-9]\d)[_\-\.]/i.test(u)) return true; // tiny ≤99px
-      return false;
-    };
-    const real = _newsImgCandidates(n).filter(u => !_junk(u));
+    const real = _newsImgCandidates(n).filter(u => !_newsImgJunk(u));
     fimg.style.display = 'block';
     // Cadena: imagen real del artículo (no-Yahoo) → placeholder local data-URI (SIEMPRE carga).
     fimg.onerror = function(){ this.onerror = null; this.src = pro; };
@@ -49092,8 +49111,10 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
 
 /* Texto de la noticia. El primer párrafo es la entradilla, SIN la línea verde. */
 #newsModal #nmText p { margin: 0 0 18px; }
-#newsModal #nmText p:first-child { padding: 0; border-left: 0; }
+#newsModal #nmText p:first-child,
+#newsModal #nmText > .nm-photo + p { padding: 0; border-left: 0; }
 #newsModal #nmText > p:first-child,
+#newsModal #nmText > .nm-photo + p,
 #newsModal #nmText > .nm-ev-sec-lbl + p {
   margin: 0 0 20px !important;
   font-size: var(--nmx-fs-lead) !important;
