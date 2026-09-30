@@ -49142,5 +49142,93 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   };
 })();
 </script>
+<script>
+// ─── Actualización obligatoria (sólo app nativa: iOS y Mac Catalyst) ─────────────────────
+// Lee https://portivapp.com/app-version.json ({ ios:{min,build?}, mac:{min,build?}, appStoreId })
+// y compara con la versión instalada (App.getInfo → CFBundleShortVersionString + build). Si la
+// instalada es menor, tapa la app con una pantalla sin salida que manda a la App Store.
+// Para forzar una versión nueva: publicarla en Apple y DESPUÉS subir "min" en app-version.json
+// (push a main). Web nunca se bloquea (siempre sirve la última). Falla ABIERTO: sin red, JSON
+// roto o plugin ausente → no bloquea. Se re-comprueba al volver a primer plano.
+// Ojo: sólo funciona desde la primera build que trae este bloque (1.0.5 / Mac 1.0 build 34+);
+// las builds anteriores no lo tienen y no se pueden bloquear desde aquí.
+(function(){
+  var C = window.Capacitor;
+  if (!(C && C.isNativePlatform && C.isNativePlatform())) return;
+  var URLS = ['https://portivapp.com/app-version.json',
+              'https://raw.githubusercontent.com/Rmunoz1809/Portivapp/main/app-version.json'];
+  // Mac Catalyst reporta plataforma 'ios'; se distingue por UA de Mac sin pantalla táctil
+  // (el iPad en modo escritorio también dice "Macintosh", pero tiene maxTouchPoints > 0).
+  var ES_MAC = /Macintosh/.test(navigator.userAgent || '') && !(navigator.maxTouchPoints > 0);
+
+  // "1.0.3(19)" → [1,0,3]; compara por segmentos numéricos.
+  function _nums(v){ return String(v || '').split('(')[0].split('.').map(function(x){ return parseInt(x, 10) || 0; }); }
+  function _cmp(a, b){
+    var x = _nums(a), y = _nums(b), n = Math.max(x.length, y.length);
+    for (var i = 0; i < n; i++){ var d = (x[i] || 0) - (y[i] || 0); if (d) return d < 0 ? -1 : 1; }
+    return 0;
+  }
+  function _esVieja(info, req){
+    if (!req || !req.min) return false;
+    var c = _cmp(info.version, req.min);
+    if (c) return c < 0;
+    return req.build != null && (parseInt(info.build, 10) || 0) < parseInt(req.build, 10);
+  }
+
+  function _abrirTienda(id){
+    var https = 'https://apps.apple.com/app/id' + id;
+    var nativo = (ES_MAC ? 'macappstore' : 'itms-apps') + '://apps.apple.com/app/id' + id;
+    var P = C.Plugins || {};
+    try { if (P.App && typeof P.App.openUrl === 'function') { P.App.openUrl({ url: nativo }); return; } } catch(e){}
+    try { if (P.Browser && typeof P.Browser.open === 'function') { P.Browser.open({ url: https }); return; } } catch(e){}
+    try { window.location.href = nativo; } catch(e){}
+  }
+
+  function _bloquear(id){
+    if (document.getElementById('pvForceUpdate')) return;
+    var en = window.__LANG === 'en';
+    var d = document.createElement('div');
+    d.id = 'pvForceUpdate';
+    d.setAttribute('role', 'alertdialog');
+    d.setAttribute('aria-modal', 'true');
+    d.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;'
+      + 'align-items:center;justify-content:center;gap:16px;padding:32px 24px;text-align:center;'
+      + 'background:var(--bg,#f8f9ff);color:var(--text,#0b1c30);font-family:inherit;';
+    d.innerHTML = '<img src="icon.png" alt="" style="width:84px;height:84px;border-radius:20px">'
+      + '<div style="font-size:22px;font-weight:700">' + (en ? 'Update Portiv' : 'Actualiza Portiv') + '</div>'
+      + '<div style="max-width:320px;font-size:15px;line-height:1.45;opacity:.75">'
+      + (en ? 'A new version of Portiv is available. Update it to keep using the app.'
+            : 'Hay una versión nueva de Portiv. Actualízala para seguir usando la app.') + '</div>'
+      + '<button type="button" style="margin-top:8px;padding:14px 28px;border:0;border-radius:14px;'
+      + 'font-size:16px;font-weight:600;background:var(--green-btn,#04162c);color:#fff;cursor:pointer">'
+      + (en ? 'Update' : 'Actualizar') + '</button>';
+    d.querySelector('button').addEventListener('click', function(){ _abrirTienda(id); });
+    (document.body || document.documentElement).appendChild(d);
+  }
+
+  function _pedir(i){
+    if (i >= URLS.length) return Promise.reject();
+    return fetch(URLS[i] + '?t=' + Date.now(), { cache: 'no-store' })
+      .then(function(r){ if (!r.ok) throw 0; return r.json(); })
+      .catch(function(){ return _pedir(i + 1); });
+  }
+
+  var _enCurso = false;
+  function _comprobar(){
+    var A = C.Plugins && C.Plugins.App;
+    if (_enCurso || !A || typeof A.getInfo !== 'function') return;
+    _enCurso = true;
+    Promise.all([A.getInfo(), _pedir(0)]).then(function(r){
+      var info = r[0] || {}, cfg = r[1] || {};
+      if (_esVieja(info, ES_MAC ? cfg.mac : cfg.ios)) _bloquear(cfg.appStoreId || '6789933095');
+    }).catch(function(){}).then(function(){ _enCurso = false; });
+  }
+
+  _comprobar();
+  try {
+    C.Plugins.App.addListener('appStateChange', function(st){ if (st && st.isActive) _comprobar(); });
+  } catch(e){}
+})();
+</script>
 </body>
 </html>
