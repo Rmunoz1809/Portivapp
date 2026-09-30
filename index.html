@@ -19605,9 +19605,23 @@ const PORTIV_CHART = {
       if(series.length===1){
         series.unshift({time:'09:30',date:_sd,value:series[0].value});
       }
+      // Sin un solo bucket real de hoy la serie es sólo ancla→en vivo (o plana): es PROVISIONAL.
+      // Si hoy ya se dibujó la curva real (caché anti-flash del último 1D pintado), se usa esa
+      // mientras la reconstrucción intradía termina → no se ve la línea plana en +$0.00 y luego
+      // el salto a la real. setPeriodData re-ancla el último punto al total en vivo igual.
+      if(!pts.length){
+        try{
+          const _c=JSON.parse(localStorage.getItem('pv_perf_snap_1D')||'null');
+          if(_c&&_c.day===today&&Array.isArray(_c.values)&&_c.values.length>=2&&Array.isArray(_c.labels)&&_c.labels.length===_c.values.length){
+            return{labels:_c.labels.slice(),dates:_c.labels.map(()=>_sd),values:_c.values.slice(),
+              change:+_c.change||0,changePct:+_c.changePct||0,since:_c.since||'apertura'};
+          }
+        }catch(e){}
+      }
       const base=openVal>0?openVal:series[0].value;
       const last=series[series.length-1].value;
       return{
+        _provisional:!pts.length,
         labels:series.map(p=>p.time),
         dates:series.map(p=>p.date),
         values:series.map(p=>p.value),
@@ -21783,13 +21797,13 @@ function _pvMixColor(a, b, t) {
 }
 
 // Fotografía de lo que hay pintado AHORA (antes de comprometer el período nuevo).
-function _pvZoomSnapshot() {
+function _pvZoomSnapshot(minPts) {
   if (!perfChart) return null;
   const d = perfChart.data, s0 = d && d.datasets && d.datasets[0];
   // Mínimo de puntos para encuadrar. Antes eran 8 y dejaba fuera a 1W (7 puntos): el paso
   // 1W↔2W caía en la transición de Chart.js entre largos distintos, que es la que dibuja la
   // curva fantasma. Con 5 basta: el re-muestreo interpola la MISMA polilínea ya pintada.
-  if (!s0 || !Array.isArray(s0.data) || s0.data.length < 5) return null;
+  if (!s0 || !Array.isArray(s0.data) || s0.data.length < (minPts || 5)) return null;
   if (!Array.isArray(d.labels) || d.labels.length !== s0.data.length) return null;
   const y = perfChart.options && perfChart.options.scales && perfChart.options.scales.y;
   return {
@@ -21983,7 +21997,20 @@ function _pvMorphPrep(prev, next) {
     if (document.hidden) return null;
     if (!perfChart.canvas || perfChart.canvas.offsetParent === null) return null;
     if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
-    return _pvZoomSnapshot();
+    return _pvZoomSnapshot(2);
+  } catch(e) { return null; }
+}
+
+// Morph para los repintados que NO son un toque de chip: la curva REAL de 1D llega segundos
+// después de tocar el chip (reconstrucción intradía en 2º plano) y trae otro número de puntos
+// que la provisional. Antes eso caía en update('none') = la línea cambiaba de golpe. Ahora la
+// provisional se deforma hasta la real con el mismo morph del cambio de período.
+function _pvMorphSnapAuto() {
+  try {
+    if (!perfChart || document.hidden) return null;
+    if (!perfChart.canvas || perfChart.canvas.offsetParent === null) return null;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return null;
+    return _pvZoomSnapshot(2);
   } catch(e) { return null; }
 }
 
@@ -22139,6 +22166,14 @@ function setPeriodData(period, ds, updMode) {
   // animada de Chart.js es segura. Ver el update() del final.
   const _prevLen = (perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0]
     && Array.isArray(perfChart.data.datasets[0].data)) ? perfChart.data.datasets[0].data.length : -1;
+  // Repintado automático con OTRO largo (p.ej. 1D provisional → 1D real): foto de la curva
+  // pintada para deformarla hasta la nueva en vez del corte seco. Sin zoom/morph vivo.
+  let _pvAutoSnap = null;
+  if (updMode === undefined && _prevLen >= 2 && _prevLen !== ds.values.length
+      && (typeof _pvZoomRAF === 'undefined' || _pvZoomRAF == null)) {
+    _pvAutoSnap = _pvMorphSnapAuto();
+    if (_pvAutoSnap) updMode = 'skip';
+  }
   // ── GARANTÍA (todos los usuarios, sin excepción): el ÚLTIMO punto de la gráfica
   //    SIEMPRE = total en vivo del portafolio (que ya incluye el day change). Sin importar
   //    de qué serie venga (histórica, override, caché), aquí se re-ancla → la gráfica nunca
@@ -22223,12 +22258,13 @@ function setPeriodData(period, ds, updMode) {
   if (updMode !== 'skip') {
     perfChart.update(updMode || (_prevLen === ds.values.length ? 'periodChange' : 'none'));
   }
+  if (_pvAutoSnap) { try { _pvRunMorph(_pvAutoSnap, period); } catch(e) { try { perfChart.update('none'); } catch(e2){} } }
   // CACHÉ ANTI-FLASH: guarda el ÚLTIMO dataset dibujado de 1M/1D (sellado con el día ET). Como
   // la reconstrucción REAL redibuja DESPUÉS del arranque, la caché acaba conteniendo la curva
   // real; al reabrir el app se hidrata al instante (initPerfChart) → ya NO se ve primero la
   // versión provisional de 1M y luego la real. El live-anchor corrige el último punto igual.
   try {
-    if (period === '1M' || period === '1D') {
+    if ((period === '1M' || period === '1D') && !ds._provisional) {
       const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
       localStorage.setItem('pv_perf_snap_' + period, JSON.stringify({
         day: _day, labels: ds.labels, values: ds.values,
@@ -22236,7 +22272,9 @@ function setPeriodData(period, ds, updMode) {
       }));
     }
   } catch(e){}
-  if (typeof _updateSummaryCardFor === 'function') _updateSummaryCardFor(period, ds.change, ds.changePct);
+  // Serie provisional (datos del período aún cargando): la tarjeta conserva los últimos números
+  // en vez de mostrar +$0.00 y saltar al valor real segundos después.
+  if (typeof _updateSummaryCardFor === 'function' && !ds._provisional) _updateSummaryCardFor(period, ds.change, ds.changePct);
   const lbl = { '1D':'Hoy','1W':'1 Semana','1M':'1 Mes','3M':'3 Meses','6M':'6 Meses','1Y':'1 Año','YTD':'YTD','ALL':'Histórico' }[period] || period;
   const since = ds.since || '';
   // El badge junto al "Total Portfolio Value" muestra el cambio del PERÍODO ACTIVO
@@ -22333,7 +22371,14 @@ function setPeriod(period, btn) {
     }
   } else {
     // Sin datos para este timeframe (p.ej. 1D antes del primer snapshot) → punto base en vivo.
+    // Con total aún en 0 (precios cargando) y una curva ya pintada, se conserva la curva: nada
+    // de caer a $0 para luego saltar al valor real.
     const T = (typeof calcTotals === 'function') ? calcTotals() : { total: 0 };
+    if (!(T.total > 0) && typeof _pvChartHasSeries === 'function' && _pvChartHasSeries()) {
+      try { _updatePerfTotals(period, null); } catch(e) {}
+      try { requestAnimationFrame(_pvSyncActivePeriod); } catch(e) {}
+      return;
+    }
     const now = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._nowHHMM() : '';
     setPeriodData(period, { labels: [now || '—'], dates: [], values: [+(T.total || 0).toFixed(2)],
       change: 0, changePct: 0, since: period === '1D' ? 'apertura' : '' });
@@ -22388,7 +22433,10 @@ function _pvSyncActivePeriod(){
 function _updatePerfTotals(activeP, ds) {
   const el = id => document.getElementById(id);
   const T = (typeof calcTotals === 'function') ? calcTotals() : { total: 0, day: 0 };
-  if (el('perf-total')) {
+  // Total aún en 0 con posiciones cargadas = precios en vuelo → se deja el último valor pintado.
+  const _pvTotLoading = !(T.total > 0) && typeof HOLDINGS !== 'undefined' && HOLDINGS && HOLDINGS.length > 0
+    && el('perf-total') && /[1-9]/.test(el('perf-total').textContent || '');
+  if (el('perf-total') && !_pvTotLoading) {
     el('perf-total').textContent = usd(T.total);
     el('perf-total').className = 'stitch-val' + (T.total < INITIAL_CAPITAL ? ' neg' : '');
   }
