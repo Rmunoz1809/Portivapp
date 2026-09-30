@@ -18406,9 +18406,10 @@ function _snCard(n, idx) {
   const src = n.source || '';
   const srcColor = sourceColors[src] || '#44474d';
   const srcInitial = src.charAt(0).toUpperCase() || '•';
-  // "2h"/"3d" → relativo (añade "ago"); "Hoy"/"24 jul" → tal cual. Sin fecha se deja VACÍO:
-  // antes ponía "Recent", que afirmaba frescura sobre noticias que podían ser de hace semanas.
-  const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : '';
+  // «2h»/«3d»/«30min» → «hace 2 h»/«hace 3 d»/«hace 30 min» («2 h ago» con la app en inglés;
+  // ver _pnxWhen); «Hoy»/«24 jul» → tal cual. Sin fecha se deja VACÍO: antes ponía "Recent",
+  // que afirmaba frescura sobre noticias que podían ser de hace semanas.
+  const timeAgo = n.date ? _pnxWhen(n.date) : '';
   return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
     <div class="sn-card-top">
       <span class="sn-card-time">${pvEsc(timeAgo)}</span>
@@ -18863,7 +18864,6 @@ var _snOpenAuto = false;   // la abierta la eligió la app (la que más se mueve
 const _pnxPhoneMQ = (typeof window.matchMedia === 'function') ? window.matchMedia('(max-width: 700px)') : null;
 function _pnxIsPhone() { return !!(_pnxPhoneMQ && _pnxPhoneMQ.matches); }
 const _PNX_CHEV  = '<svg class="pnx-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>';
-const _PNX_ARROW = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
 
 // % del día redondeado a lo que se pinta: un +0,004 % sale «0.00%» en gris y no cuenta como
 // «sube» (el «|| 0» quita el -0).
@@ -18893,21 +18893,6 @@ function _pnxWhen(d) {
   const u = m[2].toLowerCase(), k = u === 'd' ? 'd' : (u === 'm' || u === 'min') ? 'min' : 'h';
   return _L('hace ' + m[1] + ' ' + k, m[1] + ' ' + k + ' ago');
 }
-// Resumen de dos líneas: el primer párrafo con contenido real. El ext que arma
-// _buildTickerArticles empieza por el propio titular y acaba en relleno automático
-// («Publicado por…», «Esta noticia afecta a…»): eso no resume nada y se salta. Sin texto
-// útil, la noticia va sin resumen.
-function _pnxSummary(n) {
-  const norm = x => String(x || '').replace(/\s+/g, ' ').trim();
-  const key  = x => norm(x).replace(/[.\s]+$/, '').toLowerCase();
-  const head = key(n.h || n.headline);
-  for (const txt of [n.ext, n.detail, n.summary]) {
-    const p = String(txt || '').split(/\n+/).map(norm)
-      .find(x => x && key(x) !== head && !/^(publicado por|published by|esta noticia afecta a)\b/i.test(x));
-    if (p) return p;
-  }
-  return '';
-}
 // Subtítulo de la posición: el nombre, o el sector cuando el nombre es sólo el ticker
 // (en muchas carteras h.name llega igual al ticker y se leía «BAC · BAC»).
 function _pnxSub(h, tk) {
@@ -18916,23 +18901,15 @@ function _pnxSub(h, tk) {
   try { return (typeof TICKER_SECTOR !== 'undefined' && TICKER_SECTOR[tk]) || nm; } catch (e) { return nm; }
 }
 
+// Cada noticia de la posición es la MISMA tarjeta que las de «Hoy» y «Movimientos Diarios»
+// (_snCard): hora, medio, titular, divisor y sentimiento. Sólo se le añade role/tabindex para
+// poder abrirla con el teclado (ver _pnxBind), como las filas de antes.
 function _pnxItem(n, ticker) {
   if (!n.impact) n.impact = ticker;
   n._ticker = ticker;                        // el lector sabe de qué posición es (como antes)
-  const s = n.s === 'pos' ? 'pos' : n.s === 'neg' ? 'neg' : 'neu';
-  const sent = s === 'pos' ? _L('↑ Alcista', '↑ Bullish') : s === 'neg' ? _L('↓ Bajista', '↓ Bearish') : '· Neutral';
-  const src = String(n.source || '').trim(), when = _pnxWhen(n.date), sum = _pnxSummary(n);
-  // El mismo clic que las tarjetas (_snCard): el lector se abre por el ID estable de la noticia.
-  // El color de la fuente va en una variable, no en «background:», para que ninguna regla
-  // [style*="background…"] del tema oscuro lo pise.
-  return `<div class="pnx-item" role="button" tabindex="0" onclick="openNewsByKey('${_newsRegister(n)}')">`
-    + `<div class="pnx-meta"><span class="pnx-sent ${s}">${sent}</span>`
-    + (src ? `<span class="pnx-src"><i style="--pnx-src:${_SN_SRC_COLORS[src] || '#44474d'}">${pvEsc(src.charAt(0).toUpperCase())}</i>${pvEsc(src)}</span>` : '')
-    + (when ? `<span class="pnx-when">${pvEsc(when)}</span>` : '')
-    + (n.corroborated ? `<span class="pnx-two" title="${_L('Confirmada por Yahoo Finance y Finnhub', 'Confirmed by Yahoo Finance and Finnhub')}">✓ ${_L('2 fuentes', '2 sources')}</span>` : '')
-    + `</div><h4>${pvEsc(n.h || n.headline || '')}</h4>`
-    + (sum ? `<p>${pvEsc(sum)}</p>` : '')
-    + `<span class="pnx-go" aria-hidden="true">${_PNX_ARROW}</span></div>`;
+  const i = _newsCache.indexOf(n);           // como las demás tarjetas, pero sin repetirla en cada repintado
+  return _snCard(n, i >= 0 ? i : _newsCache.push(n) - 1)
+    .replace('<div class="sn-card"', '<div class="sn-card" role="button" tabindex="0"');
 }
 
 // Pastillas «▲ N suben / ▼ M bajan» y lista. La lista sólo se reescribe si cambió algo
@@ -19044,7 +19021,7 @@ function _pnxBind(sec) {
   });
   sec.addEventListener('keydown', e => {
     const it = e.target;
-    if ((e.key === 'Enter' || e.key === ' ') && it && it.classList && it.classList.contains('pnx-item')) { e.preventDefault(); it.click(); }
+    if ((e.key === 'Enter' || e.key === ' ') && it && it.classList && it.classList.contains('sn-card')) { e.preventDefault(); it.click(); }
   });
   if (_pnxPhoneMQ) {
     const onMQ = () => { try { _pnxSync(); } catch (err) {} };
@@ -49775,26 +49752,21 @@ html body.dark-theme #posNewsCard .pnx-src i { outline: 1px solid rgba(255,255,2
   html.pv-ipad body.dark-theme #posNewsCard .pnx-mv.dn { color: #c62828; background: #ffe3df; }
 }
 
-/* ── Noticias de la posición en cuadros (cuadrícula), no en filas ── */
-html body #posNewsCard { --pnx-tile: #f4f6fa; }
-html body.dark-theme #posNewsCard { --pnx-tile: rgba(255,255,255,.05); }
-html body #posNewsCard .pnx-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 14px; }
-html body #posNewsCard .pnx-items > :not(.pnx-item) { grid-column: 1 / -1; }
-html body #posNewsCard .pnx-items .pnx-item { display: flex; flex-direction: column; min-height: 240px; padding: 18px 18px 66px; border: 1px solid transparent; border-radius: 22px; background: var(--pnx-tile); transition: border-color .22s cubic-bezier(.22,1,.36,1); }
-html body #posNewsCard .pnx-items .pnx-item:hover { border-color: var(--pnx-line-hi, #cfd7e3); }
-html body #posNewsCard .pnx-items .pnx-meta { gap: 8px; margin-bottom: 12px; }
-html body #posNewsCard .pnx-items .pnx-item h4 { font-size: 16.5px; line-height: 1.38; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
-html body #posNewsCard .pnx-items .pnx-item p { font-size: 14px; line-height: 1.55; margin-top: 8px; -webkit-line-clamp: 3; }
-html body #posNewsCard .pnx-items .pnx-go { top: auto; bottom: 14px; right: 14px; margin-top: 0; width: 40px; height: 40px; }
-html.pv-ipad body #posNewsCard .pnx-items { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
-html.pv-ipad body #posNewsCard .pnx-items .pnx-item { min-height: 220px; padding: 16px 16px 62px; }
-html.pv-ipad body #posNewsCard .pnx-items .pnx-item h4 { font-size: 15.5px; }
-/* Celular: los cuadros se deslizan de lado dentro de la posición abierta */
+/* ── Noticias de la posición: las mismas tarjetas que «Movimientos Diarios» (_snCard) ──
+   Escritorio e iPad: dos columnas como mucho y una sola si no caben dos de 270 px (panel
+   estrecho: iPad en vertical, web de 701–899). La columna mínima es el mayor entre 270 px y
+   algo más de un tercio del ancho, así que nunca salen tres. Celular: carrusel de tarjetas al
+   82 %, de lado. Sólo el spinner, el error y «Reintentar» ocupan toda la fila. */
+html body #posNewsCard .pnx-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(270px, (100% - 36px) / 3 + 1px), 1fr)); gap: 18px; margin-top: 14px; }
+html body #posNewsCard .pnx-items > :not(.sn-card) { grid-column: 1 / -1; }
+/* En iPad y celular la tarjeta clara va sin borde (sólo sombra) porque se apoya en el fondo
+   gris; aquí se apoya en el panel blanco y se perdía: lleva el mismo filo que en escritorio. */
+html body:not(.dark-theme) #posNewsCard .pnx-items > .sn-card { border: 1px solid var(--pnx-line) !important; }
+/* Celular: las tarjetas se deslizan de lado dentro de la posición abierta */
 @media (max-width: 700px) {
-  html body #posNewsCard .pnx-items, html.pv-ipad body #posNewsCard .pnx-items { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 82%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 4px; }
+  html body #posNewsCard .pnx-items, html.pv-ipad body #posNewsCard .pnx-items { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 82%; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 4px; }
   html body #posNewsCard .pnx-items::-webkit-scrollbar { display: none; }
-  html body #posNewsCard .pnx-items .pnx-item, html.pv-ipad body #posNewsCard .pnx-items .pnx-item { scroll-snap-align: start; min-height: 230px; padding: 16px 16px 18px; }
-  html body #posNewsCard .pnx-items .pnx-go { display: none; }
+  html body #posNewsCard .pnx-items > .sn-card { scroll-snap-align: start; }
 }
 </style>
 
