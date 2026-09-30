@@ -49195,8 +49195,10 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
 // Lee https://portivapp.com/app-version.json ({ ios:{min,build?}, mac:{min,build?}, appStoreId })
 // y compara con la versión instalada (App.getInfo → CFBundleShortVersionString + build). Si la
 // instalada es menor, tapa la app con una pantalla sin salida que manda a la App Store.
-// Para forzar una versión nueva: publicarla en Apple y DESPUÉS subir "min" en app-version.json
-// (push a main). Web nunca se bloquea (siempre sirve la última). Falla ABIERTO: sin red, JSON
+// iOS es AUTOMÁTICO: la mínima es la mayor entre "min" y la versión que la App Store publica
+// (itunes.apple.com/lookup), así que al salir una versión nueva pasa a ser obligatoria sola.
+// "ios.auto": false en el JSON lo apaga (kill switch). Mac es manual: el lookup sólo devuelve
+// la versión de iOS, no la de Mac Catalyst. Web nunca se bloquea (siempre sirve la última). Falla ABIERTO: sin red, JSON
 // roto o plugin ausente → no bloquea. Se re-comprueba al volver a primer plano.
 // Ojo: sólo funciona desde la primera build que trae este bloque (1.0.5 / Mac 1.0 build 34+);
 // las builds anteriores no lo tienen y no se pueden bloquear desde aquí.
@@ -49261,14 +49263,24 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
       .catch(function(){ return _pedir(i + 1); });
   }
 
+  // Versión publicada en la App Store (sólo iOS). Falla a null: nunca bloquea por esto solo.
+  function _tienda(){
+    return fetch('https://itunes.apple.com/lookup?bundleId=com.portivapp.portafolio&t=' + Date.now(), { cache: 'no-store' })
+      .then(function(r){ return r.json(); })
+      .then(function(d){ return (d && d.results && d.results[0] && d.results[0].version) || null; })
+      .catch(function(){ return null; });
+  }
+
   var _enCurso = false;
   function _comprobar(){
     var A = C.Plugins && C.Plugins.App;
     if (_enCurso || !A || typeof A.getInfo !== 'function') return;
     _enCurso = true;
-    Promise.all([A.getInfo(), _pedir(0)]).then(function(r){
-      var info = r[0] || {}, cfg = r[1] || {};
-      if (_esVieja(info, ES_MAC ? cfg.mac : cfg.ios)) _bloquear(cfg.appStoreId || '6789933095');
+    Promise.all([A.getInfo(), _pedir(0).catch(function(){ return {}; }), ES_MAC ? null : _tienda()]).then(function(r){
+      var info = r[0] || {}, cfg = r[1] || {}, req = ES_MAC ? cfg.mac : cfg.ios, tienda = r[2];
+      if (!ES_MAC && tienda && !(req && req.auto === false) && (!req || !req.min || _cmp(tienda, req.min) > 0))
+        req = { min: tienda };
+      if (_esVieja(info, req)) _bloquear(cfg.appStoreId || '6789933095');
     }).catch(function(){}).then(function(){ _enCurso = false; });
   }
 
