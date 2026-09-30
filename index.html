@@ -1035,9 +1035,6 @@ window._ensureChartJs = (function(){
   .nm-sent-badge.su { background:rgba(206,164,92,.16);border-color:rgba(206,164,92,.38);color:#e7cd9a; }
   .nm-sent-badge.su::before { background:#cea45c;box-shadow:0 0 0 3px rgba(206,164,92,.25); }
   .nm-byline { font-size:12.5px;color:rgba(255,255,255,.62);font-weight:500; }
-  #newsModal .nm-photo { margin: 0 0 22px; }
-  #newsModal .nm-photo img { width: 100%; max-height: 420px; aspect-ratio: 16/9; object-fit: cover; border-radius: 16px; display: block; background: #e9edf3; }
-  #newsModal .nm-photo figcaption { font-size: 11px; color: #6b7280; margin-top: 6px; }
   .nm-headline { font-size:29px;font-weight:800;line-height:1.2;letter-spacing:-.03em;color:#fff;margin:0;text-wrap:balance; }
   @media(max-width:700px){ .nm-headline{font-size:24px;} }
   /* ── cuerpo ── */
@@ -2465,8 +2462,6 @@ window._ensureChartJs = (function(){
   }
   .sn-card:hover { box-shadow: 0 16px 40px -10px rgba(11,28,48,0.10); border-color: #cfd6e4; }
   .sn-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .sn-card-thumb { aspect-ratio: 16/9; border-radius: 10px; overflow: hidden; background: var(--st-surface-highest, #e9edf3); }
-  .sn-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .sn-card-ticker {
     background: var(--st-primary); color: #fff;
     font-size: 9.5px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
@@ -16482,121 +16477,6 @@ function _newsImgCandidates(n) {
   return [];
 }
 
-// Descarta URLs que no son foto del artículo: logo de Yahoo (yimg.com), logos/sprites/svg
-// genéricos y miniaturas diminutas (≤99px en la URL).
-function _newsImgJunk(u){
-  if (!u || !/^https?:\/\//.test(u)) return true;
-  if (/s\.yimg\.com|yimg\.com/i.test(u)) return true;
-  if (/placeholder|sprite|logo\.svg|\/logo\.|\.svg(\?|$)/i.test(u)) return true;
-  if (/[_\-x](\d{1,2}|[1-9]\d)x(\d{1,2}|[1-9]\d)[_\-\.]/i.test(u)) return true;
-  return false;
-}
-// Foto real de la noticia (Finnhub) lista para <img>, o '' si no hay ninguna utilizable.
-function _newsImgReal(n){
-  return (n ? _newsImgCandidates(n) : []).find(u => !_newsImgJunk(u)) || '';
-}
-
-// ── Fotos de Finnhub para las noticias generales de la IA (sin costo de IA) ───────────────
-// Las noticias de SharedNews las escribe la IA y no traen imagen. Se emparejan por titular con
-// las generales de Finnhub (que sí traen foto) comparando palabras clave ES↔EN. Conservador:
-// una foto equivocada es peor que ninguna → umbral alto y cada foto se usa una sola vez.
-const _NT_STOP = new Set(('el la los las del por para con que una uno unos unas sus tras sobre como pero mas muy ante entre desde hasta este esta estos estas ' +
-  'the and for with from that this after amid over into its says said will are was has have not but than new more ' +
-  'mercado mercados market markets stock stocks accion acciones share shares noticias news hoy today dia week semana ' +
-  'sube baja cae suben bajan jump jumps rise rises fall falls').split(/\s+/));
-// Sinónimos ES↔EN → token común. Estos "temas" pesan doble al puntuar (son la señal fuerte).
-const _NT_SYN = {
-  'reserva':'fed','federal':'fed','fed':'fed','fomc':'fed','powell':'fed',
-  'petroleo':'oil','crudo':'oil','oil':'oil','brent':'oil','wti':'oil',
-  'oro':'gold','gold':'gold',
-  'aranceles':'tariff','arancel':'tariff','tariffs':'tariff','tariff':'tariff',
-  'inflacion':'inflation','inflation':'inflation','cpi':'inflation',
-  'tasas':'rates','tasa':'rates','rates':'rates','rate':'rates',
-  'bitcoin':'bitcoin','btc':'bitcoin','criptomonedas':'crypto','crypto':'crypto',
-  'resultados':'earnings','earnings':'earnings','results':'earnings','ganancias':'earnings',
-  'empleo':'jobs','jobs':'jobs','payrolls':'jobs','desempleo':'jobs',
-  'ia':'ai','ai':'ai','china':'china','chinese':'china','chino':'china','china':'china',
-  'europa':'europe','europe':'europe','ue':'europe','eu':'europe',
-  'nvidia':'nvidia','apple':'apple','tesla':'tesla','microsoft':'microsoft','google':'google','alphabet':'google',
-  'amazon':'amazon','meta':'meta','netflix':'netflix','intel':'intel','amd':'amd','boeing':'boeing'
-};
-const _NT_TOPIC = new Set(Object.values(_NT_SYN));
-// Ticker Finnhub (campo `related`) → token de nombre, para cruzar "NVDA" con "Nvidia" en el texto.
-const _NT_TICK = { nvda:'nvidia', aapl:'apple', tsla:'tesla', msft:'microsoft', googl:'google', goog:'google', amzn:'amazon', meta:'meta', nflx:'netflix', intc:'intel', amd:'amd', ba:'boeing' };
-
-function _newsTokens(str){
-  const out = new Set();
-  const s = String(str || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-  for (let t of s.split(/[^a-z0-9]+/)) {
-    if (!t) continue;
-    if (_NT_SYN[t]) { out.add(_NT_SYN[t]); continue; }          // sinónimo antes del filtro de largo ("ia")
-    if (!/^\d+$/.test(t)) {
-      if (t.length < 3 || _NT_STOP.has(t)) continue;
-      if (t.length > 4 && t.endsWith('s')) t = t.slice(0, -1);  // plural simple: chips→chip
-      if (_NT_SYN[t]) t = _NT_SYN[t];
-      if (_NT_STOP.has(t)) continue;
-    }
-    out.add(t);
-  }
-  return out;
-}
-
-// Puntaje de coincidencia item↔candidato: tema compartido = 2, palabra/número común = 1,
-// +2 si un ticker `related` del candidato aparece (por símbolo o nombre) en el texto del item.
-const _NT_MIN_SCORE = 3;
-function _newsMatchScore(itemTok, candTok, related){
-  let sc = 0;
-  candTok.forEach(t => { if (itemTok.has(t)) sc += (_NT_TOPIC.has(t) ? 2 : 1); });
-  for (const r of (related || [])) {
-    const k = String(r).toLowerCase();
-    if (itemTok.has(k) || (_NT_TICK[k] && itemTok.has(_NT_TICK[k]))) { sc += 2; break; }
-  }
-  return sc;
-}
-
-let _fhGenNewsCache = { ts: 0, data: null };
-// Por TITULAR (no por objeto): SharedNews puede devolver objetos nuevos en cada render, y con
-// un WeakSet la foto se perdería y el repintado entraría en bucle.
-const _fhImgTried = new Set();        // titulares ya intentados
-const _fhImgByKey = new Map();        // titular → foto adjuntada
-const _fhImgKey = n => String((n && (n.h || n.headline)) || '').slice(0, 80).toLowerCase();
-async function _attachFinnhubImgs(items){
-  try {
-    if (!Array.isArray(items) || !items.length || typeof fhFetch !== 'function') return 0;
-    // Re-aplica fotos ya encontradas (sin contar como nuevas → no provoca repintado).
-    items.forEach(n => { if (n && !_newsImgReal(n) && _fhImgByKey.has(_fhImgKey(n))) n.img = _fhImgByKey.get(_fhImgKey(n)); });
-    const pend = items.filter(n => n && typeof n === 'object' && _fhImgKey(n) && !_fhImgTried.has(_fhImgKey(n)) && !_newsImgReal(n));
-    if (!pend.length) return 0;
-    // Caché en memoria 10 min (las generales de Finnhub cambian poco).
-    if (!_fhGenNewsCache.data || Date.now() - _fhGenNewsCache.ts > 10 * 60 * 1000) {
-      const raw = await fhFetch('/news?category=general', 9000);
-      if (Array.isArray(raw) && raw.length) _fhGenNewsCache = { ts: Date.now(), data: raw };
-    }
-    const raw = _fhGenNewsCache.data;
-    if (!Array.isArray(raw)) return 0;
-    const cands = raw.filter(a => a && a.image && !_newsImgJunk(a.image)).map(a => ({
-      url: a.image,
-      tok: _newsTokens((a.headline || '') + ' ' + String(a.summary || '').slice(0, 200)),
-      rel: String(a.related || '').split(',').map(x => x.trim()).filter(Boolean)
-    }));
-    if (!cands.length) return 0;
-    pend.forEach(n => _fhImgTried.add(_fhImgKey(n)));   // se marca sólo con datos de Finnhub en mano (si falló, reintenta)
-    const used = new Set(items.map(n => n && _newsImgReal(n)).filter(Boolean));
-    let done = 0;
-    for (const n of pend) {
-      const it = _newsTokens((n.h || n.headline || '') + ' ' + String(n.ext || n.detail || '').slice(0, 200));
-      let best = null, bs = 0;
-      for (const c of cands) {
-        if (used.has(c.url)) continue;
-        const sc = _newsMatchScore(it, c.tok, c.rel);
-        if (sc > bs) { bs = sc; best = c; }
-      }
-      if (best && bs >= _NT_MIN_SCORE) { n.img = best.url; _fhImgByKey.set(_fhImgKey(n), best.url); used.add(best.url); done++; }
-    }
-    return done;
-  } catch (e) { return 0; }
-}
-
 // Enlace a la noticia original. Si la fuente entregó una URL real (Finnhub/Yahoo/
 // Reuters/etc.) se usa directamente; si no, se construye una búsqueda en Google
 // News del titular + fuente para llegar al artículo original.
@@ -16805,10 +16685,6 @@ function openNewsModal(idx, src) {
   });
   if (!bodyHtml.includes('nmAiInline')) bodyHtml += _aiAnchor;
   if (!bodyHtml) bodyHtml = _aiAnchor + '<p>Información no disponible para esta noticia.</p>';
-  // Foto de la noticia (Finnhub) arriba del texto, dentro de la tarjeta: en móvil el modal
-  // es una rejilla con filas fijas y un bloque suelto no tendría fila. Si no carga, se quita.
-  const _photo = _newsImgReal(n);
-  if (_photo) bodyHtml = `<figure class="nm-photo"><img src="${pvEsc(_photo)}" alt="" decoding="async" referrerpolicy="no-referrer" onerror="this.parentNode.remove()">${rawSrc ? `<figcaption>Imagen: ${pvEsc(rawSrc)}</figcaption>` : ''}</figure>` + bodyHtml;
   html('nmText', bodyHtml);
 
   // ── Enlace original: OCULTO (a petición del usuario) ─────────────────────────
@@ -18466,7 +18342,6 @@ function rebuildNewsFromHoldings() {
         impact: n.impact || h.ticker,
         ext:    n.ext || '',
         link:   n.link || '',
-        img:    n.img || n.image || '',
       });
     });
   });
@@ -18534,9 +18409,7 @@ function _snCard(n, idx) {
   // "2h"/"3d" → relativo (añade "ago"); "Hoy"/"24 jul" → tal cual. Sin fecha se deja VACÍO:
   // antes ponía "Recent", que afirmaba frescura sobre noticias que podían ser de hace semanas.
   const timeAgo = n.date ? (/^\d+\s*(h|d|m|min|hr)/i.test(String(n.date)) ? n.date + ' ago' : n.date) : '';
-  const _thumb = _newsImgReal(n);
   return `<div class="sn-card" onclick="openNewsByKey('${_newsRegister(n)}')">
-    ${_thumb ? `<div class="sn-card-thumb"><img src="${pvEsc(_thumb)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" onerror="this.parentNode.remove()"></div>` : ''}
     <div class="sn-card-top">
       <span class="sn-card-time">${pvEsc(timeAgo)}</span>
     </div>
@@ -18621,7 +18494,14 @@ function _snSetFeatured(n, idx) {
     // - yimg.com → CDN de Yahoo Finance que sirve su propio logo/thumbnail de marca
     // - dimensiones pequeñas en la URL (logos ≤ 200px)
     // - patrones genéricos de logo/placeholder/sprite
-    const real = _newsImgCandidates(n).filter(u => !_newsImgJunk(u));
+    const _junk = u => {
+      if (!u || !/^https?:\/\//.test(u)) return true;
+      if (/s\.yimg\.com|yimg\.com/i.test(u)) return true;           // logo Yahoo Finance
+      if (/placeholder|sprite|logo\.svg|\/logo\.|\.svg(\?|$)/i.test(u)) return true;
+      if (/[_\-x](\d{1,2}|[1-9]\d)x(\d{1,2}|[1-9]\d)[_\-\.]/i.test(u)) return true; // tiny ≤99px
+      return false;
+    };
+    const real = _newsImgCandidates(n).filter(u => !_junk(u));
     fimg.style.display = 'block';
     // Cadena: imagen real del artículo (no-Yahoo) → placeholder local data-URI (SIEMPRE carga).
     fimg.onerror = function(){ this.onerror = null; this.src = pro; };
@@ -18753,13 +18633,7 @@ function renderTodayNews(){
     _paint(`<div style="grid-column:1/-1"><div class="pv-spinner-wrap" style="flex-direction:column;gap:10px;padding:24px 0"><span class="pv-spinner"></span><span style="font-size:12px;color:var(--text3)">Buscando noticias recientes…</span></div></div>`);
     return;
   }
-  // Fotos ya emparejadas antes (por titular) se ponen ANTES de pintar.
-  items.forEach(n => { if (n && !_newsImgReal(n) && _fhImgByKey.has(_fhImgKey(n))) n.img = _fhImgByKey.get(_fhImgKey(n)); });
   _paint(items.map(n => _snCard(n, _newsCache.push(n)-1)).join(''));
-  // Fotos: las noticias de la IA no traen imagen → se cruzan con las generales de Finnhub (por
-  // titular). Cada noticia se intenta 1× (WeakSet); si se adjuntó alguna, se repinta (el HTML ya
-  // difiere por la miniatura → pasa el guard anti-parpadeo).
-  _attachFinnhubImgs(items).then(k => { if (k > 0) { try { renderTodayNews(); } catch(e){} } }).catch(function(){});
   const u = document.getElementById('todayNewsUpdated');
   if (u) u.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
 }
@@ -49218,10 +49092,8 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
 
 /* Texto de la noticia. El primer párrafo es la entradilla, SIN la línea verde. */
 #newsModal #nmText p { margin: 0 0 18px; }
-#newsModal #nmText p:first-child,
-#newsModal #nmText > .nm-photo + p { padding: 0; border-left: 0; }
+#newsModal #nmText p:first-child { padding: 0; border-left: 0; }
 #newsModal #nmText > p:first-child,
-#newsModal #nmText > .nm-photo + p,
 #newsModal #nmText > .nm-ev-sec-lbl + p {
   margin: 0 0 20px !important;
   font-size: var(--nmx-fs-lead) !important;
