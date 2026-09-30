@@ -7088,11 +7088,14 @@ let _trRescan = false;   // se pidió traducir mientras corría un lote → re-e
 
 // Traduce UN lote de textos con IA. Devuelve un mapa {src: traducción}. Aísla la llamada
 // para poder correr varios lotes EN PARALELO (antes era estrictamente secuencial a ~8s cada
-// uno → una página grande tardaba minutos).
-async function _trTranslateChunk(texts){
+// uno → una página grande tardaba minutos). to === 'es': del inglés al español (noticias por
+// posición, ver _newsEsLazy); sin `to`, del español al inglés, como siempre.
+async function _trTranslateChunk(texts, to){
   const res = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({
     model: 'gemini-3.1-flash-lite', max_tokens: 4000,
-    system: 'You are a professional financial UI translator. Translate each numbered line from Spanish to natural, concise English suited for a finance app. Keep tickers, company names, numbers, currency symbols and % unchanged. Reply with ONLY the same numbered list, one translation per line, exact same count and order, no extra commentary.',
+    system: to === 'es'
+      ? 'You are a professional financial news translator. Translate each numbered line from English to natural, concise Spanish suited for a finance app. Keep tickers, company names, numbers, currency symbols and % unchanged. Reply with ONLY the same numbered list, one translation per line, exact same count and order, no extra commentary.'
+      : 'You are a professional financial UI translator. Translate each numbered line from Spanish to natural, concise English suited for a finance app. Keep tickers, company names, numbers, currency symbols and % unchanged. Reply with ONLY the same numbered list, one translation per line, exact same count and order, no extra commentary.',
     prompt: texts.map((t, idx) => `${idx+1}. ${t}`).join('\n')
   }) }, true);   // essential:true → corre también en el sitio desplegado, como el chat.
   if (!res.ok) return null;
@@ -7101,7 +7104,9 @@ async function _trTranslateChunk(texts){
   const lines = raw.split('\n').map(l => l.replace(/^\s*\d+\.\s*/, '').trim()).filter(Boolean);
   // Si la respuesta no trae (casi) una línea por texto pedido, no es una traducción válida
   // (p.ej. aviso de límite de sesión) → se descarta el lote entero en vez de cachear basura.
-  if (lines.length < texts.length * 0.7) return null;
+  // En noticias ('es') tiene que ser exactamente una por texto: con una de más o de menos,
+  // cada traducción caería en la noticia de al lado.
+  if (to === 'es' ? lines.length !== texts.length : lines.length < texts.length * 0.7) return null;
   const map = {};
   texts.forEach((src, idx) => { const tr = lines[idx]; if (tr) map[src] = tr; });
   return map;
@@ -18634,6 +18639,7 @@ function renderTodayNews(){
     _paint(`<div style="grid-column:1/-1"><div class="pv-spinner-wrap" style="flex-direction:column;gap:10px;padding:24px 0"><span class="pv-spinner"></span><span style="font-size:12px;color:var(--text3)">Buscando noticias recientes…</span></div></div>`);
     return;
   }
+  _newsEsLazy('hoy', items, _pvScheduleNewsRender);   // el respaldo (Finnhub, posiciones) llega en inglés
   _paint(items.map(n => _snCard(n, _newsCache.push(n)-1)).join(''));
   const u = document.getElementById('todayNewsUpdated');
   if (u) u.textContent = 'Actualizado ' + new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
@@ -18645,7 +18651,8 @@ function renderTodayNews(){
 // Se usa TANTO para elegir la noticia destacada del día COMO para rankear la lista.
 function _newsImportance(n) {
   if (!n) return -1;
-  let sc = _portfolioRelevance(n.h || n.headline || '', n.ext || n.detail || n.summary || '', n.impact || '');
+  // Con el original en inglés si se tradujo (_newsEsApply): traducirla no la cambia de sitio.
+  let sc = _portfolioRelevance(n.h_en || n.h || n.headline || '', n.ext_en || n.ext || n.detail || n.summary || '', n.impact || '');
   if (n.s === 'neg') sc += 20;                     // negativas suelen ser más accionables
   const ts = n._ts || 0;
   if (ts) {
@@ -18734,12 +18741,13 @@ function renderNewsTab() {
     const candidate = _ranked[0];
     if (candidate) {
       const candScore = _newsImportance(candidate);
-      const candKey   = (candidate.h || candidate.headline || '').slice(0, 80);
+      const candKey   = (candidate.h_en || candidate.h || candidate.headline || '').slice(0, 80);   // h_en: la misma, traducida o no
       // Reemplazar si: no hay ninguna aún, es la misma (refresco de datos), o es más importante.
       if (_currentFeaturedScore < 0 || candKey === _currentFeaturedKey || candScore > _currentFeaturedScore) {
         _currentFeaturedScore = candScore;
         _currentFeaturedKey   = candKey;
         _currentFeaturedNews  = candidate;
+        _newsEsLazy('feat', [candidate], _pvScheduleNewsRender);   // en español si llega en inglés
         const _fi = _newsCache.push(candidate) - 1;
         _snSetFeatured(candidate, _fi);
       }
@@ -18754,6 +18762,9 @@ function renderNewsTab() {
     // mientras progresa (lee nube → genera → sube) — sin este guard, la lista se reemplazaba
     // en cada llamada aunque el contenido fuera idéntico.
     const _dnEl = $('dailyNews');
+    // Su respaldo son titulares de las posiciones, en inglés. Los movimientos del día (_mover) se
+    // escriben aquí en español; el nombre de la empresa («Bank of America») no debe traducirse.
+    _newsEsLazy('daily', DAILY_NEWS.filter(n => !n._mover), _pvScheduleNewsRender);
     const _dnHtml = !DAILY_NEWS.length
       ? emptyPlaceholder(!HOLDINGS.length ? '<span class="pv-spinner"></span>' : 'Agrega posiciones a tu portafolio para ver noticias diarias relevantes.')
       : DAILY_NEWS.map(n => _snCard(n, _newsCache.push(n)-1)).join('');
@@ -18828,7 +18839,7 @@ async function _snFetchTickerNews(ticker) {
     const raw  = (d && d.news) || [];
     if (!raw.length) return false;
     const built = _buildTickerArticles(ticker, raw);
-    const _keyOf = a => ((a && (a.link || a.h || a.headline)) || '').trim().toLowerCase();
+    const _keyOf = a => ((a && (a.link || a.h_en || a.h || a.headline)) || '').trim().toLowerCase();   // h_en: titular original si se tradujo
     const _existing = Array.isArray(STOCK_NEWS[ticker]) ? STOCK_NEWS[ticker] : [];
     const _seen  = new Set(_existing.map(_keyOf));
     const _fresh = built.filter(a => { const k = _keyOf(a); if (!k || _seen.has(k)) return false; _seen.add(k); return true; });
@@ -18899,6 +18910,123 @@ function _pnxSub(h, tk) {
   const nm = String((h && h.name) || '').trim();
   if (nm && nm.toUpperCase() !== String(tk).toUpperCase()) return nm;
   try { return (typeof TICKER_SECTOR !== 'undefined' && TICKER_SECTOR[tk]) || nm; } catch (e) { return nm; }
+}
+
+// ── Noticias en español ──────────────────────────────────────────────────────────────────
+// Las noticias por posición llegan de Yahoo/Finnhub en inglés (_buildTickerArticles). Con la
+// app en español se traducen con la IA del traductor de la interfaz (_trTranslateChunk con
+// destino 'es') y sólo las que se ven: las de la posición abierta, en UN lote por ticker, y
+// las que caen en «Hoy», «Movimientos Diarios» o la destacada cuando esas secciones tiran de
+// respaldo. Va el titular y el resumen corto; el texto largo del lector (ext) se rehace
+// cambiando esas dos piezas. La noticia guarda su original (h_en, summary_en, ext_en) y se
+// persiste con _saveNewsCache; además, un diccionario local inglés→español deja lista, sin IA,
+// la misma noticia cuando vuelve a llegar en inglés (ciclo de 30 min, carga bajo demanda,
+// caché borrado a medianoche). Con la app en inglés vuelve el original. Si la IA falla, se
+// queda en inglés y se reintenta más tarde (espera de 2, 4, 8… hasta 60 min).
+const _NES_KEY = 'portiv_tr_news_es_v1';
+const _NES_EN = new Set(('the of and to in for on with is are as at by after from its it this that will has have be new '
+  + 'says over amid stock stocks shares why how what here buy sell up down could should would earnings revenue sales price '
+  + 'target analyst analysts rating market investors billion million quarter report reports deal top best more than about '
+  + 'into you your our their was were but not just still first raises cuts beats misses rises falls jumps soars slides '
+  + 'drops gains surges plunges hits high low').split(' '));
+const _NES_ES = new Set('de del la las el los que en y por para con una un se su sus al tras sobre según más como pero sin ante hasta entre desde'.split(' '));
+var _nesDict = null, _nesBusy = {}, _nesFlying = new Set(), _nesFails = 0, _nesWaitUntil = 0;
+
+// ¿Inglés? Cuenta palabras muy frecuentes de cada idioma (acentos y ñ suman al español) y sólo
+// dice que sí con más pruebas de inglés que de español. Sin pruebas de ninguno («ADBE +2.90% —
+// Adobe Inc.», los movimientos del día) no se traduce.
+function _newsIsEn(t) {
+  const s = String(t || '').toLowerCase();
+  let en = 0, es = /[áéíóúñ¿¡]/.test(s) ? 1 : 0;
+  for (const w of s.match(/[a-záéíóúüñ]+/g) || []) { if (_NES_EN.has(w)) en++; else if (_NES_ES.has(w)) es++; }
+  return en > es;
+}
+function _nesNorm(x) { return String(x == null ? '' : x).replace(/\s+/g, ' ').trim(); }
+function _nesDictGet() {
+  if (!_nesDict) { try { _nesDict = JSON.parse(localStorage.getItem(_NES_KEY) || '{}') || {}; } catch (e) { _nesDict = {}; } }
+  return _nesDict;
+}
+// Suma las traducciones nuevas y se queda con las 800 más recientes (semanas de titulares).
+function _nesDictAdd(map) {
+  const d = _nesDictGet();
+  Object.assign(d, map);
+  const ks = Object.keys(d);
+  if (ks.length > 800) ks.slice(0, ks.length - 800).forEach(k => delete d[k]);
+  try { localStorage.setItem(_NES_KEY, JSON.stringify(d)); } catch (e) {}
+}
+// Resumen que se traduce con el titular: el de la fuente o, si la noticia no lo trae aparte
+// (las de «Hoy» y sus copias), el primer párrafo del texto largo que no sea el titular ni
+// relleno fijo. raw = tal cual está en ext (para cambiarlo ahí); key = lo que se traduce,
+// recortado a ~400 caracteres por frase entera: es lo que enseñan el lector y sus puntos, y
+// acota lo que cuesta el lote.
+function _nesSum(n, hEn) {
+  let raw = String(n.summary || '').trim();
+  if (!raw) {
+    const hk = _nesNorm(hEn).replace(/[.\s]+$/, '').toLowerCase();
+    raw = String(n.ext || '').split(/\n{2,}/).map(p => p.trim())
+      .find(p => p && _nesNorm(p).replace(/[.\s]+$/, '').toLowerCase() !== hk && !/^(publicado por|esta noticia afecta a|fuente:|")/i.test(p)) || '';
+  }
+  let key = _nesNorm(raw);
+  if (!key || !_newsIsEn(key)) return null;
+  if (key.length > 400) {
+    const cut = key.slice(0, 400), end = cut.lastIndexOf('. ');
+    key = end > 150 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…';
+  }
+  return { raw, key };
+}
+// Pone la noticia en el idioma de la app con lo ya traducido, sin red. Devuelve los textos en
+// inglés que aún faltan (vacío: nada que pedir).
+function _newsEsApply(n) {
+  if (!n || typeof n !== 'object') return [];
+  if (getLang() === 'en') {                           // app en inglés: vuelve el original
+    if (n.h_en != null) {
+      n.h = n.h_en; if (n.headline != null) n.headline = n.h_en;
+      if (n.summary_en != null) n.summary = n.summary_en;
+      if (n.ext_en != null) n.ext = n.ext_en;
+      delete n.h_en; delete n.summary_en; delete n.ext_en;
+    }
+    return [];
+  }
+  if (n.h_en != null) return [];                      // ya está en español
+  const hEn = String(n.h || n.headline || '').trim();
+  if (!_newsIsEn(hEn)) return [];
+  const d = _nesDictGet(), hKey = _nesNorm(hEn), sum = _nesSum(n, hEn);
+  const miss = [hKey, sum && sum.key].filter(k => k && d[k] == null);
+  if (miss.length) return miss;
+  const hEs = /\.$/.test(hEn) ? d[hKey] : d[hKey].replace(/\.\s*$/, '');   // sin el punto que a veces añade la IA
+  n.h_en = hEn;
+  if (n.summary != null) n.summary_en = n.summary;
+  if (n.ext != null) n.ext_en = n.ext;
+  n.h = hEs; if (n.headline != null) n.headline = hEs;
+  if (sum && n.summary) n.summary = d[sum.key];
+  if (typeof n.ext === 'string') n.ext = (sum ? n.ext.split(sum.raw).join(d[sum.key]) : n.ext).split(hEn).join(hEs);
+  return [];
+}
+// Traduce en UN lote lo que falte de `list` (una posición, «Hoy», «Movimientos Diarios» o la
+// destacada) y llama a onDone cuando ya está en español, para repintar. Un lote en vuelo por
+// clave y ningún texto en dos lotes a la vez. No se pide nada sin permiso para la IA (no se abre
+// el aviso de consentimiento por una traducción), con la app en inglés ni durante la espera
+// tras un fallo.
+function _newsEsLazy(key, list, onDone) {
+  const want = new Set();
+  (list || []).forEach(n => _newsEsApply(n).forEach(t => { if (!_nesFlying.has(t)) want.add(t); }));
+  if (!want.size || _nesBusy[key] || getLang() === 'en' || Date.now() < _nesWaitUntil) return;
+  if (typeof _PV_AI_CONSENT === 'undefined' || _PV_AI_CONSENT.get() !== 'yes') return;
+  const texts = [...want].slice(0, 24);
+  _nesBusy[key] = true; texts.forEach(t => _nesFlying.add(t));
+  // Tope de 30 s: la petición a la IA no tiene timeout y una colgada dejaría la clave ocupada.
+  Promise.race([_trTranslateChunk(texts, 'es'), new Promise(r => setTimeout(() => r(null), 30000))]).catch(() => null).then(map => {
+    _nesBusy[key] = false; texts.forEach(t => _nesFlying.delete(t));
+    // Un aviso de cuota o de límite no es una traducción: cuenta como fallo y no se guarda.
+    if (!map || Object.values(map).some(v => _NM_AI_OUTAGE_RE.test(v))) {
+      _nesFails++; _nesWaitUntil = Date.now() + Math.min(60, 2 ** _nesFails) * 60000;
+      return;
+    }
+    _nesFails = 0; _nesDictAdd(map);
+    (list || []).forEach(_newsEsApply);
+    try { _saveNewsCache(); } catch (e) {}
+    try { if (onDone) onDone(); } catch (e) {}
+  });
 }
 
 // Cada noticia de la posición es la MISMA tarjeta que las de «Hoy» y «Movimientos Diarios»
@@ -19059,6 +19187,9 @@ function showStockNews(ticker, btn) {
   const news = STOCK_NEWS[ticker] || [];
   // Sin noticias en caché → spinner + carga bajo demanda, y se repinta al llegar.
   if (!news.length) _pnxFetch(ticker);
+  // En español: lo ya traducido sale al instante y lo que falte va en un lote; al llegar se
+  // repinta la posición si sigue abierta (el guard _pnLastHtml evita repintar de más).
+  else _newsEsLazy('tk:' + ticker, news, () => { if (_snOpenTicker === ticker) showStockNews(ticker, null); });
   const c = calcH(h), v = _pnxChg(h), tk = pvEsc(ticker);
   const gl = (Math.round(c.gl * 100) / 100) || 0, glp = +c.glPct || 0;
   const glpTxt = (glp > 0 ? '+' : '') + glp.toFixed(Math.abs(glp) < 1 ? 2 : 1) + '%';
@@ -34094,7 +34225,7 @@ async function autoUpdateNews(force) {
     const _built = _buildTickerArticles(ticker, news);
     // Conserva las noticias ya mostradas (calidad estable) y solo antepone las NUEVAS.
     const _existing = (_newsSeeded && Array.isArray(STOCK_NEWS[ticker])) ? STOCK_NEWS[ticker] : [];
-    const _keyOf = a => ((a && (a.link || a.h || a.headline)) || '').trim().toLowerCase();
+    const _keyOf = a => ((a && (a.link || a.h_en || a.h || a.headline)) || '').trim().toLowerCase();   // h_en: titular original si se tradujo
     const _seen  = new Set(_existing.map(_keyOf));
     const _fresh = _built.filter(a => { const k = _keyOf(a); if (!k || _seen.has(k)) return false; _seen.add(k); return true; });
     STOCK_NEWS[ticker] = [..._fresh, ..._existing].slice(0, 12);
