@@ -17317,11 +17317,14 @@ function _openOutlookEvent(evKey, outlookKey) {
     if(card) card.style.display='';
   })();
   set('nmHeadline', ev.title||'');
-  htm('nmSignals', '');
   const _tk = ev.tickers_affected || ev.tickers || [];
   htm('nmText', `
     <div class="nm-ev-sec-lbl">Qué está pasando</div>
-    <p style="font-size:15px;line-height:1.75;color:var(--text2);margin:0">${pvEsc(ev.description||ev.summary||'Sin descripción disponible.')}</p>
+    <p style="font-size:15px;line-height:1.75;color:var(--text2);margin:0">${pvEsc(ev.description||ev.summary||'Sin descripción disponible.')}</p>`);
+  // Las pastillas de datos van en #nmSignals, la fila que monta sobre la curva de la cabecera
+  // (igual que las señales de una noticia): así en el celular son UNA sola fila deslizable.
+  // Mismo marcado de siempre; sólo cambia el contenedor.
+  htm('nmSignals', `
     <div class="nm-chip-row">
       <span class="nm-chip"><span class="nm-chip-k">Categoría</span>${pvEsc(catLabels[ev.category]||ev.category)}</span>
       <span class="nm-chip"><span class="nm-chip-k">Hora</span>${pvEsc(ev.time||'TBD')}</span>
@@ -48414,6 +48417,733 @@ body.dark-theme .trade-drawer .preview-block { background: var(--surface) !impor
   html:root:not(.pv-ipad) body .navbar .nav-bottom-link { font-size: 14.5px !important; }
 }
 /* ▲ v8-escritorio ▲ */
+/* ═══ Lector de noticias a pantalla completa (rediseño 2026-09-30) ═══════════
+   Diseño aprobado (mockups de escritorio, iPad y iPhone). Sólo estética: no
+   cambia ningún texto, dato, id ni onclick.
+
+     · Cabecera navy #0b1c30 PLANA (sin degradado, halo ni desenfoque), de
+       borde a borde, con la curva abajo: 48 px escritorio · 40 iPad · 32
+       celular. Dentro: Volver, la miga, el sello, el titular y la firma.
+     · Las pastillas (#nmSignals) montan sobre la curva: mitad navy, mitad
+       fondo. En el celular son una sola fila que se desliza.
+     · Debajo, sobre #eef1f8, tarjetas blancas SEPARADAS (el usuario rechazó
+       una sola superficie continua): «Qué está pasando» (#nmText) y «Cómo
+       afecta al mercado» (#nmMktSection), con la etiqueta encima de cada una.
+     · El primer párrafo ya NO lleva la línea verde a la izquierda (petición
+       expresa del usuario).
+     · «Impacto en tu Portafolio» pasa a tarjeta blanca: en escritorio a la
+       derecha y fija al hacer scroll; en iPad, justo después de «Qué está
+       pasando»; en el celular sigue oculta (decisión de producto previa).
+
+   Cómo: el overlay (#newsModal) es la rejilla. La barra de cierre, el layout,
+   el artículo, la cabecera y el cuerpo quedan en display:contents y sus hijos
+   son celdas: Volver y la miga comparten fila sin medir nada, y el navy lo
+   pinta #newsModal::before detrás de las filas 1–5; la fila 6 (pastillas) sube
+   media pastilla. En escritorio el cuerpo vuelve a ser una caja (columna de
+   lectura) para que el lateral fijo ocupe su misma fila.
+
+   El prefijo #newsModal (un id) gana a las capas anteriores —v8, letra
+   grande de escritorio, tema oscuro— sin depender del orden. Los !important
+   son sólo para ganar a otros !important o a estilos en línea del JS; nunca
+   se fuerza display donde el JS lo alterna (#nmMktSection, #nmImpactCard,
+   #nmLink). Medidas en variables: §8 (pantalla ancha: web y iPad apaisado)
+   y §9 (celular) sólo cambian valores; las dos columnas son sólo de la web.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. Variables y rejilla (iPad y ventanas medianas: una columna) ──────── */
+#newsModal {
+  /* Paleta: la misma del escritorio (tokens pvd) */
+  --nmx-navy:     #0b1c30;
+  --nmx-bg:       #eef1f8;
+  --nmx-card:     #fff;
+  --nmx-chip:     #fff;
+  --nmx-line:     #e2e7f0;
+  --nmx-line-hi:  #cfd7e3;
+  --nmx-wash:     #f4f6fa;
+  --nmx-ink:      #0b1c30;
+  --nmx-slate:    #33475f;
+  --nmx-muted:    #7a879b;
+  --nmx-green:    #0f8a5f;
+  --nmx-green-bg: #dcf6e9;
+  --nmx-red:      #c62828;
+  --nmx-red-bg:   #ffe3df;
+  --nmx-amber:    #b45309;
+  --nmx-amber-bg: #fdecd8;
+  --nmx-avatar:   #0b1c30;
+  --nmx-ease:     cubic-bezier(.22,1,.36,1);
+
+  /* Medidas */
+  --nmx-pad:       var(--pvd-pad, 28px);   /* margen lateral: el de las pestañas */
+  --nmx-top:       calc(env(safe-area-inset-top, 0px) + 22px);
+  --nmx-back-gap:  14px;                   /* entre Volver y la miga */
+  --nmx-hero-gap:  24px;                   /* de la fila de Volver al sello */
+  --nmx-meta-gap:  28px;                   /* de la firma a las pastillas */
+  --nmx-r-hero:    40px;
+  --nmx-r-card:    28px;
+  --nmx-chip-h:    42px;                   /* alto fijo: la curva corta la pastilla por la mitad */
+  --nmx-first:     36px;                   /* de las pastillas a la primera tarjeta (o su etiqueta) */
+  --nmx-gap:       32px;                   /* entre una tarjeta y la etiqueta de la siguiente */
+  --nmx-lbl:       29px;                   /* etiqueta de sección + su aire sobre la tarjeta */
+  --nmx-card-pad:  26px 28px;
+  --nmx-bottom:    calc(96px + env(safe-area-inset-bottom, 0px));   /* hueco de la barra inferior */
+
+  /* Letra */
+  --nmx-fs-back:  14px;
+  --nmx-fs-crumb: 11px;
+  --nmx-fs-badge: 12.5px;
+  --nmx-fs-h1:    42px;
+  --nmx-lh-h1:    1.08;
+  --nmx-fs-by:    15px;
+  --nmx-fs-chip:  14px;
+  --nmx-fs-chipk: 13px;
+  --nmx-fs-tk:    12.5px;
+  --nmx-fs-lbl:   12.5px;
+  --nmx-fs-lead:  18px;
+  --nmx-lh-lead:  1.66;
+  --nmx-fs-body:  16px;
+  --nmx-lh-body:  1.72;
+  --nmx-fs-h2:    21px;
+  --nmx-fs-li:    15.5px;
+  --nmx-fs-side:  14px;
+
+  display: grid;
+  grid-template-columns:
+    [full-start] var(--nmx-pad)
+    [main-start] auto [back-end]
+    var(--nmx-back-gap)
+    [crumb-start] minmax(0, 1fr) [main-end]
+    var(--nmx-pad) [full-end];
+  /* 1 aire · 2 Volver + miga · 3 sello · 4 titular · 5 firma · 6 pastillas ·
+     7 «Qué está pasando» · 8 portafolio · 9 «Cómo afecta» · 10 enlace · 11 hueco final */
+  grid-template-rows: var(--nmx-top) repeat(9, auto) var(--nmx-bottom);
+  align-content: start;
+  overflow-x: hidden;
+  background: var(--nmx-bg);
+  font-family: var(--font);
+}
+/* Las envolturas no pintan caja: sus hijos pasan a ser celdas de la rejilla. */
+#newsModal .nm-topbar,
+#newsModal .nm-layout,
+#newsModal .nm-article,
+#newsModal .nm-cabecera,
+#newsModal .nm-badge-row,
+#newsModal .nm-body-wrap { display: contents; }
+/* El avance del titular de la vieja barra: el titular ya está en la cabecera. */
+#newsModal #nmTopTicker { display: none; }
+
+/* ── 2. Cabecera navy: plana, de borde a borde, curva abajo ─────────────── */
+#newsModal::before {
+  content: '';
+  grid-column: full-start / full-end;
+  grid-row: 1 / 6;
+  background: var(--nmx-navy);
+  border-radius: 0 0 var(--nmx-r-hero) var(--nmx-r-hero);
+}
+#newsModal .nm-close {
+  grid-column: main-start / back-end;
+  grid-row: 2;
+  justify-self: start;
+  align-self: center;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 17px 9px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255,255,255,.1);
+  box-shadow: none;
+  color: #fff;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-back) !important;
+  font-weight: 700;
+  line-height: 19px;
+  white-space: nowrap;
+  transition: background .22s var(--nmx-ease), transform .22s var(--nmx-ease);
+}
+#newsModal .nm-close:hover { background: rgba(255,255,255,.16); box-shadow: none; transform: translateX(-2px); }
+#newsModal .nm-close:active { transform: none; }
+#newsModal .nm-close:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+
+#newsModal .nm-breadcrumb {
+  grid-column: crumb-start / -2;
+  grid-row: 2;
+  align-self: center;
+  min-width: 0;
+  margin: 0;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-crumb) !important;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: .9px;
+  text-transform: uppercase;
+  color: rgba(255,255,255,.52);
+}
+#newsModal .nm-breadcrumb > span { flex-shrink: 0; }
+#newsModal .nm-breadcrumb-sep { color: rgba(255,255,255,.28); }
+#newsModal .nm-breadcrumb-active {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #7fe0b6;
+  font-weight: 800;
+}
+
+/* Sello de estado/sentimiento, en minúsculas con la inicial en mayúscula
+   («Programado · impacto medio»). Es un bloque para que ::first-letter valga;
+   el punto de color va fuera del flujo para no ser la «primera letra». */
+#newsModal .nm-sent-badge {
+  grid-column: main-start / -2;
+  grid-row: 3;
+  justify-self: start;
+  display: block;
+  position: relative;
+  margin: var(--nmx-hero-gap) 0 0;
+  padding: 6px 13px 6px 28px;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-badge) !important;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: lowercase;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+#newsModal .nm-sent-badge::first-letter { text-transform: uppercase; }
+#newsModal .nm-sent-badge::before { position: absolute; left: 13px; top: 50%; margin-top: -3.5px; }
+
+#newsModal .nm-headline {
+  grid-column: main-start / -2;
+  grid-row: 4;
+  max-width: 20ch;
+  margin: 18px 0 14px;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-h1) !important;
+  font-weight: 800;
+  line-height: var(--nmx-lh-h1);
+  letter-spacing: -.03em;
+  color: #fff;
+  text-wrap: balance;
+}
+/* La firma (fuente · fecha, u hora · tickers) bajo el titular. Su margen
+   inferior deja sitio a la mitad alta de las pastillas. */
+#newsModal .nm-byline {
+  grid-column: main-start / -2;
+  grid-row: 5;
+  display: block;
+  margin: 0 0 calc(var(--nmx-meta-gap) + var(--nmx-chip-h) / 2);
+  font-family: var(--font);
+  font-size: var(--nmx-fs-by) !important;
+  font-weight: 600;
+  line-height: 1.5;
+  color: rgba(255,255,255,.62);
+}
+
+/* ── 3. Pastillas sobre la curva ─────────────────────────────────────────── */
+#newsModal #nmSignals {
+  grid-column: main-start / -2;
+  grid-row: 6;
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: calc(var(--nmx-chip-h) / -2) 0 0;
+  padding: 0;
+  border: 0;
+}
+/* Evento: la fila Categoría/Hora/Impacto se deshace en pastillas sueltas y la
+   de «Tickers afectados» es una pastilla más, con los tickers dentro. */
+#newsModal #nmSignals > .nm-chip-row { display: contents; }
+#newsModal #nmSignals .nm-signal-item,
+#newsModal #nmSignals .nm-chip,
+#newsModal #nmSignals > .nm-chip-row + .nm-chip-row {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  box-sizing: border-box;
+  height: var(--nmx-chip-h);
+  margin: 0 !important;
+  padding: 0 16px;
+  background: var(--nmx-chip);
+  border: 1px solid var(--nmx-line);
+  border-radius: 999px;
+  box-shadow: none;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-chip) !important;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+  color: var(--nmx-ink);   /* las señales de noticia traen su color en línea y lo conservan */
+  white-space: nowrap;
+}
+#newsModal #nmSignals > .nm-chip-row + .nm-chip-row { gap: 6px; padding: 0 5px 0 16px; }
+#newsModal #nmSignals .nm-chip-k {
+  margin-right: 1px;
+  font-size: var(--nmx-fs-chipk) !important;
+  font-weight: 600;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  color: var(--nmx-muted);
+}
+#newsModal #nmSignals .nm-chip-tk {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--nmx-bg);
+  color: var(--nmx-ink);
+  font-family: var(--font);
+  font-size: var(--nmx-fs-tk) !important;
+  font-weight: 800;
+  line-height: 1.3;
+  letter-spacing: 0;
+}
+/* Señal de la noticia: el verde y el rojo en línea pasan a los del diseño
+   (y a su versión clara en el tema oscuro, que sólo cambia las variables). */
+#newsModal #nmSignals [style*="#0A7A52"] { color: var(--nmx-green) !important; }
+#newsModal #nmSignals [style*="#BA1A1A"] { color: var(--nmx-red) !important; }
+
+/* ── 4. Tarjetas separadas ───────────────────────────────────────────────── */
+#newsModal #nmText,
+#newsModal #nmMktSection,
+#newsModal #nmImpactCard {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--nmx-card-pad);
+  background: var(--nmx-card);
+  border: 1px solid var(--nmx-line);
+  border-radius: var(--nmx-r-card);
+  box-shadow: none;
+}
+#newsModal #nmText {
+  grid-column: main-start / main-end;
+  grid-row: 7;
+  position: relative;
+  margin-top: calc(var(--nmx-first) + var(--nmx-lbl));
+  font-family: var(--font);
+  font-size: var(--nmx-fs-body) !important;
+  line-height: var(--nmx-lh-body);
+  color: var(--nmx-slate);
+}
+/* Noticia: no hay etiqueta encima, la tarjeta sube (sin :has() se queda el
+   hueco de la etiqueta, que no rompe nada). */
+#newsModal #nmText:not(:has(> .nm-ev-sec-lbl)) { margin-top: var(--nmx-first); }
+#newsModal .nm-sidebar { grid-column: main-start / main-end; grid-row: 8; min-width: 0; }
+#newsModal #nmImpactCard { margin-top: var(--nmx-gap); }
+#newsModal #nmMktSection {
+  grid-column: main-start / main-end;
+  grid-row: 9;
+  position: relative;
+  margin-top: calc(var(--nmx-gap) + var(--nmx-lbl)) !important;   /* el style en línea trae 18px */
+}
+#newsModal #nmLink { grid-column: main-start / main-end; grid-row: 10; justify-self: start; }
+
+/* Etiqueta de sección: pequeña, gris, en minúscula y FUERA de la tarjeta,
+   encima de ella (el hueco lo reserva el margen superior de la tarjeta). */
+#newsModal #nmText > .nm-ev-sec-lbl,
+#newsModal #nmMktSection > .nm-ev-sec-lbl {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-lbl) !important;
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--nmx-muted);
+}
+
+/* Texto de la noticia. El primer párrafo es la entradilla, SIN la línea verde. */
+#newsModal #nmText p { margin: 0 0 18px; }
+#newsModal #nmText p:first-child { padding: 0; border-left: 0; }
+#newsModal #nmText > p:first-child,
+#newsModal #nmText > .nm-ev-sec-lbl + p {
+  margin: 0 0 20px !important;
+  font-size: var(--nmx-fs-lead) !important;
+  font-weight: 600 !important;
+  line-height: var(--nmx-lh-lead) !important;
+  color: var(--nmx-ink) !important;
+}
+#newsModal #nmText > :last-child,
+#newsModal #nmText > p:first-child:last-child,
+#newsModal #nmText > .nm-ev-sec-lbl + p:last-child { margin-bottom: 0 !important; }
+/* El resumen IA va dentro del texto: se lee como el resto de párrafos, no
+   como otra entradilla. */
+#newsModal #nmAiInline p:first-child {
+  margin-bottom: 18px;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  line-height: inherit !important;
+  color: inherit !important;
+}
+#newsModal #nmAiInline:not(:last-child) { margin-bottom: 18px; }
+#newsModal #nmAiInline p:last-child { margin-bottom: 0; }
+#newsModal #nmAiInline p[style*="font-size:11px"] {
+  margin-top: 6px !important;
+  font-size: 12.5px !important;
+  line-height: 1.6 !important;
+  color: var(--nmx-muted) !important;
+}
+
+/* «Cómo afecta al mercado»: la caja que pinta el JS se aplana dentro de la
+   tarjeta (sin caja dentro de caja). */
+#newsModal #nmMktBody > div {
+  background: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+}
+#newsModal #nmMktBody > div > div:first-child:not(.nm-ai-skel-line) {   /* sello «Cómo afecta · Impacto …» */
+  gap: 6px !important;
+  margin: 0 0 14px !important;
+  padding: 5px 11px !important;
+  font-family: var(--font);
+  font-size: 12px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0 !important;
+  text-transform: none !important;
+  background: var(--nmx-wash) !important;
+}
+#newsModal #nmMktBody > div > div:first-child .material-symbols-outlined { font-size: 15px !important; }
+#newsModal #nmMktBody > div > div[style*="color:#16794a"] { color: var(--nmx-green) !important; background: var(--nmx-green-bg) !important; }
+#newsModal #nmMktBody > div > div[style*="color:#b45309"] { color: var(--nmx-amber) !important; background: var(--nmx-amber-bg) !important; }
+#newsModal #nmMktBody > div > div:nth-child(2):not(.nm-ai-skel-line) {   /* resumen = titular de la tarjeta */
+  margin: 0 0 12px;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-h2) !important;
+  font-weight: 800 !important;
+  line-height: 1.34 !important;
+  letter-spacing: -.02em;
+  color: var(--nmx-ink) !important;
+  text-wrap: balance;
+}
+#newsModal #nmMktBody .nm-brief-ctx {
+  margin: 0 !important;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-body) !important;
+  line-height: var(--nmx-lh-body) !important;
+  color: var(--nmx-slate) !important;
+}
+#newsModal #nmMktBody .nm-ai-puntos { margin-top: 16px; }
+#newsModal #nmMktBody .nm-ai-puntos li {
+  gap: 11px;
+  padding: 12px 0;
+  border-top: 1px solid var(--nmx-line);
+  border-bottom: 0;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-li) !important;
+  line-height: 1.65;
+  color: var(--nmx-slate);
+}
+#newsModal #nmMktBody .nm-ai-puntos li:last-child { padding-bottom: 0; }
+#newsModal #nmMktBody .nm-ai-puntos li::before { width: 7px; height: 7px; margin-top: 9px; background: var(--nmx-green); }
+
+/* ── 5. Impacto en tu Portafolio: tarjeta blanca como las demás ─────────── */
+#newsModal #nmImpactCard { overflow: visible; }
+#newsModal #nmImpactCard .nm-side-card-head { gap: 0; padding: 0; border: 0; }
+#newsModal #nmImpactCard .nm-side-card-head svg { display: none; }   /* icono pensado para el navy */
+#newsModal #nmImpactCard .nm-side-card-title {
+  font-family: var(--font);
+  font-size: 17px !important;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  color: var(--nmx-ink);
+}
+#newsModal #nmImpactBody { display: flex; flex-direction: column; padding: 0; }
+/* El texto va primero, como subtítulo; las posiciones, debajo. */
+#newsModal #nmImpactBody .nm-ic-txt {
+  order: -1;
+  margin: 4px 0 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  font-family: var(--font);
+  font-size: var(--nmx-fs-side) !important;
+  line-height: 1.55;
+  color: var(--nmx-muted);
+}
+#newsModal #nmImpactBody .nm-ic-txt:not(:only-child) { margin-bottom: 16px !important; }
+#newsModal #nmImpactBody .nm-ic-txt strong { color: var(--nmx-ink) !important; font-weight: 700; }
+/* Posiciones: el ticker es el avatar navy; al lado, el nombre. */
+#newsModal .nm-af-grid { gap: 10px; }
+#newsModal #nmImpactBody > .nm-af-grid:only-child { margin-top: 14px; }   /* noticia: sin texto entre el título y las posiciones */
+#newsModal .nm-af-pill {
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--nmx-wash);
+  border: 1px solid transparent;
+  border-radius: 18px;
+  transition: border-color .22s var(--nmx-ease), background .22s var(--nmx-ease);
+}
+#newsModal .nm-af-pill:hover { background: var(--nmx-wash); transform: none; }
+#newsModal .nm-af-dot { display: none; }
+#newsModal .nm-af-meta { flex-direction: row; align-items: center; gap: 12px; }
+#newsModal .nm-af-tk {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  min-width: 40px;
+  height: 40px;
+  padding: 0 6px;
+  border-radius: 13px;
+  background: var(--nmx-avatar);
+  color: #fff;
+  font-family: var(--font);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+}
+#newsModal .nm-af-nm {
+  min-width: 0;
+  font-family: var(--font);
+  font-size: 14.5px !important;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--nmx-ink);
+}
+
+/* ── 6. Entrada: el cuerpo sube 10 px bajo la cabecera, que no se mueve ── */
+#newsModal #nmSignals,
+#newsModal #nmText,
+#newsModal #nmMktSection,
+#newsModal #nmImpactCard {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity var(--pv-t-slow, .32s) var(--nmx-ease) .04s,
+              transform var(--pv-t-slow, .32s) var(--nmx-ease) .04s,
+              border-color .22s var(--nmx-ease);
+}
+#newsModal.open #nmSignals,
+#newsModal.open #nmText,
+#newsModal.open #nmMktSection,
+#newsModal.open #nmImpactCard { opacity: 1; transform: none; }
+@media (hover: hover) and (pointer: fine) {
+  #newsModal #nmText:hover,
+  #newsModal #nmMktSection:hover,
+  #newsModal #nmImpactCard:hover { border-color: var(--nmx-line-hi); }
+  #newsModal .nm-af-pill:hover { border-color: var(--nmx-line-hi); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #newsModal #nmSignals,
+  #newsModal #nmText,
+  #newsModal #nmMktSection,
+  #newsModal #nmImpactCard { opacity: 1; transform: none; transition: none; }
+  #newsModal .nm-close { transition: none; }
+}
+
+/* ── 7. Tema oscuro: la cabecera sigue navy; tarjetas en la superficie oscura ── */
+body.dark-theme #newsModal {
+  --nmx-bg:       #0b111c;
+  --nmx-card:     var(--surface, #0f1623);
+  --nmx-chip:     var(--surface2, #161e2d);
+  --nmx-line:     rgba(255,255,255,.08);
+  --nmx-line-hi:  rgba(255,255,255,.16);
+  --nmx-wash:     rgba(255,255,255,.04);
+  --nmx-ink:      var(--text, #e8edf7);
+  --nmx-slate:    var(--text2, #aab4c2);
+  --nmx-muted:    var(--text3, #8a96a3);
+  --nmx-green:    #4ade80;
+  --nmx-green-bg: rgba(74,222,128,.12);
+  --nmx-red:      #f87171;
+  --nmx-red-bg:   rgba(248,113,113,.14);
+  --nmx-amber:    #f5b25c;
+  --nmx-amber-bg: rgba(245,178,92,.12);
+  --nmx-avatar:   #1d3252;
+}
+body.dark-theme #newsModal #nmSignals .nm-chip-tk { background: rgba(255,255,255,.08); }
+body.dark-theme #newsModal #nmText { color: var(--nmx-slate) !important; }
+/* El ocre neutro en línea está pensado para fondo blanco: en oscuro, su versión clara. */
+body.dark-theme #newsModal #nmSignals [style*="#6B5E3A"] { color: #d9c28f !important; }
+body.dark-theme #newsModal #nmMktBody > div > div[style*="color:#5b6b7d"] { color: var(--nmx-slate) !important; }
+body.dark-theme #newsModal #nmMktBody .nm-ai-skel-line {
+  background: linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.1) 50%, rgba(255,255,255,.05) 75%);
+  background-size: 200% 100%;
+}
+
+/* ── 8. Pantalla ancha (≥1100 px): medidas de escritorio ──────────────────
+   Las toman la web y el iPad apaisado (que ya lleva el diseño de escritorio
+   por v8). Las dos columnas con el lateral fijo son sólo de la web: el iPad
+   sigue en una columna, con la lectura acotada para que la línea no se vaya
+   a 150 caracteres en 1366 px. */
+@media (min-width: 1100px) {
+  #newsModal {
+    --nmx-top:       calc(env(safe-area-inset-top, 0px) + 30px);
+    --nmx-back-gap:  18px;
+    --nmx-hero-gap:  38px;
+    --nmx-meta-gap:  34px;
+    --nmx-r-hero:    48px;
+    --nmx-r-card:    30px;
+    --nmx-chip-h:    44px;
+    --nmx-first:     76px;
+    --nmx-gap:       40px;
+    --nmx-lbl:       32px;
+    --nmx-card-pad:  32px 34px;
+    --nmx-bottom:    calc(110px + env(safe-area-inset-bottom, 0px));
+    --nmx-side:      380px;   /* columna del lateral (web) */
+    --nmx-colgap:    56px;    /* entre la lectura y el lateral (web) */
+
+    --nmx-fs-back:  15px;
+    --nmx-fs-crumb: 12px;
+    --nmx-fs-badge: 13px;
+    --nmx-fs-h1:    clamp(34px, 4.2vw, 54px);
+    --nmx-fs-by:    16px;
+    --nmx-fs-chip:  14.5px;
+    --nmx-fs-chipk: 13.5px;
+    --nmx-fs-tk:    13px;
+    --nmx-fs-lbl:   13px;
+    --nmx-fs-lead:  19px;
+    --nmx-lh-lead:  1.68;
+    --nmx-fs-body:  16.5px;
+    --nmx-lh-body:  1.78;
+    --nmx-fs-h2:    23px;
+    --nmx-fs-li:    16px;
+  }
+  #newsModal .nm-close { gap: 8px; padding: 11px 20px 11px 16px; line-height: 20px; }
+  #newsModal .nm-sent-badge { padding: 7px 14px 7px 29px; }
+  #newsModal .nm-sent-badge::before { left: 14px; }
+  #newsModal .nm-headline { max-width: 24ch; margin: 20px 0 18px; }
+  #newsModal #nmSignals { gap: 10px; }
+  #newsModal #nmSignals .nm-signal-item,
+  #newsModal #nmSignals .nm-chip { gap: 8px; padding: 0 18px; }
+  #newsModal #nmSignals > .nm-chip-row + .nm-chip-row { gap: 6px; padding: 0 6px 0 18px; }
+  #newsModal #nmSignals .nm-chip-tk { padding: 4px 11px; }
+  #newsModal #nmText > .nm-ev-sec-lbl,
+  #newsModal #nmMktSection > .nm-ev-sec-lbl { margin-bottom: 14px; }
+  #newsModal #nmMktBody > div > div:first-child:not(.nm-ai-skel-line) { margin-bottom: 16px !important; padding: 5px 12px !important; font-size: 12.5px !important; }
+  #newsModal #nmMktBody > div > div:nth-child(2):not(.nm-ai-skel-line) { margin-bottom: 14px; line-height: 1.35 !important; }
+  #newsModal #nmMktBody .nm-ai-puntos { margin-top: 18px; }
+  #newsModal #nmMktBody .nm-ai-puntos li { gap: 12px; padding: 13px 0; line-height: 1.7; }
+  #newsModal #nmMktBody .nm-ai-puntos li:last-child { padding-bottom: 0; }
+  #newsModal #nmMktBody .nm-ai-puntos li::before { margin-top: 10px; }
+
+  /* iPad apaisado: una columna, acotada. */
+  html.pv-ipad #newsModal #nmText,
+  html.pv-ipad #newsModal .nm-sidebar,
+  html.pv-ipad #newsModal #nmMktSection { max-width: 860px; }
+
+  /* Web: dos columnas, lateral fijo a la derecha. */
+  html:not(.pv-ipad) #newsModal {
+    grid-template-columns:
+      [full-start] var(--nmx-pad)
+      [main-start] auto [back-end]
+      var(--nmx-back-gap)
+      [crumb-start] minmax(0, 1fr) [main-end]
+      var(--nmx-colgap)
+      [side-start] var(--nmx-side) [side-end]
+      var(--nmx-pad) [full-end];
+  }
+  /* El cuerpo vuelve a ser una caja (la columna de lectura, 780 px como
+     máximo) para compartir fila con el lateral: así el lateral fijo tiene
+     todo el alto del artículo y las tarjetas no se separan. La caja sube
+     media pastilla y las pastillas montan igual sobre la curva; su fila puede
+     seguir por encima del lateral, que empieza más abajo. */
+  html:not(.pv-ipad) #newsModal .nm-body-wrap {
+    display: block;
+    grid-column: main-start / main-end;
+    grid-row: 6;
+    min-width: 0;
+    max-width: 780px;
+    margin-top: calc(var(--nmx-chip-h) / -2);
+    padding: 0;
+  }
+  html:not(.pv-ipad) #newsModal #nmSignals { margin: 0 calc(-1 * (var(--nmx-colgap) + var(--nmx-side))) 0 0; }
+  /* Lateral: a la altura de la primera etiqueta y fijo al hacer scroll. */
+  html:not(.pv-ipad) #newsModal .nm-sidebar {
+    grid-column: side-start / side-end;
+    grid-row: 6;
+    align-self: start;
+    position: sticky;
+    top: 28px;
+    margin-top: calc(var(--nmx-chip-h) / 2 + var(--nmx-first));
+  }
+  html:not(.pv-ipad) #newsModal #nmImpactCard { margin-top: 0; padding: 26px 26px 22px; }
+  html:not(.pv-ipad) #newsModal #nmImpactBody .nm-ic-txt:not(:only-child) { margin-bottom: 14px !important; }
+  /* En la columna estrecha, una posición por fila (como una lista). */
+  html:not(.pv-ipad) #newsModal .nm-af-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  html:not(.pv-ipad) #newsModal #nmImpactBody > .nm-af-grid:only-child { margin-top: 4px; }
+  html:not(.pv-ipad) #newsModal .nm-af-pill {
+    gap: 13px;
+    margin: 0 -12px;
+    padding: 12px;
+    background: none;
+    border: 0;
+  }
+  html:not(.pv-ipad) #newsModal .nm-af-pill:hover { background: var(--nmx-wash); }
+  html:not(.pv-ipad) #newsModal .nm-af-meta { gap: 13px; }
+  html:not(.pv-ipad) #newsModal .nm-af-tk { min-width: 44px; height: 44px; border-radius: 14px; font-size: 11.5px; }
+  html:not(.pv-ipad) #newsModal .nm-af-nm { font-size: 15.5px !important; font-weight: 800; }
+}
+
+/* ── 9. Celular (≤700 px) ──────────────────────────────────────────────────
+   El lateral sigue oculto (regla de arriba del todo, decisión de producto). */
+@media (max-width: 700px) {
+  #newsModal {
+    --nmx-pad:       18px;
+    --nmx-top:       calc(env(safe-area-inset-top, 0px) + 12px);
+    --nmx-hero-gap:  20px;
+    --nmx-meta-gap:  24px;
+    --nmx-r-hero:    32px;
+    --nmx-r-card:    24px;
+    --nmx-chip-h:    40px;
+    --nmx-first:     28px;
+    --nmx-gap:       28px;
+    --nmx-card-pad:  22px 20px;
+
+    --nmx-fs-h1:    29px;
+    --nmx-lh-h1:    1.12;
+    --nmx-fs-by:    14px;
+    --nmx-fs-chip:  13.5px;
+    --nmx-fs-chipk: 12.5px;
+    --nmx-fs-tk:    12px;
+    --nmx-fs-lead:  16.5px;
+    --nmx-fs-body:  15px;
+    --nmx-fs-h2:    19px;
+    --nmx-fs-li:    14.5px;
+  }
+  /* Miga: sólo la parte activa. */
+  #newsModal .nm-breadcrumb > span:first-child,
+  #newsModal .nm-breadcrumb-sep { display: none; }
+  #newsModal .nm-headline { max-width: none; margin: 16px 0 12px; }
+  #newsModal #nmSignals .nm-signal-item,
+  #newsModal #nmSignals .nm-chip { padding: 0 14px; }
+  #newsModal #nmSignals > .nm-chip-row + .nm-chip-row { padding: 0 5px 0 14px; }
+  #newsModal #nmSignals .nm-chip-tk { padding: 3px 9px; }
+  /* Pastillas: una sola fila que se desliza de borde a borde. El hueco final
+     es un elemento (::after) porque el padding derecho de un contenedor con
+     scroll no siempre cuenta. */
+  #newsModal #nmSignals {
+    grid-column: full-start / full-end;
+    min-height: var(--nmx-chip-h);   /* con scroll su alto mínimo sería 0 y la fila se quedaría en media pastilla */
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 0 0 0 var(--nmx-pad);
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  #newsModal #nmSignals::-webkit-scrollbar { display: none; }
+  #newsModal #nmSignals::after { content: ''; flex: 0 0 calc(var(--nmx-pad) - 8px); height: 1px; }
+}
+/* ▲ Lector de noticias a pantalla completa ▲ */
 </style>
 
 <script>
