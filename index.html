@@ -18908,6 +18908,14 @@ function _pnxSummary(n) {
   }
   return '';
 }
+// Subtítulo de la posición: el nombre, o el sector cuando el nombre es sólo el ticker
+// (en muchas carteras h.name llega igual al ticker y se leía «BAC · BAC»).
+function _pnxSub(h, tk) {
+  const nm = String((h && h.name) || '').trim();
+  if (nm && nm.toUpperCase() !== String(tk).toUpperCase()) return nm;
+  try { return (typeof TICKER_SECTOR !== 'undefined' && TICKER_SECTOR[tk]) || nm; } catch (e) { return nm; }
+}
+
 function _pnxItem(n, ticker) {
   if (!n.impact) n.impact = ticker;
   n._ticker = ticker;                        // el lector sabe de qué posición es (como antes)
@@ -18946,7 +18954,7 @@ function _pnxRenderList() {
         const v = _pnxChg(h), tk = pvEsc(h.ticker);
         return `<div class="pnx-ai" data-tk="${tk}"><button type="button" class="pnx-row">`
           + `<span class="pnx-av">${pvEsc(_pnxLetter(h.ticker))}</span>`
-          + `<span class="pnx-nm"><b>${tk}</b><small>${pvEsc(h.name || '')}</small></span>`
+          + `<span class="pnx-nm"><b>${tk}</b><small>${pvEsc(_pnxSub(h, tk))}</small></span>`
           + `<span class="pnx-rt"><b class="${_pnxCls(v)}">${_pnxPct(v)}</b><small>${_pnxCount((STOCK_NEWS[h.ticker] || []).length)}</small></span>`
           + `${_PNX_CHEV}</button></div>`;
       }).join('');
@@ -19079,7 +19087,7 @@ function showStockNews(ticker, btn) {
   const glpTxt = (glp > 0 ? '+' : '') + glp.toFixed(Math.abs(glp) < 1 ? 2 : 1) + '%';
   const html =
       `<div class="pnx-ph"><span class="pnx-av">${pvEsc(_pnxLetter(ticker))}</span>`
-    + `<div class="pnx-pn"><h3>${tk}</h3><small>${pvEsc(h.name || '')}</small></div>`
+    + `<div class="pnx-pn"><h3>${tk}</h3><small>${pvEsc(_pnxSub(h, tk))}</small></div>`
     + `<div class="pnx-px"><b>${_pvPx(h.price)}</b><span class="pnx-chg ${_pnxCls(v)}">${_pnxPct(v)} ${_L('hoy', 'today')}</span></div></div>`
     + `<div class="pnx-stats">`
     + `<div class="pnx-st"><small>${_L('Tu posición', 'Your position')}</small><b>${usd(c.mktVal)}</b></div>`
@@ -49765,6 +49773,28 @@ html body.dark-theme #posNewsCard .pnx-src i { outline: 1px solid rgba(255,255,2
   html.pv-ipad body.dark-theme #posNewsCard { --pnx-head-ink: #0b1c30; --pnx-head-muted: #7a879b; }
   html.pv-ipad body.dark-theme #posNewsCard .pnx-mv.up { color: #0f8a5f; background: #dcf6e9; }
   html.pv-ipad body.dark-theme #posNewsCard .pnx-mv.dn { color: #c62828; background: #ffe3df; }
+}
+
+/* ── Noticias de la posición en cuadros (cuadrícula), no en filas ── */
+html body #posNewsCard { --pnx-tile: #f4f6fa; }
+html body.dark-theme #posNewsCard { --pnx-tile: rgba(255,255,255,.05); }
+html body #posNewsCard .pnx-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; margin-top: 14px; }
+html body #posNewsCard .pnx-items > :not(.pnx-item) { grid-column: 1 / -1; }
+html body #posNewsCard .pnx-items .pnx-item { display: flex; flex-direction: column; min-height: 240px; padding: 18px 18px 66px; border: 1px solid transparent; border-radius: 22px; background: var(--pnx-tile); transition: border-color .22s cubic-bezier(.22,1,.36,1); }
+html body #posNewsCard .pnx-items .pnx-item:hover { border-color: var(--pnx-line-hi, #cfd7e3); }
+html body #posNewsCard .pnx-items .pnx-meta { gap: 8px; margin-bottom: 12px; }
+html body #posNewsCard .pnx-items .pnx-item h4 { font-size: 16.5px; line-height: 1.38; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+html body #posNewsCard .pnx-items .pnx-item p { font-size: 14px; line-height: 1.55; margin-top: 8px; -webkit-line-clamp: 3; }
+html body #posNewsCard .pnx-items .pnx-go { top: auto; bottom: 14px; right: 14px; margin-top: 0; width: 40px; height: 40px; }
+html.pv-ipad body #posNewsCard .pnx-items { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+html.pv-ipad body #posNewsCard .pnx-items .pnx-item { min-height: 220px; padding: 16px 16px 62px; }
+html.pv-ipad body #posNewsCard .pnx-items .pnx-item h4 { font-size: 15.5px; }
+/* Celular: los cuadros se deslizan de lado dentro de la posición abierta */
+@media (max-width: 700px) {
+  html body #posNewsCard .pnx-items, html.pv-ipad body #posNewsCard .pnx-items { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 82%; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 4px; }
+  html body #posNewsCard .pnx-items::-webkit-scrollbar { display: none; }
+  html body #posNewsCard .pnx-items .pnx-item, html.pv-ipad body #posNewsCard .pnx-items .pnx-item { scroll-snap-align: start; min-height: 230px; padding: 16px 16px 18px; }
+  html body #posNewsCard .pnx-items .pnx-go { display: none; }
 }
 </style>
 
