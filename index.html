@@ -4706,22 +4706,33 @@ window._pvAwaitIAP = function(totalMs){
 
 <!-- ═══════════════ TAB ANALIZAR ═══════════════ -->
 <div id="tab-analizar" class="page">
-  <div class="research-search-bar">
-    <div class="search-wrap">
-      <svg class="research-input-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      <input id="researchInput" class="research-input" type="text"
-        placeholder="Busca por ticker o nombre: Apple, TSLA, AppLovin..." data-ph-sm="Ticker o nombre…" data-i18n-ph="analysis.searchPh"
-        oninput="onSearchInput(this.value)"
-        onkeydown="onSearchKey(event)"
-        onblur="setTimeout(closeDropdown,180)"
-        autocapitalize="characters" autocomplete="off" spellcheck="false" />
-      <div class="sdrop" id="searchDropdown"></div>
+  <!-- Cabecera navy de Análisis (pvAnalisisCss): antetítulo, título y subtítulo a la izquierda;
+       el buscador de siempre (mismos ids y eventos) con «Analizar» dentro de la pastilla. Los 4
+       indicadores montan sobre su curva desde #pvaKpis. En el análisis de una acción sólo
+       queda el buscador (ver :has() en pvAnalisisCss). -->
+  <header class="pva-hero" id="pvaHero">
+    <div class="pva-htxt">
+      <div class="pva-eyebrow">Análisis</div>
+      <h1 class="pva-h1" data-i18n="analysis.title">Análisis de portafolio</h1>
+      <p class="pva-hsub" data-i18n="analysis.subtitle">Análisis profundo del rendimiento, los riesgos y el potencial de tu portafolio.</p>
     </div>
-    <button class="research-btn" id="researchBtn" onclick="doResearch()">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.1-2.8-2.8L7 14"/></svg>
-      <span data-i18n="analysis.analyze">Analizar</span>
-    </button>
-  </div>
+    <div class="research-search-bar">
+      <div class="search-wrap">
+        <svg class="research-input-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input id="researchInput" class="research-input" type="text"
+          placeholder="Busca por ticker o nombre: Apple, TSLA, AppLovin..." data-ph-sm="Ticker o nombre…" data-i18n-ph="analysis.searchPh"
+          oninput="onSearchInput(this.value)"
+          onkeydown="onSearchKey(event)"
+          onblur="setTimeout(closeDropdown,180)"
+          autocapitalize="characters" autocomplete="off" spellcheck="false" />
+        <div class="sdrop" id="searchDropdown"></div>
+      </div>
+      <button class="research-btn" id="researchBtn" onclick="doResearch()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.1-2.8-2.8L7 14"/></svg>
+        <span data-i18n="analysis.analyze">Analizar</span>
+      </button>
+    </div>
+  </header>
 
   <!-- ═══ ANÁLISIS DE PORTAFOLIO (rediseño Stitch — mockup) ═══ -->
   <style>
@@ -4883,61 +4894,67 @@ window._pvAwaitIAP = function(totalMs){
     .rbl-export:hover { background:#0a2547; }
     .rbl-export .material-symbols-outlined { font-size:18px; }
   </style>
-  <div id="analizar-portfolio-section" style="margin-bottom:18px">
+  <!-- ═══ ANÁLISIS DE PORTAFOLIO — rediseño (estilos en <style id="pvAnalisisCss">) ═══
+       Orden: indicadores sobre la curva navy → Retorno esperado → Tus posiciones →
+       Diagnóstico → Salud y diversificación → Fortalezas y riesgos → Análisis del asesor →
+       Recomendaciones de rebalanceo → Dividendos → EPS. Cada sección lleva antetítulo +
+       título; el hueco de la derecha de la cabecera (.pva-side) lo rellena su render. -->
+  <div id="analizar-portfolio-section">
 
-    <div class="pa-header">
-      <div>
-        <h1 class="pa-h1" data-i18n="analysis.title">Análisis de Portafolio</h1>
-        <p class="pa-subtitle" data-i18n="analysis.subtitle">Análisis profundo del rendimiento, riesgos y potencial de tu portafolio.</p>
-      </div>
-    </div>
+    <!-- Los 4 indicadores: montan sobre la curva de #pvaHero (margen negativo). Van aquí y no
+         dentro de la cabecera para ocultarse junto con la sección en el análisis de una acción
+         y para entrar opacos con ella al cambiar de pestaña. -->
+    <div class="pva-kpis" id="pvaKpis"></div>
 
-    <!-- Fila 1: Retorno Esperado — full width -->
-    <div style="margin-bottom:20px">
-      <div class="pa-label" style="margin-bottom:12px">Retorno Esperado (<span id="pa-year-label"></span>)</div>
+    <section class="pva-sec" id="pvaSecRet">
+      <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow" id="pa-year-label"></div><h2 class="pva-h2">Retorno esperado</h2></div></div>
       <div id="port-expected-return"></div>
-    </div>
+    </section>
 
-    <!-- De "Detalle de Activos" hacia abajo TODO es Portiv Pro: desglose por activo,
-         pros y contras, KPIs, análisis profundo, Portiv Intelligence, rebalanceo y EPS
-         quedan bajo UN SOLO candado. Antes esta fila llevaba el suyo propio y en pantalla
-         se veían dos tarjetas de "Desbloquea Portiv Pro" a la vez, una encima de otra.
-         Se usa .pv-lock-stack (no .pv-lock a secas) porque la pila mide miles de píxeles
-         y esa variante ancla el mensaje arriba; un overlay centrado en `inset:0` dejaría
-         el candado a 1.500px de donde mira el usuario. -->
+    <section class="pva-sec" id="pvaSecPos">
+      <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Retorno esperado anual por activo</div><h2 class="pva-h2">Tus posiciones</h2></div><div class="pva-side" id="pvaPosSide"></div></div>
+      <div id="port-asset-detail"></div>
+    </section>
+
+    <!-- Desde el diagnóstico hacia abajo TODO es Portiv Pro: diagnóstico, salud, fortalezas
+         y riesgos, Portiv Intelligence, rebalanceo, dividendos y EPS quedan bajo UN SOLO
+         candado (antes empezaba en "Detalle de Activos", que ahora es la tabla «Tus
+         posiciones», junto al retorno por activo que ya era libre). Se usa .pv-lock-stack
+         (no .pv-lock a secas) porque la pila mide miles de píxeles y esa variante ancla el
+         mensaje arriba; un overlay centrado en `inset:0` dejaría el candado a 1.500px de
+         donde mira el usuario. -->
     <div class="pv-lock pv-lock-stack" id="portDeepLockWrap">
       <div class="pv-lock-body">
-    <!-- Fila 2: Detalle de Activos + Pros/Contras — dos columnas simétricas -->
-    <div class="pa-top-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;align-items:start">
-      <div class="pa-asset-detail-col">
-        <div class="pa-label" style="margin-bottom:12px">Detalle de Activos</div>
-        <div class="pa-asset-card"><div id="port-asset-detail"></div></div>
-      </div>
-      <div>
-        <div class="pa-label" style="margin-bottom:12px">Pros y Contras</div>
-        <div id="port-pros-cons"></div>
-      </div>
-    </div>
-
-    <!-- Fila 4: KPI bar — rellenada por JS -->
-    <div id="port-kpi-bar"></div>
-
-    <div class="pda-card pa-fullrow">
-      <h2 class="pda-h2">Análisis Profundo del Portafolio</h2>
-      <div id="port-deep-analysis"></div>
-    </div>
-    <div class="pda-card pa-fullrow">
-      <h2 class="pda-h2">Portiv Intelligence</h2>
-      <div id="port-ai-analysis"></div>
-    </div>
-    <div class="pda-card">
-      <h2 class="pda-h2">Recomendaciones de Rebalanceo</h2>
-      <div id="port-rebal-recs"></div>
-    </div>
-    <div class="pda-card pa-fullrow">
-      <h2 class="pda-h2">Earnings Per Share</h2>
-      <div id="port-eps"></div>
-    </div>
+        <div id="port-deep-analysis">
+          <section class="pva-sec" id="pvaSecDiag">
+            <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Lectura rápida</div><h2 class="pva-h2">Diagnóstico de tu portafolio</h2></div></div>
+            <div id="pvaDiag"></div>
+          </section>
+          <section class="pva-sec" id="pvaSecHealth">
+            <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Estructura</div><h2 class="pva-h2">Salud y diversificación</h2></div></div>
+            <div id="pvaHealth"></div>
+          </section>
+        </div>
+        <section class="pva-sec" id="pvaSecPros">
+          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Balance</div><h2 class="pva-h2">Fortalezas y riesgos</h2></div></div>
+          <div id="port-pros-cons"></div>
+        </section>
+        <section class="pva-sec" id="pvaSecAdv">
+          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Portiv Intelligence</div><h2 class="pva-h2">Análisis del asesor</h2></div><div class="pva-side" id="pvaAdvSide"></div></div>
+          <div id="port-ai-analysis"></div>
+        </section>
+        <section class="pva-sec" id="pvaSecReb">
+          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Plan sugerido</div><h2 class="pva-h2">Recomendaciones de rebalanceo</h2></div><div class="pva-side" id="pvaRebSide"></div></div>
+          <div id="port-rebal-recs"></div>
+        </section>
+        <section class="pva-sec" id="pvaSecDiv">
+          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Ingresos</div><h2 class="pva-h2">Dividendos y retorno por riesgo</h2></div></div>
+          <div id="port-kpi-bar"></div>
+        </section>
+        <section class="pva-sec" id="pvaSecEps">
+          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Resultados trimestrales</div><h2 class="pva-h2">Beneficio por acción (EPS)</h2></div></div>
+          <div id="port-eps"></div>
+        </section>
       </div><!-- /.pv-lock-body -->
       <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
         <div class="pv-lock-card">
@@ -6824,8 +6841,8 @@ const translations = {
     'news.viewAll':'VER TODO','news.readFull':'Leer historia completa →',
     'news.searchPh':'Busca ticker o nombre: TSLA, Netflix, AMD…',
     // Analysis
-    'analysis.title':'Análisis de Portafolio',
-    'analysis.subtitle':'Análisis profundo del rendimiento, riesgos y potencial de tu portafolio.',
+    'analysis.title':'Análisis de portafolio',
+    'analysis.subtitle':'Análisis profundo del rendimiento, los riesgos y el potencial de tu portafolio.',
     'analysis.analyze':'Analizar',
     'analysis.searchPh':'Busca por ticker o nombre: Apple, TSLA, AppLovin...',
     'topbar.searchPh':'Buscar empresa o ticker…',
@@ -6863,7 +6880,7 @@ const translations = {
     'news.viewAll':'VIEW ALL','news.readFull':'Read full story →',
     'news.searchPh':'Search ticker or name: TSLA, Netflix, AMD…',
     // Analysis
-    'analysis.title':'Portfolio Analysis',
+    'analysis.title':'Portfolio analysis',
     'analysis.subtitle':'In-depth analysis of your portfolio’s performance, risks and potential.',
     'analysis.analyze':'Analyze',
     'analysis.searchPh':'Search by ticker or name: Apple, TSLA, AppLovin...',
@@ -12570,17 +12587,114 @@ function _pvRiskCaps(risk){
 }
 window._pvRiskCaps = _pvRiskCaps;
 
+// ══════════════════════════════════════════════════════════════════════════════════
+//  PESTAÑA ANÁLISIS — piezas de presentación del rediseño (pvAnalisisCss)
+//  Sólo marcado: ningún número se calcula aquí. Todo sale de _portfolioMetrics,
+//  _portfolioHealthScore, _buildRebalPlan y demás, igual que antes.
+// ══════════════════════════════════════════════════════════════════════════════════
+function _pvaSvg(p, s, w){
+  return '<svg width="' + (s||18) + '" height="' + (s||18) + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (w||2.2)
+    + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+}
+const _PVA_I = {
+  up:    () => _pvaSvg('<path d="M12 19V5M6 11l6-6 6 6"/>', 14, 2.6),
+  dn:    () => _pvaSvg('<path d="M12 5v14M6 13l6 6 6-6"/>', 14, 2.6),
+  flat:  () => _pvaSvg('<path d="M5 12h14"/>', 14, 2.6),
+  info:  () => _pvaSvg('<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>', 16),
+  check: () => _pvaSvg('<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.8"/>', 16),
+  warn:  () => _pvaSvg('<path d="M12 3l10 18H2z"/><path d="M12 10v4M12 17h.01"/>', 18),
+  trend: () => _pvaSvg('<path d="M3 17l6-6 4 4 8-8M15 7h6v6"/>', 18),
+  cal:   () => _pvaSvg('<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>', 16),
+  down:  () => _pvaSvg('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', 17),
+};
+// Avatar de letra (la primera del ticker) — el mismo de «Noticias por posición».
+function _pvaAv(tk){ return '<span class="pva-av" aria-hidden="true">' + pvEsc(String(tk || '?').charAt(0).toUpperCase()) + '</span>'; }
+// % con signo y menos tipográfico: +8.7% / −24.4% / 0.0%
+function _pvaSgn(v, d){
+  const x = (+v || 0) * 100, f = Math.abs(x).toFixed(d == null ? 1 : d);
+  return (+f === 0 ? '' : (x > 0 ? '+' : '−')) + f + '%';
+}
+// Nivel de color de una sub-puntuación: verde ≥70, ámbar 40–69, rojo <40.
+function _pvaLvl(v){ return v >= 70 ? 'g' : v >= 40 ? 'a' : 'r'; }
+// «Moderado-agresivo» → «moderada-agresiva» (concuerda con capacidad / disposición).
+function _pvaFem(s){ return String(s || '').toLowerCase().replace(/conservador\b/g, 'conservadora').replace(/o\b/g, 'a'); }
+// «Largo plazo (10+ años)» → «Largo plazo · 10+ años»
+function _pvaHorizon(s){ return String(s || '').replace(/\s*\(([^)]+)\)\s*$/, ' · $1'); }
+// Pastillas del perfil que se repiten en el diagnóstico y en la cabecera del asesor.
+function _pvaTag(txt, cls){ return '<span class="pva-tag ' + (cls || 'n') + '">' + txt + '</span>'; }
+// «Reduce la concentración: recorta…» → la entradilla en negrita.
+function _pvaLead(t){
+  const s = String(t || ''), i = s.indexOf(': ');
+  return (i > 0 && i <= 48 && s.slice(0, i).indexOf('<') < 0) ? '<b>' + s.slice(0, i + 1) + '</b>' + s.slice(i + 1) : s;
+}
+// Rellena el hueco de la derecha de la cabecera de una sección (etiqueta o pastillas).
+function _pvaSide(id, html){ const el = document.getElementById(id); if (el) el.innerHTML = html || ''; }
+
+// Pastillas del perfil en la cabecera de «Análisis del asesor».
+function _pvaAdvPills(p){
+  return '<div class="pva-pills">' + _pvaTag('Perfil ' + String(p.label || '').toLowerCase())
+    + (p.capLabel ? _pvaTag('Capacidad ' + _pvaFem(p.capLabel)) : '')
+    + (p.dispLabel ? _pvaTag('Disposición ' + _pvaFem(p.dispLabel)) : '') + '</div>';
+}
+// Maqueta del análisis del asesor bajo candado: la misma forma (entrada + apartados), sin texto.
+function _pvaAdvSkeleton(){
+  const bar  = w  => '<div class="pv-sk-bar" style="width:' + w + '%"></div>';
+  const para = ws => '<div class="pv-sk-p">' + ws.map(bar).join('') + '</div>';
+  return '<div class="pva-card pva-intro">' + para([100, 94, 58]) + '</div>'
+    + '<div class="pva-parts n3">'
+    + [1, 2, 3].map(k => '<div class="pva-card pva-part"><span class="pva-pn">' + k + '</span><div class="pv-sk-h"></div>'
+      + para([100, 92, 96, 70]) + para([100, 84]) + '</div>').join('')
+    + '</div>';
+}
+// La carta del asesor partida por sus títulos: tarjeta de entrada (lo que va antes del primer
+// título) + una tarjeta por apartado, numeradas. Si el texto no se parte limpio en 2–4
+// apartados con contenido, se lee entero en una sola tarjeta. La última línea, si es el
+// descargo («educativo… no constituye asesoramiento…»), pasa al pie junto a la fecha.
+function _pvaAdvHTML(text, when){
+  const md = s => (typeof _outlookNarrativeHtml === 'function') ? _outlookNarrativeHtml(s) : '<p>' + pvEsc(s).replace(/\n/g, '<br>') + '</p>';
+  let t = String(text || '').replace(/\r\n?/g, '\n').trim();
+  try { if (typeof _humanizeNarr === 'function') t = _humanizeNarr(t); } catch(e){}
+  const lines = t.split('\n');
+  let disc = '';
+  for (let k = lines.length - 1; k >= 0; k--) {
+    const plain = lines[k].replace(/[*_#>]/g, '').trim();
+    if (!plain) continue;
+    if (plain.length < 260 && /educativ|no constituye|asesor[ií]a financiera|asesoramiento financiero/i.test(plain)) { disc = plain; lines.splice(k, 1); }
+    break;
+  }
+  const head = L => {
+    const r = /^\*\*([^*]{2,90})\*\*:?$/.exec(L) || /^#{1,4}\s+(.{2,90})$/.exec(L) || (L.length < 60 ? /^\d+[.)]\s+(.+)$/.exec(L) : null);
+    return r ? r[1].replace(/\*\*/g, '').replace(/:$/, '').trim() : null;
+  };
+  const intro = [], parts = [];
+  let cur = null;
+  lines.forEach(raw => {
+    const L = raw.trim(), h = L ? head(L) : null;
+    if (h) { cur = { h, body: [] }; parts.push(cur); return; }
+    (cur ? cur.body : intro).push(raw);
+  });
+  const full = b => b.join('\n').trim().length > 0;
+  const clean = parts.length >= 2 && parts.length <= 4 && parts.every(x => full(x.body));
+  const foot = `<p class="pva-foot">${_PVA_I.cal()}<span>Generado ${pvEsc(when)} · ${pvEsc(disc || 'Análisis educativo, no asesoría financiera personalizada.')}</span></p>`;
+  if (!clean) return `<div class="pva-card pva-read"><div class="pva-prose">${md(lines.join('\n').trim())}</div></div>` + foot;
+  const introTxt = intro.join('\n').trim();
+  return (introTxt ? `<div class="pva-card pva-intro"><div class="pva-prose">${md(introTxt)}</div></div>` : '')
+    + `<div class="pva-parts n${parts.length}">`
+    + parts.map((x, k) => `<article class="pva-card pva-part"><span class="pva-pn">${k + 1}</span><h3>${pvEsc(x.h)}</h3><div class="pva-prose">${md(x.body.join('\n').trim())}</div></article>`).join('')
+    + '</div>' + foot;
+}
+
 function _pvAdvisorBlock(m, techWeight, perfil){
   const p = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
   const pctf = v => (v*100).toFixed(0) + '%';
 
   // Sin perfil → invitar a completar el cuestionario.
   if (!p) {
-    return `<div class="pv-profile-cta">
-      <div class="pv-profile-cta-txt">Aún no conozco tu perfil de inversionista
+    return `<div class="pva-card pva-cta">
+      <div class="pva-cta-t"><b>Aún no conozco tu perfil de inversionista</b>
         <span>Responde 10 preguntas rápidas y personalizaré todo este análisis según tu horizonte y tolerancia al riesgo.</span>
       </div>
-      <button class="pv-profile-cta-btn" onclick="openProfileQuiz()">Definir mi perfil →</button>
+      <button class="pva-btn" type="button" onclick="openProfileQuiz()">Definir mi perfil →</button>
     </div>`;
   }
 
@@ -12588,6 +12702,7 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   const [bLo, bHi] = p.betaTarget;
   const recs = [];
   let flags = 0;
+  const fuera = [];   // qué métricas se salen de la banda (para la línea bajo el veredicto)
   // Exposición defensiva / ETF amplio YA presente → no sugerir "añade lo que ya tienes".
   const _defW = (m.items||[]).reduce((s,i)=> s + (DEFENSIVE_SECTORS.has(i.sector) ? i.weight : 0), 0);
   const _hasBroadEtf = (m.items||[]).some(i => i.sector === 'ETF · Índice');
@@ -12595,13 +12710,13 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   // 1) Beta / nivel de riesgo
   let betaTxt;
   if (beta > bHi + 0.05) {
-    flags++;
+    flags++; fuera.push('la beta');
     betaTxt = `Tu portafolio tiene una beta de <strong>${beta.toFixed(2)}</strong>, <strong>más agresiva</strong> que el rango ${bLo.toFixed(2)}–${bHi.toFixed(2)} que corresponde a tu perfil <strong>${p.riskLabel.toLowerCase()}</strong>. En una caída del 20% del mercado, perderías ~${(beta*20).toFixed(0)}% — más de lo que tu tolerancia indica.`;
     recs.push({i:'shield', t: (_hasBroadEtf || _defW >= 0.12)
       ? `Baja la beta: aumenta la asignación a los activos defensivos / ETF amplios que ya tienes para amortiguar las caídas.`
       : `Baja la beta: añade una posición defensiva o de baja volatilidad (un ETF amplio como VOO, salud o consumo básico) para suavizar las caídas.`});
   } else if (beta < bLo - 0.05) {
-    flags++;
+    flags++; fuera.push('la beta');
     betaTxt = `Tu beta es <strong>${beta.toFixed(2)}</strong>, <strong>más defensiva</strong> que el rango ${bLo.toFixed(2)}–${bHi.toFixed(2)} de tu perfil. Dado tu horizonte ${p.horizon === 'largo' ? 'de largo plazo' : ''}, estás dejando crecimiento sobre la mesa.`;
     recs.push({i:'trending_up', t:`Puedes asumir algo más de riesgo: tu perfil tolera mayor exposición a crecimiento para maximizar el retorno a tu horizonte.`});
   } else {
@@ -12611,7 +12726,7 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   // 2) Exposición a tech vs el tope de tu perfil
   let techTxt;
   if (techWeight > p.techCap + 0.03) {
-    flags++;
+    flags++; fuera.push('la exposición a tecnología');
     techTxt = `Tu exposición a tecnología es <strong>${pctf(techWeight)}</strong>, por encima del ~${pctf(p.techCap)} recomendado para tu perfil. Es una apuesta concentrada al ciclo de IA/semis.`;
     recs.push({i:'pie_chart', t:`Diversifica fuera de tech: rota una parte hacia sectores no correlacionados (pagos, salud, industriales) para reducir el riesgo de rotación sectorial.`});
   } else {
@@ -12621,7 +12736,7 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   // 3) Concentración top 3
   let concTxt = '';
   if (m.top3W > p.top3Cap + 0.03) {
-    flags++;
+    flags++; fuera.push('la concentración');
     concTxt = ` Tus 3 mayores posiciones pesan <strong>${pctf(m.top3W)}</strong> — por encima del ${pctf(p.top3Cap)} ideal para ti; un mal trimestre de una sola empresa mueve toda tu cartera.`;
     // El techo por posición es el MISMO que aplica el motor de rebalanceo (12/9/7 % según
     // perfil): antes esta frase decía "10-12 %" para todos y la tabla de abajo recortaba a 7 %.
@@ -12631,11 +12746,11 @@ function _pvAdvisorBlock(m, techWeight, perfil){
 
   // 4) Énfasis según objetivo
   if (p.emphasis === 'ingreso' || p.emphasis === 'preservacion') {
-    if (m.expDiv < 0.015) recs.push({i:'savings', t:`Tu perfil valora estabilidad/ingreso, pero tu cartera rinde casi 0% en dividendos. Considera añadir activos que paguen dividendo creciente para generar flujo.`});
+    if (m.expDiv < 0.015) recs.push({i:'savings', t:`Suma ingreso: tu perfil valora estabilidad/ingreso, pero tu cartera rinde casi 0% en dividendos. Considera añadir activos que paguen dividendo creciente para generar flujo.`});
   } else if (p.emphasis === 'crecimiento') {
-    recs.push({i:'rocket_launch', t:`Tu perfil de crecimiento a largo plazo te permite mantener (y comprar en caídas) tus posiciones de mayor convicción sin reaccionar al ruido de corto plazo.`});
+    recs.push({i:'rocket_launch', t:`Mantén tus convicciones: tu perfil de crecimiento a largo plazo te permite mantener (y comprar en caídas) tus posiciones de mayor convicción sin reaccionar al ruido de corto plazo.`});
   }
-  if (!recs.length) recs.push({i:'check_circle', t:`Tu portafolio refleja bien tu perfil. Mantén el rumbo y revisa el rebalanceo trimestralmente.`});
+  if (!recs.length) recs.push({i:'check_circle', t:`Mantén el rumbo: tu portafolio refleja bien tu perfil. Revisa el rebalanceo trimestralmente.`});
 
   // 5) El mercado de hoy, en una línea determinista: qué régimen hay y qué implica para
   //    ESTE perfil. Sin esto el diagnóstico era idéntico con el índice en máximos y en caída.
@@ -12655,28 +12770,29 @@ function _pvAdvisorBlock(m, techWeight, perfil){
       else
         impl = (mk.offHigh > -0.02) ? 'Con el índice en máximos, evita perseguir lo que más subió y rebalancea con calma.'
                                     : 'Mercado constructivo: los ajustes pueden hacerse sin prisa.';
-      mktTxt = `<p style="margin-top:8px"><strong>Mercado hoy:</strong> ${PORTIV_MKT.text(mk)} ${impl}</p>`;
+      mktTxt = `<div class="pva-mkt"><b>Mercado hoy</b>${PORTIV_MKT.text(mk)} ${impl}</div>`;
     }
   } catch(e){}
 
-  const verdict = flags === 0 ? {cls:'aligned', icon:'check_circle', txt:'Portafolio alineado con tu perfil'}
-                : flags === 1 ? {cls:'partial', icon:'info', txt:'Parcialmente alineado — 1 ajuste sugerido'}
-                : {cls:'misaligned', icon:'warning', txt:`Requiere ajustes — ${flags} desalineaciones con tu perfil`};
+  // Veredicto de encaje: verde (alineado), ámbar (1 ajuste) o rojo (2 o más), con una línea
+  // que nombra qué se sale de los márgenes del perfil.
+  const _lista = xs => xs.length > 1 ? xs.slice(0, -1).join(', ') + ' y ' + xs[xs.length - 1] : (xs[0] || '');
+  const _cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const verdict = flags === 0 ? {cls:'g', icon:_PVA_I.check(), txt:'Portafolio alineado con tu perfil', sub:'Beta, tecnología y concentración están dentro de los márgenes de tu perfil.'}
+                : flags === 1 ? {cls:'a', icon:_PVA_I.info(), txt:'Parcialmente alineado · 1 ajuste sugerido', sub:`Solo ${_lista(fuera)} se sale de los márgenes de tu perfil.`}
+                : {cls:'r', icon:_PVA_I.warn(), txt:`Requiere ajustes · ${flags} desalineaciones con tu perfil`, sub:`${_cap(_lista(fuera))} se salen de los márgenes de tu perfil.`};
 
-  return `<div class="pv-advisor">
-    <div class="pv-advisor-head">
-      <span class="pv-advisor-title">Diagnóstico rápido</span>
-    </div>
-    <div class="pv-advisor-profile">Perfil: <b>${p.label}</b> · ${p.horizonLabel} · Riesgo ${p.riskLabel}</div>
-    <div class="pv-advisor-body">
-      <p>${betaTxt} ${techTxt}${concTxt}</p>
-      <p style="margin-bottom:6px;"><strong>Mis recomendaciones para ti:</strong></p>
-      <ul class="pv-advisor-recs">
-        ${recs.map(r=>`<li><span class="material-symbols-outlined">${r.i}</span><span>${r.t}</span></li>`).join('')}
-      </ul>
+  return `<div class="pva-card pva-diag">
+    <div class="pva-dl">
+      <div class="pva-pills">${_pvaTag('Perfil ' + String(p.label || '').toLowerCase())}${_pvaTag(_pvaHorizon(p.horizonLabel))}${_pvaTag('Riesgo ' + String(p.riskLabel || '').toLowerCase())}</div>
+      <p class="pva-big">${betaTxt} ${techTxt}${concTxt}</p>
       ${mktTxt}
-      <div class="pv-advisor-verdict ${verdict.cls}"><span class="material-symbols-outlined" style="font-size:16px">${verdict.icon}</span>${verdict.txt}</div>
-      <div style="font-size:10px;color:var(--text3);margin-top:8px;line-height:1.5">Lectura instantánea por reglas. El <b>Análisis del asesor</b> (más abajo) la amplía con IA y sigue la misma dirección.</div>
+      <p class="pva-note">Lectura instantánea por reglas. El análisis del asesor (más abajo) la amplía con IA y sigue la misma dirección.</p>
+    </div>
+    <div class="pva-recs">
+      <div class="pva-lbl">Mis recomendaciones para ti</div>
+      ${recs.map(r=>`<div class="pva-rec"><span class="pva-ri"><span class="material-symbols-outlined">${r.i}</span></span><p>${_pvaLead(r.t)}</p></div>`).join('')}
+      <div class="pva-status ${verdict.cls}">${verdict.icon}<div><b>${verdict.txt}</b><span>${verdict.sub}</span></div></div>
     </div>
   </div>`;
 }
@@ -13229,15 +13345,18 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
   },
 
   // Pinta el estado actual: análisis cacheado, CTA al test, o un mensaje de error/estado.
+  // (Rediseño: la cabecera de la sección lleva las pastillas del perfil en #pvaAdvSide y el
+  // texto se reparte en una tarjeta de entrada + una por apartado; ver _pvaAdvHTML.)
   render(errMsg){
     const host = document.getElementById('port-ai-analysis');
     if (!host) return;
     const p = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
+    _pvaSide('pvaAdvSide', p ? _pvaAdvPills(p) : '');
 
     if (!p){
-      host.innerHTML = `<div class="pv-ai-cta">
-        <div class="pv-ai-cta-txt">Completa tu test de perfil para recibir un análisis con IA<span>La IA comparará tu cartera real con tu perfil de riesgo.</span></div>
-        <button class="pv-ai-btn" onclick="openProfileQuiz()">Hacer el test →</button>
+      host.innerHTML = `<div class="pva-card pva-cta">
+        <div class="pva-cta-t"><b>Completa tu test de perfil para recibir un análisis con IA</b><span>La IA comparará tu cartera real con tu perfil de riesgo.</span></div>
+        <button class="pva-btn" type="button" onclick="openProfileQuiz()">Hacer el test →</button>
       </div>`;
       return;
     }
@@ -13246,15 +13365,17 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
     // abajo para que no se vuelva a disparar generate() en cada render.
     if (this._locked){
       host.innerHTML = '<div class="pv-lock">'
-        + _pvAdvisorSkeleton(p)
+        + _pvaAdvSkeleton()
         + _pvLockOverlay('Tu <b>Análisis del asesor</b> con IA está listo')
         + '</div>';
       return;
     }
     if (errMsg){
-      host.innerHTML = `<div class="pv-ai-error">${errMsg}</div>
-        <div style="font-size:12px;color:var(--text3);margin:6px 0 10px">No se guardó nada en el dispositivo — puedes regenerarlo.</div>
-        <button class="pv-ai-btn" onclick="PV_AI.generate(true)" ${this._busy?'disabled':''}>Regenerar análisis →</button>`;
+      host.innerHTML = `<div class="pva-card pva-aistate">
+        <div class="pv-ai-error">${errMsg}</div>
+        <p class="pva-cap">No se guardó nada en el dispositivo — puedes regenerarlo.</p>
+        <button class="pva-btn" type="button" onclick="PV_AI.generate(true)" ${this._busy?'disabled':''}>Regenerar análisis →</button>
+      </div>`;
       return;
     }
     let cached = this.load();
@@ -13308,16 +13429,7 @@ Cierra en una sola línea recordando que es un análisis educativo, no asesoría
       return;
     }
     const when = new Date(cached.at).toLocaleDateString('es-MX',{ day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' });
-    const bodyHtml = (typeof _outlookNarrativeHtml === 'function')
-      ? _outlookNarrativeHtml(cached.text)
-      : `<p>${cached.text.replace(/\n/g,'<br>')}</p>`;
-    host.innerHTML = `
-      <div class="pv-ai-head">
-        <div class="pv-ai-title" style="font-weight:800;font-size:13px;color:var(--text);margin-bottom:2px">Análisis del asesor</div>
-        <div class="pv-ai-profile">Perfil: <b>${p.label}</b> · Capacidad ${p.capLabel} · Disposición ${p.dispLabel}</div>
-      </div>
-      <div class="wo-narrative pv-ai-body">${bodyHtml}</div>
-      <div class="pv-ai-foot">Generado ${when} · Análisis educativo, no asesoría financiera personalizada.</div>`;
+    host.innerHTML = _pvaAdvHTML(cached.text, when);
   },
 };
 window.PV_AI = PV_AI;
@@ -13436,44 +13548,41 @@ function _buildRebalPlan(m){
 
 function renderDeepPortfolioAnalysis(T) {
   if (!document.getElementById('port-deep-analysis')) return;
-  try { if (typeof PV_AI !== 'undefined') PV_AI.render(); } catch(e){}  // análisis IA (card propia, debajo)
+  try { if (typeof PV_AI !== 'undefined') PV_AI.render(); } catch(e){}  // análisis IA (sección propia, debajo)
   const m = _portfolioMetrics(T);
   const pct = v => (v*100).toFixed(1) + '%';
+  const _set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
 
   // ── 0) ESTADO VACÍO ─────────────────────────────────────────────────────────
   // Sin posiciones: todo en cero. El análisis se construye a medida que el
   // usuario agrega posiciones reales — nada hardcodeado, nada inventado.
   if (HOLDINGS.length === 0 || T.mkt <= 0) {
-    const emptyMsg = txt => `<div style="padding:22px 16px;text-align:center;font-size:12px;color:var(--text3);line-height:1.6">${txt}</div>`;
-    const card0 = (label, sub) => `
-      <div style="padding:12px;background:var(--surface2);border-radius: 0;border:1px solid var(--border)">
-        <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;font-weight:600">${label}</div>
-        <div style="font-size:22px;font-weight:700;color:var(--text3);margin-top:4px">0</div>
-        <div style="font-size:10px;color:var(--text3)">${sub}</div>
-      </div>`;
-    const _emptyAdvisor = (typeof getInvestorProfile==='function' && getInvestorProfile())
-      ? `<div class="pv-advisor">
-          <div class="pv-advisor-head"><span class="pv-advisor-title">Diagnóstico rápido</span></div>
-          <div class="pv-advisor-profile">Perfil: <b>${getInvestorProfile().label}</b> · ${getInvestorProfile().horizonLabel} · Riesgo ${getInvestorProfile().riskLabel}</div>
-          <div class="pv-advisor-body"><p>Ya conozco tu perfil. En cuanto agregues posiciones, compararé tu cartera con tu horizonte y tolerancia al riesgo y te daré recomendaciones a medida.</p></div></div>`
-      : `<div class="pv-profile-cta"><div class="pv-profile-cta-txt">Define tu perfil de inversionista<span>10 preguntas rápidas para personalizar todo tu análisis.</span></div><button class="pv-profile-cta-btn" onclick="openProfileQuiz()">Empezar →</button></div>`;
-    document.getElementById('port-deep-analysis').innerHTML = _emptyAdvisor + `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:18px">
-        ${card0('Posiciones','0 sectores')}
-        ${card0('Top 3 concentración','—')}
-        ${card0('Exposición Tech','—')}
-        ${card0('Beta ponderada','—')}
-      </div>
-      ${emptyMsg('Tu portafolio está vacío. Conecta tu broker desde <b>Ajustes</b> para construir el análisis profundo — sectores, concentración, beta y diagnóstico se calcularán con tus datos reales.')}`;
-    document.getElementById('port-rebal-recs').innerHTML = emptyMsg('Sin posiciones que rebalancear. Las recomendaciones aparecerán cuando agregues holdings.');
-    document.getElementById('port-pros-cons').innerHTML = emptyMsg('Los pros y contras se generan a partir de tus posiciones reales. Aún no hay nada que analizar.');
-    document.getElementById('port-expected-return').innerHTML = `
-      <div class="pa-scen-grid">
-        <div class="pa-scen bear"><div class="pa-scen-label">Escenario Bear</div><div class="pa-scen-val" style="color:var(--text3)">0.0%</div><div class="pa-scen-desc">Recesión o corrección.</div></div>
-        <div class="pa-scen base"><div class="pa-scen-badge">Retorno Esperado</div><div class="pa-scen-label">Escenario Base</div><div class="pa-scen-val" style="color:var(--text3)">0.0%</div><div class="pa-scen-desc">Promedio ponderado por acción.</div></div>
-      </div>
-      ${emptyMsg('Los escenarios de retorno se proyectan sobre tus posiciones. Agrega holdings y se calcularán bear / base con el crecimiento esperado y dividendos de cada empresa.')}`;
-    renderAssetDetailTable(T);
+    const emptyMsg = txt => `<div class="pva-card pva-empty">${txt}</div>`;
+    const kpi0 = (label, v, sub) => `<div class="pva-kpi"><small>${label}</small><b class="nd">${v}</b>${_pvaTag(sub)}</div>`;
+    _set('pvaKpis', kpi0('Posiciones', '0', '0 sectores') + kpi0('Concentración top 3', '—', 'Sin datos')
+                  + kpi0('Exposición tech', '—', 'Sin datos') + kpi0('Beta ponderada', '—', 'Sin datos'));
+    const _p0 = (typeof getInvestorProfile==='function') ? getInvestorProfile() : null;
+    _set('pvaDiag', _p0
+      ? `<div class="pva-card pva-diag pva-diag-empty"><div class="pva-dl">
+           <div class="pva-pills">${_pvaTag('Perfil ' + String(_p0.label || '').toLowerCase())}${_pvaTag(_pvaHorizon(_p0.horizonLabel))}${_pvaTag('Riesgo ' + String(_p0.riskLabel || '').toLowerCase())}</div>
+           <p class="pva-big">Ya conozco tu perfil. En cuanto agregues posiciones, compararé tu cartera con tu horizonte y tolerancia al riesgo y te daré recomendaciones a medida.</p>
+         </div></div>`
+      : `<div class="pva-card pva-cta"><div class="pva-cta-t"><b>Define tu perfil de inversionista</b><span>10 preguntas rápidas para personalizar todo tu análisis.</span></div><button class="pva-btn" type="button" onclick="openProfileQuiz()">Empezar →</button></div>`);
+    _set('pvaHealth', emptyMsg('Tu portafolio está vacío. Conecta tu broker desde <b>Ajustes</b> para construir el análisis profundo — sectores, concentración, beta y diagnóstico se calcularán con tus datos reales.'));
+    _set('port-rebal-recs', emptyMsg('Sin posiciones que rebalancear. Las recomendaciones aparecerán cuando agregues holdings.'));
+    _set('port-pros-cons', emptyMsg('Los pros y contras se generan a partir de tus posiciones reales. Aún no hay nada que analizar.'));
+    _set('port-kpi-bar', '');
+    _pvaSide('pvaRebSide', '');
+    // EPS sin posiciones: su propio mensaje (la sección se oculta sola si no hay tarjetas).
+    try { if (typeof EPS !== 'undefined') EPS.renderPortfolio(); } catch(e) {}
+    const _yl0 = document.getElementById('pa-year-label'); if (_yl0) _yl0.textContent = new Date().getFullYear();
+    _set('port-expected-return', `
+      <div class="pva-card pva-rcard pva-rcard-empty">
+        <div class="pva-scn"><span class="pva-tag g">Escenario base</span><b class="nd">0.0%</b><p>Promedio ponderado por acción.</p></div>
+        <div class="pva-scn"><span class="pva-tag r">Escenario bajista</span><b class="nd">0.0%</b><p>Recesión o corrección.</p></div>
+        <div class="pva-scn pva-scn-note"><p>Los escenarios de retorno se proyectan sobre tus posiciones. Agrega holdings y se calcularán el escenario base y el bajista con el crecimiento esperado y los dividendos de cada empresa.</p></div>
+      </div>`);
+    renderAssetDetailTable(T, m);
     return;
   }
   try { if (typeof EPS !== 'undefined') EPS.renderPortfolio(); } catch(e) {}
@@ -13492,15 +13601,9 @@ function renderDeepPortfolioAnalysis(T) {
   // ── 1) ANÁLISIS PROFUNDO ───────────────────────────────────────────────────
   const _sectorEntries = Object.entries(m.bySector).sort((a,b)=>b[1]-a[1]);
   const _maxSectorW = _sectorEntries.length ? _sectorEntries[0][1] : 0;
-  const sectorRows = _sectorEntries.map(([s,w])=>{
-    const barColor = (w === _maxSectorW) ? 'var(--st-primary)' : 'var(--st-secondary)';
-    return `
-      <div class="pda-srow">
-        <div class="pda-sname" title="${s}">${s}</div>
-        <div class="pda-sbar"><div style="width:${(w*100).toFixed(1)}%;background:${barColor}"></div></div>
-        <div class="pda-spct">${pct(w)}</div>
-      </div>`;
-  }).join('');
+  // Barras navy relativas al sector más grande (el más grande llena la barra).
+  const sectorRows = _sectorEntries.map(([s,w])=>`
+      <div class="pva-srow"><span title="${pvEsc(s)}">${pvEsc(s)}</span><span class="pva-bar n"><i style="width:${_maxSectorW > 0 ? (w/_maxSectorW*100).toFixed(1) : 0}%"></i></span><b>${pct(w)}</b></div>`).join('');
 
   // techWeight robusto: suma pesos de sectores tech canónicos (no strings literales a mano).
   const techWeight = m.items.reduce((s,i)=> s + (TECH_SECTORS.has(i.sector) ? i.weight : 0), 0);
@@ -13512,13 +13615,20 @@ function renderDeepPortfolioAnalysis(T) {
   else if (m.portBeta >= 0.85) perfil = { label:'MODERADO',  cls:'' };
   else                          perfil = { label:'DEFENSIVO', cls:'pos' };
 
-  const _top3Cls = m.top3W>=0.55?'red':m.top3W>=0.45?'yellow':'green';
-  const _techCls = techWeight>=0.6?'red':techWeight>=0.45?'yellow':'green';
-  const _perfilSubCls = perfil.cls==='neg'?'red':'green';
-  const _diagBadge = perfil.label==='AGRESIVO'?'AGGRESSIVE':perfil.label==='CRECIMIENTO'?'GROWTH ORIENTED':perfil.label==='MODERADO'?'BALANCED':'DEFENSIVE';
+  const _top3Cls = m.top3W>=0.55?'r':m.top3W>=0.45?'a':'g';
+  const _techCls = techWeight>=0.6?'r':techWeight>=0.45?'a':'g';
+  const _perfilSubCls = perfil.cls==='neg'?'r':'g';
+  const _cap1 = s => s.charAt(0) + s.slice(1).toLowerCase();   // «CRECIMIENTO» → «Crecimiento»
+
+  // ── Los 4 indicadores de la cabecera (montan sobre la curva navy) ──
+  _set('pvaKpis', `
+    <div class="pva-kpi"><small>Posiciones</small><b>${HOLDINGS.length}</b>${_pvaTag(sectorCount + (sectorCount === 1 ? ' sector' : ' sectores'))}</div>
+    <div class="pva-kpi"><small>Concentración top 3</small><b class="${_top3Cls}">${pct(m.top3W)}</b>${_pvaTag(m.top3W>=0.55?'Alta':m.top3W>=0.45?'Media':'Baja', _top3Cls)}</div>
+    <div class="pva-kpi"><small>Exposición tech</small><b class="${_techCls}">${pct(techWeight)}</b>${_pvaTag(techWeight>=0.6?'Muy alta':techWeight>=0.45?'Alta':'Diversificada', _techCls)}</div>
+    <div class="pva-kpi"><small>Beta ponderada</small><b>${m.portBeta.toFixed(2)}</b>${_pvaTag(_cap1(perfil.label), _perfilSubCls)}</div>`);
 
   // ── ASESOR PERSONALIZADO (según el perfil del cuestionario) ──
-  const _advisorHTML = _pvAdvisorBlock(m, techWeight, perfil);
+  _set('pvaDiag', _pvAdvisorBlock(m, techWeight, perfil));
 
   // ── Look-through de ETFs: exposición EFECTIVA por acción (directa + parte dentro de cada ETF).
   // Insight diferenciador: "tu exposición real a NVDA es ~19%, no 14%, porque VOO también la tiene".
@@ -13542,87 +13652,53 @@ function renderDeepPortfolioAnalysis(T) {
       .filter(r => r.viaEtf > 0.01 && r.total >= 0.05 && (r.total - r.direct) >= 0.02)   // solapamiento material
       .sort((a,b) => b.total - a.total).slice(0, 5);
   })();
+  // «Dónde está esa exposición»: qué fondos de la cartera llevan dentro esas acciones y qué
+  // parte del fondo suman (los mismos pesos de ETF_DB que usa el cálculo de arriba).
+  const _ltSet = new Set(_lookThrough.map(r => r.t));
+  const _ltVia = _lookThrough.length ? m.items.map(i => {
+    const db = ETF_DB[(i.ticker||'').toUpperCase()];
+    if (!db || !Array.isArray(db.holdings) || !(i.weight > 0)) return null;
+    const hits = db.holdings.filter(h => h && h.w != null && _ltSet.has((h.t||'').toUpperCase()));
+    if (!hits.length) return null;
+    const share = hits.reduce((a,h) => a + h.w, 0);
+    const names = Array.from(new Set(hits.map(h => (h.t||'').toUpperCase())));
+    const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' y ' + names[names.length - 1] : names[0];
+    return { t: i.ticker, share, list };
+  }).filter(Boolean).sort((a,b) => b.share - a.share) : [];
   const _lookThroughHTML = _lookThrough.length ? `
-    <div style="margin-top:16px;border:1px solid var(--border);border-radius:var(--pa-radius,12px);overflow:hidden;background:var(--surface)">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px">
-        Exposición real (look-through de ETFs)
+    <div class="pva-card pva-lt">
+      <h3>Exposición real</h3>
+      <p class="pva-cap">Tus ETFs también contienen acciones. Tu exposición real suma la tenencia directa más la parte dentro de cada fondo.</p>
+      <div class="pva-ltbox">${_lookThrough.map(r => `
+        <div class="pva-ltr"><b>${pvEsc(r.t)}</b><span class="pva-sbar"><i style="width:${(r.direct/r.total*100).toFixed(1)}%"></i><i style="width:${(r.viaEtf/r.total*100).toFixed(1)}%"></i></span>
+          <small><b>${pct(r.total)} real</b><span><i class="k1"></i>directa ${pct(r.direct)}</span><span><i class="k2"></i>vía ETF ${pct(r.viaEtf)}</span></small></div>`).join('')}
       </div>
-      <div style="padding:8px 16px 12px">
-        <div style="font-size:10px;color:var(--text3);line-height:1.5;margin:4px 0 8px">Tus ETFs también contienen estas acciones. Tu exposición REAL suma la tenencia directa más la parte dentro de cada fondo — puede ser bastante mayor de lo que parece.</div>
-        ${_lookThrough.map(r => `
-          <div style="display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-top:1px solid var(--border)">
-            <div style="font-size:12px;color:var(--text)"><b>${r.t}</b> <span style="color:var(--st-primary,#04162c);font-weight:700">real ${pct(r.total)}</span></div>
-            <div style="font-size:11px;color:var(--text3);text-align:right">directa ${pct(r.direct)} + vía ETF ${pct(r.viaEtf)}</div>
-          </div>`).join('')}
-      </div>
+      ${_ltVia.length ? `<div class="pva-lbl pva-lbl-via">Dónde está esa exposición</div>
+      ${_ltVia.map(v => `<div class="pva-via">${_pvaAv(v.t)}<div><b>${pvEsc(v.t)}</b><small>${v.share.toFixed(v.share < 10 ? 1 : 0)}% del fondo está en ${pvEsc(v.list)}</small></div><span class="pva-bar n"><i style="width:${Math.min(100, v.share*4).toFixed(0)}%"></i></span></div>`).join('')}` : ''}
     </div>` : '';
 
-  document.getElementById('port-deep-analysis').innerHTML = _advisorHTML + `
-    <div class="pda-metrics">
-      <div class="pda-metric">
-        <div class="pda-mlabel">Posiciones</div>
-        <div class="pda-mval">${HOLDINGS.length}</div>
-        <div class="pda-msub">${sectorCount} sectores</div>
+  // ── Salud y diversificación: tarjeta de salud a lo ancho + sectores | exposición real ──
+  _set('pvaHealth', (() => {
+    const hs = _portfolioHealthScore(m, techWeight, sectorCount, T);
+    const R = 62, C = 2 * Math.PI * R, lv = _pvaLvl(hs.score);
+    const ring = `<svg viewBox="0 0 150 150" aria-hidden="true"><circle class="pva-rtrack" cx="75" cy="75" r="${R}"/>`
+      + `<circle class="pva-rprog ${lv}" cx="75" cy="75" r="${R}" stroke-dasharray="${(C * Math.max(0, Math.min(100, hs.score)) / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 75 75)"/></svg>`;
+    const subs = hs.factors.map(f => { const l = _pvaLvl(f.val); return `
+        <div class="pva-sub"><div><b>${f.name}</b><small>${String(f.detail).replace(/^Cash\b/, 'Efectivo')}</small></div><span class="pva-bar ${l}"><i style="width:${Math.max(0, Math.min(100, f.val))}%"></i></span><em class="${l}">${f.val}</em></div>`; }).join('')
+      + (hs.dataNote ? `<div class="pva-sub pva-subnote"><small>${hs.dataNote}</small></div>` : '');
+    return `
+    <div class="pva-card pva-hcard">
+      <div class="pva-hh">
+        <div class="pva-ring">${ring}<div><b class="${lv}">${hs.score}</b><small>de 100</small></div></div>
+        <div class="pva-hht"><strong class="${lv}">${hs.grade.label}</strong><p>${hs.grade.sub}</p></div>
       </div>
-      <div class="pda-metric">
-        <div class="pda-mlabel">Top 3 concentración</div>
-        <div class="pda-mval ${_top3Cls}">${pct(m.top3W)}</div>
-        <div class="pda-msub">${m.top3W>=0.55?'Alta':m.top3W>=0.45?'Media':'Baja'}</div>
-      </div>
-      <div class="pda-metric">
-        <div class="pda-mlabel">Exposición Tech</div>
-        <div class="pda-mval ${_techCls}">${pct(techWeight)}</div>
-        <div class="pda-msub">${techWeight>=0.6?'Muy alta':techWeight>=0.45?'Alta':'Diversificada'}</div>
-      </div>
-      <div class="pda-metric hl">
-        <div class="pda-mlabel">Beta ponderada</div>
-        <div class="pda-mval">${m.portBeta.toFixed(2)}</div>
-        <div class="pda-msub ${_perfilSubCls}">${perfil.label}</div>
-      </div>
+      <div class="pva-subs">${subs}</div>
     </div>
-
-    <div class="pda-cols">
-      <div class="pda-sector-card">
-        <div class="pda-section-lbl">Distribución por sector</div>
-        ${sectorRows}
-      </div>
-      ${(() => {
-        const hs = _portfolioHealthScore(m, techWeight, sectorCount, T);
-        const C = 326.7;                                   // circunferencia (r=52)
-        const off = C * (1 - hs.score/100);
-        return `
-      <div class="phc-card">
-        <div class="phc-head"><span class="material-symbols-outlined">monitoring</span>Portfolio Health Score</div>
-        <div class="phc-main">
-          <div class="phc-gauge">
-            <svg viewBox="0 0 118 118">
-              <circle class="phc-track" cx="59" cy="59" r="52"/>
-              <circle class="phc-prog" cx="59" cy="59" r="52" stroke="${hs.scoreCol}" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
-            </svg>
-            <div class="phc-center">
-              <span class="phc-num" style="color:${hs.scoreCol}">${hs.score}</span>
-              <span class="phc-den">/ 100</span>
-            </div>
-          </div>
-          <div class="phc-verdict">
-            <div class="phc-grade" style="color:${hs.scoreCol}">${hs.grade.label}</div>
-            <div class="phc-grade-sub">${hs.grade.sub}</div>
-          </div>
-        </div>
-        <div class="phc-factors">
-          ${hs.factors.map(f => `
-          <div class="phc-frow">
-            <div class="phc-fname">${f.name}<small>${f.detail}</small></div>
-            <div class="phc-fbar"><div style="width:${f.val}%;background:${f.col}"></div></div>
-            <div class="phc-fval" style="color:${f.col}">${f.val}</div>
-          </div>`).join('')}
-        </div>
-        ${hs.dataNote ? `<div style="font-size:10px;color:var(--text3);padding:9px 2px 0;line-height:1.5;border-top:1px solid var(--border);margin-top:8px">${hs.dataNote}</div>` : ''}
-      </div>`;
-      })()}
-    </div>
-    ${_lookThroughHTML}
-  `;
+    <div class="pva-g2 ${_lookThroughHTML ? '' : 'pva-g1'}">
+      <div class="pva-card pva-sect"><h3>Distribución por sector</h3><p class="pva-cap">Cuánto de tu dinero está en cada sector.</p><div class="pva-srows">${sectorRows}</div></div>
+      ${_lookThroughHTML}
+    </div>`;
+  })());
 
   // ── 2) RECOMENDACIONES DE REBALANCEO ──────────────────────────────────────
   // Lógica: comparar peso actual vs sugerido (de REBAL_NOTES si existe, si no usar rating-based)
@@ -13643,21 +13719,20 @@ function renderDeepPortfolioAnalysis(T) {
   const _skPara  = ws => '<div class="pv-sk-p">' + ws.map(_skBar).join('') + '</div>';
   const _plan = _rblFree ? { rows: [] } : _buildRebalPlan(m);
   const _planByTk = {}; _plan.rows.forEach(r => { _planByTk[r.ticker] = r; });
-  const _actionStyle = { MANTENER:{cls:'gray',icon:'remove'}, AUMENTAR:{cls:'green',icon:'arrow_upward'}, REDUCIR:{cls:'red',icon:'arrow_downward'} };
+  const _actionStyle = { MANTENER:{cls:'fl',txt:'Mantener',icon:_PVA_I.flat}, AUMENTAR:{cls:'up',txt:'Aumentar',icon:_PVA_I.up}, REDUCIR:{cls:'dn',txt:'Reducir',icon:_PVA_I.dn} };
   // Una fila de maqueta por posición: misma altura de tabla, ni un dato dentro.
   const _skRows = _rblFree ? m.items.map(() => `
-      <tr>
-        <td>${_skPara([64])}${_skPara([38])}</td>
-        <td>${_skPara([72])}</td>
-        <td>${_skPara([80])}</td>
-        <td>${_skPara([100, 86])}</td>
-      </tr>`).join('') : '';
+      <div class="pva-rr pva-rr-sk">
+        <span>${_skPara([64])}${_skPara([38])}</span>
+        <span>${_skPara([72])}</span>
+        <span>${_skPara([80])}</span>
+        <div>${_skPara([100, 86])}</div>
+      </div>`).join('') : '';
   const recRows = _rblFree ? '' : m.items.map(i => {
     const noteEntry = (typeof REBAL_NOTES !== 'undefined') ? REBAL_NOTES[i.ticker] : null;
     const pr = _planByTk[i.ticker] || { cur:i.weight, sug:i.weight, action:'MANTENER' };
     const sug = pr.sug;
     const st  = _actionStyle[pr.action] || _actionStyle.MANTENER;
-    const action = { label: pr.action, cls: st.cls, icon: st.icon };
     const note = noteEntry?.note || pr.why || _genericRebalReason(i);
     // Delta accionable en dinero y en acciones (los pesos son sobre el valor de mercado T.mkt).
     const _deltaUSD = (sug - i.weight) * (T.mkt || 0);
@@ -13666,36 +13741,31 @@ function renderDeepPortfolioAnalysis(T) {
     const _sign = _deltaUSD >= 0 ? '+' : '−';
     const _deltaTxt = (pr.action === 'MANTENER' || Math.abs(_deltaUSD) < 1)
       ? ''
-      : `<div class="rbl-delta" style="font-size:10px;color:var(--text3);margin-top:3px;font-variant-numeric:tabular-nums">${_sign}${Math.abs(_sh).toFixed(Math.abs(_sh)<10?2:1)} acc · ${_sign}${_pvSym()}${Math.abs(Math.round(_deltaUSD)).toLocaleString('en-US')}</div>`;
+      : `<small>${_sign}${Math.abs(_sh).toFixed(Math.abs(_sh)<10?2:1)} acc · ${_sign}${_pvSym()}${Math.abs(Math.round(_deltaUSD)).toLocaleString('en-US')}</small>`;
     return `
-      <tr>
-        <td>
-          <div class="rbl-tk">${i.ticker}</div>
-          <div class="rbl-tkw">${pct(i.weight)}</div>
-        </td>
-        <td>
-          <span class="rbl-action ${action.cls}"><span class="material-symbols-outlined">${action.icon}</span>${action.label}</span>
-        </td>
-        <td><span class="rbl-rebal">${pct(i.weight)} → <strong>${pct(sug)}</strong></span>${_deltaTxt}</td>
-        <td><div class="rbl-note"><span class="rbl-note-full">${note}</span></div></td>
-      </tr>`;
+      <div class="pva-rr">
+        <span class="pva-tk">${_pvaAv(i.ticker)}<span class="pva-tkt"><b>${pvEsc(i.ticker)}</b><small>Pesa ${pct(i.weight)}</small></span></span>
+        <span class="pva-actc"><span class="pva-act ${st.cls}">${st.icon()}${st.txt}</span></span>
+        <span class="pva-mv"><span class="pva-ft">${pct(i.weight)} <i>→</i> <b class="${st.cls}">${pct(sug)}</b></span>${_deltaTxt}</span>
+        <p>${note}</p>
+      </div>`;
   }).join('');
 
   const _pp = (typeof getInvestorProfile==='function') ? getInvestorProfile() : null;
-  const _perfilTxt = _pp ? `tu perfil <strong>${_pp.label}</strong> (${_pp.horizonLabel.toLowerCase()}, riesgo ${_pp.riskLabel.toLowerCase()})` : 'tu perfil de inversionista';
+  const _perfilTxt = _pp ? `tu perfil <b>${String(_pp.label || '').toLowerCase()}</b> (${_pp.horizonLabel.toLowerCase()}, riesgo ${_pp.riskLabel.toLowerCase()})` : 'tu perfil de inversionista';
   // CON QUÉ DATOS ESTÁ HECHO ESTE PLAN. Un plan de rebalanceo sin fecha se lee como si
   // fuera de hoy siempre; en realidad se recalcula cuando una de tus empresas publica
   // resultados. Decirlo evita que el usuario actúe sobre una foto que cree más fresca
   // de lo que es, y hace visible que el plan SÍ se actualiza cada trimestre.
-  let _rblFreshHTML = '';
+  // (Ahora va en las fichas de «Cómo se calcula»: datos usados · se recalcula.)
+  let _fDatos = 'Los precios de hoy', _fSens = '', _rbTag = '', _fMkt = '';
   try {
     const _lastQ = (typeof _pvLastEarnDate === 'function') ? _pvLastEarnDate(HOLDINGS.map(h => h.ticker)) : null;
     if (_lastQ){
-      const _MS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+      const _MS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
       const _mm = /^(\d{4})-(\d{2})-(\d{2})$/.exec(_lastQ);
-      const _fq = _mm ? `${+_mm[3]} de ${_MS[+_mm[2]-1]} de ${_mm[1]}` : _lastQ;
-      _rblFreshHTML = `Calculado con los resultados publicados hasta el <b>${_fq}</b> y con los precios de hoy. `
-        + `Se rehace solo cuando una de tus empresas reporta un trimestre nuevo.`;
+      const _fq = _mm ? `${+_mm[3]} ${_MS[+_mm[2]-1]} ${_mm[1]}` : _lastQ;
+      _fDatos = `Resultados publicados hasta el ${_fq} y precios de hoy`;
     }
   } catch(e){}
   // LA PRUEBA DE QUE EL PLAN RESPONDE AL PERFIL. Antes el diagnóstico podía marcar la
@@ -13707,10 +13777,12 @@ function renderDeepPortfolioAnalysis(T) {
       const [_bl, _bh] = _bi.band;
       const _dentro = _bi.after >= _bl - 0.02 && _bi.after <= _bh + 0.02;
       const _cambio = Math.abs(_bi.after - _bi.before) >= 0.02;
-      _rblFreshHTML += ` <b style="color:var(--text2)">Sensibilidad al mercado:</b> `
-        + (_cambio ? `${_bi.before.toFixed(2)} → <b>${_bi.after.toFixed(2)}</b>` : `<b>${_bi.after.toFixed(2)}</b>`)
-        + ` con el plan aplicado, frente al ${_bl.toFixed(2)}–${_bh.toFixed(2)} que tolera tu perfil`
-        + (_dentro ? ' — dentro de banda.' : ' — todavía por encima: la tabla de abajo propone con qué amortiguarla.');
+      const _band = `${_bl.toFixed(2)}–${_bh.toFixed(2)}`;
+      _fSens = `${_cambio ? `${_bi.before.toFixed(2)} <i>→</i> ` : ''}${_bi.after.toFixed(2)} `
+        + (_dentro ? _pvaTag('Dentro de ' + _band, 'g') : _pvaTag('Por encima de ' + _band, 'a'));
+      _rbTag = _dentro ? _pvaTag(`Sensibilidad ${_bi.after.toFixed(2)} · dentro de tu banda`, 'g')
+                       : _pvaTag(`Sensibilidad ${_bi.after.toFixed(2)} · por encima de tu banda`, 'a');
+      if (!_dentro) _fSens += '<span class="pva-fnote">La tabla de abajo propone con qué amortiguarla.</span>';
     }
   } catch(e){}
   // EL MERCADO EN EL QUE SE EJECUTA EL PLAN. Un plan que ignora si el índice está en máximos
@@ -13719,60 +13791,55 @@ function renderDeepPortfolioAnalysis(T) {
   try {
     const _mk = (typeof PORTIV_MKT !== 'undefined') ? PORTIV_MKT.now() : null;
     if (_mk){
-      _rblFreshHTML += ` <b style="color:var(--text2)">Mercado hoy:</b> ${PORTIV_MKT.text(_mk)}`
+      _fMkt = `<p class="pva-howmkt"><b>Mercado hoy:</b> ${PORTIV_MKT.text(_mk)}`
         + (_mk.trend !== 'alcista'
             ? ' Con el índice lejos de máximos, el plan inclina algo más hacia los negocios sólidos que el mercado ha castigado y sugiere entrar por tramos.'
             : (_mk.vol === 'calma' && _mk.offHigh > -0.02
                 ? ' Con el índice en máximos y en calma, el plan es más exigente con las cíclicas que ya subieron.'
-                : ''));
+                : '')) + '</p>';
     }
   } catch(e){}
-  if (_rblFreshHTML)
-    _rblFreshHTML = `<div style="font-size:11px;color:var(--text3);margin:-8px 0 14px;line-height:1.55">${_rblFreshHTML}</div>`;
-  document.getElementById('port-rebal-recs').innerHTML = `
+  _pvaSide('pvaRebSide', _rblFree ? '' : _rbTag);
+  _set('port-rebal-recs', `
     <div class="pv-lock">
-      <!-- El párrafo que explica CÓMO se calcula el rebalanceo va DENTRO del candado:
-           es parte de la misma feature de pago que la tabla. Dejarlo nítido encima
-           partía el bloque en dos (texto legible + tabla borrosa) y además regalaba
-           el método. Al ser hijo directo de .pv-lock lo difumina la misma regla que
-           a la tabla, y el velo (inset:0) pasa a cubrir el bloque entero. -->
-      <div class="rbl-sub">
-        Cada posición se compara con las demás usando los <strong>números que publica cada empresa</strong>
+      <!-- El texto que explica CÓMO se calcula el rebalanceo va DENTRO del candado: es parte
+           de la misma feature de pago que la tabla (al ser hijo de .pv-lock lo difumina la
+           misma regla y el velo cubre el bloque entero). -->
+      <div class="pva-card pva-how">
+        <h3>Cómo se calcula</h3>
+        <p>Cada posición se compara con las demás usando los <b>números que publica cada empresa</b>
         —qué gana por lo que vende, cuánto crece, con cuánta deuda y a qué precio cotiza— y el peso se
         inclina hacia los negocios que salen mejor parados. Qué rasgos pesan más lo decide
         ${_perfilTxt}: un perfil conservador penaliza deuda, volatilidad y comprar el pico del ciclo;
         uno agresivo prima el crecimiento que compone y acepta una cartera más concentrada.
         Sobre eso van los límites: techo por posición, techo por sector y un mínimo por debajo del
-        cual una posición no aporta.
-        Sobre eso se mira además <strong>dónde está el precio hoy</strong>: la misma empresa en la
-        parte baja de su rango del año y en máximos no merece el mismo peso, así que el momento
+        cual una posición no aporta. También se mira <b>dónde está el precio hoy</b>: la misma empresa
+        en la parte baja de su rango del año y en máximos no merece el mismo peso, así que el momento
         ajusta el tamaño de la posición — nunca decide si la empresa debe estar en la cartera.
-        La columna de la derecha explica las tres mitades: qué hace ese nombre <strong>dentro de tu
-        cartera</strong>, qué está haciendo <strong>el negocio</strong> y qué está haciendo
-        <strong>el precio</strong>. Vender posiciones ganadoras
-        puede generar impuestos sobre las ganancias — tenlo en cuenta antes de recortar.
+        El texto de cada fila explica las tres mitades: qué hace ese nombre <b>dentro de tu
+        cartera</b>, qué está haciendo <b>el negocio</b> y qué está haciendo <b>el precio</b>.</p>
+        ${_rblFree ? '' : _fMkt}
+        <div class="pva-facts">
+          <div class="pva-fact"><small>Sensibilidad al mercado con el plan</small>${_rblFree ? _skPara([70]) : `<b>${_fSens || '—'}</b>`}</div>
+          <div class="pva-fact"><small>Datos usados</small>${_rblFree ? _skPara([92, 60]) : `<b>${_fDatos}</b>`}</div>
+          <div class="pva-fact"><small>Se recalcula</small><b>Cuando una de tus empresas reporta un trimestre nuevo</b></div>
+          <div class="pva-fact pva-tax">${_PVA_I.info()}<span>Vender posiciones ganadoras puede generar impuestos sobre las ganancias: tenlo en cuenta antes de recortar.</span></div>
+        </div>
       </div>
-      ${_rblFree ? '' : _rblFreshHTML}
-      <div class="rbl-card">
-        <table class="rbl-table">
-          <thead><tr><th>Activo</th><th>Acción</th><th>Rebalanceo</th><th>Análisis</th></tr></thead>
-          <tbody>${_rblFree ? _skRows : recRows}</tbody>
-        </table>
+      <div class="pva-card pva-reb">
+        <div class="pva-rr pva-rh"><span>Activo</span><span>Acción</span><span>Rebalanceo</span><span>Por qué</span></div>
+        ${_rblFree ? _skRows : recRows}
       </div>
       ${(!_rblFree && typeof _pvxSuggestHTML === 'function') ? _pvxSuggestHTML(m, T) : ''}
       ${(typeof _pvLockOverlay === 'function') ? _pvLockOverlay('Qué comprar, qué recortar y cuánto, posición por posición') : ''}
     </div>
-    <div class="rbl-sub" style="margin-top:12px">
-      Sugerencias calculadas con fines educativos a partir de los datos publicados por cada empresa.
+    <div class="pva-rebfoot">
+      <p class="pva-disc">Sugerencias calculadas con fines educativos a partir de los datos publicados por cada empresa.
       No son asesoría financiera ni una recomendación de compra o venta; decide siempre por tu cuenta
-      o con un asesor autorizado.
+      o con un asesor autorizado.</p>
+      <button class="rbl-export pva-btn" type="button" onclick="(typeof exportPortfolioReport==='function')?exportPortfolioReport():window.print()">${_PVA_I.down()}Exportar reporte</button>
     </div>
-    <div class="rbl-foot">
-      <button class="rbl-export" onclick="(typeof exportPortfolioReport==='function')?exportPortfolioReport():window.print()">
-        <span class="material-symbols-outlined">download</span>Exportar Reporte
-      </button>
-    </div>
-  `;
+  `);
 
   // ── 3) PROS Y CONTRAS ─────────────────────────────────────────────────────
   const pros = [];
@@ -13783,11 +13850,11 @@ function renderDeepPortfolioAnalysis(T) {
   const etfTickers  = m.items.filter(i => (i.sector||'').includes('ETF') || (i.sector||'').includes('Índice')).map(i=>i.ticker);
   const payTickers  = m.items.filter(i => (i.sector||'').includes('Pagos') || (i.sector||'').includes('Fintech')).map(i=>i.ticker);
   if (techWeight >= 0.45) pros.push(`Posicionado fuerte en el ciclo secular de IA y semiconductores${techTickers.length?` (${techTickers.slice(0,4).join(', ')})`:''}.`);
-  if (m.expGrowth >= 0.13) pros.push(`Retorno esperado de crecimiento alto (${pct(m.expGrowth)} anual) — superior al S&P 500 (~9-10%).`);
-  if (etfTickers.length && (m.bySector['ETF · Índice']||0) > 0.20) pros.push(`Exposición al S&P 500 vía ${etfTickers.join(', ')} (${pct(m.bySector['ETF · Índice'])}) actúa como ancla diversificadora.`);
-  if (HOLDINGS.length >= 5) pros.push('Calidad de holdings: empresas con moats reales (ecosistema, marca, escala, datos) y márgenes operativos elevados en su mayoría.');
+  if (m.expGrowth >= 0.13) pros.push(`Retorno esperado de crecimiento alto (${pct(m.expGrowth)} anual): superior al S&P 500 (~9-10%).`);
+  if (etfTickers.length && (m.bySector['ETF · Índice']||0) > 0.20) pros.push(`Exposición al S&P 500 vía ${etfTickers.join(', ')} (${pct(m.bySector['ETF · Índice'])}): actúa como ancla diversificadora.`);
+  if (HOLDINGS.length >= 5) pros.push('Calidad de holdings: empresas con ventajas reales (ecosistema, marca, escala, datos) y márgenes operativos elevados en su mayoría.');
   if (payTickers.length) pros.push(`${payTickers.join(', ')} añade un negocio asset-light, defensivo, con pricing power y crecimiento secular en pagos digitales.`);
-  pros.push('Costos: tenencia directa sin comisiones de gestión (a diferencia de fondos activos que cobran 0.5-2%/año).');
+  pros.push('Costos: tenencia directa sin comisiones de gestión, a diferencia de fondos activos que cobran 0.5–2% al año.');
 
   // ── Exposiciones REALES para condicionar los contras (BLOQUE 3) — nada de contras falsos ──
   const _defWeight = m.items.reduce((s,i)=> s + (DEFENSIVE_SECTORS.has(i.sector) ? i.weight : 0), 0);
@@ -13809,31 +13876,31 @@ function renderDeepPortfolioAnalysis(T) {
   const _topTk = (m.sorted[0] && m.sorted[0].ticker) || 'tu mayor posición';
 
   // Cons (críticas honestas — SOLO cuando aplican a las tenencias reales)
-  if (m.top3W >= 0.45) cons.push(`Concentración: top 3 holdings = ${pct(m.top3W)} del portafolio. Un mal trimestre de ${_topTk} mueve material toda la cartera.`);
+  if (m.top3W >= 0.45) cons.push(`Concentración: las 3 mayores posiciones son el ${pct(m.top3W)} del portafolio. Un mal trimestre de ${_topTk} mueve toda la cartera.`);
   if (techWeight >= 0.55) cons.push(`Sobreexposición a tech (${pct(techWeight)}): en rotación sectorial o subida de tasas, el drawdown puede ser 25-40%.`);
   if (m.portBeta >= 1.30) cons.push(`Beta alta (${m.portBeta.toFixed(2)}): en una caída del mercado del 20%, este portafolio cae ~${(m.portBeta*20).toFixed(0)}%.`);
-  if (_defWeight < 0.08) cons.push('Sin exposición a sectores defensivos (salud, consumo básico, utilities) — más vulnerable en recesión.');
-  if (!_hasIntl) cons.push('Cero exposición internacional (Europa, emergentes) — riesgo de "home bias" si el dólar pierde primacía.');
-  if (m.expDiv < 0.015) cons.push(`Dividend yield bajo (${pct(m.expDiv)}): el portafolio depende casi 100% de apreciación; en mercado lateral genera poco ingreso.`);
-  if (_cushion < 0.05) cons.push('Sin renta fija ni cash significativo — sin dry powder para comprar en caídas fuertes.');
+  if (_defWeight < 0.08) cons.push('Sin exposición a sectores defensivos (salud, consumo básico, utilities): más vulnerable en una recesión.');
+  if (!_hasIntl) cons.push('Cero exposición internacional (Europa, emergentes): riesgo de "home bias" si el dólar pierde primacía.');
+  if (m.expDiv < 0.015) cons.push(`Dividendo bajo (${pct(m.expDiv)}): el portafolio depende casi por completo de la apreciación; en un mercado lateral genera poco ingreso.`);
+  if (_cushion < 0.05) cons.push('Sin renta fija ni efectivo significativo: sin pólvora seca para comprar en caídas fuertes.');
 
-  document.getElementById('port-pros-cons').innerHTML = `
+  _set('port-pros-cons', `
     <div class="pv-lock">
-    <div class="pa-prosbox">
-      <div class="pa-care strengths">
-        <div class="pa-care-title"><span class="material-symbols-outlined">trending_up</span>Fortalezas</div>
+    <div class="pva-g2">
+      <div class="pva-card pva-pc pro">
+        <h3><span>${_PVA_I.trend()}</span>Fortalezas</h3>
         ${_rblFree ? (_skPara([100,88]) + _skPara([96,64]) + _skPara([100,72]))
                    : `<ul>${pros.map(p=>`<li>${p}</li>`).join('')}</ul>`}
       </div>
-      <div class="pa-care risks">
-        <div class="pa-care-title"><span class="material-symbols-outlined">warning_amber</span>Riesgos</div>
+      <div class="pva-card pva-pc con">
+        <h3><span>${_PVA_I.warn()}</span>Riesgos</h3>
         ${_rblFree ? (_skPara([100,92]) + _skPara([84,58]) + _skPara([100,76]))
                    : `<ul>${cons.map(c=>`<li>${c}</li>`).join('')}</ul>`}
       </div>
     </div>
     ${(typeof _pvLockOverlay === 'function') ? _pvLockOverlay('Las fortalezas y los riesgos concretos de tu cartera') : ''}
     </div>
-  `;
+  `);
   // ── 4) RETORNO ESPERADO ANUAL (forward 12M) ──────────────────────────────
   // Tasa anual esperada de la cartera (apreciación sobria + dividendos). Ya NO se compone
   // con un "YTD realizado": ese número era retorno-desde-costo (no año calendario) y con un
@@ -13854,72 +13921,46 @@ function renderDeepPortfolioAnalysis(T) {
   const mktDrop = 0.20;
   const bear    = -((m.portBeta || 1) * mktDrop);
 
-  // % con signo
-  const pr = v => (v>=0?'+':'') + (v*100).toFixed(1) + '%';
+  // ── La escala «Tu rango para el año»: de −30% a +20%, ampliada de 5 en 5 si el escenario
+  // bajista o el techo del base se salen. Sólo posiciona lo ya calculado arriba.
+  const _lo = Math.min(-30, Math.floor((bear*100 - 4) / 5) * 5);
+  const _hi = Math.max(20, Math.ceil((baseHi*100 + 4) / 5) * 5);
+  const _pos = v => Math.max(0, Math.min(100, (v*100 - _lo) / (_hi - _lo) * 100));
+  const _pB = _pos(bear), _pL = _pos(baseLo), _pH = _pos(baseHi), _pA = _pos(base), _p0 = _pos(0);
+  const _pM = (_pL + _pH) / 2;
+  // Etiquetas de arriba: centradas en su marca salvo en los bordes; si la del bajista pisa la
+  // del rango base, baja una línea.
+  const _anchor = p => p < 12 ? 'l' : p > 88 ? 'r' : 'c';
+  const _clash = Math.abs(_pB - _pM) < 30;
+  const _sgn = v => (v>=0?'+':'−') + Math.abs(v*100).toFixed(1) + '%';
+  const _rngTxt = `${_sgn(baseLo)} a ${_sgn(baseHi)}`;
+  const _cls = base >= 0 ? 'up' : 'dn';
+  const _fmtEdge = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v) + '%';
+  const _pZ = v => (+v).toFixed(2);
 
   // Desglose por activo: el "Retorno anual" de cada fila es i.expTotal
   // (= gAnnual capeado + divYield), IDÉNTICO al "Retorno total esperado anual"
   // que muestra el análisis individual de esa acción. El promedio ponderado por
   // peso (footer) = m.expTotal = la tasa anualizada implícita del portafolio.
-  const _th = 'padding:9px 6px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3)';
-  const contribRows = m.sorted.map(i => `
-      <tr style="border-bottom:1px solid var(--border)">
-        <td style="padding:8px 6px;font-size:12px;font-weight:700;color:var(--text)">${i.ticker}</td>
-        <td style="padding:8px 6px;font-size:12px;color:var(--text2);text-align:right">${pct(i.weight)}</td>
-        <td style="padding:8px 6px;font-size:12px;font-weight:600;color:${i.growth>=0?'var(--green)':'var(--red)'};text-align:right">${pr(i.growth)}</td>
-        <td style="padding:8px 6px;font-size:12px;color:var(--text2);text-align:right">${(i.divYield*100).toFixed(2)}%</td>
-        <td style="padding:8px 6px;font-size:12px;font-weight:800;color:${i.expTotal>=0?'var(--green)':'var(--red)'};text-align:right">${pr(i.expTotal)}</td>
-      </tr>`).join('');
-
-  const breakdownTable = `
-    <div style="margin-top:18px;border:1px solid var(--border);border-radius:var(--pa-radius);overflow:hidden;background:var(--surface)">
-      <div style="padding:13px 16px;border-bottom:1px solid var(--border);font-size:12px;font-weight:700;color:var(--text)">
-        Retorno esperado anual por activo
-        <span style="font-weight:500;color:var(--text3)"> · coincide con el análisis individual de cada acción</span>
+  // (La tabla ahora es «Tus posiciones», unida a «Detalle de Activos»: renderAssetDetailTable.)
+  _set('port-expected-return', `
+    <div class="pva-card pva-rcard">
+      <div class="pva-rng">
+        <h3>Tu rango para el año</h3>
+        <p class="pva-cap">Escala de ${_fmtEdge(_lo)} a ${_fmtEdge(_hi)}.</p>
+        <div class="pva-scale" role="img" aria-label="Escenario bajista ${_sgn(bear)}; escenario base ${_rngTxt}; promedio ${_sgn(base)}">
+          <div class="pva-axis"></div>
+          <div class="pva-zero" style="left:${_pZ(_p0)}%"><span${Math.abs(_p0 - _pA) < 22 ? ' class="off"' : ''}>0%</span></div>
+          <div class="pva-band ${_cls}" style="left:${_pZ(_pL)}%;width:${_pZ(Math.max(1.5, _pH - _pL))}%"></div>
+          <div class="pva-avg" style="left:${_pZ(_pA)}%"><span class="${_anchor(_pA)}">Promedio ${_sgn(base)}</span></div>
+          <div class="pva-dot" style="left:${_pZ(_pB)}%"></div>
+          <div class="pva-flag dn ${_anchor(_pB)}${_clash ? ' low' : ''}" style="left:${_pZ(_pB)}%">${_sgn(bear)}</div>
+          <div class="pva-flag ${_cls} ${_anchor(_pM)}" style="left:${_pZ(_pM)}%">${_rngTxt}</div>
+        </div>
       </div>
-      <table class="pa-ret-table" style="width:100%;border-collapse:collapse">
-        <thead>
-          <tr style="border-bottom:1px solid var(--border)">
-            <th style="${_th};text-align:left">Activo</th>
-            <th style="${_th};text-align:right">Peso</th>
-            <th style="${_th};text-align:right">Apreciación</th>
-            <th style="${_th};text-align:right">Dividendo</th>
-            <th style="${_th};text-align:right">Retorno anual</th>
-          </tr>
-        </thead>
-        <tbody>${contribRows}</tbody>
-        <tfoot>
-          <tr style="border-top:2px solid var(--border);background:var(--surface2)">
-            <td style="padding:11px 6px;font-size:12px;font-weight:800;color:var(--text)">Promedio ponderado</td>
-            <td style="padding:11px 6px;font-size:12px;font-weight:700;color:var(--text2);text-align:right">100%</td>
-            <td style="padding:11px 6px;font-size:12px;font-weight:700;color:var(--green);text-align:right">${pr(m.expGrowth)}</td>
-            <td style="padding:11px 6px;font-size:12px;font-weight:700;color:var(--text2);text-align:right">${(m.expDiv*100).toFixed(2)}%</td>
-            <td style="padding:11px 6px;font-size:13px;font-weight:800;color:${m.expTotal>=0?'var(--green)':'var(--red)'};text-align:right">${pr(m.expTotal)}</td>
-          </tr>
-        </tfoot>
-      </table>
-      <div style="padding:10px 16px;font-size:10px;color:var(--text3);line-height:1.5;border-top:1px solid var(--border)">
-        La "Apreciación" de cada activo es una estimación sobria: mezcla su crecimiento esperado con el retorno histórico de largo plazo de su sector, capeada a un rango razonable (hasta ~18%). El "Retorno anual" añade el dividendo y coincide con el análisis individual de esa acción. El promedio ponderado por peso es la tasa anualizada implícita del portafolio (${pr(m.expTotal)}). Estimación, no promesa.
-      </div>
-    </div>`;
-
-  // Bear | Base (destacado) — sin Bull
-  document.getElementById('port-expected-return').innerHTML = `
-    <div class="pa-scen-grid">
-      <div class="pa-scen bear">
-        <div class="pa-scen-label">Escenario Bear</div>
-        <div class="pa-scen-val neg">${(bear*100).toFixed(1)}%</div>
-        <div class="pa-scen-desc">En una corrección del mercado de ~20%, tu cartera (beta ${(m.portBeta||1).toFixed(2)}) caería alrededor de esto.</div>
-      </div>
-      <div class="pa-scen base">
-        <div class="pa-scen-badge">Retorno Esperado</div>
-        <div class="pa-scen-label">Escenario Base</div>
-        <div class="pa-scen-val ${base>=0?'pos':'neg'}">${pr(baseLo)} a ${pr(baseHi)}</div>
-        <div class="pa-scen-desc">Rango del retorno anual esperado (apreciación sobria + dividendos), no una promesa. Estimación basada en consenso.</div>
-      </div>
-    </div>
-    ${breakdownTable}
-  `;
+      <div class="pva-scn"><span class="pva-tag ${base >= 0 ? 'g' : 'r'}">Escenario base</span><b class="${_cls}">${_rngTxt}</b><p>Rango del retorno anual esperado (apreciación sobria + dividendos), no una promesa. Estimación basada en consenso.</p></div>
+      <div class="pva-scn"><span class="pva-tag r">Escenario bajista</span><b class="dn">${_sgn(bear)}</b><p>En una corrección del mercado de ~20%, tu cartera (beta ${(m.portBeta||1).toFixed(2)}) caería alrededor de esto.</p></div>
+    </div>`);
 
   // KPI bar — sin duplicar Concentración (ya está en el grid superior + Health Score) ni la
   // proyección puntual con veredicto "On Track" (eliminada por riesgo App Store). Estas
@@ -13931,76 +13972,76 @@ function renderDeepPortfolioAnalysis(T) {
   const _vooER   = (ETF_DB.VOO && ETF_DB.VOO.expReturn) || 0.087;
   const _riskAdj = (m.portBeta > 0) ? (expAnnual / m.portBeta) : 0;
   const _beatsVoo = _riskAdj >= _vooER;
-  const _kpiBar = document.getElementById('port-kpi-bar');
-  if (_kpiBar) _kpiBar.innerHTML = `
-    <div class="pa-kpi-bar">
-      <div class="pa-kpi">
-        <div class="pa-kpi-label">Dividend Yield</div>
-        <div class="pa-kpi-val">${(m.expDiv*100).toFixed(1)}%<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> Anual</span></div>
-      </div>
-      <div class="pa-kpi">
-        <div class="pa-kpi-label">Ingreso por Dividendos</div>
-        <div class="pa-kpi-val">~${_pvSym()}${Math.round(_divIncome).toLocaleString('en-US')}<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> / año</span></div>
-      </div>
-      <div class="pa-kpi">
-        <div class="pa-kpi-label">Retorno Anual Esperado</div>
-        <div class="pa-kpi-val">${pr(expAnnual)}<span class="pa-kpi-tag" style="color:var(--text3);font-size:13px;font-weight:500"> estimado</span></div>
-      </div>
-      <div class="pa-kpi">
-        <div class="pa-kpi-label">Retorno / Riesgo <span style="color:var(--text3);font-weight:400">vs VOO</span></div>
-        <div class="pa-kpi-val">${(_riskAdj*100).toFixed(1)}%<span class="pa-kpi-tag ${_beatsVoo?'green':'amber'}"> ${_beatsVoo?'paga el riesgo':'≤ VOO'}</span></div>
-      </div>
+  _set('port-kpi-bar', `
+    <div class="pva-g4">
+      <div class="pva-card pva-dtile"><small>Rendimiento por dividendo</small><b>${(m.expDiv*100).toFixed(1)}%<span>anual</span></b></div>
+      <div class="pva-card pva-dtile"><small>Ingreso por dividendos</small><b>~${_pvSym()}${Math.round(_divIncome).toLocaleString('en-US')}<span>/ año</span></b></div>
+      <div class="pva-card pva-dtile"><small>Retorno anual esperado</small><b class="${expAnnual >= 0 ? 'up' : 'dn'}">${_pvaSgn(expAnnual)}<span>estimado</span></b></div>
+      <div class="pva-card pva-dtile"><small>Retorno / riesgo frente a VOO</small><b>${(_riskAdj*100).toFixed(1)}%${_pvaTag(_beatsVoo ? 'Paga el riesgo' : '≤ VOO', _beatsVoo ? 'g' : 'a')}</b></div>
     </div>
-    <div style="font-size:10px;color:var(--text3);margin-top:10px;line-height:1.55">
-      Estimación basada en consenso de analistas — no es una meta ni una promesa de rendimiento. El retorno esperado es el mismo del panel superior y del desglose por activo. No es asesoría financiera.
-    </div>
-  `;
+    <p class="pva-foot2">Estimación basada en consenso de analistas — no es una meta ni una promesa de rendimiento. El retorno esperado es el mismo del panel superior y del desglose por activo. No es asesoría financiera.</p>
+  `);
 
-  renderAssetDetailTable(T);
+  renderAssetDetailTable(T, m);
   // (La sección "Retornos de precio de la cartera" se retiró: el retorno de precio de las
   //  posiciones con pesos de hoy no es el rendimiento real de la cuenta y confundía.)
 }
 
-// ── Tabla "Detalle de Activos" (mockup Stitch) — usa HOLDINGS reales ──
-function renderAssetDetailTable(T) {
+// ── «Tus posiciones»: «Detalle de Activos» + «Retorno esperado anual por activo» en UNA
+// tabla. Precio y cambio del día salen de HOLDINGS; peso, apreciación, dividendo y retorno
+// anual de _portfolioMetrics (los mismos del análisis individual de cada acción). Orden: el
+// de la tabla de retornos (peso de mayor a menor).
+function renderAssetDetailTable(T, m) {
   const el = document.getElementById('port-asset-detail');
   if (!el) return;
-  if (!HOLDINGS.length) { el.innerHTML = '<div style="padding:26px 16px;text-align:center;font-size:12px;color:var(--text3)">Sin activos en el portafolio.</div>'; return; }
-
-  // (Se eliminó la columna "Tendencia": su sparkline era ruido determinista sin dato real.
-  //  Portiv no muestra gráficos inventados — mejor omitir la tendencia que fabricarla.)
-  const rows = HOLDINGS.map((h, i) => {
-    const color = (typeof CHART_COLORS!=='undefined' && CHART_COLORS[i]) ? CHART_COLORS[i] : '#04162c';
-    let sector = (typeof _canonicalSector === 'function') ? _canonicalSector(h.ticker) : ((typeof TICKER_SECTOR!=='undefined' && TICKER_SECTOR[h.ticker]) ? TICKER_SECTOR[h.ticker] : '');
-    if (sector === 'Sin clasificar') sector = '';   // no ensuciar cada fila con "Sin clasificar"
-    const chg = +h.dayChgPct || 0, up = chg >= 0;
-    const c = (typeof calcH === 'function') ? calcH(h) : { mktVal: h.qty * h.price };
-    // Peso relativo al total del portafolio (misma base que la tabla de posiciones)
-    const allocPct = T.total > 0 ? c.mktVal / T.total * 100 : 0;
+  if (!HOLDINGS.length || !(T && T.mkt > 0)) {
+    el.innerHTML = '<div class="pva-card pva-empty">Sin activos en el portafolio.</div>';
+    _pvaSide('pvaPosSide', '');
+    return;
+  }
+  if (!m) m = _portfolioMetrics(T);
+  const pct = v => (v*100).toFixed(1) + '%';
+  // m.items va en el mismo orden que HOLDINGS (uno por posición): de ahí sale su fila.
+  const hOf = new Map(m.items.map((it, k) => [it, HOLDINGS[k]]));
+  const maxW = Math.max.apply(null, m.sorted.map(i => i.weight).concat([0]));
+  const maxR = Math.max.apply(null, m.sorted.map(i => Math.abs(i.expTotal || 0)).concat([0]));
+  const rows = m.sorted.map(i => {
+    const h = hOf.get(i) || {};
+    const sector = (i.sector && i.sector !== 'Sin clasificar') ? i.sector : '';   // no ensuciar cada fila con "Sin clasificar"
+    const chg = +h.dayChgPct || 0;
+    const cc = chg > 0 ? 'up' : chg < 0 ? 'dn' : 'fl';
+    const arrow = chg < 0 ? _PVA_I.dn() : _PVA_I.up();
+    const px = _pvPx(+(h.price != null ? h.price : i.price));
+    const rc = (i.expTotal || 0) >= 0 ? 'up' : 'dn';
     return `
-      <tr>
-        <td>
-          <div class="pa-acell">
-            <div class="pa-logo" style="background:${color}">${h.ticker}</div>
-            <div>
-              <div class="pa-aname">${pvEsc(h.name)}</div>
-              ${sector?`<div class="pa-asector">${sector}</div>`:''}
-            </div>
-          </div>
-        </td>
-        <td class="r"><span class="pa-aprice">${_pvPx(+h.price)}</span></td>
-        <td class="r"><span class="pa-achg ${up?'pos':'neg'}"><span class="material-symbols-outlined">${up?'arrow_upward':'arrow_downward'}</span>${Math.abs(chg).toFixed(2)}%</span></td>
-        <td class="r" style="font-size:12px;color:var(--text2);font-variant-numeric:tabular-nums">${allocPct.toFixed(2)}%</td>
-      </tr>`;
+      <div class="pva-tr" role="row" title="${pvEsc(i.name || i.ticker)}">
+        <span class="pva-tk" role="rowheader">${_pvaAv(i.ticker)}<span class="pva-tkt"><b>${pvEsc(i.ticker)}</b>${sector ? `<small>${pvEsc(sector)}</small>` : ''}</span></span>
+        <span class="pva-px" role="cell">${px}</span>
+        <span class="pva-chg ${cc}" role="cell">${arrow}${Math.abs(chg).toFixed(2)}%</span>
+        <span class="pva-wt" role="cell"><span class="pva-bar n"><i style="width:${maxW > 0 ? (i.weight/maxW*100).toFixed(0) : 0}%"></i></span><b>${pct(i.weight)}</b></span>
+        <span class="pva-apr ${i.growth >= 0 ? 'up' : 'dn'}" role="cell">${_pvaSgn(i.growth)}</span>
+        <span class="pva-dv" role="cell">${(i.divYield*100).toFixed(2)}%</span>
+        <span class="pva-ra" role="cell"><span class="pva-bar ${rc === 'up' ? 'g' : 'r'}"><i style="width:${maxR > 0 ? (Math.abs(i.expTotal||0)/maxR*100).toFixed(0) : 0}%"></i></span><b class="${rc}">${_pvaSgn(i.expTotal)}</b></span>
+        <span class="pva-meta" aria-hidden="true"><span>${px}</span> · <span class="${cc}">${chg < 0 ? '↓' : '↑'} ${Math.abs(chg).toFixed(2)}%</span> · <span>Aprec. ${_pvaSgn(i.growth)}</span> · <span>Div. ${(i.divYield*100).toFixed(2)}%</span></span>
+      </div>`;
   }).join('');
-
+  const tc = (m.expTotal || 0) >= 0 ? 'up' : 'dn';
   el.innerHTML = `
-    <table class="pa-atable">
-      <thead>
-        <tr><th>Activo</th><th class="r">Precio</th><th class="r">Cambio 24h</th><th class="r">% Cartera</th></tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    <div class="pva-card pva-tbl" role="table" aria-label="Tus posiciones">
+      <div class="pva-tr pva-th" role="row"><span role="columnheader">Activo</span><span role="columnheader">Precio</span><span role="columnheader">Cambio 24 h</span><span role="columnheader">Peso</span><span role="columnheader">Apreciación</span><span role="columnheader">Dividendo</span><span role="columnheader">Retorno anual</span></div>
+      ${rows}
+      <div class="pva-tr pva-tot" role="row">
+        <span class="pva-tk" role="rowheader"><b>Promedio ponderado</b></span><span class="pva-px" role="cell"></span><span class="pva-chg" role="cell"></span>
+        <span class="pva-wt" role="cell"><b>100%</b></span>
+        <span class="pva-apr ${m.expGrowth >= 0 ? 'up' : 'dn'}" role="cell">${_pvaSgn(m.expGrowth)}</span>
+        <span class="pva-dv" role="cell">${(m.expDiv*100).toFixed(2)}%</span>
+        <span class="pva-ra" role="cell"><b class="${tc}">${_pvaSgn(m.expTotal)}</b></span>
+        <span class="pva-meta" aria-hidden="true"><span>Apreciación ${_pvaSgn(m.expGrowth)}</span> · <span>Dividendo ${(m.expDiv*100).toFixed(2)}%</span></span>
+      </div>
+      <p class="pva-tnote">La “Apreciación” de cada activo es una estimación sobria: mezcla su crecimiento esperado con el retorno histórico de largo plazo de su sector, con un tope razonable (hasta ~18%). El “Retorno anual” añade el dividendo y coincide con el análisis individual de esa acción. El promedio ponderado por peso es la tasa anualizada implícita del portafolio (${_pvaSgn(m.expTotal)}). Estimación, no promesa.</p>
+    </div>`;
+  const n = m.items.length;
+  _pvaSide('pvaPosSide', _pvaTag(n + (n === 1 ? ' posición' : ' posiciones')));
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════
@@ -15261,7 +15302,7 @@ function _pvxSuggestHTML(m, T){
   const recs = _pvxSuggestNew(m, T);
   if (!recs.length) return '';
   const prof = (typeof getInvestorProfile === 'function') ? getInvestorProfile() : null;
-  const perf = prof ? prof.label : 'tu perfil';
+  const perf = prof ? String(prof.label || '').toLowerCase() : 'tu perfil';
   const cashPct = (T && T.total > 0) ? ((T.cash||0) + (T.mm||0)) / T.total : 0;
   const fondos = cashPct >= 0.02
     ? `Tienes ${(cashPct*100).toFixed(0)}% en efectivo; el resto sale de los recortes de la tabla de arriba.`
@@ -15279,29 +15320,25 @@ function _pvxSuggestHTML(m, T){
     if (bi && bi.band && bi.after != null && bi.after > bi.band[1] + 0.01)
       calmaTxt = ` Aun después de rebalancear, tu cartera queda en una sensibilidad de ${bi.after.toFixed(2)} frente al ${bi.band[0].toFixed(2)}–${bi.band[1].toFixed(2)} que tolera tu perfil: mover peso entre lo que ya tienes no alcanza porque todo se mueve parecido. Por eso la lista prioriza lo que amortigua.`;
   } catch(e){}
+  // Misma rejilla que las filas del plan: empresa · sector · peso sugerido · por qué.
   const rows = recs.map(r => `
-      <tr>
-        <td>
-          <div class="rbl-tk">${r.ticker}</div>
-          <div class="rbl-tkw">${r.name}</div>
-        </td>
-        <td><span class="rbl-rebal">${r.fam}</span></td>
-        <td><span class="rbl-rebal"><strong>${(r.pct*100).toFixed(1)}%</strong></span></td>
-        <td><div class="rbl-note">${r.why}</div></td>
-      </tr>`).join('');
+      <div class="pva-rr pva-sg">
+        <span class="pva-tk">${_pvaAv(r.ticker)}<span class="pva-tkt"><b>${pvEsc(r.ticker)}</b><small>${pvEsc(r.name)}</small></span></span>
+        <span class="pva-sgf">${pvEsc(r.fam)}</span>
+        <span class="pva-mv"><span class="pva-ft"><b>${(r.pct*100).toFixed(1)}%</b></span><small>peso sugerido</small></span>
+        <p>${r.why}</p>
+      </div>`).join('');
   return `
-    <div class="rbl-sub" style="margin-top:22px">
-      <b style="color:var(--text)">Lo que le falta a tu cartera</b> — no todo se arregla moviendo pesos
-      entre lo que ya tienes. Son empresas y fondos que hoy no tienes y que cubren lo que a tu
-      cartera le queda por debajo de lo que le correspondería a un perfil <b>${perf}</b>. El peso sugerido
-      es el destino de cada una sobre el total de tu cartera, para construirlo por tramos y no
-      de una sola vez; en conjunto suman <b>${(suma*100).toFixed(1)}%</b>. ${fondos}${mixTxt}${calmaTxt}
-    </div>
-    <div class="rbl-card">
-      <table class="rbl-table">
-        <thead><tr><th>Empresa</th><th>Sector</th><th>Peso sugerido</th><th>Por qué</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+    <div class="pva-card pva-reb pva-sug">
+      <div class="pva-sghd">
+        <h3>Lo que le falta a tu cartera</h3>
+        <p>No todo se arregla moviendo pesos entre lo que ya tienes. Son empresas y fondos que hoy no tienes y
+        que cubren lo que a tu cartera le queda por debajo de lo que le correspondería a un perfil <b>${perf}</b>.
+        El peso sugerido es el destino de cada una sobre el total de tu cartera, para construirlo por tramos y no
+        de una sola vez; en conjunto suman <b>${(suma*100).toFixed(1)}%</b>. ${fondos}${mixTxt}${calmaTxt}</p>
+      </div>
+      <div class="pva-rr pva-rh"><span>Empresa</span><span>Sector</span><span>Peso sugerido</span><span>Por qué</span></div>
+      ${rows}
     </div>`;
 }
 
@@ -19548,7 +19585,7 @@ function _pvTabEnter(pg){
   /* Ancla navy de cada pestaña. Watchlist y Ajustes no tienen clase propia
      para su cabecera: se cae al primer bloque que pinte (en Ajustes, dentro de
      .set-wrap, que es un envoltorio y no la cabecera). */
-  var navy = pg.querySelector('.sn-header, .research-search-bar, .ai-chat-header, .stitch-header-left');
+  var navy = pg.querySelector('.pva-hero, .sn-header, .research-search-bar, .ai-chat-header, .stitch-header-left');
   if (!navy) {
     var c0 = pg.firstElementChild;
     while (c0 && !_pvIsPainted(c0)) c0 = c0.nextElementSibling;
@@ -49898,6 +49935,708 @@ html body:not(.dark-theme) #posNewsCard .pnx-items > .sn-card { border: 1px soli
   html body #posNewsCard .pnx-items, html.pv-ipad body #posNewsCard .pnx-items { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 82%; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; padding-bottom: 4px; }
   html body #posNewsCard .pnx-items::-webkit-scrollbar { display: none; }
   html body #posNewsCard .pnx-items > .sn-card { scroll-snap-align: start; }
+}
+</style>
+<style id="pvAnalisisCss">
+/* ═══ ANÁLISIS — rediseño aprobado de la pestaña (analisis.png) ═══════════════════════════
+   Cabecera navy con buscador y los 4 indicadores sobre la curva, y debajo: Retorno esperado ·
+   Tus posiciones · Diagnóstico · Salud y diversificación · Fortalezas y riesgos · Análisis del
+   asesor · Rebalanceo · Dividendos · EPS. Marcado: #pvaHero y #analizar-portfolio-section
+   (renderDeepPortfolioAnalysis, renderAssetDetailTable, _pvAdvisorBlock, PV_AI.render,
+   _pvxSuggestHTML). Todas las clases son nuevas (pva-*).
+   Cada regla cuelga de DOS ids (#tab-analizar + #pvaHero / #analizar-portfolio-section, con
+   el prefijo «html body»): gana por especificidad a las capas anteriores de la pestaña —el
+   bloque pvd/v8 de escritorio, html.pv-ipad, @media ≤700, las tallas de fuente de
+   html:root:not(.pv-ipad) y body.dark-theme— sin tocarlas; donde esas capas usan !important
+   (el buscador) se responde con !important.
+   Sin sombras, sin desenfoques, sin degradados y sin animaciones de entrada: sólo
+   transiciones de hover y de pulsación (.22s). Columnas lado a lado con la misma altura.
+   Orden: tokens → cabecera → secciones (escritorio) → escritorio estrecho → iPad → celular →
+   oscuro → vista de una acción → movimiento reducido. */
+
+/* ── Tokens (claro). --pva-pg-*: texto que va directo sobre el fondo de la página ── */
+html body #tab-analizar {
+  --pva-hero:#0b1c30; --pva-hero-eb:rgba(255,255,255,.55); --pva-hero-sub:rgba(255,255,255,.66);
+  --pva-bg:#eef1f8; --pva-card:#fff; --pva-line:#e2e7f0; --pva-line-hi:#cfd7e3; --pva-wash:#f4f6fa;
+  --pva-ink:#0b1c30; --pva-slate:#33475f; --pva-muted:#7a879b;
+  --pva-pg-ink:#0b1c30; --pva-pg-muted:#7a879b;
+  --pva-green:#0f8a5f; --pva-green-bg:#dcf6e9; --pva-red:#c62828; --pva-red-bg:#ffe3df;
+  --pva-amber:#b45309; --pva-amber-bg:#fdecd8; --pva-amber-ink:#8a4308; --pva-amber-bar:#d68a2e;
+  --pva-strong:#0b1c30; --pva-on-strong:#fff; --pva-via:#8ea2bd; --pva-track:#dfe5ef;
+  --pva-pill:#fff; --pva-pill-ink:#0b1c30; --pva-pill-ph:#7a879b; --pva-pill-line:transparent;
+  --pva-btn:#0b1c30; --pva-btn-ink:#fff; --pva-kpi:#fff; --pva-kpi-line:#e2e7f0;
+  --pva-r:30px; --pva-r-hero:48px; --pva-r-kpi:24px;
+  --pva-lift:78px;            /* cuánto suben los indicadores sobre la curva navy */
+  --pva-ease:cubic-bezier(.22,1,.36,1);
+}
+/* La cabecera navy arranca pegada a la barra superior en todos los equipos (el :not(#…)
+   sube la especificidad a dos ids para ganar a los padding-top !important de otras capas). */
+html body #tab-analizar:not(#pva-x) { padding-top:0 !important; }
+
+/* ═══ CABECERA NAVY ═══════════════════════════════════════════════════════════════════ */
+/* A sangre: de borde a borde de la ventana (el padding de la pestaña cambia por equipo). */
+html body #tab-analizar #pvaHero {
+  display:flex; flex-direction:column; align-items:stretch; gap:22px;
+  box-sizing:border-box; position:relative;   /* sin z-index: el desplegable del buscador pasa por encima de los indicadores */
+  margin:0 calc(50% - 50vw); padding:20px 28px calc(28px + var(--pva-lift));
+  background:var(--pva-hero); color:#fff; border-radius:0 0 var(--pva-r-hero) var(--pva-r-hero);
+  font-family:var(--font); -webkit-font-smoothing:antialiased;
+}
+html body #tab-analizar #pvaHero .pva-htxt { min-width:0; }
+html body #tab-analizar #pvaHero .pva-eyebrow { font-size:14px; font-weight:700; line-height:1.3; color:var(--pva-hero-eb); margin:0 0 6px; }
+html body #tab-analizar #pvaHero .pva-h1 { font-family:inherit; font-size:40px; font-weight:800; letter-spacing:-.035em; line-height:1.05; color:#fff; margin:0 0 10px; }
+html body #tab-analizar #pvaHero .pva-hsub { font-size:16.5px; font-weight:500; line-height:1.55; color:var(--pva-hero-sub); margin:0; max-width:52ch; }
+
+/* Buscador: la pastilla blanca lleva dentro el botón «Analizar». */
+html body #tab-analizar #pvaHero .research-search-bar {
+  display:flex !important; align-items:center !important; flex-wrap:nowrap !important; gap:10px !important;
+  position:relative; box-sizing:border-box !important; width:100% !important; max-width:none !important;
+  height:60px; margin:0 !important; padding:0 7px 0 22px !important; overflow:visible !important;
+  background:var(--pva-pill) !important; border:1px solid var(--pva-pill-line) !important;
+  border-radius:999px !important; box-shadow:none !important;
+}
+html body #tab-analizar #pvaHero .research-search-bar:focus-within { outline:2px solid rgba(255,255,255,.5); outline-offset:3px; }
+/* El campo no es contexto de posición: así el desplegable se mide contra la pastilla entera. */
+html body #tab-analizar #pvaHero .research-search-bar .search-wrap {
+  position:static !important; display:flex !important; align-items:center !important;
+  flex:1 1 auto !important; width:auto !important; min-width:0 !important; max-width:none !important;
+  height:100% !important; margin:0 !important;
+}
+html body #tab-analizar #pvaHero .research-search-bar .research-input-icon { position:absolute; left:22px; top:50%; transform:translateY(-50%); width:20px; height:20px; color:var(--pva-muted); pointer-events:none; }
+html body #tab-analizar #pvaHero .research-search-bar .research-input {
+  width:100% !important; height:100% !important; margin:0 !important; padding:0 0 0 32px !important;
+  background:transparent !important; border:0 !important; border-radius:0 !important; box-shadow:none !important;
+  font-family:var(--font) !important; font-size:15.5px !important; font-weight:600 !important; line-height:1.2 !important;
+  color:var(--pva-pill-ink) !important; outline:none !important; text-overflow:ellipsis;
+}
+html body #tab-analizar #pvaHero .research-search-bar .research-input::placeholder { color:var(--pva-pill-ph) !important; opacity:1; }
+html body #tab-analizar #pvaHero .research-search-bar .research-btn {
+  display:inline-flex !important; align-items:center !important; gap:8px !important; flex:0 0 auto !important;
+  height:46px !important; margin:0 !important; padding:0 22px !important;
+  background:var(--pva-btn) !important; color:var(--pva-btn-ink) !important; border:0 !important; border-radius:999px !important; box-shadow:none !important;
+  font-family:var(--font) !important; font-size:15px !important; font-weight:800 !important; letter-spacing:0 !important; cursor:pointer;
+  transition:transform .22s var(--pva-ease), opacity .22s var(--pva-ease) !important;
+}
+html body #tab-analizar #pvaHero .research-search-bar .research-btn svg { stroke:currentColor !important; width:18px; height:18px; flex:none; }
+html body #tab-analizar #pvaHero .research-search-bar .research-btn:active { transform:scale(.97); }
+html body #tab-analizar #pvaHero .research-search-bar .research-btn:disabled { opacity:.55; }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-analizar #pvaHero .research-search-bar .research-btn:hover { transform:translateY(-1px); }
+}
+/* El desplegable de sugerencias sale bajo la pastilla, con su ancho completo. */
+html body #tab-analizar #pvaHero .research-search-bar .sdrop { left:0 !important; right:0 !important; width:auto !important; top:calc(100% + 10px) !important; border-radius:20px !important; z-index:320; }
+
+/* ═══ SECCIONES — ESCRITORIO (base) ════════════════════════════════════════════════════ */
+html body #tab-analizar #analizar-portfolio-section { font-family:var(--font); color:var(--pva-ink); -webkit-font-smoothing:antialiased; margin:0 !important; }
+html body #tab-analizar #analizar-portfolio-section *:not(.material-symbols-outlined) { font-family:inherit; }
+html body #tab-analizar #analizar-portfolio-section i, html body #tab-analizar #analizar-portfolio-section em { font-style:normal; }
+html body #tab-analizar #analizar-portfolio-section .up { color:var(--pva-green); } html body #tab-analizar #analizar-portfolio-section .dn { color:var(--pva-red); } html body #tab-analizar #analizar-portfolio-section .fl { color:var(--pva-muted); }
+
+/* Los 4 indicadores sobre la curva */
+html body #tab-analizar #analizar-portfolio-section .pva-kpis { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:16px; position:relative; z-index:2; margin:calc(-1 * var(--pva-lift)) 0 0; }
+html body #tab-analizar #analizar-portfolio-section .pva-kpis:empty { display:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-kpi { min-width:0; box-sizing:border-box; background:var(--pva-kpi); border:1px solid var(--pva-kpi-line); border-radius:var(--pva-r-kpi); padding:20px 22px 18px; color:var(--pva-ink); transition:border-color .22s var(--pva-ease); }
+html body #tab-analizar #analizar-portfolio-section .pva-kpi small { display:block; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--pva-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+html body #tab-analizar #analizar-portfolio-section .pva-kpi b { display:block; font-size:34px; font-weight:800; letter-spacing:-.035em; line-height:1; margin:8px 0 10px; color:var(--pva-ink); font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-kpi b.g { color:var(--pva-green); } html body #tab-analizar #analizar-portfolio-section .pva-kpi b.a { color:var(--pva-amber); } html body #tab-analizar #analizar-portfolio-section .pva-kpi b.r { color:var(--pva-red); } html body #tab-analizar #analizar-portfolio-section .pva-kpi b.nd { color:var(--pva-muted); }
+
+/* Cabecera de sección: antetítulo + título; a la derecha, etiqueta o pastillas. */
+html body #tab-analizar #analizar-portfolio-section .pva-sec { margin-top:68px; }
+html body #tab-analizar #analizar-portfolio-section .pva-kpis + .pva-sec { margin-top:46px; }
+html body #tab-analizar #analizar-portfolio-section .pva-kpis:empty + .pva-sec { margin-top:40px; }
+html body #tab-analizar #analizar-portfolio-section .pva-sh { display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px 20px; margin:0 0 20px; }
+html body #tab-analizar #analizar-portfolio-section .pva-sht { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-eyebrow { font-size:14px; font-weight:700; line-height:1.3; color:var(--pva-pg-muted); margin:0 0 6px; }
+html body #tab-analizar #analizar-portfolio-section .pva-eyebrow:empty { display:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-h2 { font-size:30px; font-weight:800; letter-spacing:-.03em; line-height:1.1; color:var(--pva-pg-ink); margin:0; text-transform:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-side { flex-shrink:0; display:flex; align-items:center; }
+html body #tab-analizar #analizar-portfolio-section .pva-side:empty { display:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-side .pva-pills { margin:0; justify-content:flex-end; }
+
+/* Piezas comunes */
+html body #tab-analizar #pvaHero .pva-tag, html body #tab-analizar #analizar-portfolio-section .pva-tag { display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:800; line-height:1.2; padding:5px 11px; border-radius:999px; white-space:nowrap; letter-spacing:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-tag.g { color:var(--pva-green); background:var(--pva-green-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-tag.a { color:var(--pva-amber); background:var(--pva-amber-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-tag.r { color:var(--pva-red); background:var(--pva-red-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-tag.n { color:var(--pva-slate); background:var(--pva-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-pills { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 18px; }
+html body #tab-analizar #analizar-portfolio-section .pva-card { box-sizing:border-box; min-width:0; background:var(--pva-card); border:1px solid var(--pva-line); border-radius:var(--pva-r); padding:30px 32px; color:var(--pva-ink); box-shadow:none; transition:border-color .22s var(--pva-ease); }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-analizar #analizar-portfolio-section .pva-card:hover, html body #tab-analizar #analizar-portfolio-section .pva-kpi:hover { border-color:var(--pva-line-hi); }
+}
+html body #tab-analizar #analizar-portfolio-section .pva-card h3 { font-size:18px; font-weight:800; letter-spacing:-.02em; line-height:1.3; color:var(--pva-ink); margin:0 0 6px; }
+html body #tab-analizar #analizar-portfolio-section .pva-cap { font-size:14px; font-weight:600; line-height:1.55; color:var(--pva-muted); margin:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-lbl { font-size:13.5px; font-weight:700; line-height:1.3; color:var(--pva-muted); margin:0 0 14px; }
+html body #tab-analizar #analizar-portfolio-section .pva-av { flex-shrink:0; display:grid; place-items:center; width:38px; height:38px; border-radius:12px; background:var(--pva-bg); color:var(--pva-ink); font-size:15px; font-weight:800; line-height:1; }
+html body #tab-analizar #analizar-portfolio-section .pva-bar { display:block; height:8px; border-radius:99px; background:var(--pva-bg); overflow:hidden; }
+html body #tab-analizar #analizar-portfolio-section .pva-bar i { display:block; height:100%; border-radius:99px; }
+html body #tab-analizar #analizar-portfolio-section .pva-bar.n i { background:var(--pva-strong); } html body #tab-analizar #analizar-portfolio-section .pva-bar.g i { background:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section .pva-bar.a i { background:var(--pva-amber-bar); } html body #tab-analizar #analizar-portfolio-section .pva-bar.r i { background:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-g2 { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; align-items:stretch; }
+html body #tab-analizar #analizar-portfolio-section .pva-g2.pva-g1 { grid-template-columns:minmax(0,1fr); }
+html body #tab-analizar #analizar-portfolio-section .pva-empty { padding:26px 32px; text-align:center; font-size:14.5px; font-weight:600; line-height:1.6; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-empty b { color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-btn {
+  -webkit-appearance:none; appearance:none; display:inline-flex; align-items:center; justify-content:center; gap:8px; flex:0 0 auto;
+  height:46px; margin:0; padding:0 22px; border:0; border-radius:999px; background:var(--pva-btn); color:var(--pva-btn-ink);
+  font-size:14.5px; font-weight:800; line-height:1; white-space:nowrap; cursor:pointer; box-shadow:none;
+  transition:transform .22s var(--pva-ease), opacity .22s var(--pva-ease);
+}
+html body #tab-analizar #analizar-portfolio-section .pva-btn:active { transform:scale(.97); }
+html body #tab-analizar #analizar-portfolio-section .pva-btn:disabled { opacity:.5; cursor:not-allowed; }
+@media (hover: hover) and (pointer: fine) { html body #tab-analizar #analizar-portfolio-section .pva-btn:hover { transform:translateY(-1px); } }
+/* Maquetas grises (plan gratuito) dentro de las tarjetas nuevas */
+html body #tab-analizar #analizar-portfolio-section .pv-sk-p { margin-top:10px; }
+html body #tab-analizar #analizar-portfolio-section .pv-sk-bar { background:var(--pva-bg); }
+
+/* ── Retorno esperado: rango del año | escenario base | escenario bajista ── */
+html body #tab-analizar #analizar-portfolio-section .pva-rcard { display:grid; grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr); padding:0; overflow:hidden; }
+html body #tab-analizar #analizar-portfolio-section .pva-rcard > div { min-width:0; padding:28px 32px; }
+html body #tab-analizar #analizar-portfolio-section .pva-rcard > div + div { border-left:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-scale { position:relative; height:118px; margin:4px 6px 8px; }
+html body #tab-analizar #analizar-portfolio-section .pva-axis { position:absolute; left:0; right:0; top:62px; height:8px; border-radius:99px; background:var(--pva-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-zero { position:absolute; top:50px; width:2px; height:32px; margin-left:-1px; background:var(--pva-line-hi); }
+html body #tab-analizar #analizar-portfolio-section .pva-zero span { position:absolute; top:36px; left:50%; transform:translateX(-50%); font-size:12px; font-weight:700; color:var(--pva-muted); white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-zero span.off { visibility:hidden; }
+html body #tab-analizar #analizar-portfolio-section .pva-band { position:absolute; top:58px; height:16px; border-radius:99px; background:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section .pva-band.dn { background:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-dot { position:absolute; top:57px; width:18px; height:18px; margin-left:-9px; box-sizing:border-box; border-radius:50%; background:var(--pva-red); border:4px solid var(--pva-card); }
+html body #tab-analizar #analizar-portfolio-section .pva-flag { position:absolute; top:8px; transform:translateX(-50%); font-size:14px; font-weight:800; line-height:1.3; white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-flag.l { transform:translateX(-9px); } html body #tab-analizar #analizar-portfolio-section .pva-flag.r { transform:translateX(calc(-100% + 9px)); }
+html body #tab-analizar #analizar-portfolio-section .pva-flag.low { top:32px; }
+html body #tab-analizar #analizar-portfolio-section .pva-avg { position:absolute; top:52px; width:3px; height:28px; margin-left:-1.5px; border-radius:2px; background:var(--pva-strong); }
+html body #tab-analizar #analizar-portfolio-section .pva-avg span { position:absolute; top:34px; left:50%; transform:translateX(-50%); font-size:12px; font-weight:800; color:var(--pva-ink); white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-avg span.l { left:-6px; transform:none; } html body #tab-analizar #analizar-portfolio-section .pva-avg span.r { left:auto; right:-6px; transform:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-scn b { display:block; font-size:32px; font-weight:800; letter-spacing:-.03em; line-height:1.1; margin:14px 0 10px; font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-scn b.nd { color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-scn p { font-size:15px; font-weight:500; line-height:1.62; color:var(--pva-slate); margin:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-rcard-empty .pva-scn-note { display:flex; align-items:center; }
+html body #tab-analizar #analizar-portfolio-section .pva-rcard-empty .pva-scn-note p { font-size:14px; color:var(--pva-muted); }
+
+/* ── Tus posiciones: una tabla (detalle + retorno por activo) ── */
+html body #tab-analizar #analizar-portfolio-section .pva-tbl { padding:26px 10px 10px; }
+html body #tab-analizar #analizar-portfolio-section .pva-tr {
+  display:grid; grid-template-columns:minmax(0,1.6fr) 110px 110px minmax(0,1.2fr) 100px 90px minmax(0,1.3fr);
+  align-items:center; gap:12px; padding:10px 22px; border-top:1px solid var(--pva-line);
+  font-size:15px; font-weight:600; color:var(--pva-slate); font-variant-numeric:tabular-nums;
+}
+html body #tab-analizar #analizar-portfolio-section .pva-tr > span:not(.pva-tk) { text-align:right; min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-th { border-top:0; padding-top:12px; padding-bottom:12px; font-size:13px; font-weight:700; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-th > span:first-child { text-align:left; }
+html body #tab-analizar #analizar-portfolio-section .pva-tk { display:flex; align-items:center; gap:12px; min-width:0; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-tkt { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-tkt b { display:block; font-size:15.5px; font-weight:800; line-height:1.3; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-tkt small { display:block; font-size:13px; font-weight:600; line-height:1.35; color:var(--pva-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+html body #tab-analizar #analizar-portfolio-section .pva-px { font-weight:800; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-chg { display:flex; align-items:center; justify-content:flex-end; gap:4px; font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-chg svg { flex:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-wt, html body #tab-analizar #analizar-portfolio-section .pva-ra { display:flex; align-items:center; justify-content:flex-end; gap:12px; }
+html body #tab-analizar #analizar-portfolio-section .pva-wt .pva-bar, html body #tab-analizar #analizar-portfolio-section .pva-ra .pva-bar { flex:1 1 auto; min-width:24px; height:7px; }
+html body #tab-analizar #analizar-portfolio-section .pva-wt .pva-bar { max-width:90px; } html body #tab-analizar #analizar-portfolio-section .pva-ra .pva-bar { max-width:110px; }
+html body #tab-analizar #analizar-portfolio-section .pva-wt b { flex:0 0 58px; font-weight:800; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-ra b { flex:0 0 58px; font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-meta { display:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-tot { border-top:2px solid var(--pva-strong); background:var(--pva-wash); padding-top:14px; padding-bottom:14px; font-weight:800; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-tot .pva-tk b { font-size:15.5px; font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-tot .pva-dv { color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-tnote { margin:0; padding:14px 22px 12px; font-size:13px; font-weight:600; line-height:1.6; color:var(--pva-muted); }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-analizar #analizar-portfolio-section .pva-tbl .pva-tr:not(.pva-th):not(.pva-tot) { transition:background-color .22s var(--pva-ease); }
+  html body #tab-analizar #analizar-portfolio-section .pva-tbl .pva-tr:not(.pva-th):not(.pva-tot):hover { background:var(--pva-wash); }
+}
+
+/* ── Diagnóstico: lectura + recomendaciones con el veredicto abajo ── */
+html body #tab-analizar #analizar-portfolio-section .pva-diag { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:40px; }
+html body #tab-analizar #analizar-portfolio-section .pva-dl { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-big { font-size:18px; font-weight:500; line-height:1.7; color:var(--pva-slate); margin:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-big strong, html body #tab-analizar #analizar-portfolio-section .pva-big b { color:var(--pva-ink); font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-mkt { margin-top:22px; background:var(--pva-wash); border-radius:20px; padding:16px 20px; font-size:14.5px; line-height:1.65; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-mkt b { display:block; margin-bottom:3px; color:var(--pva-ink); font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-note { margin:16px 0 0; font-size:13px; font-weight:600; line-height:1.5; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-recs { min-width:0; display:flex; flex-direction:column; border-left:1px solid var(--pva-line); padding-left:40px; }
+html body #tab-analizar #analizar-portfolio-section .pva-recs > .pva-lbl { margin-bottom:6px; }
+html body #tab-analizar #analizar-portfolio-section .pva-rec { display:flex; gap:14px; padding:16px 0; }
+html body #tab-analizar #analizar-portfolio-section .pva-rec + .pva-rec { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-ri { flex-shrink:0; display:grid; place-items:center; width:42px; height:42px; border-radius:14px; background:var(--pva-bg); color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-ri .material-symbols-outlined { font-family:'Material Symbols Outlined'; font-size:21px; line-height:1; color:inherit; }
+html body #tab-analizar #analizar-portfolio-section .pva-rec p { margin:0; font-size:15.5px; line-height:1.65; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-rec p b { color:var(--pva-ink); font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-status { display:flex; align-items:flex-start; gap:12px; margin-top:auto; border-radius:18px; padding:14px 16px; }
+html body #tab-analizar #analizar-portfolio-section .pva-status svg { flex-shrink:0; margin-top:2px; }
+html body #tab-analizar #analizar-portfolio-section .pva-status b { display:block; font-size:14.5px; font-weight:800; line-height:1.4; }
+html body #tab-analizar #analizar-portfolio-section .pva-status span { display:block; font-size:13.5px; font-weight:600; line-height:1.5; }
+html body #tab-analizar #analizar-portfolio-section .pva-status.a { background:var(--pva-amber-bg); color:var(--pva-amber-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-status.g { background:var(--pva-green-bg); color:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section .pva-status.r { background:var(--pva-red-bg); color:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-diag-empty { display:block; }
+/* Sin perfil: invitación al cuestionario */
+html body #tab-analizar #analizar-portfolio-section .pva-cta { display:flex; align-items:center; justify-content:space-between; gap:24px; }
+html body #tab-analizar #analizar-portfolio-section .pva-cta-t { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-cta-t b { display:block; font-size:18px; font-weight:800; letter-spacing:-.01em; line-height:1.35; color:var(--pva-ink); margin:0 0 4px; }
+html body #tab-analizar #analizar-portfolio-section .pva-cta-t span { display:block; font-size:15px; font-weight:500; line-height:1.55; color:var(--pva-slate); }
+
+/* ── Salud y diversificación ── */
+html body #tab-analizar #analizar-portfolio-section .pva-hcard { display:grid; grid-template-columns:minmax(0,1fr); gap:22px; }
+html body #tab-analizar #analizar-portfolio-section .pva-hh { display:flex; align-items:center; gap:24px; padding-bottom:22px; border-bottom:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-ring { position:relative; flex-shrink:0; width:150px; height:150px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ring svg { display:block; width:150px; height:150px; }
+html body #tab-analizar #analizar-portfolio-section .pva-rtrack { fill:none; stroke:var(--pva-bg); stroke-width:13; }
+html body #tab-analizar #analizar-portfolio-section .pva-rprog { fill:none; stroke-width:13; stroke-linecap:round; stroke:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section .pva-rprog.a { stroke:var(--pva-amber-bar); } html body #tab-analizar #analizar-portfolio-section .pva-rprog.r { stroke:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-ring > div { position:absolute; inset:0; display:grid; place-content:center; text-align:center; }
+html body #tab-analizar #analizar-portfolio-section .pva-ring b { display:block; font-size:44px; font-weight:800; letter-spacing:-.04em; line-height:1; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-ring small { display:block; margin-top:4px; font-size:13px; font-weight:700; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-hht { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-hht strong { display:block; font-size:24px; font-weight:800; letter-spacing:-.02em; line-height:1.2; margin:0 0 6px; }
+html body #tab-analizar #analizar-portfolio-section .pva-hht strong.g { color:var(--pva-green); } html body #tab-analizar #analizar-portfolio-section .pva-hht strong.a { color:var(--pva-amber); } html body #tab-analizar #analizar-portfolio-section .pva-hht strong.r { color:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-hht p { margin:0; font-size:15.5px; font-weight:500; line-height:1.6; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-subs { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); column-gap:40px; min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-sub { display:grid; grid-template-columns:minmax(0,1fr) minmax(60px,150px) 38px; align-items:center; gap:16px; padding:14px 0; border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-subs > .pva-sub:nth-child(-n+2) { border-top:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-sub > div { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-sub b { display:block; font-size:15px; font-weight:800; line-height:1.35; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-sub small { display:block; font-size:13px; font-weight:600; line-height:1.4; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-sub em { text-align:right; font-size:15px; font-weight:800; font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-sub em.g { color:var(--pva-green); } html body #tab-analizar #analizar-portfolio-section .pva-sub em.a { color:var(--pva-amber); } html body #tab-analizar #analizar-portfolio-section .pva-sub em.r { color:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-subnote { display:flex; align-items:center; }
+html body #tab-analizar #analizar-portfolio-section .pva-subnote small { font-size:13px; line-height:1.5; }
+html body #tab-analizar #analizar-portfolio-section .pva-hcard + .pva-g2 { margin-top:24px; }
+/* Sectores: las filas se reparten el alto de la tarjeta (hasta 60px cada una) para que
+   termine a la par de «Exposición real» sin un hueco abajo. */
+html body #tab-analizar #analizar-portfolio-section .pva-sect, html body #tab-analizar #analizar-portfolio-section .pva-lt { display:flex; flex-direction:column; }
+html body #tab-analizar #analizar-portfolio-section .pva-srows { flex:1 1 auto; display:flex; flex-direction:column; margin-top:12px; }
+html body #tab-analizar #analizar-portfolio-section .pva-srow { flex:1 1 auto; max-height:60px; display:grid; grid-template-columns:190px minmax(0,1fr) 56px; align-items:center; gap:16px; padding:9px 0; font-size:15px; font-weight:600; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-srow > span:first-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+html body #tab-analizar #analizar-portfolio-section .pva-srow b { text-align:right; font-weight:800; color:var(--pva-ink); font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-srow .pva-bar { height:10px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ltbox { margin-top:18px; background:var(--pva-wash); border-radius:20px; padding:4px 18px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr { display:grid; grid-template-columns:auto minmax(0,1fr); column-gap:14px; row-gap:6px; align-items:center; padding:13px 0; }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr + .pva-ltr { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr > b { min-width:48px; font-size:17px; font-weight:800; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-sbar { display:flex; height:12px; border-radius:99px; background:var(--pva-track); overflow:hidden; }
+html body #tab-analizar #analizar-portfolio-section .pva-sbar i { display:block; height:100%; }
+html body #tab-analizar #analizar-portfolio-section .pva-sbar i:first-child { background:var(--pva-strong); }
+html body #tab-analizar #analizar-portfolio-section .pva-sbar i:last-child { background:var(--pva-via); }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr small { grid-column:2; display:flex; flex-wrap:wrap; align-items:center; gap:2px 14px; font-size:13px; font-weight:600; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr small b { font-size:13px; font-weight:800; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr small i { display:inline-block; width:9px; height:9px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ltr small i.k1 { background:var(--pva-strong); } html body #tab-analizar #analizar-portfolio-section .pva-ltr small i.k2 { background:var(--pva-via); }
+html body #tab-analizar #analizar-portfolio-section .pva-lbl-via { margin:20px 0 2px; }
+html body #tab-analizar #analizar-portfolio-section .pva-via { display:grid; grid-template-columns:auto minmax(0,1fr) minmax(60px,120px); gap:12px; align-items:center; padding:10px 0; }
+html body #tab-analizar #analizar-portfolio-section .pva-via + .pva-via { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-via > div { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-via b { display:block; font-size:15px; font-weight:800; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-via small { display:block; font-size:13px; font-weight:600; line-height:1.4; color:var(--pva-muted); }
+
+/* ── Fortalezas y riesgos ── */
+html body #tab-analizar #analizar-portfolio-section .pva-pc h3 { display:flex; align-items:center; gap:10px; margin:0 0 10px; }
+html body #tab-analizar #analizar-portfolio-section .pva-pc h3 span { flex-shrink:0; display:grid; place-items:center; width:34px; height:34px; border-radius:11px; }
+html body #tab-analizar #analizar-portfolio-section .pva-pc.pro h3 span { background:var(--pva-green-bg); color:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section .pva-pc.con h3 span { background:var(--pva-red-bg); color:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-pc ul { list-style:none; margin:0; padding:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-pc li { display:flex; gap:12px; margin:0; padding:12px 0; font-size:15px; font-weight:500; line-height:1.62; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-pc li + li { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-pc li::before { content:""; flex-shrink:0; width:8px; height:8px; border-radius:50%; margin-top:9px; background:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section .pva-pc.con li::before { background:var(--pva-red); }
+
+/* ── Análisis del asesor: entrada + un apartado por título ── */
+html body #tab-analizar #analizar-portfolio-section .pva-intro { padding:28px 32px; }
+html body #tab-analizar #analizar-portfolio-section .pva-intro .pva-prose p { font-size:18px; font-weight:600; line-height:1.7; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-parts { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:24px; align-items:stretch; margin-top:24px; }
+html body #tab-analizar #analizar-portfolio-section .pva-parts:first-child { margin-top:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-parts.n2, html body #tab-analizar #analizar-portfolio-section .pva-parts.n4 { grid-template-columns:repeat(2, minmax(0,1fr)); }
+html body #tab-analizar #analizar-portfolio-section .pva-pn { display:grid; place-items:center; width:34px; height:34px; border-radius:50%; margin:0 0 14px; background:var(--pva-strong); color:var(--pva-on-strong); font-size:14px; font-weight:800; line-height:1; }
+html body #tab-analizar #analizar-portfolio-section .pva-part h3 { font-size:19px; margin:0 0 10px; }
+html body #tab-analizar #analizar-portfolio-section .pva-prose { font-size:15.5px; line-height:1.75; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-prose p { margin:0; font-size:15.5px; font-weight:500; line-height:1.75; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-prose p + p, html body #tab-analizar #analizar-portfolio-section .pva-prose ul + p, html body #tab-analizar #analizar-portfolio-section .pva-prose p + ul { margin-top:12px; }
+html body #tab-analizar #analizar-portfolio-section .pva-prose strong, html body #tab-analizar #analizar-portfolio-section .pva-prose b { color:var(--pva-ink); font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-prose ul { margin:0; padding-left:20px; }
+html body #tab-analizar #analizar-portfolio-section .pva-prose li { font-size:15.5px; line-height:1.7; color:var(--pva-slate); margin:4px 0 0; }
+html body #tab-analizar #analizar-portfolio-section .pva-prose .wo-nar-h { font-size:17px; font-weight:800; letter-spacing:-.01em; color:var(--pva-ink); margin:22px 0 8px; }
+html body #tab-analizar #analizar-portfolio-section .pva-prose > .wo-nar-h:first-child { margin-top:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-read { padding:36px 44px 34px; }
+/* Carta sin apartados: en pantalla ancha se lee en dos columnas equilibradas (sin un
+   hueco a la derecha de la tarjeta). */
+html body #tab-analizar #analizar-portfolio-section .pva-read .pva-prose { columns:2 340px; column-gap:56px; }
+html body #tab-analizar #analizar-portfolio-section .pva-read .pva-prose > * { break-inside:avoid-column; }
+html body #tab-analizar #analizar-portfolio-section .pva-read .pva-prose .wo-nar-h { break-after:avoid-column; }
+html body #tab-analizar #analizar-portfolio-section .pva-foot { display:flex; align-items:center; gap:8px; margin:18px 0 0; font-size:13px; font-weight:600; line-height:1.5; color:var(--pva-pg-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-foot svg { flex-shrink:0; }
+/* Estados del asesor: generando, error, sin perfil */
+html body #tab-analizar #analizar-portfolio-section #port-ai-analysis > .pv-ai-loading { display:flex; align-items:center; gap:12px; box-sizing:border-box; margin:0; padding:26px 32px; background:var(--pva-card); border:1px solid var(--pva-line); border-radius:var(--pva-r); font-size:15px; font-weight:600; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-aistate .pv-ai-error { margin:0 0 12px; padding:14px 16px; border:0; border-radius:16px; background:var(--pva-red-bg); color:var(--pva-red); font-size:14.5px; font-weight:700; line-height:1.5; }
+html body #tab-analizar #analizar-portfolio-section .pva-aistate .pva-cap { margin:0 0 16px; }
+
+/* ── Recomendaciones de rebalanceo ── */
+html body #tab-analizar #analizar-portfolio-section .pva-how p { margin:8px 0 0; font-size:15.5px; font-weight:500; line-height:1.75; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-how p b { color:var(--pva-ink); font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-how p.pva-howmkt { margin-top:12px; font-size:14.5px; line-height:1.65; }
+html body #tab-analizar #analizar-portfolio-section .pva-facts { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:12px; align-items:stretch; margin-top:22px; }
+html body #tab-analizar #analizar-portfolio-section .pva-fact { min-width:0; box-sizing:border-box; background:var(--pva-wash); border-radius:18px; padding:14px 18px; }
+html body #tab-analizar #analizar-portfolio-section .pva-fact small { display:block; margin:0 0 4px; font-size:12.5px; font-weight:700; line-height:1.4; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-fact b { display:block; font-size:15px; font-weight:800; line-height:1.45; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-fact b i { color:var(--pva-muted); margin:0 2px; }
+html body #tab-analizar #analizar-portfolio-section .pva-fact b .pva-tag { margin:2px 0 0 6px; vertical-align:1px; }
+html body #tab-analizar #analizar-portfolio-section .pva-fnote { display:block; margin-top:6px; font-size:12.5px; font-weight:600; line-height:1.45; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-fact.pva-tax { display:flex; align-items:flex-start; gap:10px; background:var(--pva-amber-bg); color:var(--pva-amber-ink); font-size:14px; font-weight:700; line-height:1.5; }
+html body #tab-analizar #analizar-portfolio-section .pva-fact.pva-tax svg { flex-shrink:0; margin-top:2px; }
+html body #tab-analizar #analizar-portfolio-section .pva-reb { margin-top:24px; padding:10px; }
+html body #tab-analizar #analizar-portfolio-section .pva-rr { display:grid; grid-template-columns:190px 150px 200px minmax(0,1fr); gap:20px; align-items:start; padding:22px; }
+html body #tab-analizar #analizar-portfolio-section .pva-rr + .pva-rr { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-rh { padding:12px 22px; font-size:13px; font-weight:700; line-height:1.3; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-rr .pva-tk { align-items:center; }
+html body #tab-analizar #analizar-portfolio-section .pva-actc { display:block; }
+html body #tab-analizar #analizar-portfolio-section .pva-act { display:inline-flex; align-items:center; gap:6px; margin-top:6px; padding:6px 12px; border-radius:999px; font-size:13px; font-weight:800; line-height:1.2; white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-act.up { color:var(--pva-green); background:var(--pva-green-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-act.dn { color:var(--pva-red); background:var(--pva-red-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-act.fl { color:var(--pva-slate); background:var(--pva-bg); }
+html body #tab-analizar #analizar-portfolio-section .pva-mv { display:block; padding-top:6px; min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-ft { display:block; font-size:17px; font-weight:700; line-height:1.3; color:var(--pva-slate); font-variant-numeric:tabular-nums; white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-ft i { color:var(--pva-muted); margin:0 4px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ft b { font-weight:800; } html body #tab-analizar #analizar-portfolio-section .pva-ft b.fl { color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-mv small { display:block; margin-top:4px; font-size:13px; font-weight:600; color:var(--pva-muted); font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-rr > p { margin:0; padding-top:4px; font-size:15px; font-weight:500; line-height:1.65; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-rr-sk > * { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-rr-sk .pv-sk-p:first-child { margin-top:4px; }
+html body #tab-analizar #analizar-portfolio-section .pva-sug { margin-top:24px; }
+html body #tab-analizar #analizar-portfolio-section .pva-sghd { padding:20px 22px 10px; }
+html body #tab-analizar #analizar-portfolio-section .pva-sghd p { margin:6px 0 0; font-size:15px; font-weight:500; line-height:1.7; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-sghd p b { color:var(--pva-ink); font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section .pva-sghd + .pva-rh { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-sgf { display:block; padding-top:10px; font-size:14.5px; font-weight:700; line-height:1.45; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-sg .pva-mv small { display:none; }
+html body #tab-analizar #analizar-portfolio-section .pva-rebfoot { display:flex; align-items:center; justify-content:space-between; gap:24px; margin-top:18px; }
+html body #tab-analizar #analizar-portfolio-section .pva-disc { margin:0; max-width:92ch; font-size:13px; font-weight:600; line-height:1.55; color:var(--pva-pg-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-rebfoot .rbl-export { height:44px; padding:0 20px; font-size:14px; }
+html body #tab-analizar #analizar-portfolio-section .pva-rebfoot .rbl-export svg { flex:none; }
+
+/* ── Dividendos y retorno por riesgo ── */
+html body #tab-analizar #analizar-portfolio-section .pva-g4 { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:16px; align-items:stretch; }
+html body #tab-analizar #analizar-portfolio-section .pva-dtile { padding:20px 22px; }
+html body #tab-analizar #analizar-portfolio-section .pva-dtile small { display:block; font-size:13.5px; font-weight:700; line-height:1.35; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-dtile b { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; margin-top:10px; font-size:28px; font-weight:800; letter-spacing:-.03em; line-height:1.1; color:var(--pva-ink); font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-dtile b.up { color:var(--pva-green); } html body #tab-analizar #analizar-portfolio-section .pva-dtile b.dn { color:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section .pva-dtile b > span:not(.pva-tag) { font-size:13.5px; font-weight:700; letter-spacing:0; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-dtile b .pva-tag { align-self:center; font-size:12px; }
+html body #tab-analizar #analizar-portfolio-section .pva-foot2 { margin:14px 0 0; font-size:13px; font-weight:600; line-height:1.55; color:var(--pva-pg-muted); }
+html body #tab-analizar #analizar-portfolio-section #pvaSecDiv:not(:has(.pva-dtile)) { display:none; }
+/* La tarjeta del candado (plan gratuito) sigue la piel de la pestaña: filo y sin sombra. */
+html body #tab-analizar #analizar-portfolio-section .pv-lock-card { box-shadow:none; border:1px solid var(--pva-line); border-radius:24px; }
+
+/* ── EPS: las tarjetas de siempre con la piel nueva (sólo en esta pestaña) ── */
+html body #tab-analizar #analizar-portfolio-section #pvaSecEps:not(:has(.eps-card)) { display:none; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-sec-head { display:flex; justify-content:flex-end; margin:0 0 16px; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-toggle { display:inline-flex; padding:4px; background:var(--pva-card); border:1px solid var(--pva-line); border-radius:999px; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-tg { padding:7px 14px !important; border:0; border-radius:999px; background:none; color:var(--pva-muted); font-size:13px !important; font-weight:700; cursor:pointer; transition:background-color .22s var(--pva-ease), color .22s var(--pva-ease); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-tg.on { background:var(--pva-strong); color:var(--pva-on-strong); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-grid { display:flex !important; flex-wrap:wrap; gap:16px !important; align-items:stretch; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-slot { flex:1 1 280px; min-width:0; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-slot:empty { display:none; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card { height:100%; box-sizing:border-box; background:var(--pva-card) !important; border:1px solid var(--pva-line) !important; border-radius:24px !important; padding:20px 20px 14px !important; box-shadow:none !important; color:var(--pva-ink) !important; overflow:visible !important; transform:none !important; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card-head { margin:0 0 6px; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card-tk { font-size:15.5px !important; font-weight:800; letter-spacing:0; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-xrow { gap:4px !important; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-xcol { padding:6px 2px !important; border-radius:10px; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-xcol.sel { background:var(--pva-bg); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-q { font-size:11.5px !important; font-weight:800; color:var(--pva-ink); line-height:1.3 !important; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-bm { display:block !important; font-size:11.5px; font-weight:800; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-diff { font-size:11.5px !important; font-weight:700; letter-spacing:0 !important; }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-bm.beat, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-diff.beat { color:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-bm.miss, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-diff.miss { color:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-fut, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-date { font-size:11.5px !important; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section #port-eps .eps-loading, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-empty { font-size:14px; font-weight:600; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#22c55e"] { fill:var(--pva-green); }
+html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#ef4444"] { fill:var(--pva-red); }
+html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#ffffff"] { fill:var(--pva-card); stroke:var(--pva-muted); }
+
+/* ═══ ESCRITORIO — cabecera en fila, medidas del diseño ═════════════════════════════════ */
+@media (min-width: 900px) {
+  /* Web y app de Mac: la cabecera se alinea con la columna de 1320px del bloque v8. */
+  html:not(.pv-ipad) body #tab-analizar #pvaHero { margin:0 calc(-1 * var(--pvd-pad, 32px)); padding:36px var(--pvd-pad, 32px) calc(40px + var(--pva-lift)); }
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .pva-h1 { font-size:44px; margin-bottom:12px; }
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .pva-hsub { font-size:17px; }
+}
+@media (min-width: 1024px) {
+  html:not(.pv-ipad) body #tab-analizar #pvaHero { flex-direction:row; align-items:flex-end; justify-content:space-between; gap:48px; }
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .pva-htxt { flex:0 0 auto; }
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .pva-hsub { max-width:420px; padding:12px 0; }   /* el aire del diseño aprobado: la pastilla se alinea con el pie del texto */
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .research-search-bar { flex:0 1 600px; width:auto !important; min-width:0; }
+}
+@media (min-width: 1100px) {
+  /* iPad apaisado: el mismo layout de escritorio, con las medidas de tablet. */
+  html.pv-ipad body #tab-analizar #pvaHero { margin:0 calc(-1 * var(--pvd-pad, 32px)); padding:var(--pvd-hero-top, 22px) var(--pvd-pad, 32px) calc(34px + var(--pva-lift)); flex-direction:row; align-items:flex-end; justify-content:space-between; gap:40px; }
+  html.pv-ipad body #tab-analizar #pvaHero .pva-htxt { flex:0 0 auto; }
+  html.pv-ipad body #tab-analizar #pvaHero .pva-hsub { max-width:420px; padding:10px 0; }
+  html.pv-ipad body #tab-analizar #pvaHero .research-search-bar { flex:0 1 560px; width:auto !important; min-width:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-diag { grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); }
+}
+@media (min-width: 1280px) {
+  /* Salud: el anillo a la izquierda y las sub-puntuaciones a la derecha. */
+  html body #tab-analizar #analizar-portfolio-section .pva-hcard { grid-template-columns:360px minmax(0,1fr); gap:44px; align-items:center; }
+  html body #tab-analizar #analizar-portfolio-section .pva-hh { padding-bottom:0; border-bottom:0; }
+}
+
+/* ═══ ESCRITORIO ESTRECHO Y TABLET (≤1279) ══════════════════════════════════════════════ */
+@media (max-width: 1279px) {
+  /* Retorno esperado: la escala a lo ancho y los dos escenarios lado a lado. */
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard > .pva-rng { grid-column:1 / -1; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard > div + div { border-left:0; border-top:1px solid var(--pva-line); }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard > .pva-scn + .pva-scn { border-left:1px solid var(--pva-line); }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard-empty { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard-empty > .pva-scn:first-child { border-top:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard-empty > .pva-scn-note { grid-column:1 / -1; border-left:0 !important; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr { grid-template-columns:160px 130px minmax(0,1fr); }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr > p, html body #tab-analizar #analizar-portfolio-section .pva-rr-sk > div { grid-column:1 / -1; padding-top:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rh > span:last-child { display:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-facts { grid-template-columns:repeat(2, minmax(0,1fr)); }
+}
+@media (max-width: 1099px) {
+  html body #tab-analizar #analizar-portfolio-section .pva-diag { grid-template-columns:minmax(0,1fr); gap:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-recs { border-left:0; padding-left:0; border-top:1px solid var(--pva-line); margin-top:24px; padding-top:14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-status { margin-top:10px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-g4 { grid-template-columns:repeat(2, minmax(0,1fr)); }
+  html body #tab-analizar #analizar-portfolio-section .pva-parts, html body #tab-analizar #analizar-portfolio-section .pva-parts.n2, html body #tab-analizar #analizar-portfolio-section .pva-parts.n4 { grid-template-columns:minmax(0,1fr); }
+  html body #tab-analizar #analizar-portfolio-section .pva-read .pva-prose { columns:auto; max-width:78ch; }
+}
+@media (max-width: 1023px) {
+  /* Tus posiciones: fuera la columna Dividendo (sigue en el pie del promedio). */
+  html body #tab-analizar #analizar-portfolio-section .pva-tr { grid-template-columns:minmax(0,1.3fr) 88px 84px minmax(0,1fr) 76px minmax(0,1.1fr); gap:10px; padding-left:16px; padding-right:16px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tr > .pva-dv, html body #tab-analizar #analizar-portfolio-section .pva-th > span:nth-child(6) { display:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tk { gap:10px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-av { width:34px; height:34px; border-radius:11px; font-size:14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-wt, html body #tab-analizar #analizar-portfolio-section .pva-ra { gap:10px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-wt b, html body #tab-analizar #analizar-portfolio-section .pva-ra b { flex-basis:52px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tnote { padding-left:16px; padding-right:16px; }
+}
+@media (max-width: 959px) {
+  html body #tab-analizar #analizar-portfolio-section .pva-hcard + .pva-g2 { grid-template-columns:minmax(0,1fr); }
+  html body #tab-analizar #analizar-portfolio-section .pva-srow { max-height:none; }
+}
+/* Web de 701–899 y iPad en vertical: la pestaña no lleva margen lateral; las secciones sí.
+   En la web de ese tramo (sin pv-ipad) se usan las medidas de tablet del iPad. */
+@media (min-width: 701px) and (max-width: 899px) {
+  html body #tab-analizar #analizar-portfolio-section { padding:0 28px; }
+  html:not(.pv-ipad) body #tab-analizar { --pva-r:28px; --pva-r-hero:40px; --pva-r-kpi:22px; --pva-lift:64px; }
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .pva-h1 { font-size:36px; }
+  html:not(.pv-ipad) body #tab-analizar #pvaHero .pva-hsub { font-size:16px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-kpis { gap:12px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-kpi { padding:16px 18px 15px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-kpi small { font-size:12.5px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-kpi b { font-size:28px; margin:7px 0 9px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-h2 { font-size:27px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-card { padding:26px 26px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-rcard { padding:0; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-rcard > div { padding:24px 26px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-tbl { padding:20px 8px 8px; }
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-reb { padding:8px; }
+}
+
+/* ═══ iPAD (html.pv-ipad) — radio 28, curva 40, medidas de tablet ══════════════════════ */
+@media (min-width: 701px) {
+  html.pv-ipad body #tab-analizar { --pva-r:28px; --pva-r-hero:40px; --pva-r-kpi:22px; --pva-lift:64px; }
+  html.pv-ipad body #tab-analizar #pvaHero .pva-h1 { font-size:36px; }
+  html.pv-ipad body #tab-analizar #pvaHero .pva-hsub { font-size:16px; }
+  html.pv-ipad body #tab-analizar #pvaHero .research-search-bar { height:56px; padding-left:20px !important; }
+  html.pv-ipad body #tab-analizar #pvaHero .research-search-bar .research-input-icon { left:20px; }
+  /* 16px: con menos, iOS amplía la página al enfocar el campo. */
+  html.pv-ipad body #tab-analizar #pvaHero .research-search-bar .research-input { font-size:16px !important; }
+  html.pv-ipad body #tab-analizar #pvaHero .research-search-bar .research-btn { height:44px !important; padding:0 20px !important; font-size:14.5px !important; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpis { gap:12px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpi { padding:16px 18px 15px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpi small { font-size:12.5px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpi b { font-size:28px; margin:7px 0 9px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-sec { margin-top:52px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpis + .pva-sec { margin-top:40px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-eyebrow { font-size:13.5px; margin-bottom:5px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-h2 { font-size:27px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-sh { margin-bottom:18px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-card { padding:26px 26px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-rcard { padding:0; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-rcard > div { padding:24px 26px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-tbl { padding:20px 8px 8px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-reb { padding:8px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-rr { padding:20px 18px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-rh { padding:12px 18px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-sghd { padding:18px 18px 8px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-scn b { font-size:29px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-big { font-size:17px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-intro .pva-prose p { font-size:17px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-read { padding:30px 30px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-dtile b { font-size:25px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-ring,
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-ring svg { width:132px; height:132px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-ring b { font-size:38px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-srow { grid-template-columns:minmax(110px, 170px) minmax(0,1fr) 54px; gap:14px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-sub { grid-template-columns:minmax(0,1fr) minmax(50px,110px) 34px; gap:12px; }
+  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-subs { column-gap:28px; }
+  @media (min-width: 1100px) {
+    html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpi b { font-size:31px; }
+  }
+}
+
+/* ═══ CELULAR (≤700) — una columna, indicadores 2×2 sobre la curva ═════════════════════ */
+@media (max-width: 700px) {
+  html body #tab-analizar { --pva-r:24px; --pva-r-hero:32px; --pva-r-kpi:20px; --pva-lift:158px; }
+  html body #tab-analizar #pvaHero { gap:18px; padding:14px 16px calc(20px + var(--pva-lift)); }
+  html body #tab-analizar #pvaHero .pva-eyebrow { font-size:13px; margin-bottom:5px; }
+  html body #tab-analizar #pvaHero .pva-h1 { font-size:30px; margin-bottom:8px; }
+  html body #tab-analizar #pvaHero .pva-hsub { font-size:15px; line-height:1.5; }
+  html body #tab-analizar #pvaHero .research-search-bar { height:54px; padding:0 5px 0 16px !important; gap:8px !important; }
+  html body #tab-analizar #pvaHero .research-search-bar .research-input { font-size:16px !important; padding-left:28px !important; }
+  html body #tab-analizar #pvaHero .research-search-bar .research-input-icon { left:16px; width:18px; height:18px; }
+  html body #tab-analizar #pvaHero .research-search-bar .research-btn { height:44px !important; padding:0 16px !important; font-size:14px !important; gap:6px !important; }
+  html body #tab-analizar #analizar-portfolio-section .pva-kpis { grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-kpi { min-height:104px; padding:14px 14px 13px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-kpi small { font-size:12.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-kpi b { font-size:25px; margin:6px 0 8px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-kpi .pva-tag { font-size:11.5px; padding:4px 9px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sec { margin-top:40px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-kpis + .pva-sec { margin-top:30px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sh { flex-wrap:wrap; align-items:flex-start; margin-bottom:14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sh { padding:0 4px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-eyebrow { font-size:13px; margin-bottom:5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-h2 { font-size:24px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-side { flex-shrink:1; }
+  html body #tab-analizar #analizar-portfolio-section #pvaSecAdv .pva-sh { flex-direction:column; }
+  html body #tab-analizar #analizar-portfolio-section .pva-side .pva-pills { justify-content:flex-start; gap:6px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-card { padding:20px 18px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-card h3 { font-size:17px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-g2, html body #tab-analizar #analizar-portfolio-section .pva-hcard + .pva-g2 { grid-template-columns:minmax(0,1fr); gap:14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-hcard + .pva-g2 { margin-top:14px; }
+  /* Retorno esperado: escala, base y bajista, uno debajo de otro */
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard, html body #tab-analizar #analizar-portfolio-section .pva-rcard-empty { grid-template-columns:minmax(0,1fr); padding:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard > div { padding:20px 18px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rcard > .pva-scn + .pva-scn { border-left:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-scale { margin:4px 0 4px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-scn b { font-size:27px; margin:12px 0 8px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-scn p { font-size:14.5px; }
+  /* Tus posiciones: filas compactas — activo | peso | retorno; el resto en una línea gris */
+  html body #tab-analizar #analizar-portfolio-section .pva-tbl { padding:12px 4px 4px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tr { grid-template-columns:minmax(0,1fr) 58px 66px; column-gap:10px; row-gap:4px; padding:11px 12px; font-size:14.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tr > .pva-px, html body #tab-analizar #analizar-portfolio-section .pva-tr > .pva-chg, html body #tab-analizar #analizar-portfolio-section .pva-tr > .pva-apr, html body #tab-analizar #analizar-portfolio-section .pva-tr > .pva-dv,
+  html body #tab-analizar #analizar-portfolio-section .pva-th > span:nth-child(2), html body #tab-analizar #analizar-portfolio-section .pva-th > span:nth-child(3), html body #tab-analizar #analizar-portfolio-section .pva-th > span:nth-child(5), html body #tab-analizar #analizar-portfolio-section .pva-th > span:nth-child(6) { display:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-th { font-size:12px; line-height:1.25; padding-top:8px; padding-bottom:8px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-wt .pva-bar, html body #tab-analizar #analizar-portfolio-section .pva-ra .pva-bar { display:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-wt b, html body #tab-analizar #analizar-portfolio-section .pva-ra b { flex:0 1 auto; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tkt b { font-size:15px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tkt small { font-size:12.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-meta { display:block; grid-column:1 / -1; padding-left:44px; font-size:12.5px; font-weight:600; line-height:1.45; color:var(--pva-muted); text-align:left !important; }
+  html body #tab-analizar #analizar-portfolio-section .pva-meta .up, html body #tab-analizar #analizar-portfolio-section .pva-meta .dn { font-weight:700; }
+  html body #tab-analizar #analizar-portfolio-section .pva-meta > span { white-space:nowrap; }   /* corta entre datos, nunca dentro de uno */
+  html body #tab-analizar #analizar-portfolio-section .pva-tot .pva-meta { padding-left:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-tnote { padding:12px 12px 10px; font-size:12.5px; }
+  /* Diagnóstico */
+  html body #tab-analizar #analizar-portfolio-section .pva-big { font-size:16px; line-height:1.65; }
+  html body #tab-analizar #analizar-portfolio-section .pva-mkt { padding:14px 16px; font-size:14px; border-radius:18px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rec p { font-size:15px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-ri { width:38px; height:38px; border-radius:12px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-cta { flex-direction:column; align-items:flex-start; gap:16px; }
+  /* Salud */
+  html body #tab-analizar #analizar-portfolio-section .pva-hh { gap:18px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-ring, html body #tab-analizar #analizar-portfolio-section .pva-ring svg { width:112px; height:112px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-ring b { font-size:34px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-ring small { font-size:12px; margin-top:2px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-hht strong { font-size:21px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-hht p { font-size:14.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-subs { grid-template-columns:minmax(0,1fr); }
+  html body #tab-analizar #analizar-portfolio-section .pva-subs > .pva-sub:nth-child(2) { border-top:1px solid var(--pva-line); }
+  html body #tab-analizar #analizar-portfolio-section .pva-sub { grid-template-columns:minmax(0,1fr) minmax(50px,96px) 32px; gap:12px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-srow { grid-template-columns:minmax(0,1fr) minmax(60px,34%) 50px; gap:12px; font-size:14.5px; max-height:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-ltbox { padding:2px 14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-via { grid-template-columns:auto minmax(0,1fr) 56px; }
+  /* Fortalezas y riesgos */
+  html body #tab-analizar #analizar-portfolio-section .pva-pc li { font-size:14.5px; }
+  /* Asesor */
+  html body #tab-analizar #analizar-portfolio-section .pva-intro { padding:20px 18px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-intro .pva-prose p { font-size:16px; line-height:1.65; }
+  html body #tab-analizar #analizar-portfolio-section .pva-parts { gap:14px; margin-top:14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-prose p, html body #tab-analizar #analizar-portfolio-section .pva-prose li { font-size:15px; line-height:1.7; }
+  html body #tab-analizar #analizar-portfolio-section .pva-read { padding:20px 18px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-foot { align-items:flex-start; padding:0 4px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-foot svg { margin-top:1px; }
+  /* Rebalanceo: activo + acción en una línea, a%→b% debajo y luego el texto */
+  html body #tab-analizar #analizar-portfolio-section .pva-how p { font-size:14.5px; line-height:1.7; }
+  html body #tab-analizar #analizar-portfolio-section .pva-facts { grid-template-columns:minmax(0,1fr); gap:8px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-reb { padding:4px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rh { display:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr { grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; padding:16px 14px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr .pva-actc { align-self:center; text-align:right; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr .pva-act { margin-top:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr .pva-mv { grid-column:1 / -1; padding-top:0; display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 12px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr .pva-mv small { margin-top:0; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr > p, html body #tab-analizar #analizar-portfolio-section .pva-rr-sk > div { grid-column:1 / -1; font-size:14.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-rr.pva-sg .pva-sgf { text-align:right; padding-top:0; align-self:center; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sg .pva-mv small { display:block; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sghd { padding:16px 14px 8px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sghd p { font-size:14.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-sghd + .pva-rh + .pva-rr { border-top:1px solid var(--pva-line); }
+  html body #tab-analizar #analizar-portfolio-section .pva-rebfoot { flex-direction:column; align-items:flex-start; gap:14px; padding:0 4px; }
+  /* Dividendos */
+  html body #tab-analizar #analizar-portfolio-section .pva-g4 { gap:10px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-dtile { padding:16px 16px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-dtile small { font-size:12.5px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-dtile b { font-size:22px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-foot2 { padding:0 4px; }
+  /* EPS: una tarjeta por fila */
+  html body #tab-analizar #analizar-portfolio-section #port-eps .eps-grid { gap:12px !important; }
+  html body #tab-analizar #analizar-portfolio-section #port-eps .eps-slot { flex-basis:100%; }
+  html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card { padding:16px 14px 12px !important; }
+}
+
+/* ═══ OSCURO (body.dark-theme): los tokens oscuros de la app ════════════════════════════ */
+html body.dark-theme #tab-analizar {
+  --pva-hero:#13233a; --pva-hero-eb:rgba(255,255,255,.5); --pva-hero-sub:rgba(255,255,255,.62);
+  --pva-bg:rgba(255,255,255,.07); --pva-card:var(--surface,#0f1623); --pva-line:rgba(255,255,255,.08); --pva-line-hi:rgba(255,255,255,.16); --pva-wash:rgba(255,255,255,.04);
+  --pva-ink:#e8edf7; --pva-slate:#aab4c2; --pva-muted:#8a96a3; --pva-pg-ink:#e8edf7; --pva-pg-muted:#8a96a3;
+  --pva-green:#4ade80; --pva-green-bg:rgba(74,222,128,.12); --pva-red:#f87171; --pva-red-bg:rgba(248,113,113,.14);
+  --pva-amber:#f5b76b; --pva-amber-bg:rgba(245,183,107,.14); --pva-amber-ink:#f5b76b; --pva-amber-bar:#e59a45;
+  --pva-strong:#cbd5e6; --pva-on-strong:#0b1c30; --pva-via:#5d7290; --pva-track:rgba(255,255,255,.1);
+  --pva-pill:var(--surface2,#161e2d); --pva-pill-ink:#e8edf7; --pva-pill-ph:#8a96a3; --pva-pill-line:rgba(255,255,255,.1);
+  --pva-btn:#e8edf7; --pva-btn-ink:#0b1c30; --pva-kpi:var(--surface,#0f1623); --pva-kpi-line:rgba(255,255,255,.1);
+}
+html body.dark-theme #tab-analizar #pvaHero { border:1px solid rgba(255,255,255,.06); border-top:0; }
+html body.dark-theme #tab-analizar #pvaHero .research-search-bar:focus-within { outline-color:rgba(255,255,255,.35); }
+/* Donde la pestaña conserva el fondo claro del diseño también en oscuro (web desde 900px e
+   iPad apaisado desde 1100px: el fondo lo fija el bloque v8 con un id), la cabecera sigue
+   navy como la barra superior y lo que va directo sobre la página —cabeceras de sección,
+   pies y el botón de exportar— conserva los tokens claros; las tarjetas van en oscuro. */
+@media (min-width: 900px) {
+  html:not(.pv-ipad) body.dark-theme #tab-analizar { --pva-hero:#0b1c30; --pva-pg-ink:#0b1c30; --pva-pg-muted:#7a879b; }
+  html:not(.pv-ipad) body.dark-theme #tab-analizar #pvaHero { border:0; }
+  html:not(.pv-ipad) body.dark-theme #tab-analizar #analizar-portfolio-section :is(.pva-sh, .pva-foot, .pva-rebfoot, .pva-foot2, #port-eps .eps-sec-head) {
+    --pva-bg:#eef1f8; --pva-slate:#33475f; --pva-muted:#7a879b; --pva-ink:#0b1c30; --pva-card:#fff; --pva-line:#e2e7f0;
+    --pva-green:#0f8a5f; --pva-green-bg:#dcf6e9; --pva-amber:#b45309; --pva-amber-bg:#fdecd8; --pva-red:#c62828; --pva-red-bg:#ffe3df;
+    --pva-btn:#0b1c30; --pva-btn-ink:#fff; --pva-strong:#0b1c30; --pva-on-strong:#fff;
+  }
+}
+@media (min-width: 1100px) {
+  html.pv-ipad body.dark-theme #tab-analizar { --pva-hero:#0b1c30; --pva-pg-ink:#0b1c30; --pva-pg-muted:#7a879b; }
+  html.pv-ipad body.dark-theme #tab-analizar #pvaHero { border:0; }
+  html.pv-ipad body.dark-theme #tab-analizar #analizar-portfolio-section :is(.pva-sh, .pva-foot, .pva-rebfoot, .pva-foot2, #port-eps .eps-sec-head) {
+    --pva-bg:#eef1f8; --pva-slate:#33475f; --pva-muted:#7a879b; --pva-ink:#0b1c30; --pva-card:#fff; --pva-line:#e2e7f0;
+    --pva-green:#0f8a5f; --pva-green-bg:#dcf6e9; --pva-amber:#b45309; --pva-amber-bg:#fdecd8; --pva-red:#c62828; --pva-red-bg:#ffe3df;
+    --pva-btn:#0b1c30; --pva-btn-ink:#fff; --pva-strong:#0b1c30; --pva-on-strong:#fff;
+  }
+}
+
+/* ═══ ANÁLISIS DE UNA ACCIÓN: la sección de portafolio se oculta (style="display:none") y
+   la cabecera se queda sólo con el buscador, sin el hueco de los indicadores. ═══════════ */
+html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHero { padding-bottom:26px; margin-bottom:20px; justify-content:flex-start; }
+html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHero .pva-htxt { display:none; }
+@media (min-width: 900px) {
+  html:not(.pv-ipad) body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHero { padding-bottom:40px; margin-bottom:36px; }
+  html:not(.pv-ipad) body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHero .research-search-bar { flex:0 1 760px; }
+}
+@media (max-width: 700px) {
+  html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHero { padding-bottom:20px; margin-bottom:12px; }
+}
+
+/* ═══ Movimiento reducido: sin desplazamientos ni transiciones ═══════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-analizar #pvaHero .research-search-bar .research-btn, html body #tab-analizar #analizar-portfolio-section .pva-btn, html body #tab-analizar #analizar-portfolio-section .pva-card, html body #tab-analizar #analizar-portfolio-section .pva-kpi, html body #tab-analizar #analizar-portfolio-section .pva-tr, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-tg { transition:none !important; }
+  html body #tab-analizar #pvaHero .research-search-bar .research-btn:hover, html body #tab-analizar #pvaHero .research-search-bar .research-btn:active, html body #tab-analizar #analizar-portfolio-section .pva-btn:hover, html body #tab-analizar #analizar-portfolio-section .pva-btn:active { transform:none; }
 }
 </style>
 
