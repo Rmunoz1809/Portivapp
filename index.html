@@ -5240,7 +5240,8 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
         </div>
         <div class="ra-price-row">
           <span class="ra-price" id="r-price"></span>
-          <span id="r-change" class="ra-change"></span>
+          <!-- La pastilla del cambio del periodo (#r-change) ya no va aquí: está junto a «Precio
+               histórico», en la tarjeta de la gráfica (ver .ra-ctrow). -->
         </div>
         <div id="r-sub" style="display:none"></div>
         <div class="ra-subline">
@@ -5275,7 +5276,13 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
     <div class="ra-grid">
       <div class="ra-card ra-chart-card">
         <div class="ra-card-head">
-          <div class="ra-card-title">Precio histórico <span id="r-chart-estimated" style="display:none;font-size:11px;font-weight:600;color:var(--text3);text-transform:none;letter-spacing:0">(estimación)</span></div>
+          <!-- Título + pastilla del cambio del periodo, como «Rendimiento» en Portafolio. La rellena
+               _updateChangeDisplay (por id, así que el periodo activo y el refresco de precio en
+               vivo de _refreshResearchPrice siguen llegando igual que cuando iba en la cabecera). -->
+          <div class="ra-ctrow">
+            <div class="ra-card-title">Precio histórico <span id="r-chart-estimated" style="display:none;font-size:11px;font-weight:600;color:var(--text3);text-transform:none;letter-spacing:0">(estimación)</span></div>
+            <span id="r-change" class="ra-change"></span>
+          </div>
           <div class="ra-pills" id="r-period-pills">
             <button class="ppill" onclick="setResearchPeriod('1d',this)">1D</button>
             <button class="ppill" onclick="setResearchPeriod('5d',this)">1S</button>
@@ -55264,6 +55271,16 @@ html body #tab-analizar #researchResults .ra-pills .ppill {
 }
 html body #tab-analizar #researchResults .ra-pills .ppill:hover { color:var(--pac-ink) !important; }
 html body #tab-analizar #researchResults .ra-pills .ppill.active { background:var(--pac-strong) !important; color:var(--pac-on-strong) !important; font-weight:800 !important; }
+/* Pastilla del cambio del periodo junto a «Precio histórico» (antes iba junto al precio, en la
+   cabecera navy). Como en Portafolio: los periodos SIEMPRE en la misma línea, a la derecha; si
+   falta sitio, la que cede es la pastilla, que baja debajo del título, y la barra no se mueve. */
+html body #tab-analizar #researchResults .ra-ctrow { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; min-width:0; }
+html body #tab-analizar #researchResults .ra-ctrow .ra-change:empty { display:none; }
+@media (min-width: 701px) {
+  html body #tab-analizar #researchResults .ra-card-head { flex-wrap:nowrap; }
+  html body #tab-analizar #researchResults .ra-ctrow { flex:1 1 auto; }
+  html body #tab-analizar #researchResults .ra-card-head .ra-pills { flex:0 0 auto; }
+}
 /* La gráfica ocupa el alto que deja la tarjeta: sin hueco debajo cuando el veredicto es más alto. */
 html body #tab-analizar #researchResults .r-chart-wrap { position:relative; flex:1 1 auto; min-height:240px; height:auto !important; }
 
@@ -56286,5 +56303,365 @@ html.pv-ipad body #pvTabs .bottom-tab svg { width:22px !important; height:22px !
 html.pv-ipad body.chat-active { background:#0b1c30 !important; }
 html.pv-ipad body.chat-active #tab-aianalyst #aiChatLockWrap .pvia-hero { position:sticky; top:0; z-index:5; }
 </style>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════════════════════
+     MOVIMIENTO v8 — EL LENGUAJE DE PORTIV IA EN TODAS LAS PESTAÑAS (pedido de Rafael, 1-oct)
+     ───────────────────────────────────────────────────────────────────────────────────────────
+     Portiv IA ya se movía con un lenguaje propio (pvIaCss): curva cubic-bezier(.22,1,.36,1),
+     entrada «pviaIn» —de opacidad 0 y 12 px por debajo a su sitio— en ~0,45 s, escalonada de
+     70 en 70 ms, y la respuesta que crece en vez de aparecer. Aquí ese lenguaje pasa a ser
+     común: tokens, keyframes y unos pocos ayudantes (window.PVM). Cada pestaña lo aplica desde
+     su propio bloque, más abajo (pvMov<Pestaña>Css / pvMov<Pestaña>Js).
+
+     Lo que no se toca:
+       · La entrada de la pestaña la sigue haciendo MOTION v7 (_pvTabEnter) sobre los bloques
+         de primer nivel. Esto anima lo de DENTRO: datos que llegan, cambios que pide el
+         usuario, ticks de precio, pulsaciones y lo que entra al hacer scroll.
+       · El bloque navy de cabecera nunca cambia de opacidad (la franja blanca, ver MOTION v7).
+       · Nada puede quedarse invisible si una animación no llega a correr: WAAPI con fill
+         'backwards' y ningún opacity:0 en el CSS a la espera de una clase (la única excepción,
+         .pvm-pre, la pone y la quita el JS, y el movimiento reducido la anula).
+       · Los refrescos periódicos no repiten entradas: sólo destellan lo que cambió.
+       · prefers-reduced-motion lo apaga todo: cada ayudante sale antes de crear nada.
+     ═══════════════════════════════════════════════════════════════════════════════════════════ -->
+<style id="pvMovBaseCss">
+/* Tokens. La curva es la de Portiv IA (--pvia-ease). En pantalla ancha todo va más corto y con
+   menos recorrido, como la entrada de pestaña en escritorio (PV_MOTION.wide). */
+:root {
+  --pvm-ease: cubic-bezier(.22,1,.36,1);
+  --pvm-ease-io: cubic-bezier(.65,0,.35,1);   /* ida y vuelta: plegar, cambiar de estado */
+  --pvm-fast: .16s;                           /* hover y pulsación */
+  --pvm-base: .24s;                           /* chips, pestañas internas, colores */
+  --pvm-in: .45s;                             /* entradas (= pviaIn) */
+  --pvm-slow: .7s;                            /* trazos y crecimientos */
+  --pvm-rise: 12px;                           /* recorrido de entrada (= pviaIn) */
+  --pvm-press: .97;                           /* escala al pulsar */
+  --pvm-up-tint: rgba(22,163,74,.14);         /* destello de subida */
+  --pvm-down-tint: rgba(220,38,38,.13);       /* destello de bajada */
+}
+@media (min-width: 900px) {
+  :root { --pvm-in: .32s; --pvm-slow: .5s; --pvm-rise: 8px; }
+}
+html body.dark-theme { --pvm-up-tint: rgba(74,222,128,.16); --pvm-down-tint: rgba(248,113,113,.16); }
+
+@keyframes pvmIn    { from { opacity: 0; transform: translateY(var(--pvm-rise)); } to { opacity: 1; transform: none; } }
+@keyframes pvmFade  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pvmPop   { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes pvmGrowX { from { transform: scaleX(0); } to { transform: none; } }
+@keyframes pvmGrowY { from { transform: scaleY(0); } to { transform: none; } }
+@keyframes pvmShine { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Para marcado ESTÁTICO o que se pinta una sola vez. Lo que se repinta con innerHTML en cada
+   refresco se anima desde JS (PVM.enter, una vez): con una clase volvería a entrar en cada
+   tick. fill backwards: al terminar no queda nada pegado, así que el transform de un :hover o
+   un :active sigue funcionando. --pvm-i da el turno del escalonado (0, 1, 2…). */
+.pvm-in   { animation: pvmIn var(--pvm-in) var(--pvm-ease) backwards; animation-delay: calc(var(--pvm-i, 0) * 70ms); }
+.pvm-fade { animation: pvmFade var(--pvm-in) var(--pvm-ease) backwards; }
+/* Revelado al hacer scroll: la pone y la quita PVM.reveal, nunca el marcado. */
+.pvm-pre  { opacity: 0; }
+/* Respuesta al pulsar (botones, filas y tarjetas que se tocan). */
+.pvm-press { transition: transform var(--pvm-fast) var(--pvm-ease); }
+.pvm-press:active { transform: scale(var(--pvm-press)); }
+/* Esqueleto de carga con brillo. */
+.pvm-skel {
+  background: linear-gradient(90deg, rgba(11,28,48,.06) 25%, rgba(11,28,48,.11) 37%, rgba(11,28,48,.06) 63%);
+  background-size: 400% 100%; animation: pvmShine 1.4s ease infinite; border-radius: 8px;
+}
+html body.dark-theme .pvm-skel {
+  background-image: linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.10) 37%, rgba(255,255,255,.05) 63%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pvm-in, .pvm-fade, .pvm-skel { animation: none !important; }
+  .pvm-pre { opacity: 1 !important; }
+  .pvm-press, .pvm-press:active { transition: none; transform: none; }
+}
+</style>
+<script id="pvMovBaseJs">
+/* MOVIMIENTO v8 — ayudantes comunes (window.PVM). Todo va con la Web Animations API: durante el
+   retardo se ve el estado inicial (fill 'backwards') y al acabar no queda nada pegado, así que
+   si algo falla el elemento se queda como lo pinta el CSS. Una animación nueva sobre el mismo
+   nodo y la misma ranura cancela la anterior: cambiar algo a toda prisa no apila movimientos.
+   Con prefers-reduced-motion cada ayudante sale antes de crear nada (countTo escribe el valor
+   final y swap/expand ejecutan su trabajo sin animarlo). */
+(function(){
+  'use strict';
+  var EASE = 'cubic-bezier(.22,1,.36,1)';
+  var EASE_IO = 'cubic-bezier(.65,0,.35,1)';
+  var seen = Object.create(null);
+
+  function reduced(){
+    try {
+      if (typeof window._pvReducedMotion === 'function') return window._pvReducedMotion();
+      return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch(e){ return false; }
+  }
+  function wide(){ try { return window.innerWidth >= 900; } catch(e){ return false; } }
+  /* Medidas: en el celular, las de pviaIn; en pantalla ancha, más cortas (MOTION v7). */
+  function T(){
+    return wide() ? { dur: 320, step: 40, max: 6, rise: 8, slow: 520 }
+                  : { dur: 450, step: 60, max: 8, rise: 12, slow: 750 };
+  }
+  function list(x){
+    if (!x) return [];
+    if (x.nodeType === 1) return [x];
+    try { return Array.prototype.slice.call(x); } catch(e){ return []; }
+  }
+  function painted(el){
+    if (!el || el.nodeType !== 1) return false;
+    try { return el.getClientRects().length > 0; } catch(e){ return true; }
+  }
+  function ok(el){ return !!(el && el.nodeType === 1 && typeof el.animate === 'function') && !reduced(); }
+  function run(el, kf, opts, slot){
+    slot = slot || '_pvmA';
+    try {
+      if (el[slot]) { try { el[slot].cancel(); } catch(e){} }
+      return (el[slot] = el.animate(kf, opts));
+    } catch(e){ return null; }
+  }
+
+  /* enter(nodos, op) — la entrada de Portiv IA (pviaIn), escalonada. Sólo lo que pinta; a
+     partir del `max`-ésimo nodo ya no se acumula retardo (una lista larga no puede tardar
+     segundos en aparecer). op: delay, step, max, rise, dur, easing y from —
+     'below' (por defecto, como pviaIn), 'above', 'left', 'right', 'scale' o 'fade'. */
+  function enter(nodes, op){
+    if (reduced()) return;
+    op = op || {};
+    var t = T(), els = list(nodes).filter(painted);
+    var dur = op.dur || t.dur, step = op.step != null ? op.step : t.step,
+        max = op.max != null ? op.max : t.max, rise = op.rise != null ? op.rise : t.rise,
+        delay = op.delay || 0, from = op.from || 'below';
+    var start = from === 'above' ? 'translateY(-' + rise + 'px)'
+              : from === 'left'  ? 'translateX(-' + rise + 'px)'
+              : from === 'right' ? 'translateX(' + rise + 'px)'
+              : from === 'scale' ? 'scale(.96)'
+              : from === 'fade'  ? 'none'
+              : 'translateY(' + rise + 'px)';
+    els.forEach(function(el, i){
+      if (!ok(el)) return;
+      run(el, [{ opacity: 0, transform: start }, { opacity: 1, transform: 'none' }],
+          { duration: dur, delay: delay + Math.min(i, max) * step, easing: op.easing || EASE, fill: 'backwards' });
+    });
+  }
+
+  /* first(clave) — true sólo la primera vez que se pregunta por esa clave en la sesión. Sirve
+     para animar la LLEGADA de algo (una noticia, una fila nueva) y no cada repintado suyo. */
+  function first(key){
+    key = String(key);
+    if (seen[key]) return false;
+    seen[key] = 1;
+    return true;
+  }
+
+  /* countTo(el, valor, formato, op) — el número cuenta hasta `valor` desde el que se enseñó
+     la última vez (o desde op.from). Sin valor previo, se escribe directamente: el primer
+     pintado no cuenta desde cero salvo que se pida (op.from = 0). `formato(v)` devuelve el
+     texto: cada pestaña tiene el suyo ($, %, compactos). Si otro código reescribe el texto a
+     mitad de la cuenta, la cuenta se retira y deja ese valor: nunca pisa un dato más nuevo. */
+  function countTo(el, to, fmt, op){
+    if (!el) return;
+    op = op || {};
+    fmt = fmt || function(v){ return String(Math.round(v)); };
+    to = +to;
+    var from = op.from != null ? +op.from : (el._pvmNum != null ? el._pvmNum : NaN);
+    if (el._pvmRaf) { try { cancelAnimationFrame(el._pvmRaf); } catch(e){} el._pvmRaf = 0; }
+    function put(v){ var s = fmt(v); el.textContent = s; el._pvmTxt = el.textContent; }
+    function fin(){ el._pvmNum = to; try { put(to); } catch(e){} }
+    /* Con la página oculta (app en segundo plano) no hay fotogramas: se escribe el final. */
+    if (!isFinite(to) || !isFinite(from) || from === to || reduced() || document.hidden || !window.requestAnimationFrame) { fin(); return; }
+    var dur = op.dur || (wide() ? 520 : 750), t0 = 0;
+    try { put(from); } catch(e){ fin(); return; }
+    function step(ts){
+      if (el.textContent !== el._pvmTxt) { el._pvmRaf = 0; el._pvmNum = null; return; }
+      if (!t0) t0 = ts;
+      var p = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+      el._pvmNum = from + (to - from) * e;
+      if (p >= 1) { el._pvmRaf = 0; fin(); return; }
+      try { put(el._pvmNum); } catch(err){ el._pvmRaf = 0; fin(); return; }
+      el._pvmRaf = requestAnimationFrame(step);
+    }
+    el._pvmRaf = requestAnimationFrame(step);
+  }
+
+  /* flash(el, dir) — destello del cambio de precio: un velo verde (dir > 0) o rojo (dir < 0)
+     que se apaga en ~1 s. Va como box-shadow inset para teñir encima del fondo que tenga el
+     elemento (blanco, navy o pastilla) sin sustituirlo. En celdas <td>, no en <tr>: Safari no
+     pinta sombras en filas de tabla. */
+  function flash(el, dir){
+    if (!dir || !ok(el)) return;
+    var c = '';
+    try { c = getComputedStyle(document.body).getPropertyValue(dir > 0 ? '--pvm-up-tint' : '--pvm-down-tint').trim(); } catch(e){}
+    if (!c) c = dir > 0 ? 'rgba(22,163,74,.14)' : 'rgba(220,38,38,.13)';
+    run(el, [{ boxShadow: 'inset 0 0 0 999px ' + c }, { boxShadow: 'inset 0 0 0 999px rgba(0,0,0,0)' }],
+        { duration: 1100, easing: 'cubic-bezier(.33,1,.68,1)' }, '_pvmF');
+  }
+
+  /* draw(trazos, op) — la línea se dibuja de principio a fin (stroke-dashoffset) y, si se pasa
+     op.area, el relleno de debajo entra después con un fundido. Para SVG (<path>, <polyline>,
+     <line>, <circle>); las gráficas de Chart.js animan con su propia configuración. */
+  function draw(paths, op){
+    op = op || {};
+    var t = T(), dur = op.dur || t.slow, delay = op.delay || 0;
+    list(paths).forEach(function(p){
+      if (!ok(p) || typeof p.getTotalLength !== 'function') return;
+      var len = 0;
+      try { len = p.getTotalLength(); } catch(e){}
+      if (!(len > 0)) return;
+      /* Con vector-effect:non-scaling-stroke el guion se mide en pantalla, no en unidades del
+         viewBox: se escala por el mayor factor de la matriz (pasarse de largo no estorba). */
+      try {
+        if (getComputedStyle(p).vectorEffect === 'non-scaling-stroke') {
+          var m = p.getScreenCTM();
+          if (m) len *= Math.max(1, Math.abs(m.a), Math.abs(m.d));
+        }
+      } catch(e){}
+      var prev = p.style.strokeDasharray;
+      p.style.strokeDasharray = len + ' ' + len;
+      var a = run(p, [{ strokeDashoffset: len }, { strokeDashoffset: 0 }],
+                  { duration: dur, delay: delay, easing: op.easing || 'cubic-bezier(.33,1,.68,1)', fill: 'backwards' }, '_pvmD');
+      var back = function(){ p.style.strokeDasharray = prev; };
+      if (a) { a.addEventListener('finish', back); a.addEventListener('cancel', back); } else back();
+    });
+    list(op.area).forEach(function(el){
+      if (ok(el)) run(el, [{ opacity: 0 }, { opacity: 1 }],
+                      { duration: dur * .8, delay: delay + dur * .35, easing: EASE, fill: 'backwards' }, '_pvmD');
+    });
+  }
+
+  /* grow(nodos, eje, op) — barras y medidores que crecen desde cero: scaleX desde la izquierda
+     (eje 'x', por defecto) o scaleY desde abajo (eje 'y'). Sólo transform: no mueve el layout.
+     op: origin, dur, delay, step, max, easing. */
+  function grow(nodes, axis, op){
+    if (reduced()) return;
+    op = op || {};
+    var t = T(), y = axis === 'y';
+    var origin = op.origin || (y ? '50% 100%' : '0% 50%');
+    var step = op.step != null ? op.step : 30, max = op.max != null ? op.max : t.max;
+    list(nodes).filter(painted).forEach(function(el, i){
+      if (!ok(el)) return;
+      run(el, [{ transform: y ? 'scaleY(0)' : 'scaleX(0)', transformOrigin: origin },
+               { transform: 'none', transformOrigin: origin }],
+          { duration: op.dur || t.slow, delay: (op.delay || 0) + Math.min(i, max) * step,
+            easing: op.easing || EASE, fill: 'backwards' }, '_pvmG');
+    });
+  }
+
+  /* swap(contenedor, pintar, op) — cambio de contenido que pide el usuario (periodo, orden,
+     filtro, pestaña interna). `pintar()` se ejecuta YA, sin esperar a nada (el código que venga
+     detrás encuentra el DOM nuevo), y lo nuevo entra con un fundido y medio recorrido. Si
+     `pintar` devuelve una promesa, mientras llega el contenido queda a media luz —nunca a
+     cero— y entra al resolverse (o a los op.wait ms, 2,5 s por defecto, como tope). */
+  function swap(el, paint, op){
+    op = op || {};
+    var r = paint ? paint() : undefined;
+    if (!ok(el)) return r;
+    var t = T();
+    function land(){
+      run(el, [{ opacity: 0, transform: 'translateY(' + Math.round(t.rise / 2) + 'px)' },
+               { opacity: 1, transform: 'none' }],
+          { duration: t.dur, easing: EASE, fill: 'backwards' }, '_pvmS');
+    }
+    if (r && typeof r.then === 'function') {
+      run(el, [{ opacity: 1 }, { opacity: .55 }], { duration: 160, easing: 'ease-out', fill: 'forwards' }, '_pvmS');
+      var done = false, guard = 0;
+      var end = function(){ if (done) return; done = true; clearTimeout(guard); land(); };
+      guard = setTimeout(end, op.wait || 2500);
+      r.then(end, end);
+    } else land();
+    return r;
+  }
+
+  /* expand(el, abrir, alTerminar) — despliega o pliega `el` animando su alto. Al ABRIR, `el`
+     ya tiene que estar visible (quítale antes tu clase o tu display:none); al CERRAR, ocúltalo
+     en `alTerminar`, que llega con el alto ya en cero. El alto sólo se anima en este nodo y
+     mientras dura: al acabar vuelve a ser el suyo (auto). */
+  function expand(el, open, done){
+    var cb = function(){ try { if (done) done(); } catch(e){} };
+    if (!ok(el)) { cb(); return; }
+    var t = T(), h = open ? el.scrollHeight : el.offsetHeight;
+    var prevOv = el.style.overflow;
+    el.style.overflow = 'hidden';
+    var a = run(el,
+      open ? [{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }]
+           : [{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }],
+      { duration: Math.round(Math.min(t.dur * 1.15, 260 + h * .35)), easing: open ? EASE : EASE_IO,
+        fill: open ? 'backwards' : 'forwards' }, '_pvmE');
+    if (!a) { el.style.overflow = prevOv; cb(); return; }
+    a.addEventListener('finish', function(){
+      el.style.overflow = prevOv;
+      cb();
+      if (!open) { try { a.cancel(); } catch(e){} }   // ya oculto: suelta el alto 0 retenido
+    });
+    a.addEventListener('cancel', function(){ el.style.overflow = prevOv; });
+  }
+
+  /* reveal(nodos, op) — lo que está por debajo del pliegue entra (pviaIn) cuando el scroll lo
+     trae a la vista, una sola vez. Sólo se oculta (.pvm-pre) lo que AHORA pinta y queda por
+     debajo de la ventana; lo que ya se ve no se toca. Sin IntersectionObserver o con movimiento
+     reducido no hace nada. Si el nodo se repinta y desaparece, el nuevo nace visible. */
+  var io = null;
+  function reveal(nodes, op){
+    if (reduced() || typeof IntersectionObserver !== 'function') return;
+    op = op || {};
+    if (!io) io = new IntersectionObserver(function(entries){
+      var batch = [];
+      entries.forEach(function(en){
+        if (!en.isIntersecting) return;
+        io.unobserve(en.target);
+        en.target.classList.remove('pvm-pre');
+        batch.push(en.target);
+      });
+      if (batch.length) enter(batch, { step: 60, max: 4 });
+    }, { rootMargin: '0px 0px -4% 0px' });
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    list(nodes).forEach(function(el){
+      if (!painted(el) || el.classList.contains('pvm-pre')) return;
+      if (el.getBoundingClientRect().top >= vh - 4) { el.classList.add('pvm-pre'); io.observe(el); }
+    });
+  }
+
+  window.PVM = {
+    ease: EASE, easeIO: EASE_IO, T: T, reduced: reduced, wide: wide, painted: painted,
+    enter: enter, first: first, countTo: countTo, flash: flash, draw: draw,
+    grow: grow, swap: swap, expand: expand, reveal: reveal
+  };
+})();
+</script>
+
+<!-- ═══ MOVIMIENTO · PORTAFOLIO (#tab-portfolio) ══════════════════════════════════════════════ -->
+<style id="pvMovPortafolioCss">
+/* MOVIMIENTO · Portafolio — pendiente */
+</style>
+<script id="pvMovPortafolioJs">
+/* MOVIMIENTO · Portafolio — pendiente */
+</script>
+<!-- ═══ fin MOVIMIENTO · PORTAFOLIO ═══ -->
+
+<!-- ═══ MOVIMIENTO · NOTICIAS (#tab-noticias) ═════════════════════════════════════════════════ -->
+<style id="pvMovNoticiasCss">
+/* MOVIMIENTO · Noticias — pendiente */
+</style>
+<script id="pvMovNoticiasJs">
+/* MOVIMIENTO · Noticias — pendiente */
+</script>
+<!-- ═══ fin MOVIMIENTO · NOTICIAS ═══ -->
+
+<!-- ═══ MOVIMIENTO · SEGUIMIENTO (#tab-watchlist) ═════════════════════════════════════════════ -->
+<style id="pvMovSeguimientoCss">
+/* MOVIMIENTO · Seguimiento — pendiente */
+</style>
+<script id="pvMovSeguimientoJs">
+/* MOVIMIENTO · Seguimiento — pendiente */
+</script>
+<!-- ═══ fin MOVIMIENTO · SEGUIMIENTO ═══ -->
+
+<!-- ═══ MOVIMIENTO · ANÁLISIS (#tab-analizar) ═════════════════════════════════════════════════ -->
+<style id="pvMovAnalisisCss">
+/* MOVIMIENTO · Análisis — pendiente */
+</style>
+<script id="pvMovAnalisisJs">
+/* MOVIMIENTO · Análisis — pendiente */
+</script>
+<!-- ═══ fin MOVIMIENTO · ANÁLISIS ═══ -->
 </body>
 </html>
