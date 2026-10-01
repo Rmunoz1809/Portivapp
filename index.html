@@ -4701,22 +4701,29 @@ window._pvAwaitIAP = function(totalMs){
 <!-- ═══════════════ TAB WATCHLIST ═══════════════ -->
 <div id="tab-watchlist" class="page" style="padding:24px;">
 
-  <!-- Search / Add bar -->
-  <div style="background:#fff;border:1px solid #eef1f6;border-radius:16px;padding:14px 16px;margin-bottom:24px;position:relative;box-shadow:0 2px 8px rgba(11,28,48,0.04);">
-    <div style="display:flex;gap:10px;align-items:center;">
-      <div style="flex:1;position:relative;">
-        <input id="wlInput" style="width:100%;box-sizing:border-box;background:#f4f6fb;border:1.5px solid #e8eaf0;border-radius:12px;padding:11px 16px;font-size:14px;font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;color:#0F1D35;outline:none;transition:border-color .15s;"
-          type="text" placeholder="Busca ticker o nombre: TSLA, Netflix, AMD…" data-ph-sm="Ticker o nombre…" data-i18n-ph="news.searchPh"
-          oninput="onWlInput(this.value)"
-          onfocus="this.style.borderColor='#04162c'" onblur="this.style.borderColor='#e8eaf0'"
-          onkeydown="if(event.key==='Enter')addWatchlistFromInput();if(event.key==='Escape')$('wlDropdown').style.display='none'">
-        <div id="wlDropdown" class="wl-dropdown" style="display:none;"></div>
-      </div>
-      <button onclick="addWatchlistFromInput()" style="background:#0F1D35;color:#fff;border:none;border-radius:12px;padding:11px 20px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;transition:background .15s;" onmouseover="this.style.background='#1a2b42'" onmouseout="this.style.background='#0F1D35'">+ Agregar</button>
+  <!-- Cabecera navy de Seguimiento (estilos en <style id="pvSeguimientoCss">): antetítulo y
+       título a la izquierda; el buscador de siempre (mismos ids y eventos) con «Agregar»
+       dentro de la pastilla, a la derecha en escritorio e iPad y debajo en el celular. -->
+  <header class="pwl-hero" id="pwlHero">
+    <div class="pwl-htxt">
+      <div class="pwl-eyebrow">Tu lista</div>
+      <h1 class="pwl-h1">Seguimiento</h1>
     </div>
-  </div>
+    <div class="pwl-search">
+      <svg class="pwl-sico" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input id="wlInput" type="text" placeholder="Busca ticker o nombre: TSLA, Netflix, AMD…" data-ph-sm="Ticker o nombre…" data-i18n-ph="news.searchPh"
+        oninput="onWlInput(this.value)"
+        onkeydown="if(event.key==='Enter')addWatchlistFromInput();if(event.key==='Escape')$('wlDropdown').style.display='none'"
+        autocomplete="off" spellcheck="false" aria-label="Buscar una empresa para agregar">
+      <div id="wlDropdown" class="wl-dropdown" style="display:none;"></div>
+      <button type="button" class="pwl-add" onclick="addWatchlistFromInput()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Agregar</span>
+      </button>
+    </div>
+  </header>
 
-  <!-- Cards grouped by sector -->
+  <!-- Tarjeta «Tus empresas» (la pinta renderWatchlist) -->
   <div id="wlCards"></div>
 
 </div>
@@ -19618,10 +19625,10 @@ function _pvTabEnter(pg){
           dist: M.wide.dist || M.dist, distHead: M.wide.distHead || M.distHead, ease: M.ease };
   }
 
-  /* Ancla navy de cada pestaña. Watchlist y Ajustes no tienen clase propia
-     para su cabecera: se cae al primer bloque que pinte (en Ajustes, dentro de
+  /* Ancla navy de cada pestaña (Seguimiento: .pwl-hero). Ajustes no tiene clase
+     propia para su cabecera: se cae al primer bloque que pinte (dentro de
      .set-wrap, que es un envoltorio y no la cabecera). */
-  var navy = pg.querySelector('.pva-hero, .sn-header, .research-search-bar, .ai-chat-header, .pvia-hero, .stitch-header-left');
+  var navy = pg.querySelector('.pva-hero, .pwl-hero, .sn-header, .research-search-bar, .ai-chat-header, .pvia-hero, .stitch-header-left');
   if (!navy) {
     var c0 = pg.firstElementChild;
     while (c0 && !_pvIsPainted(c0)) c0 = c0.nextElementSibling;
@@ -31978,150 +31985,251 @@ function _wlAvatarColor(ticker) {
   return _WL_AVATAR_PALETTE[Math.abs(idx) % _WL_AVATAR_PALETTE.length];
 }
 
-// ── Mini sparkline SVG based on day change direction ─────────────────────────
-function _wlSparkline(pct, w=80, h=36) {
-  if (pct == null) return `<svg width="${w}" height="${h}"></svg>`;
-  const pos = pct >= 0;
-  const color = pos ? '#0A7A52' : '#BA1A1A';
-  // Generate a smooth path that trends in the correct direction with natural variance
-  const seed = Math.abs(Math.round(pct * 100));
+// ── Movimiento del día: la minigráfica de cada fila ─────────────────────────────────────────
+// Serie REAL de la sesión: apiCall({action:'history', period:'1d'}), el mismo origen que la
+// vista 1D de Analizar (Alpaca y, de respaldo, Finnhub). _wlDayNorm la deja en la ÚLTIMA sesión
+// de Nueva York y en su horario regular (09:30–16:00 ET), con x = minuto de la sesión: a media
+// mañana la línea llega sólo hasta donde va el día. Caché por ticker de 5 min en memoria y en
+// localStorage ('wl_day_v1', como _chartLSset): el refresco de precios repinta con la serie
+// guardada y sólo se vuelve a pedir cuando caducó. Mientras no hay serie (cargando, fallo,
+// ticker sin barras) se pinta una línea plana neutra: nunca una curva inventada.
+const _WL_DAY_TTL   = 5 * 60 * 1000;
+const _WL_DAY_RETRY = 2 * 60 * 1000;        // tras un fallo, no se reintenta antes de esto
+const _WL_DAY_LS    = 'wl_day_v1';
+const _WL_DAY = (function(){
+  try { const o = JSON.parse(localStorage.getItem(_WL_DAY_LS) || '{}'); return (o && typeof o === 'object') ? o : {}; }
+  catch(e){ return {}; }
+})();
+const _wlDayBusy = {}, _wlDayFail = {}, _wlDayQueue = [];
+let _wlDayRunning = 0, _wlDaySaveT = null;
+
+function _wlDayNorm(raw) {
+  const ts = raw && raw.timestamps, cl = raw && raw.closes;
+  if (!Array.isArray(ts) || !Array.isArray(cl)) return null;
+  const fmt = _pvDTF('en-US', { timeZone:'America/New_York', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hourCycle:'h23' });
   const pts = [];
-  const n = 8;
-  for (let i = 0; i < n; i++) {
-    const t = i / (n - 1);
-    // Base trend + deterministic pseudo-random noise
-    const noise = Math.sin((seed + i * 3.7) * 1.3) * 0.18 + Math.cos((seed + i * 2.1) * 0.9) * 0.12;
-    const trend = pos ? t * 0.6 : (1 - t) * 0.6;
-    const y = 0.5 - trend * 0.5 + noise * 0.3;
-    pts.push([i / (n-1) * w, Math.max(3, Math.min(h-3, y * h))]);
+  for (let i = 0; i < ts.length; i++) {
+    const c = +cl[i], t = +ts[i];
+    if (!(c > 0) || !isFinite(t)) continue;
+    const p = {}; fmt.formatToParts(new Date(t * 1000)).forEach(x => { p[x.type] = x.value; });
+    pts.push({ d: p.year + '-' + p.month + '-' + p.day, m: (+p.hour % 24) * 60 + (+p.minute), c });
   }
-  // Smooth cubic bezier path
-  let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
-  for (let i = 1; i < pts.length; i++) {
-    const cp1x = (pts[i-1][0] + pts[i][0]) / 2;
-    d += ` C ${cp1x.toFixed(1)} ${pts[i-1][1].toFixed(1)}, ${cp1x.toFixed(1)} ${pts[i][1].toFixed(1)}, ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
+  if (pts.length < 2) return null;
+  const day = pts[pts.length - 1].d;
+  let s = pts.filter(p => p.d === day);
+  const reg = s.filter(p => p.m >= 570 && p.m <= 960);
+  const byTime = reg.length >= 2;
+  if (byTime) s = reg;
+  if (s.length < 2) return null;
+  return {
+    day,
+    x: s.map((p, i) => +(byTime ? (p.m - 570) / 390 : i / (s.length - 1)).toFixed(4)),
+    c: s.map(p => Math.round(p.c * 10000) / 10000)
+  };
+}
+// La serie guardada vale si es de la sesión que toca dibujar (la de hoy si ya abrió; si no,
+// la última real): así nunca se pinta el viernes junto al % del lunes.
+function _wlDayUsable(e) {
+  if (!e || !Array.isArray(e.c) || e.c.length < 2 || !Array.isArray(e.x) || e.x.length !== e.c.length) return false;
+  try { return e.day === PORTIV_CHART.sessionDay(); }
+  catch(err){ return (Date.now() - (e.ts || 0)) < 6 * 60 * 60 * 1000; }
+}
+function _wlDaySave() {
+  if (_wlDaySaveT) return;
+  _wlDaySaveT = setTimeout(() => {
+    _wlDaySaveT = null;
+    Object.keys(_WL_DAY).forEach(t => { if (!WATCHLIST_TICKERS.includes(t)) delete _WL_DAY[t]; });
+    try { localStorage.setItem(_WL_DAY_LS, JSON.stringify(_WL_DAY)); } catch(e){ /* cuota — ignora */ }
+  }, 300);
+}
+function _wlDayEnsure(tickers) {
+  const now = Date.now();
+  (tickers || []).forEach(t => {
+    if (_wlDayBusy[t]) return;
+    const e = _WL_DAY[t];
+    if (e && (now - (e.ts || 0)) < _WL_DAY_TTL) return;
+    if (_wlDayFail[t] && now - _wlDayFail[t] < _WL_DAY_RETRY) return;
+    _wlDayBusy[t] = true;
+    _wlDayQueue.push(t);
+  });
+  _wlDayPump();
+}
+function _wlDayPump() {
+  while (_wlDayRunning < 3 && _wlDayQueue.length) {
+    const t = _wlDayQueue.shift();
+    _wlDayRunning++;
+    Promise.resolve()
+      .then(() => apiCall({ action:'history', ticker:t, period:'1d' }, 8000))
+      .then(raw => {
+        const n = _wlDayNorm(raw);
+        if (!n) throw new Error('sin barras de 1 día');
+        _WL_DAY[t] = Object.assign({ ts: Date.now() }, n);
+        delete _wlDayFail[t];
+        _wlDaySave();
+      })
+      .catch(() => { _wlDayFail[t] = Date.now(); })
+      .finally(() => { delete _wlDayBusy[t]; _wlDayRunning--; _wlDayPaint(t); _wlDayPump(); });
   }
-  return `<svg class="wl2-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" fill="none">
-    <path d="${d}" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
+}
+// Repinta SÓLO la minigráfica de ese ticker (sin rehacer la tabla).
+function _wlDayPaint(t) {
+  const box = $('wlCards'); if (!box) return;
+  box.querySelectorAll('.pwl-row').forEach(r => {
+    if (r.getAttribute('data-wl-t') !== t) return;
+    const c = r.querySelector('.pwl-sc'); if (c) c.innerHTML = _wlSparkline(t, _wlQuote(t));
+  });
 }
 
+// Precio, % del día y cierre anterior de una fila. Fuente única: la cotización viva del cache
+// compartido (watchlist o pantalla de la acción) manda; si aún no la hubo, el cache persistido.
+// El cierre anterior viene de la cotización (regularMarketPreviousClose) y sólo vale si cuadra
+// con el % que se muestra (si no, es de otra sesión).
+function _wlQuote(t) {
+  const cache = WATCHLIST_CACHE[t] || {};
+  const cq = (typeof _quoteCacheGet === 'function') ? _quoteCacheGet(t) : null;
+  const price = cq ? cq.price : cache.price;
+  const pct = cq ? cq.pct : cache.dayChgPct;
+  const okPx = typeof price === 'number' && isFinite(price) && price > 0;
+  const okPct = typeof pct === 'number' && isFinite(pct);
+  let pc = +cache.prevClose || 0;
+  if (!(pc > 0 && okPx && okPct && Math.abs((price / pc - 1) * 100 - pct) < 0.25)) pc = 0;
+  return { price: okPx ? price : null, pct: okPct ? pct : null, pc };
+}
+
+// ── Minigráfica del día (SVG). Verde o roja según el cambio del día; la punteada tenue es el
+//    cierre anterior (entra en la escala, así la línea queda por encima o por debajo de él). ──
+function _wlSparkline(t, q) {
+  const e = _WL_DAY[t];
+  if (!_wlDayUsable(e)) {
+    return `<span class="pwl-spk pwl-flat" data-st="${_wlDayBusy[t] ? 'wait' : 'na'}" aria-hidden="true">`
+      + `<svg viewBox="0 0 100 32" preserveAspectRatio="none" focusable="false"><line x1="0" y1="16" x2="100" y2="16" vector-effect="non-scaling-stroke"/></svg></span>`;
+  }
+  const pct = q ? q.pct : null, pc = q ? q.pc : 0;
+  const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : 'fl';
+  let lo = Math.min.apply(null, e.c), hi = Math.max.apply(null, e.c);
+  if (pc > 0) { lo = Math.min(lo, pc); hi = Math.max(hi, pc); }
+  const Y = v => (hi > lo) ? 3 + (hi - v) / (hi - lo) * 26 : 16;
+  const X = x => 1 + Math.max(0, Math.min(1, x)) * 96;
+  let d = '';
+  for (let i = 0; i < e.c.length; i++) d += (i ? 'L' : 'M') + X(e.x[i]).toFixed(2) + ' ' + Y(e.c[i]).toFixed(2);
+  const yb = pc > 0 ? Y(pc).toFixed(2) : null;
+  const lx = X(e.x[e.x.length - 1]), ly = Y(e.c[e.c.length - 1]);
+  return `<span class="pwl-spk ${cls}" data-st="ok" aria-hidden="true">`
+    + `<svg viewBox="0 0 100 32" preserveAspectRatio="none" focusable="false">`
+    + (yb !== null ? `<line class="pwl-pcl" x1="0" y1="${yb}" x2="100" y2="${yb}" vector-effect="non-scaling-stroke"/>` : '')
+    + `<path d="${d}" vector-effect="non-scaling-stroke"/></svg>`
+    + `<i style="left:${lx.toFixed(2)}%;top:${(ly / 32 * 100).toFixed(2)}%"></i></span>`;
+}
+
+// ── Rango de 52 semanas: sale de WATCHLIST_CACHE[t].info (se guarda al agregar). Se renueva
+//    como mucho una vez al día por ticker, de uno en uno y fuera del refresco de precios. ──
+const _WL_INFO_TTL = 24 * 60 * 60 * 1000;
+const _wlInfoTried = {};
+let _wlInfoBusy = false, _wlInfoSaveT = null;
+function _wlInfoEnsure() {
+  if (_wlInfoBusy) return;
+  const now = Date.now();
+  const t = WATCHLIST_TICKERS.find(x => {
+    if (_wlInfoTried[x] && now - _wlInfoTried[x] < 30 * 60 * 1000) return false;   // ya se intentó hace poco
+    const c = WATCHLIST_CACHE[x];
+    return !(c && c.info && (now - (c.cachedAt || 0)) < _WL_INFO_TTL);
+  });
+  if (!t) return;
+  _wlInfoBusy = true;
+  _wlInfoTried[t] = now;
+  Promise.resolve()
+    .then(() => apiCall({ action:'info', ticker:t }, 14000))
+    .then(data => {
+      if (!data || !(data.regularMarketPrice > 0) || !WATCHLIST_TICKERS.includes(t)) return;
+      const c = WATCHLIST_CACHE[t] || (WATCHLIST_CACHE[t] = {});
+      c.info = data; c.cachedAt = Date.now();
+      if (!(c.price > 0)) { c.price = data.regularMarketPrice; c.dayChgPct = data.regularMarketChangePercent; }
+      if (!_wlInfoSaveT) _wlInfoSaveT = setTimeout(() => { _wlInfoSaveT = null; _wlSave(); }, 1500);
+      if ($('tab-watchlist')?.classList.contains('visible')) renderWatchlist();
+    })
+    .catch(() => {})
+    .finally(() => { _wlInfoBusy = false; setTimeout(_wlInfoEnsure, 400); });
+}
+
+function _wlUsd(v) { return '$' + (+v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function _wlPctTxt(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2) + '%'; }
+function _wlRange(info, price) {
+  const lo = +(info && info.fiftyTwoWeekLow), hi = +(info && info.fiftyTwoWeekHigh);
+  if (!(lo > 0 && hi > lo)) {
+    return '<span class="pwl-rng pwl-rng-na"><span class="pwl-trk"></span><span class="pwl-rl"><span>—</span><span>—</span></span></span>';
+  }
+  const knob = price > 0 ? `<i style="left:${Math.max(0, Math.min(100, (price - lo) / (hi - lo) * 100)).toFixed(1)}%"></i>` : '';
+  return `<span class="pwl-rng" title="Mínimo y máximo de las últimas 52 semanas"><span class="pwl-trk">${knob}</span>`
+    + `<span class="pwl-rl"><span>${_wlUsd(lo)}</span><span>${_wlUsd(hi)}</span></span></span>`;
+}
+const _WL_X_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+
 function renderWatchlist() {
-  // ── Empty state ──────────────────────────────────────────────────────────────
+  const box = $('wlCards');
+  if (!box) return;
+  // ── Lista vacía: la tarjeta explica qué hacer y lleva al buscador de la cabecera ──
   if (!WATCHLIST_TICKERS.length) {
-    const mktOpen = isMarketOpen();
-    $('wlCards').innerHTML = `
-      <div class="wl2-empty">
-        <div class="wl2-empty-icon">
-          <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#b0b8c9" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/>
-            <path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>
-          </svg>
+    box.innerHTML = `
+      <section class="pwl-card pwl-empty" id="pwlCard">
+        <div class="pwl-body">
+          <span class="pwl-ei" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <h2 class="pwl-et">Tu lista está vacía</h2>
+          <p class="pwl-ed">Busca una empresa por su ticker o su nombre y toca <b>Agregar</b>. Aquí verás su precio, cómo se mueve en el día y dónde está dentro de su rango de 52 semanas.</p>
+          <button type="button" class="pwl-ebtn" onclick="var i=document.getElementById('wlInput');if(i){i.focus();try{i.scrollIntoView({block:'center'});}catch(e){}}">Buscar una empresa</button>
         </div>
-        <div class="wl2-empty-title">Tu watchlist está vacía</div>
-        <div class="wl2-empty-desc">Busca un ticker arriba y toca <strong style="color:#0A7A52">+ Agregar</strong>. Se guardan automáticamente y muestran el rating Fit de tu perfil.</div>
-        <div class="wl2-feature-cards">
-          <div class="wl2-feat">
-            <div class="wl2-feat-ico">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0A7A52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-            </div>
-            <div class="wl2-feat-title">Tendencias</div>
-            <div class="wl2-feat-desc">Visualiza el sentimiento del mercado en tiempo real para las acciones más populares.</div>
-          </div>
-          <div class="wl2-feat">
-            <div class="wl2-feat-ico">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0A7A52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l1.09 3.26L16.18 6 13.5 8.14l.91 3.36L12 9.77l-2.41 1.73.91-3.36L7.82 6l3.09-.74L12 2z"/><path d="M5 12H2M22 12h-3M12 5V2M12 22v-3"/></svg>
-            </div>
-            <div class="wl2-feat-title">Rating Fit</div>
-            <div class="wl2-feat-desc">Nuestro algoritmo analiza si la acción se alinea con tus objetivos de riesgo.</div>
-          </div>
-          <div class="wl2-feat">
-            <div class="wl2-feat-ico">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#0A7A52" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-            </div>
-            <div class="wl2-feat-title">Alertas Rápidas</div>
-            <div class="wl2-feat-desc">Recibe notificaciones instantáneas sobre cambios de precio o volumen.</div>
-          </div>
-        </div>
-        <div class="wl2-footer">
-          <div class="wl2-footer-left">
-            Market Data: Delayed by 15min
-            <div class="wl2-footer-dot" style="background:${mktOpen?'#0A7A52':'#9aa6b8'}"></div>
-            <span class="wl2-footer-market" style="color:${mktOpen?'#0A7A52':'#9aa6b8'}">${mktOpen?'NYSE/NASDAQ Open':'Market Closed'}</span>
-          </div>
-          <div class="wl2-footer-right">
-            <a class="wl2-footer-link" href="https://portivapp.com/privacidad.html" onclick="return _pvOpenExternal('privacidad.html')" target="_blank" rel="noopener">Privacidad</a>
-            <a class="wl2-footer-link" href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
-          </div>
-        </div>
-      </div>`;
+      </section>`;
     return;
   }
 
-  // ── Group by sector ──────────────────────────────────────────────────────────
+  _wlDayEnsure(WATCHLIST_TICKERS);     // series del día que falten o hayan caducado (5 min)
+  _wlInfoEnsure();                     // info (rango de 52 semanas) de más de un día
+
+  // ── Agrupado por sector ──
   const groups = {};
   WATCHLIST_TICKERS.forEach(t => {
-    const cache = WATCHLIST_CACHE[t] || {};
-    const {group} = wlNiche(t, cache.info);
-    if (!groups[group]) groups[group] = [];
-    groups[group].push(t);
+    const { group } = wlNiche(t, (WATCHLIST_CACHE[t] || {}).info);
+    (groups[group] = groups[group] || []).push(t);
   });
+  const order = WL_GROUP_ORDER.filter(g => groups[g]);
+  const held = new Set(((typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS : [])
+    .map(h => String((h && h.ticker) || '').toUpperCase().replace('.', '-')));
+  const n = WATCHLIST_TICKERS.length, m = order.length;
+  const open = (typeof isMarketOpen === 'function') && isMarketOpen();
+  const cnt = k => k + (k === 1 ? ' empresa' : ' empresas');
 
-  let html = '';
-
-  WL_GROUP_ORDER.forEach(group => {
-    if (!groups[group]) return;
-    const tickers = groups[group];
-    const count = tickers.length;
-    const label = group.toUpperCase();
-
-    html += `<div>
-      <div class="wl2-sector">
-        <span class="wl2-sector-name">${label}</span>
-        <div class="wl2-sector-line"></div>
-        <span class="wl2-sector-count">${count} ${count === 1 ? 'company' : 'companies'}</span>
-      </div>`;
-
-    tickers.forEach(t => {
-      const cache = WATCHLIST_CACHE[t] || {};
-      const info  = cache.info || {};
-      // Fuente ÚNICA: si hay cotización viva en el cache compartido (la escribió el refresco del
-      // watchlist O la pantalla de la acción), esa MANDA → la card y el detalle muestran EL MISMO
-      // precio y % del día. Si aún no hubo fetch esta sesión, cae al cache persistido.
-      const _cq   = (typeof _quoteCacheGet === 'function') ? _quoteCacheGet(t) : null;
-      const price = _cq ? _cq.price : cache.price;
-      const pct   = _cq ? _cq.pct   : cache.dayChgPct;
-      const name  = info.longName || info.shortName
-        || (STOCK_DB.find(s => s[0] === t)?.[1]) || t;
-      const av = _wlAvatarColor(t);
-      const posNeg = pct == null ? '' : pct >= 0 ? 'pos' : 'neg';
-      const priceStr = price != null ? `$${price.toFixed(2)}` : '—';
-      const pctStr   = pct  != null ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%` : '—';
-      const sparkSvg = _wlSparkline(pct);
-
-      html += `<div class="wl2-row ${posNeg}" onclick="quickSearch('${t}')">
-        <div class="wl2-avatar" style="background:${av.bg};color:${av.fg}">${t.charAt(0)}</div>
-        <div class="wl2-name-block">
-          <div class="wl2-ticker">${t}</div>
-          <div class="wl2-company">${pvEsc(name)}</div>
-        </div>
-        <div class="wl2-stat">
-          <span class="wl2-stat-label">Precio</span>
-          <span class="wl2-stat-val">${priceStr}</span>
-        </div>
-        <div class="wl2-stat">
-          <span class="wl2-stat-label">Cambio del Día</span>
-          <span class="wl2-stat-val ${posNeg}">${pctStr}</span>
-        </div>
-        ${sparkSvg}
-        <button class="wl2-remove" onclick="event.stopPropagation();removeFromWatchlist('${t}')" title="Quitar">×</button>
-      </div>`;
+  let rows = '';
+  order.forEach(group => {
+    rows += `<div class="pwl-grp"><b>${pvEsc(group)}</b><i></i><small>${cnt(groups[group].length)}</small></div>`;
+    groups[group].forEach(t => {
+      const tk   = String(t).replace(/[^A-Za-z0-9.\-]/g, '');
+      const info = (WATCHLIST_CACHE[t] || {}).info || {};
+      const q    = _wlQuote(t);
+      const name = info.longName || info.shortName || (STOCK_DB.find(s => s[0] === t)?.[1]) || t;
+      const cls  = q.pct == null ? 'fl' : q.pct > 0 ? 'up' : q.pct < 0 ? 'dn' : 'fl';
+      const own  = held.has(t) ? '<em class="pwl-own">En tu portafolio</em>' : '';
+      rows += `<div class="pwl-tr pwl-row" data-wl-t="${tk}" tabindex="0" onclick="quickSearch('${tk}')" onkeydown="if(event.target===this&&(event.key==='Enter'||event.key===' ')){event.preventDefault();quickSearch('${tk}')}">`
+        + `<span class="pwl-co"><span class="pwl-av" aria-hidden="true">${pvEsc(tk.charAt(0))}</span>`
+        +   `<span class="pwl-nm"><b><span class="pwl-tk">${pvEsc(tk)}</span>${own}</b><small>${pvEsc(name)}</small></span></span>`
+        + `<span class="pwl-pr"><b class="pwl-px">${q.price != null ? _wlUsd(q.price) : '—'}</b>`
+        +   `<span class="pwl-cc"><span class="pwl-chg ${cls}">${q.pct != null ? _wlPctTxt(q.pct) : '—'}</span></span></span>`
+        + `<span class="pwl-sc">${_wlSparkline(t, q)}</span>`
+        + `<span class="pwl-rc">${_wlRange(info, q.price)}</span>`
+        + `<button type="button" class="pwl-rm" onclick="event.stopPropagation();removeFromWatchlist('${tk}')" title="Quitar de la lista" aria-label="Quitar ${pvEsc(tk)} de la lista">${_WL_X_SVG}</button>`
+        + `</div>`;
     });
-
-    html += `</div>`;
   });
 
-  $('wlCards').innerHTML = html;
+  box.innerHTML = `
+    <section class="pwl-card" id="pwlCard">
+      <div class="pwl-thd">
+        <div class="pwl-tt"><span class="pwl-eb">${cnt(n)} · ${m} ${m === 1 ? 'sector' : 'sectores'}</span><h2 class="pwl-h2">Tus empresas</h2></div>
+        <span class="pwl-live${open ? ' on' : ''}"><i></i><span class="pwl-ll">${open ? 'Precios en vivo' : 'Mercado cerrado'}</span><span class="pwl-ls">${open ? 'En vivo' : 'Cerrado'}</span></span>
+      </div>
+      <div class="pwl-body">
+        <div class="pwl-tr pwl-th" aria-hidden="true"><span class="pwl-h-co">Empresa</span><span class="pwl-h-px">Precio</span><span class="pwl-h-cc">Cambio de hoy</span><span class="pwl-h-pr">Precio · hoy</span><span class="pwl-h-sc">Movimiento del día</span><span class="pwl-h-rc">Rango de 52 semanas</span><span class="pwl-h-rm"></span></div>
+        ${rows}
+      </div>
+    </section>`;
 }
 
 // ── Add / Remove ───────────────────────────────────────────────────────────
@@ -32142,6 +32250,7 @@ async function addToWatchlist(ticker) {
   // Agregado OPTIMISTA + validación contra la API. Si el ticker no existe
   // (apiCall lanza cuando no hay cotización), se revierte: nunca queda basura.
   WATCHLIST_TICKERS.push(ticker);
+  _wlInfoTried[ticker] = Date.now();   // la info la pide el alta: el refresco diario del rango de 52 s no la repite
   _wlSave();
   renderWatchlist();
   showToast(`${ticker} — verificando…`);
@@ -32192,6 +32301,7 @@ async function refreshWatchlistPrices() {
       if (!WATCHLIST_CACHE[q.symbol]) WATCHLIST_CACHE[q.symbol] = {};
       if (q.regularMarketPrice)       WATCHLIST_CACHE[q.symbol].price      = q.regularMarketPrice;
       if (q.regularMarketChangePercent != null) WATCHLIST_CACHE[q.symbol].dayChgPct = q.regularMarketChangePercent;
+      if (q.regularMarketPreviousClose > 0)       WATCHLIST_CACHE[q.symbol].prevClose = q.regularMarketPreviousClose;
     });
     _wlSave();
     if ($('tab-watchlist')?.classList.contains('visible')) renderWatchlist();
@@ -38562,6 +38672,7 @@ if (document.readyState === 'loading') {
       localStorage.setItem('wl_seed_ufo', '1'); // no re-sembrar UFO sobre la lista restaurada
       if (typeof WATCHLIST_TICKERS !== 'undefined') { WATCHLIST_TICKERS.length = 0; tickers.forEach(function(t){ WATCHLIST_TICKERS.push(t); }); }
       if (typeof WATCHLIST_CACHE   !== 'undefined') { for (var k in WATCHLIST_CACHE) delete WATCHLIST_CACHE[k]; Object.keys(cache).forEach(function(k){ WATCHLIST_CACHE[k] = cache[k]; }); }
+      if (typeof _wlDaySave === 'function') _wlDaySave();   // poda las series de tickers que no están en esta lista
       if (typeof renderWatchlist === 'function') renderWatchlist();
     } catch(e){}
   }
@@ -38569,6 +38680,8 @@ if (document.readyState === 'loading') {
     try {
       localStorage.removeItem('wl_tickers');
       localStorage.removeItem('wl_cache');
+      localStorage.removeItem('wl_day_v1');
+      if (typeof _WL_DAY !== 'undefined') { for (var k2 in _WL_DAY) delete _WL_DAY[k2]; }
       localStorage.setItem('wl_seed_ufo', '1'); // evita que se auto-agregue UFO en cuentas no propietarias
       if (typeof WATCHLIST_TICKERS !== 'undefined') WATCHLIST_TICKERS.length = 0;
       if (typeof WATCHLIST_CACHE   !== 'undefined') { for (var k in WATCHLIST_CACHE) delete WATCHLIST_CACHE[k]; }
@@ -50012,6 +50125,20 @@ html body:not(.dark-theme) #posNewsCard .pnx-items > .sn-card { border: 1px soli
   html body #posNewsCard .pnx-items::-webkit-scrollbar { display: none; }
   html body #posNewsCard .pnx-items > .sn-card { scroll-snap-align: start; }
 }
+/* ── Tarjetas de la posición más pequeñas (pedido de Rafael, 30-sep) ──
+   Hasta tres columnas (la mínima es el mayor entre 190 px y algo más de un cuarto del ancho,
+   así que nunca salen cuatro) y todo más compacto: relleno, hora, medio, titular (4 líneas como
+   mucho) y sentimiento. Dos ids para ganar a las capas de escritorio con !important. */
+html body #tab-noticias #posNewsCard .pnx-items { grid-template-columns: repeat(auto-fill, minmax(max(190px, (100% - 24px) / 4 + 1px), 1fr)); gap: 12px; }
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card { padding: 15px 16px 14px !important; border-radius: 20px !important; gap: 8px !important; min-height: 0 !important; }
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card .sn-card-time { font-size: 11.5px !important; }
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card .sn-card-source-name { font-size: 12.5px !important; }
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card .sn-card-source-dot { width: 18px !important; height: 18px !important; font-size: 9.5px !important; }
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card .sn-card-headline { font-size: 14.5px !important; line-height: 1.38 !important; display: -webkit-box !important; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card .sn-card-sentiment { font-size: 10.5px !important; padding: 4px 9px !important; }
+@media (max-width: 700px) {
+  html body #tab-noticias #posNewsCard .pnx-items, html.pv-ipad body #tab-noticias #posNewsCard .pnx-items { grid-template-columns: none; grid-auto-columns: 70%; }
+}
 </style>
 <style id="pvAnalisisCss">
 /* ═══ ANÁLISIS — rediseño aprobado de la pestaña (analisis.png) ═══════════════════════════
@@ -52434,6 +52561,370 @@ html body.dark-theme #tab-aianalyst #aiChatLockWrap .pvia-sp i { outline: 1px so
 /* ═══ Movimiento reducido: los puntos quietos ═══ */
 @media (prefers-reduced-motion: reduce) {
   html body #tab-aianalyst #aiChatLockWrap .pvia-typing i { animation: none; }
+}
+</style>
+<style id="pvSeguimientoCss">
+/* ═══ SEGUIMIENTO — rediseño aprobado de la pestaña (seguimiento.py) ═════════════════════════
+   Cabecera navy compacta con curva —antetítulo «Tu lista», título y el buscador de siempre con
+   «Agregar» dentro de la pastilla— y la tarjeta «Tus empresas»: tabla agrupada por sector con
+   precio, cambio de hoy, el movimiento del día (serie intradía real) y el rango de 52 semanas.
+   Marcado: #pwlHero (en #tab-watchlist) y renderWatchlist(), que pinta #pwlCard en #wlCards.
+   Todas las clases son nuevas (pwl-*); las viejas (.wl2-*, #tab-watchlist > div:first-child)
+   siguen en su sitio y ya no casan con nada.
+   Cada regla cuelga de dos ids (#tab-watchlist + #pwlHero / #wlCards, con «html body»): gana por
+   especificidad a las capas anteriores de la pestaña —bloque pvd/v8 de escritorio, html.pv-ipad,
+   @media ≤700, tallas de fuente de html:root:not(.pv-ipad) y body.dark-theme— sin tocarlas; donde
+   esas capas usan !important (el campo #wlInput, el padding de la pestaña) se responde igual.
+   Sin sombras, sin desenfoques, sin degradados y sin animaciones de aparición: sólo
+   transiciones de hover (.22s).
+   Tramos: escritorio (web y Mac ≥1100) · tablet (iPad, y web de 701–1099) · celular (≤700).
+   Orden: tokens → cabecera → tarjeta (escritorio) → tablet → celular → oscuro → movimiento
+   reducido. */
+
+/* ── Tokens (claro). --pwl-pg-*: texto que va directo sobre el fondo de la página ── */
+html body #tab-watchlist {
+  --pwl-hero:var(--pvr-navy-bar,#0b1c30); --pwl-hero-eb:rgba(255,255,255,.55);   /* el navy de la barra superior: sin costura con ella */
+  --pwl-bg:#eef1f8; --pwl-card:#fff; --pwl-line:#e2e7f0; --pwl-line-hi:#cfd7e3; --pwl-wash:#f4f6fa;
+  --pwl-ink:#0b1c30; --pwl-slate:#33475f; --pwl-muted:#7a879b; --pwl-flat:#cfd7e3; --pwl-pcl:#7a879b;
+  --pwl-pg-ink:#0b1c30; --pwl-pg-muted:#7a879b;
+  --pwl-green:#0f8a5f; --pwl-green-bg:#dcf6e9; --pwl-red:#c62828; --pwl-red-bg:#ffe3df;
+  --pwl-pill:#fff; --pwl-pill-ink:#0b1c30; --pwl-pill-ph:#7a879b; --pwl-pill-line:transparent;
+  --pwl-btn:#0b1c30; --pwl-btn-hi:#1b3553; --pwl-btn-ink:#fff;
+  --pwl-knob:#0b1c30; --pwl-knob-ring:#fff; --pwl-drop:#fff;
+  --pwl-r:30px; --pwl-r-hero:40px;
+  --pwl-ease:cubic-bezier(.22,1,.36,1);
+}
+/* La cabecera arranca pegada a la barra superior en todos los equipos (el :not(#…) sube la
+   especificidad a dos ids para ganar a los padding-top !important de otras capas). */
+html body #tab-watchlist:not(#pwl-x) { padding-top:0 !important; }
+
+/* ═══ CABECERA NAVY ═══════════════════════════════════════════════════════════════════════ */
+/* A sangre: de borde a borde de la ventana; el padding lateral calc(50vw - 50%) devuelve el
+   contenido a la columna de la pestaña, sea cual sea su margen en cada equipo. */
+html body #tab-watchlist #pwlHero {
+  display:flex; flex-direction:row; align-items:center; justify-content:space-between; gap:32px;
+  box-sizing:border-box; position:relative; z-index:3;   /* el desplegable del buscador pasa por encima de la tarjeta */
+  margin:0 calc(50% - 50vw); padding:20px calc(50vw - 50%) 30px;
+  background:var(--pwl-hero); color:#fff; border-radius:0 0 var(--pwl-r-hero) var(--pwl-r-hero);
+  font-family:var(--font); -webkit-font-smoothing:antialiased;
+}
+html body #tab-watchlist #pwlHero .pwl-htxt { min-width:0; flex:0 0 auto; }
+html body #tab-watchlist #pwlHero .pwl-eyebrow { font-size:13.5px; font-weight:700; line-height:1.3; color:var(--pwl-hero-eb); margin:0 0 4px; }
+html body #tab-watchlist #pwlHero .pwl-h1 { font-family:inherit; font-size:32px; font-weight:800; letter-spacing:-.03em; line-height:1.1; color:#fff; margin:0; padding:0; text-transform:none; }
+
+/* Buscador: la pastilla blanca lleva dentro el botón «Agregar». */
+html body #tab-watchlist #pwlHero .pwl-search {
+  display:flex; align-items:center; gap:12px; flex:0 1 560px; min-width:0;
+  position:relative; box-sizing:border-box; height:52px; margin:0; padding:0 6px 0 20px;
+  background:var(--pwl-pill); border:1px solid var(--pwl-pill-line); border-radius:999px; box-shadow:none;
+}
+html body #tab-watchlist #pwlHero .pwl-search:focus-within { outline:2px solid rgba(255,255,255,.5); outline-offset:3px; }
+html body #tab-watchlist #pwlHero .pwl-sico { flex:0 0 auto; display:block; color:var(--pwl-pill-ink); }
+html body #tab-watchlist #pwlHero #wlInput {
+  flex:1 1 auto; min-width:0; width:auto !important; height:100% !important; margin:0 !important; padding:0 !important;
+  background:transparent !important; border:0 !important; border-radius:0 !important; box-shadow:none !important; outline:none !important;
+  font-family:var(--font) !important; font-size:15px !important; font-weight:600 !important; line-height:1.2 !important; letter-spacing:0 !important;
+  color:var(--pwl-pill-ink) !important; text-overflow:ellipsis; -webkit-appearance:none; appearance:none;
+}
+html body #tab-watchlist #pwlHero #wlInput::placeholder { color:var(--pwl-pill-ph) !important; opacity:1; }
+html body #tab-watchlist #pwlHero .pwl-add {
+  -webkit-appearance:none; appearance:none; flex:0 0 auto; display:inline-flex; align-items:center; gap:6px;
+  height:40px; margin:0; padding:0 18px 0 14px; box-sizing:border-box;
+  background:var(--pwl-btn); color:var(--pwl-btn-ink); border:0; border-radius:999px; box-shadow:none;
+  font-family:var(--font); font-size:14.5px; font-weight:800; line-height:1; letter-spacing:0; white-space:nowrap; cursor:pointer;
+  transition:background-color .22s var(--pwl-ease);
+}
+html body #tab-watchlist #pwlHero .pwl-add svg { display:block; flex:none; }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-watchlist #pwlHero .pwl-add:hover { background:var(--pwl-btn-hi); }
+}
+/* Sugerencias: bajo la pastilla, con su ancho completo. */
+html body #tab-watchlist #pwlHero #wlDropdown {
+  position:absolute; top:calc(100% + 10px); left:0; right:0; width:auto; z-index:320; overflow:hidden;
+  background:var(--pwl-drop); border:1px solid var(--pwl-line); border-radius:20px; box-shadow:none !important;
+  padding:6px 0; color:var(--pwl-ink);
+}
+html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest { gap:10px; padding:11px 18px; transition:background-color .22s var(--pwl-ease); }
+html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest:hover { background:var(--pwl-wash); }
+html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest > span:first-child { font-size:14px !important; font-weight:800 !important; color:var(--pwl-ink) !important; }
+html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest > span:nth-child(2) { font-size:13px !important; font-weight:600; color:var(--pwl-muted) !important; }
+html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest > span:nth-child(3) { font-size:11px !important; font-weight:700; color:var(--pwl-slate) !important; background:var(--pwl-bg) !important; border-radius:999px !important; padding:2px 8px !important; }
+
+/* ═══ TARJETA «TUS EMPRESAS» — ESCRITORIO (base) ═════════════════════════════════════════ */
+html body #tab-watchlist #wlCards { display:block; gap:0; margin:36px 0 0; font-family:var(--font); color:var(--pwl-ink); -webkit-font-smoothing:antialiased; }
+html body #tab-watchlist #wlCards *, html body #tab-watchlist #pwlHero * { font-family:inherit; }
+html body #tab-watchlist #wlCards i, html body #tab-watchlist #wlCards em { font-style:normal; }
+html body #tab-watchlist #wlCards .pwl-card {
+  box-sizing:border-box; background:var(--pwl-card); border:1px solid var(--pwl-line); border-radius:var(--pwl-r);
+  padding:28px 28px 14px; color:var(--pwl-ink); box-shadow:none;
+}
+html body #tab-watchlist #wlCards .pwl-thd { display:flex; align-items:flex-end; justify-content:space-between; gap:16px; padding:0 14px 20px; }
+html body #tab-watchlist #wlCards .pwl-tt { min-width:0; }
+html body #tab-watchlist #wlCards .pwl-eb { display:block; font-size:13.5px; font-weight:700; line-height:1.3; color:var(--pwl-muted); margin:0 0 4px; }
+html body #tab-watchlist #wlCards .pwl-h2 { font-size:24px; font-weight:800; letter-spacing:-.02em; line-height:1.36; color:var(--pwl-ink); margin:0; padding:0; text-transform:none; }
+html body #tab-watchlist #wlCards .pwl-live { flex-shrink:0; display:inline-flex; align-items:center; gap:8px; font-size:14px; font-weight:700; line-height:1.36; color:var(--pwl-muted); white-space:nowrap; }
+html body #tab-watchlist #wlCards .pwl-live i { width:8px; height:8px; border-radius:50%; background:var(--pwl-muted); opacity:.6; }
+html body #tab-watchlist #wlCards .pwl-live.on i { background:var(--pwl-green); opacity:1; }
+html body #tab-watchlist #wlCards .pwl-ls { display:none; }
+
+/* Columnas: Empresa · Precio · Cambio de hoy · Movimiento del día · Rango de 52 semanas · × */
+html body #tab-watchlist #wlCards .pwl-tr {
+  display:grid; grid-template-columns:minmax(0,1.35fr) 130px 130px minmax(0,1fr) minmax(0,1.15fr) 36px;
+  column-gap:32px; align-items:center;
+}
+html body #tab-watchlist #wlCards .pwl-th { font-size:13px; font-weight:700; line-height:1.4; color:var(--pwl-muted); padding:0 14px 13px; border-bottom:1px solid var(--pwl-line); }
+html body #tab-watchlist #wlCards .pwl-th span { min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+html body #tab-watchlist #wlCards .pwl-th .pwl-h-pr { display:none; }
+html body #tab-watchlist #wlCards .pwl-pr { display:contents; }
+html body #tab-watchlist #wlCards .pwl-grp { display:flex; align-items:center; gap:12px; padding:20px 14px 8px; }
+html body #tab-watchlist #wlCards .pwl-grp b { font-size:14.5px; font-weight:800; line-height:1.3; color:var(--pwl-ink); white-space:nowrap; }
+html body #tab-watchlist #wlCards .pwl-grp i { flex:1; height:1px; background:var(--pwl-line); }
+html body #tab-watchlist #wlCards .pwl-grp small { font-size:13px; font-weight:700; line-height:1.3; color:var(--pwl-muted); white-space:nowrap; }
+html body #tab-watchlist #wlCards .pwl-row {
+  padding:14px; border-radius:20px; background:transparent; cursor:pointer; outline:none;
+  transition:background-color .22s var(--pwl-ease);
+}
+html body #tab-watchlist #wlCards .pwl-row:focus-visible { box-shadow:none; outline:2px solid var(--pwl-ink); outline-offset:-2px; }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-watchlist #wlCards .pwl-row:hover { background:var(--pwl-wash); }
+}
+html body #tab-watchlist #wlCards .pwl-row:active { background:var(--pwl-wash); }
+html body #tab-watchlist #wlCards .pwl-co { display:flex; align-items:center; gap:14px; min-width:0; }
+html body #tab-watchlist #wlCards .pwl-av { flex-shrink:0; display:grid; place-items:center; width:46px; height:46px; border-radius:15px; background:var(--pwl-bg); color:var(--pwl-ink); font-size:18px; font-weight:800; line-height:1; }
+html body #tab-watchlist #wlCards .pwl-nm { min-width:0; }
+html body #tab-watchlist #wlCards .pwl-nm b { display:flex; align-items:center; gap:8px; min-width:0; font-size:16.5px; font-weight:800; letter-spacing:-.01em; line-height:1.36; color:var(--pwl-ink); }
+html body #tab-watchlist #wlCards .pwl-nm small { display:block; font-size:13.5px; font-weight:600; line-height:1.35; color:var(--pwl-muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+html body #tab-watchlist #wlCards .pwl-own { flex-shrink:0; font-size:11.5px; font-weight:800; line-height:1.3; letter-spacing:0; color:var(--pwl-green); background:var(--pwl-green-bg); border-radius:999px; padding:3px 9px; white-space:nowrap; }
+html body #tab-watchlist #wlCards .pwl-px { font-size:17px; font-weight:800; letter-spacing:-.01em; line-height:1.36; color:var(--pwl-ink); font-variant-numeric:tabular-nums; white-space:nowrap; }
+html body #tab-watchlist #wlCards .pwl-cc { display:block; line-height:0; }
+html body #tab-watchlist #wlCards .pwl-chg { display:inline-flex; font-size:13px; font-weight:800; line-height:1.36; padding:4px 10px; border-radius:999px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+html body #tab-watchlist #wlCards .pwl-chg.up { color:var(--pwl-green); background:var(--pwl-green-bg); }
+html body #tab-watchlist #wlCards .pwl-chg.dn { color:var(--pwl-red); background:var(--pwl-red-bg); }
+html body #tab-watchlist #wlCards .pwl-chg.fl { color:var(--pwl-slate); background:var(--pwl-bg); }
+
+/* Movimiento del día: la línea no se deforma al estirar el SVG (non-scaling-stroke) y el punto
+   final es un elemento aparte, colocado en %. */
+html body #tab-watchlist #wlCards .pwl-sc { min-width:0; }
+html body #tab-watchlist #wlCards .pwl-spk { position:relative; display:block; width:150px; max-width:100%; height:38px; color:var(--pwl-slate); }
+html body #tab-watchlist #wlCards .pwl-spk.up { color:var(--pwl-green); }
+html body #tab-watchlist #wlCards .pwl-spk.dn { color:var(--pwl-red); }
+html body #tab-watchlist #wlCards .pwl-spk svg { position:absolute; inset:0; display:block; width:100%; height:100%; overflow:visible; }
+html body #tab-watchlist #wlCards .pwl-spk path { fill:none; stroke:currentColor; stroke-width:2px; stroke-linecap:round; stroke-linejoin:round; }
+html body #tab-watchlist #wlCards .pwl-spk .pwl-pcl { stroke:var(--pwl-pcl); stroke-width:1px; stroke-dasharray:2 3; opacity:.55; }
+html body #tab-watchlist #wlCards .pwl-spk i { position:absolute; width:6px; height:6px; margin:-3px 0 0 -3px; border-radius:50%; background:currentColor; }
+html body #tab-watchlist #wlCards .pwl-spk.pwl-flat line { stroke:var(--pwl-flat); stroke-width:1.5px; }
+
+/* Rango de 52 semanas */
+html body #tab-watchlist #wlCards .pwl-rc { min-width:0; }
+html body #tab-watchlist #wlCards .pwl-rng { display:block; width:100%; }
+html body #tab-watchlist #wlCards .pwl-trk { position:relative; display:block; height:6px; border-radius:99px; background:var(--pwl-bg); }
+html body #tab-watchlist #wlCards .pwl-trk i { position:absolute; top:50%; width:14px; height:14px; margin:-7px 0 0 -7px; box-sizing:border-box; border-radius:50%; background:var(--pwl-knob); border:3px solid var(--pwl-knob-ring); }
+html body #tab-watchlist #wlCards .pwl-rl { display:flex; justify-content:space-between; gap:8px; font-size:12.5px; font-weight:700; line-height:1.35; color:var(--pwl-muted); margin-top:8px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+/* Quitar de la lista */
+html body #tab-watchlist #wlCards .pwl-rm {
+  -webkit-appearance:none; appearance:none; justify-self:end; flex-shrink:0; display:grid; place-items:center;
+  width:36px; height:36px; margin:0; padding:0; border:0; border-radius:50%; background:transparent; color:var(--pwl-muted); cursor:pointer; box-shadow:none;
+  transition:background-color .22s var(--pwl-ease), color .22s var(--pwl-ease);
+}
+html body #tab-watchlist #wlCards .pwl-rm svg { display:block; }
+html body #tab-watchlist #wlCards .pwl-rm:focus-visible { outline:2px solid var(--pwl-ink); outline-offset:1px; }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-watchlist #wlCards .pwl-rm:hover { background:var(--pwl-red-bg); color:var(--pwl-red); }
+}
+html body #tab-watchlist #wlCards .pwl-rm:active { background:var(--pwl-red-bg); color:var(--pwl-red); }
+
+/* Lista vacía */
+html body #tab-watchlist #wlCards .pwl-empty .pwl-body { display:flex; flex-direction:column; align-items:center; text-align:center; padding:26px 24px 30px; }
+html body #tab-watchlist #wlCards .pwl-ei { display:grid; place-items:center; width:56px; height:56px; border-radius:18px; background:var(--pwl-bg); color:var(--pwl-ink); margin:0 0 18px; }
+html body #tab-watchlist #wlCards .pwl-et { font-size:24px; font-weight:800; letter-spacing:-.02em; line-height:1.25; color:var(--pwl-ink); margin:0 0 8px; text-transform:none; }
+html body #tab-watchlist #wlCards .pwl-ed { max-width:500px; font-size:15px; font-weight:600; line-height:1.6; color:var(--pwl-muted); margin:0 0 22px; }
+html body #tab-watchlist #wlCards .pwl-ed b { color:var(--pwl-ink); font-weight:800; }
+html body #tab-watchlist #wlCards .pwl-ebtn {
+  -webkit-appearance:none; appearance:none; display:inline-flex; align-items:center; justify-content:center; height:44px; padding:0 22px; margin:0;
+  background:var(--pwl-btn); color:var(--pwl-btn-ink); border:0; border-radius:999px; box-shadow:none; cursor:pointer;
+  font-size:14.5px; font-weight:800; letter-spacing:0; transition:background-color .22s var(--pwl-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-watchlist #wlCards .pwl-ebtn:hover { background:var(--pwl-btn-hi); }
+}
+
+/* Escritorio estrecho (1100–1279): columnas fijas más angostas y menos aire, para que el
+   ticker con «En tu portafolio» quepa en su columna. */
+@media (min-width: 1100px) and (max-width: 1279px) {
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-tr { grid-template-columns:minmax(0,1.6fr) 112px 112px minmax(0,1fr) minmax(0,1fr) 36px; column-gap:20px; }
+}
+
+/* ═══ TABLET — iPad (html.pv-ipad) y web de 701–1099: radio 28, curva 36, medidas de tablet ═══
+   Columnas: Empresa · Movimiento del día · Rango de 52 semanas · Precio y cambio · × */
+@media (min-width: 701px) {
+  html.pv-ipad body #tab-watchlist { --pwl-r:28px; --pwl-r-hero:36px; }
+  html.pv-ipad body #tab-watchlist #pwlHero { gap:24px; padding-top:18px; padding-bottom:26px; }
+  html.pv-ipad body #tab-watchlist #pwlHero .pwl-eyebrow { font-size:13px; margin-bottom:4px; }
+  html.pv-ipad body #tab-watchlist #pwlHero .pwl-h1 { font-size:28px; }
+  html.pv-ipad body #tab-watchlist #pwlHero .pwl-search { flex-basis:480px; height:50px; padding:0 5px 0 18px; }
+  /* 16px: con menos, iOS amplía la página al enfocar el campo. */
+  html.pv-ipad body #tab-watchlist #pwlHero #wlInput { font-size:16px !important; }
+  html.pv-ipad body #tab-watchlist #pwlHero .pwl-add { padding:0 16px 0 13px; font-size:14px; }
+  html.pv-ipad body #tab-watchlist #wlCards { margin-top:28px; }
+}
+@media (min-width: 701px) and (max-width: 1099px) {
+  html:not(.pv-ipad) body #tab-watchlist { --pwl-r:28px; --pwl-r-hero:36px; }
+  html:not(.pv-ipad) body #tab-watchlist #pwlHero { gap:24px; padding-top:18px; padding-bottom:26px; }
+  html:not(.pv-ipad) body #tab-watchlist #pwlHero .pwl-eyebrow { font-size:13px; margin-bottom:4px; }
+  html:not(.pv-ipad) body #tab-watchlist #pwlHero .pwl-h1 { font-size:28px; }
+  html:not(.pv-ipad) body #tab-watchlist #pwlHero .pwl-search { flex-basis:480px; height:50px; padding:0 5px 0 18px; }
+  html:not(.pv-ipad) body #tab-watchlist #pwlHero .pwl-add { padding:0 16px 0 13px; font-size:14px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards { margin-top:28px; }
+}
+/* La tabla de tablet (los dos grupos de arriba comparten estas reglas). */
+@media (min-width: 701px) {
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-card { padding:24px 18px 14px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-thd { padding:0 8px 14px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-eb { font-size:12.5px; margin-bottom:3px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-h2 { font-size:20px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-live { font-size:12.5px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-tr { grid-template-columns:minmax(0,1.5fr) minmax(112px,1fr) minmax(150px,1.15fr) minmax(96px,auto) 32px; column-gap:22px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-th { font-size:12px; padding:0 8px 10px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-th .pwl-h-px, html.pv-ipad body #tab-watchlist #wlCards .pwl-th .pwl-h-cc { display:none; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-th .pwl-h-pr { display:block; order:3; text-align:right; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-th .pwl-h-sc { order:1; } html.pv-ipad body #tab-watchlist #wlCards .pwl-th .pwl-h-rc { order:2; } html.pv-ipad body #tab-watchlist #wlCards .pwl-th .pwl-h-rm { order:4; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-grp { padding:18px 8px 8px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-grp b { font-size:13.5px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-grp small { font-size:12px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-row { padding:15px 8px; border-radius:18px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-sc { order:1; } html.pv-ipad body #tab-watchlist #wlCards .pwl-rc { order:2; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-pr { order:3; display:flex; flex-direction:column; align-items:flex-end; gap:5px; text-align:right; min-width:0; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-rm { order:4; width:32px; height:32px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-co { gap:12px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-av { width:42px; height:42px; border-radius:14px; font-size:16px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-nm b { font-size:15.5px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-nm small { font-size:12.5px; margin-top:1px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-own { font-size:11px; padding:2px 8px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-px { font-size:15.5px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-chg { font-size:12.5px; padding:3px 9px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-spk { width:100%; max-width:220px; height:34px; }
+  html.pv-ipad body #tab-watchlist #wlCards .pwl-rl { font-size:11.5px; margin-top:7px; }
+}
+@media (min-width: 701px) and (max-width: 1099px) {
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-card { padding:24px 18px 14px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-thd { padding:0 8px 14px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-eb { font-size:12.5px; margin-bottom:3px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-h2 { font-size:20px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-live { font-size:12.5px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-tr { grid-template-columns:minmax(0,1.5fr) minmax(112px,1fr) minmax(150px,1.15fr) minmax(96px,auto) 32px; column-gap:22px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th { font-size:12px; padding:0 8px 10px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th .pwl-h-px, html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th .pwl-h-cc { display:none; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th .pwl-h-pr { display:block; order:3; text-align:right; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th .pwl-h-sc { order:1; } html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th .pwl-h-rc { order:2; } html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-th .pwl-h-rm { order:4; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-grp { padding:18px 8px 8px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-grp b { font-size:13.5px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-grp small { font-size:12px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-row { padding:15px 8px; border-radius:18px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-sc { order:1; } html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-rc { order:2; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-pr { order:3; display:flex; flex-direction:column; align-items:flex-end; gap:5px; text-align:right; min-width:0; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-rm { order:4; width:32px; height:32px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-co { gap:12px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-av { width:42px; height:42px; border-radius:14px; font-size:16px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-nm b { font-size:15.5px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-nm small { font-size:12.5px; margin-top:1px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-own { font-size:11px; padding:2px 8px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-px { font-size:15.5px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-chg { font-size:12.5px; padding:3px 9px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-spk { width:100%; max-width:220px; height:34px; }
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-rl { font-size:11.5px; margin-top:7px; }
+}
+/* Ventana web de 701–899: la columna Empresa ya no da para la pastilla (como en el celular). */
+@media (min-width: 701px) and (max-width: 899px) {
+  html:not(.pv-ipad) body #tab-watchlist #wlCards .pwl-own { display:none; }
+}
+
+/* ═══ CELULAR (≤700) — una columna: título de la lista fuera de la tarjeta, filas con avatar,
+   ticker y nombre, minigráfica, precio con su % y la × de siempre ═══════════════════════ */
+@media (max-width: 700px) {
+  html body #tab-watchlist { --pwl-r:24px; --pwl-r-hero:30px; }
+  html body #tab-watchlist:not(#pwl-x) { padding-left:16px !important; padding-right:16px !important; }
+  html body #tab-watchlist #pwlHero { flex-direction:column; align-items:stretch; gap:16px; padding-top:14px; padding-bottom:22px; }
+  html body #tab-watchlist #pwlHero .pwl-eyebrow { font-size:12.5px; margin-bottom:3px; }
+  html body #tab-watchlist #pwlHero .pwl-h1 { font-size:25px; }
+  html body #tab-watchlist #pwlHero .pwl-search { flex:0 0 auto; height:50px; padding:0 5px 0 16px; gap:10px; }
+  html body #tab-watchlist #pwlHero #wlInput { font-size:16px !important; }
+  html body #tab-watchlist #pwlHero .pwl-add { padding:0 15px 0 12px; font-size:14px; gap:5px; }
+  html body #tab-watchlist #pwlHero #wlDropdown { border-radius:18px; }
+  html body #tab-watchlist #wlCards { margin-top:26px; }
+  html body #tab-watchlist #wlCards .pwl-card { background:transparent; border:0; border-radius:0; padding:0; }
+  html body #tab-watchlist #wlCards .pwl-thd { align-items:baseline; padding:0; margin:0 2px 12px; }
+  html body #tab-watchlist #wlCards .pwl-eb { display:none; }
+  html body #tab-watchlist #wlCards .pwl-h2 { font-size:19px; color:var(--pwl-pg-ink); }
+  html body #tab-watchlist #wlCards .pwl-live { font-size:12.5px; padding:0; color:var(--pwl-pg-muted); }
+  html body #tab-watchlist #wlCards .pwl-ll { display:none; } html body #tab-watchlist #wlCards .pwl-ls { display:inline; }
+  html body #tab-watchlist #wlCards .pwl-body { box-sizing:border-box; background:var(--pwl-card); border:1px solid var(--pwl-line); border-radius:var(--pwl-r); padding:4px 14px 6px; }
+  html body #tab-watchlist #wlCards .pwl-th { display:none; }
+  html body #tab-watchlist #wlCards .pwl-grp { padding:14px 2px 4px; }
+  html body #tab-watchlist #wlCards .pwl-grp b { font-size:13.5px; }
+  html body #tab-watchlist #wlCards .pwl-grp small { font-size:12px; }
+  html body #tab-watchlist #wlCards .pwl-row { display:flex; align-items:center; gap:10px; padding:12px 2px; border-radius:14px; }
+  html body #tab-watchlist #wlCards .pwl-co { flex:1 1 auto; gap:10px; }
+  html body #tab-watchlist #wlCards .pwl-av { width:40px; height:40px; border-radius:13px; font-size:15.5px; }
+  html body #tab-watchlist #wlCards .pwl-nm b { font-size:15.5px; }
+  html body #tab-watchlist #wlCards .pwl-nm small { font-size:12.5px; margin-top:1px; }
+  html body #tab-watchlist #wlCards .pwl-own { display:none; }
+  html body #tab-watchlist #wlCards .pwl-sc { flex:0 0 auto; order:1; }
+  html body #tab-watchlist #wlCards .pwl-spk { width:56px; height:28px; }
+  html body #tab-watchlist #wlCards .pwl-spk path { stroke-width:1.8px; }
+  html body #tab-watchlist #wlCards .pwl-spk i { width:5px; height:5px; margin:-2.5px 0 0 -2.5px; }
+  html body #tab-watchlist #wlCards .pwl-rc { display:none; }
+  html body #tab-watchlist #wlCards .pwl-pr { order:2; flex:0 0 auto; display:flex; flex-direction:column; align-items:flex-end; gap:4px; text-align:right; }
+  html body #tab-watchlist #wlCards .pwl-px { font-size:15.5px; }
+  html body #tab-watchlist #wlCards .pwl-chg { font-size:12.5px; padding:3px 9px; }
+  html body #tab-watchlist #wlCards .pwl-rm { order:3; position:relative; width:28px; height:28px; margin-left:-4px; }
+  html body #tab-watchlist #wlCards .pwl-rm svg { width:15px; height:15px; }
+  /* Zona táctil de 38×44 sin agrandar la × que se ve. */
+  html body #tab-watchlist #wlCards .pwl-rm::after { content:''; position:absolute; top:-8px; bottom:-8px; left:-4px; right:-6px; }
+  html body #tab-watchlist #wlCards .pwl-empty .pwl-body { padding:24px 18px 26px; }
+  html body #tab-watchlist #wlCards .pwl-et { font-size:20px; }
+  html body #tab-watchlist #wlCards .pwl-ed { font-size:14px; line-height:1.55; margin-bottom:18px; }
+}
+
+/* ═══ OSCURO (body.dark-theme): los tokens oscuros de la app ══════════════════════════════ */
+html body.dark-theme #tab-watchlist {
+  --pwl-hero:#13233a; --pwl-hero-eb:rgba(255,255,255,.5);
+  --pwl-bg:rgba(255,255,255,.07); --pwl-card:var(--surface,#0f1623); --pwl-line:rgba(255,255,255,.08); --pwl-line-hi:rgba(255,255,255,.16); --pwl-wash:rgba(255,255,255,.04);
+  --pwl-ink:#e8edf7; --pwl-slate:#aab4c2; --pwl-muted:#8a96a3; --pwl-flat:rgba(255,255,255,.16); --pwl-pcl:#8a96a3;
+  --pwl-pg-ink:#e8edf7; --pwl-pg-muted:#8a96a3;
+  --pwl-green:#4ade80; --pwl-green-bg:rgba(74,222,128,.12); --pwl-red:#f87171; --pwl-red-bg:rgba(248,113,113,.14);
+  --pwl-pill:var(--surface2,#161e2d); --pwl-pill-ink:#e8edf7; --pwl-pill-ph:#8a96a3; --pwl-pill-line:rgba(255,255,255,.1);
+  --pwl-btn:#e8edf7; --pwl-btn-hi:#cbd5e6; --pwl-btn-ink:#0b1c30;
+  --pwl-knob:#e8edf7; --pwl-knob-ring:var(--surface,#0f1623); --pwl-drop:var(--surface2,#161e2d);
+}
+html body.dark-theme #tab-watchlist #pwlHero { border:1px solid rgba(255,255,255,.06); border-top:0; }
+html body.dark-theme #tab-watchlist #pwlHero .pwl-search:focus-within { outline-color:rgba(255,255,255,.35); }
+/* Fondo oscuro de la app donde el bloque v8 no fija el claro (web por debajo de 900, iPad por
+   debajo de 1100), como el resto de pestañas: una capa vieja de ≤760 la dejaba transparente y
+   en oscuro se veía el fondo claro del body. */
+@media (max-width: 899px) {
+  html:not(.pv-ipad) body.dark-theme #tab-watchlist:not(#pwl-x) { background:var(--surface,#0f1623) !important; }
+}
+@media (max-width: 1099px) {
+  html.pv-ipad body.dark-theme #tab-watchlist:not(#pwl-x) { background:var(--surface,#0f1623) !important; }
+}
+/* Donde la pestaña conserva el fondo claro del diseño también en oscuro (web desde 900px e
+   iPad apaisado desde 1100px: el fondo lo fija el bloque v8 con un id), la cabecera sigue navy
+   como la barra superior y lo que va directo sobre la página conserva los tokens claros; la
+   tarjeta va en oscuro. */
+@media (min-width: 900px) {
+  html:not(.pv-ipad) body.dark-theme #tab-watchlist { --pwl-hero:var(--pvr-navy-bar,#0b1c30); --pwl-pg-ink:#0b1c30; --pwl-pg-muted:#7a879b; }
+  html:not(.pv-ipad) body.dark-theme #tab-watchlist #pwlHero { border:0; }
+}
+@media (min-width: 1100px) {
+  html.pv-ipad body.dark-theme #tab-watchlist { --pwl-hero:var(--pvr-navy-bar,#0b1c30); --pwl-pg-ink:#0b1c30; --pwl-pg-muted:#7a879b; }
+  html.pv-ipad body.dark-theme #tab-watchlist #pwlHero { border:0; }
+}
+
+/* ═══ Movimiento reducido: sin transiciones ════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-watchlist #pwlHero .pwl-add, html body #tab-watchlist #wlCards .pwl-row, html body #tab-watchlist #wlCards .pwl-rm,
+  html body #tab-watchlist #wlCards .pwl-ebtn, html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest { transition:none; }
 }
 </style>
 </body>
