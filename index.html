@@ -4917,7 +4917,7 @@ window._pvAwaitIAP = function(totalMs){
   <!-- ═══ ANÁLISIS DE PORTAFOLIO — rediseño (estilos en <style id="pvAnalisisCss">) ═══
        Orden: indicadores sobre la curva navy → Retorno esperado → Tus posiciones →
        Diagnóstico → Salud y diversificación → Fortalezas y riesgos → Análisis del asesor →
-       Recomendaciones de rebalanceo → Dividendos → EPS. Cada sección lleva antetítulo +
+       Recomendaciones de rebalanceo → Calendario de resultados y dividendos. Cada sección lleva antetítulo +
        título; el hueco de la derecha de la cabecera (.pva-side) lo rellena su render. -->
   <div id="analizar-portfolio-section">
 
@@ -4937,7 +4937,7 @@ window._pvAwaitIAP = function(totalMs){
     </section>
 
     <!-- Desde el diagnóstico hacia abajo TODO es Portiv Pro: diagnóstico, salud, fortalezas
-         y riesgos, Portiv Intelligence, rebalanceo, dividendos y EPS quedan bajo UN SOLO
+         y riesgos, Portiv Intelligence, rebalanceo y el calendario quedan bajo UN SOLO
          candado (antes empezaba en "Detalle de Activos", que ahora es la tabla «Tus
          posiciones», junto al retorno por activo que ya era libre). Se usa .pv-lock-stack
          (no .pv-lock a secas) porque la pila mide miles de píxeles y esa variante ancla el
@@ -4967,13 +4967,11 @@ window._pvAwaitIAP = function(totalMs){
           <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Plan sugerido</div><h2 class="pva-h2">Recomendaciones de rebalanceo</h2></div><div class="pva-side" id="pvaRebSide"></div></div>
           <div id="port-rebal-recs"></div>
         </section>
-        <section class="pva-sec" id="pvaSecDiv">
-          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Ingresos</div><h2 class="pva-h2">Dividendos y retorno por riesgo</h2></div></div>
-          <div id="port-kpi-bar"></div>
-        </section>
-        <section class="pva-sec" id="pvaSecEps">
-          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow">Resultados trimestrales</div><h2 class="pva-h2">Beneficio por acción (EPS)</h2></div></div>
-          <div id="port-eps"></div>
+        <!-- Calendario del año: resultados y dividendos de tus posiciones (PV_CAL.render). El
+             antetítulo y el título (con el año) los reescribe el render, también en inglés. -->
+        <section class="pva-sec" id="pvaSecCal">
+          <div class="pva-sh"><div class="pva-sht"><div class="pva-eyebrow" id="pvaCalEb">Calendario</div><h2 class="pva-h2" id="pvaCalTitle">Resultados y dividendos</h2></div><div class="pva-side" id="pvaCalSide"></div></div>
+          <div id="pvaCal"></div>
         </section>
       </div><!-- /.pv-lock-body -->
       <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
@@ -12796,28 +12794,6 @@ function _pvAdvisorBlock(m, techWeight, perfil){
   }
   if (!recs.length) recs.push({i:'check_circle', t:`Mantén el rumbo: tu portafolio refleja bien tu perfil. Revisa el rebalanceo trimestralmente.`});
 
-  // 5) El mercado de hoy, en una línea determinista: qué régimen hay y qué implica para
-  //    ESTE perfil. Sin esto el diagnóstico era idéntico con el índice en máximos y en caída.
-  let mktTxt = '';
-  try {
-    const mk = (typeof PORTIV_MKT !== 'undefined') ? PORTIV_MKT.now() : null;
-    if (mk){
-      const cons = /conserv|baj/i.test(p.riskLabel || ''), agres = /agres|alto/i.test(p.riskLabel || '');
-      let impl;
-      if (mk.trend === 'bajista' || mk.vol === 'estres')
-        impl = cons ? 'Para tu perfil, es momento de no añadir volatilidad: si mueves algo, que sea hacia lo que menos cae.'
-             : agres ? 'Para tu horizonte, las caídas de calidad son oportunidades: compra por tramos, no de golpe.'
-                     : 'Para tu perfil, conviene mover por tramos y priorizar los negocios sólidos que más han caído.';
-      else if (mk.trend === 'correccion')
-        impl = cons ? 'Una corrección no obliga a vender: revisa que ninguna posición pese más de lo que toleras.'
-                    : 'Una corrección es cuando rebalancear hacia tus mejores negocios sale más barato.';
-      else
-        impl = (mk.offHigh > -0.02) ? 'Con el índice en máximos, evita perseguir lo que más subió y rebalancea con calma.'
-                                    : 'Mercado constructivo: los ajustes pueden hacerse sin prisa.';
-      mktTxt = `<div class="pva-mkt"><b>Mercado hoy</b>${PORTIV_MKT.text(mk)} ${impl}</div>`;
-    }
-  } catch(e){}
-
   // Veredicto de encaje: verde (alineado), ámbar (1 ajuste) o rojo (2 o más), con una línea
   // que nombra qué se sale de los márgenes del perfil.
   const _lista = xs => xs.length > 1 ? xs.slice(0, -1).join(', ') + ' y ' + xs[xs.length - 1] : (xs[0] || '');
@@ -12830,7 +12806,6 @@ function _pvAdvisorBlock(m, techWeight, perfil){
     <div class="pva-dl">
       <div class="pva-pills">${_pvaTag('Perfil ' + String(p.label || '').toLowerCase())}${_pvaTag(_pvaHorizon(p.horizonLabel))}${_pvaTag('Riesgo ' + String(p.riskLabel || '').toLowerCase())}</div>
       <p class="pva-big">${betaTxt} ${techTxt}${concTxt}</p>
-      ${mktTxt}
       <p class="pva-note">Lectura instantánea por reglas. El análisis del asesor (más abajo) la amplía con IA y sigue la misma dirección.</p>
     </div>
     <div class="pva-recs">
@@ -12845,13 +12820,13 @@ function _pvAdvisorBlock(m, techWeight, perfil){
 //  EPS — Earnings Per Share (Estimate vs Actual + Beat/Miss)
 //  Fuente: Finnhub /stock/earnings (reportados) + /calendar/earnings (futuro).
 //  Mismo patrón fhFetch que los precios. Caché EN MEMORIA (sesión), NO localStorage.
+//  En la pestaña Análisis lo consume el calendario (PV_CAL), que guarda aparte lo que necesita.
 // ══════════════════════════════════════════════════════════
 const EPS = {
   _cache: {},   // ticker -> { hasData, quarters:[], reason? }
   _pending: {}, // ticker -> promesa en vuelo (dedup entre renderStock y el análisis)
   _inst:  {},   // cardId -> { selected }
   _mode: 'Normalized',
-  _portSig: null,
   _ETF: new Set(['VOO','VTI','SPY','QQQ','QQQM','VUG','VEA','VWO','SCHD','IVV','VIG','VYM','ARKK','DIA','IWM','XLK','XLF','SOXX','SMH','VGT','VT','BND','AGG','UFO','GLD','SLV','XLE','XLF','XLV']),
 
   _qLabel(q,y){ return `Q${q||'?'} FY${String(y||'').slice(-2)}`; },
@@ -12882,7 +12857,8 @@ const EPS = {
     try{
       const today=new Date(), iso=today.toISOString().slice(0,10);
       const from=new Date(today.getTime()-220*864e5).toISOString().slice(0,10);
-      const to  =new Date(today.getTime()+240*864e5).toISOString().slice(0,10);
+      // Hasta fin de año como mínimo: el calendario de la pestaña Análisis enseña el año entero.
+      const to  =new Date(Math.max(today.getTime()+240*864e5, Date.UTC(today.getFullYear(),11,31))).toISOString().slice(0,10);
       const [hist,cal]=await Promise.all([
         fhFetch(`/stock/earnings?symbol=${ticker}`,12000).catch(()=>null),
         fhFetch(`/calendar/earnings?symbol=${ticker}&from=${from}&to=${to}`,12000).catch(()=>null),
@@ -12909,8 +12885,16 @@ const EPS = {
           if(!seen.has(k)) qs.push({ q:fut.quarter, y:fut.year, date:fut.date, estimate:fut.epsEstimate, actual:null, future:true, expected:this._fmtDate(fut.date) });
         }
       }
+      // Todas las filas del calendario (futuras y la del último mes): la FECHA REAL de cada
+      // reporte, por trimestre fiscal. Las usa el calendario de la pestaña Análisis; `quarters`
+      // —y con él la clave de invalidación por earnings— no cambia.
+      const calRows=(cal && Array.isArray(cal.earningsCalendar) ? cal.earningsCalendar : [])
+        .filter(e=> e && e.date && e.quarter && e.year)
+        .map(e=>({ d:e.date, q:e.quarter, y:e.year, e:(typeof e.epsEstimate==='number'?e.epsEstimate:null), a:(typeof e.epsActual==='number'?e.epsActual:null) }));
       const hasData=qs.some(x=>!x.future);
-      return this._cache[ticker]={ hasData, quarters:qs, _fetchedDate:iso };
+      // Las dos llamadas fallaron (red o proxy): es un error, no «esta empresa no tiene datos».
+      if(hist==null && cal==null) return this._cache[ticker]={ hasData:false, error:true, quarters:[], cal:[], _fetchedDate:iso };
+      return this._cache[ticker]={ hasData, quarters:qs, cal:calRows, _fetchedDate:iso };
     }catch(e){ return this._cache[ticker]={ hasData:false, error:true, quarters:[], _fetchedDate:new Date().toISOString().slice(0,10) }; }
   },
 
@@ -12981,7 +12965,6 @@ const EPS = {
   setMode(mode){
     this._mode = mode;
     const rs=document.getElementById('r-eps'); if(rs && rs.dataset.ticker) rs.innerHTML=this._cardHTML(rs.dataset.ticker,'stock');
-    const pe=document.getElementById('port-eps'); if(pe && pe.children.length) this.renderPortfolio(true);
   },
 
   // Devuelve true si el caché del ticker debe invalidarse:
@@ -13000,9 +12983,9 @@ const EPS = {
     if(!stale.length) return;
     stale.forEach(t=>delete this._cache[t]);
     await Promise.all(stale.map(t=>this.fetch(t)));
-    // Re-render portfolio grid si está visible
-    const pe=document.getElementById('port-eps');
-    if(pe && pe.children.length){ this._portSig=null; this.renderPortfolio(true); }
+    // Calendario de la pestaña Análisis: vuelca lo nuevo (el resultado ya publicado, una fecha
+    // que se movió) y se repinta si cambió algo.
+    try{ if(typeof PV_CAL!=='undefined') PV_CAL.refresh(stale); }catch(e){}
     // Re-render stock view si el ticker abierto es uno de los stale
     const rs=document.getElementById('r-eps');
     if(rs && rs.dataset.ticker && stale.includes(rs.dataset.ticker.toUpperCase()))
@@ -13022,45 +13005,488 @@ const EPS = {
     if(h2 && h2.dataset.ticker===ticker) h2.innerHTML=this._cardHTML(ticker,'stock');
   },
 
-  // ── Análisis de portafolio (grid compacto de tarjetas) ──
-  renderPortfolio(force){
-    const host=document.getElementById('port-eps'); if(!host) return;
-    // Excluir ETFs — no tienen EPS reportado por empresa
-    const tickers=(typeof HOLDINGS!=='undefined'
-      ? HOLDINGS.filter(h=>(h.type||'stock').toLowerCase()!=='etf').map(h=>h.ticker)
-      : []);
-    const sig=tickers.join(',')+'|'+this._mode;
-    if(!force && this._portSig===sig && host.children.length){
-      // Aunque el sig no cambió, verifica si algún ticker tiene datos stale
-      const staleOnes=tickers.filter(t=>this._isStale(t));
-      if(!staleOnes.length) return;
-      staleOnes.forEach(t=>{
-        delete this._cache[t];
-        const sl=document.getElementById('eps-slot-'+t);
-        if(sl) sl.innerHTML=`<div class="eps-card"><div class="eps-loading">Actualizando…</div></div>`;
-        this.fetch(t).then(()=>{ const s=document.getElementById('eps-slot-'+t); if(s) s.innerHTML=this._cardHTML(t,'port'); });
-      });
-      return;
-    }
-    this._portSig=sig;
-    if(!tickers.length){ host.innerHTML='<div class="eps-empty" style="padding:18px">Agrega posiciones para ver su EPS.</div>'; return; }
-    host.innerHTML = `<div class="eps-sec-head"><div class="eps-toggle">
-        <button class="eps-tg ${this._mode==='GAAP'?'on':''}" onclick="EPS.setMode('GAAP')">GAAP</button>
-        <button class="eps-tg ${this._mode!=='GAAP'?'on':''}" onclick="EPS.setMode('Normalized')">Normalized</button>
-      </div></div>
-      <div class="eps-grid">${tickers.map(t=>`<div class="eps-slot" id="eps-slot-${t}">${this._cardHTML(t,'port')}</div>`).join('')}</div>`;
-    tickers.forEach(t=>{
-      if(this._cache[t] && !this._isStale(t)){ const sl=document.getElementById('eps-slot-'+t); if(sl) sl.innerHTML=this._cardHTML(t,'port'); return; }
-      if(this._isStale(t)) delete this._cache[t];
-      this.fetch(t).then(()=>{ const sl=document.getElementById('eps-slot-'+t); if(sl) sl.innerHTML=this._cardHTML(t,'port'); });
-    });
-  },
 };
 window.EPS = EPS;
 
 // Auto-refresh EPS cada 15 min: invalida tickers cuya fecha de reporte ya pasó
 // o cuyos datos sean del día anterior, y actualiza la UI visible automáticamente.
 setInterval(()=>{ if(document.hidden)return; try{ EPS.autoRefresh(); }catch(e){} }, 15*60*1000);
+
+// ══════════════════════════════════════════════════════════════════════════════════
+//  CALENDARIO DE RESULTADOS Y DIVIDENDOS — pestaña Análisis (sustituye a la rejilla EPS)
+//  Los 12 meses del año en curso con los eventos de las posiciones de HOLDINGS, y nada más.
+//  · Resultados: Finnhub vía EPS.fetch (/stock/earnings + /calendar/earnings: las mismas dos
+//    llamadas que ya hacía la sección de EPS). El calendario de Finnhub trae la fecha REAL de
+//    los próximos reportes (unos tres trimestres por delante), pero hacia atrás sólo el último
+//    mes; /stock/earnings trae el resultado de los cuatro últimos trimestres SIN la fecha en
+//    que se publicaron (su `period` es el cierre del trimestre, a veces posterior al reporte).
+//    Por eso cada fecha real que se ve se GUARDA (pv_cal_v1) y sigue sirviendo cuando el
+//    reporte ya pasó, y un trimestre publicado cuya fecha nunca se vio se coloca por el
+//    calendario habitual de la empresa (sus fechas reales de otros trimestres), con «≈».
+//  · Dividendos: Alpaca vía alpaca-proxy, /v2/stocks/bars (el endpoint de la gráfica, ya
+//    permitido). Las velas diarias ajustadas por splits y por splits+dividendos sólo difieren
+//    en el factor de dividendos, que salta exactamente el día ex-dividendo: el salto da el
+//    importe por acción. Salen fechas ex e importes REALES del último año, su frecuencia
+//    (mensual, trimestral, semestral o anual) y los próximos pagos, proyectados con esa
+//    frecuencia y marcados «estimado». Alpaca no da la fecha de pago: se enseña la ex.
+//  Red: resultados, con la pauta de siempre de la rejilla de EPS (lo que no esté en memoria o
+//  haya vencido, un intento por ticker cada 2 h; y si un reporte de los últimos días aún no
+//  trae el dato, otra vez cada 2 h hasta que llegue). Dividendos (llamada nueva): un lote con
+//  las posiciones a las que les toca, cada 7 días o cuando les tocaba un ex-dividendo, y como
+//  mucho 1×/día por ticker. Lo guardado se pinta al instante; pintar nunca espera a la red.
+//  Plan gratuito: maqueta bajo el candado, sin llamadas (como el rebalanceo).
+// ══════════════════════════════════════════════════════════════════════════════════
+const PV_CAL = {
+  _LS: 'pv_cal_v1',
+  _db: null,
+  _busyE: false, _busyD: false,
+  _triedE: {}, _triedD: 0,
+  _html: '', _side: null, _key: '',
+  _MES: ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'],
+  _MON: ['January','February','March','April','May','June','July','August','September','October','November','December'],
+  _mes: ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'],
+  _mon: ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],
+
+  // ── Fechas 'YYYY-MM-DD': «hoy» es el día local; la aritmética, en UTC y sin horas ──
+  _today(){ const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); },
+  _ms(s){ const p = String(s).split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); },
+  _iso(ms){ return new Date(ms).toISOString().slice(0, 10); },
+  _add(s, n){ return this._iso(this._ms(s) + n * 864e5); },
+  _days(a, b){ return Math.round((this._ms(b) - this._ms(a)) / 864e5); },
+  _isDate(s){ return /^\d{4}-\d{2}-\d{2}$/.test(String(s || '')); },
+  _med(a){ const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; },
+  _addMonths(s, n){
+    const p = String(s).split('-'), m = +p[1] - 1 + n, yy = +p[0] + Math.floor(m / 12), mm = ((m % 12) + 12) % 12;
+    return this._iso(Date.UTC(yy, mm, Math.min(+p[2], new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate())));
+  },
+  _weekday(s){ const w = new Date(this._ms(s)).getUTCDay(); return w === 6 ? this._add(s, -1) : w === 0 ? this._add(s, -2) : s; },
+
+  // ── Almacén (localStorage pv_cal_v1): e = resultados por trimestre fiscal, d = ex-dividendos ──
+  _load(){
+    if (this._db) return this._db;
+    let db = null;
+    try { db = JSON.parse(localStorage.getItem(this._LS) || 'null'); } catch(e){}
+    if (!db || typeof db !== 'object' || db.v !== 1) db = { v: 1, e: {}, d: {} };
+    if (!db.e || typeof db.e !== 'object') db.e = {};
+    if (!db.d || typeof db.d !== 'object') db.d = {};
+    return (this._db = db);
+  },
+  // Guarda podando: posiciones que ya no tienes (sin tocar en 60 días) y trimestres viejos.
+  _save(held){
+    const db = this._load(), hoy = this._today(), y0 = +hoy.slice(0, 4) - 1;
+    ['e', 'd'].forEach(k => Object.keys(db[k]).forEach(tk => {
+      const r = db[k][tk];
+      if (!r || typeof r !== 'object' || (held && !held.has(tk) && (!this._isDate(r.at) || this._days(r.at, hoy) > 60))) delete db[k][tk];
+    }));
+    Object.keys(db.e).forEach(tk => { const q = db.e[tk].q || {}; Object.keys(q).forEach(k => { if (!(+k.split('-')[0] >= y0)) delete q[k]; }); });
+    try { _lsSet(this._LS, JSON.stringify(db)); } catch(e){}
+  },
+
+  // ── RESULTADOS ────────────────────────────────────────────────────────────────────
+  // Lo que trae EPS._cache[tk] → almacén, por trimestre fiscal «año-trimestre»: fecha REAL del
+  // reporte (filas del calendario y la fila futura de `quarters`) y resultado de cada trimestre
+  // publicado (/stock/earnings manda sobre la estimación del calendario). true si cambió algo.
+  _mergeEps(tk){
+    const c = (typeof EPS !== 'undefined' && EPS._cache) ? EPS._cache[tk] : null;
+    if (!c || c.error || c.reason === 'ETF') return false;
+    const db = this._load(), cur = db.e[tk], day = String(c._fetchedDate || '');
+    if (cur && cur.src && day && day < cur.src) return false;          // más viejo que lo guardado
+    const q = JSON.parse(JSON.stringify((cur && cur.q) || {}));
+    const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+    const put = (y, n, o) => {
+      if (!(y > 1990 && y < 2200) || !(n >= 1 && n <= 4)) return;
+      const r = q[y + '-' + n] || (q[y + '-' + n] = {});
+      Object.keys(o).forEach(f => { if (o[f] != null && (f !== 'd' || this._isDate(o[f]))) r[f] = o[f]; });
+    };
+    (Array.isArray(c.cal) ? c.cal : []).forEach(r => {
+      if (!r) return;
+      const a = num(r.a), e = num(r.e);
+      put(+r.y, +r.q, { d: r.d, e, a, s: (a != null && e != null) ? +(a - e).toFixed(4) : null });
+    });
+    (Array.isArray(c.quarters) ? c.quarters : []).forEach(x => {
+      if (!x) return;
+      if (x.future) put(+x.y, +x.q, { d: x.date, e: num(x.estimate) });
+      else if (num(x.actual) != null) put(+x.y, +x.q, { a: x.actual, e: num(x.estimate), s: num(x.surprise) });
+    });
+    // `at` = el día (local) en que se trajo de Finnhub; un dato que viene de una instantánea
+    // de otro día no lo adelanta, para que hoy se pida fresco.
+    const fresh = !!day && day >= new Date().toISOString().slice(0, 10);
+    const next = { at: fresh ? this._today() : ((cur && cur.at) || ''), src: day || ((cur && cur.src) || ''), q };
+    if (cur && JSON.stringify(cur) === JSON.stringify(next)) return false;
+    db.e[tk] = next;
+    return true;
+  },
+  // Fecha aproximada de un trimestre ya publicado cuya fecha nunca se vio: el calendario de
+  // una empresa se repite, así que sale de sus fechas reales de otros trimestres. Primero las
+  // del MISMO trimestre fiscal de otro año (52 semanas exactas: mismo día de la semana, y
+  // respeta que el cuarto trimestre suele publicarse más tarde); si no hay, las de los
+  // trimestres vecinos (13 semanas cada uno). Mediana de lo que den.
+  _estDate(x, anc){
+    const yr = [], qt = [];
+    anc.forEach(a => {
+      const di = a.i - x.i;
+      if (!di) return;
+      if (di % 4 === 0 && Math.abs(di) <= 8) yr.push(this._ms(a.d) - (di / 4) * 364 * 864e5);
+      else if (Math.abs(di) <= 4) qt.push(this._ms(a.d) - di * 91 * 864e5);
+    });
+    const v = yr.length ? yr : qt;
+    return v.length ? this._iso(Math.round(this._med(v) / 864e5) * 864e5) : null;
+  },
+  _earnEvents(tk, Y, hoy){
+    const r = this._load().e[tk];
+    if (!r || !r.q) return [];
+    const recs = Object.keys(r.q).map(k => { const p = k.split('-'); return Object.assign({ i: (+p[0]) * 4 + (+p[1]) - 1 }, r.q[k]); });
+    const anc = recs.filter(x => this._isDate(x.d));
+    const ev = anc.map(x => ({ t: 'e', tk, d: x.d, a: x.a, e: x.e, s: x.s, ap: false }));
+    recs.forEach(x => {
+      if (this._isDate(x.d) || typeof x.a !== 'number') return;
+      const d = this._estDate(x, anc);
+      if (!d || d > hoy) return;                     // ya publicado: no puede caer en el futuro
+      // A ≤20 días de una fecha real es el mismo reporte con otra etiqueta fiscal: se le pasa
+      // el resultado si aún no lo tenía, y no se duplica.
+      const twin = ev.find(o => Math.abs(this._days(o.d, d)) <= 20);
+      if (twin) { if (typeof twin.a !== 'number' && twin.d <= hoy) Object.assign(twin, { a: x.a, e: x.e, s: x.s }); return; }
+      ev.push({ t: 'e', tk, d, a: x.a, e: x.e, s: x.s, ap: true });
+    });
+    return ev.filter(o => o.d.slice(0, 4) === String(Y));
+  },
+
+  // ── DIVIDENDOS ────────────────────────────────────────────────────────────────────
+  // Ex-dividendos REALES desde las velas diarias de Alpaca: S = ajustadas por splits, SD = por
+  // splits y dividendos. f = SD/S es constante entre dos ex-dividendos y salta justo el día ex;
+  // el salto da el importe por acción (en acciones de hoy, ya corregido por splits):
+  // D = cierre previo × (1 − f antes / f después). Las medianas de cada tramo quitan el ruido
+  // del redondeo a centavos de las dos series (±1 ¢ en un solo día). Devuelve [[fecha, $], …].
+  _divDetect(S, SD){
+    const m = new Map();
+    (Array.isArray(SD) ? SD : []).forEach(b => { if (b && b.c > 0) m.set(String(b.t).slice(0, 10), b.c); });
+    const ds = [], cs = [], fs = [];
+    (Array.isArray(S) ? S : []).forEach(b => {
+      if (!b || !(b.c > 0)) return;
+      const d = String(b.t).slice(0, 10), v = m.get(d);
+      if (v > 0 && this._isDate(d)) { ds.push(d); cs.push(b.c); fs.push(v / b.c); }
+    });
+    const n = ds.length, cand = [];
+    for (let i = 1; i < n; i++) {
+      const D1 = cs[i - 1] * (1 - fs[i - 1] / fs[i]);
+      if (!(D1 > 0.012)) continue;
+      const k = cand.length - 1;
+      if (k >= 0 && i - cand[k].i <= 3) { if (D1 > cand[k].D1) cand[k] = { i, D1 }; }   // un salto partido en dos días
+      else cand.push({ i, D1 });
+    }
+    const out = [];
+    cand.forEach((c, k) => {
+      const i = c.i, lo = k ? cand[k - 1].i : 0, hi = k + 1 < cand.length ? cand[k + 1].i : n;
+      const D = cs[i - 1] * (1 - this._med(fs.slice(Math.max(lo, i - 15), i)) / this._med(fs.slice(i, Math.min(hi, i + 15))));
+      // < 0,8 ¢ es ruido; más del 15 % del precio no es un pago normal (dato raro): fuera.
+      if (D >= 0.008 && D <= 0.15 * cs[i - 1]) out.push([ds[i], +D.toFixed(4)]);
+    });
+    return out;
+  },
+  // Frecuencia deducida de las fechas ex reales: meses entre pagos (0 = no se puede deducir).
+  // Un solo pago en los ~13 meses de velas, y de hace más de 200 días, es anual.
+  _divFreq(x, hoy){
+    if (x.length >= 2) {
+      const g = [];
+      for (let i = 1; i < x.length; i++) g.push(this._days(x[i - 1][0], x[i][0]));
+      const m = this._med(g);
+      return m <= 45 ? 1 : m <= 135 ? 3 : m <= 270 ? 6 : 12;
+    }
+    return (x.length === 1 && this._days(x[0][0], hoy) > 200) ? 12 : 0;
+  },
+  // Próximos ex-dividendos (estimados) entre `desde` y `hasta`: el pago real de hace un año
+  // + 52 semanas (mismo día de la semana del calendario de la empresa) o, si no lo hay, el
+  // último pago + k periodos, nunca en fin de semana.
+  _divProject(x, per, desde, hasta){
+    const out = [];
+    if (!per || !x.length) return out;
+    const last = x[x.length - 1][0], tol = Math.min(20, per * 10.5) * 864e5;
+    for (let k = 1; k <= 26; k++) {
+      let d = this._addMonths(last, k * per);
+      const ago = this._ms(d) - 365 * 864e5, prev = x.find(p => Math.abs(this._ms(p[0]) - ago) <= tol);
+      d = prev ? this._add(prev[0], 364) : this._weekday(d);
+      if (d > hasta) break;
+      if (d >= desde && d > last && out.indexOf(d) < 0) out.push(d);
+    }
+    return out;
+  },
+  // Importes para enseñar. Cada uno sale de dos series redondeadas a centavos (±0,2 ¢), así
+  // que los pagos seguidos del mismo importe declarado (a ≤1,5 % uno de otro) se igualan a su
+  // mediana, y el resultado se ajusta al centavo o, si no cuadra, al medio centavo
+  // (0.2814 → 0.28; 0.114 → 0.115; 0.5258 → 0.525).
+  _divClean(x){
+    const out = [];
+    for (let i = 0; i < x.length;) {
+      let j = i + 1;
+      while (j < x.length && Math.abs(x[j][1] / x[j - 1][1] - 1) <= 0.015) j++;
+      const v = this._med(x.slice(i, j).map(p => p[1])), c = Math.round(v * 100) / 100, h = Math.round(v * 200) / 200;
+      const a = Math.abs(v - c) <= 0.0015 ? c : Math.abs(v - h) <= 0.0015 ? h : c;
+      for (let k = i; k < j; k++) out.push([x[k][0], a > 0 ? a : x[k][1]]);
+      i = j;
+    }
+    return out;
+  },
+  // Importe del próximo pago. Una acción paga casi siempre lo mismo (la mayoría de pagos
+  // seguidos coinciden): el último, que ya recoge una subida. Un ETF reparte distinto cada vez:
+  // la mediana de los cuatro últimos.
+  _divNext(x){
+    const a = x.slice(-5).map(p => p[1]);
+    let flat = 0;
+    for (let i = 1; i < a.length; i++) if (Math.abs(a[i] / a[i - 1] - 1) <= 0.03) flat++;
+    return (a.length < 3 || flat >= Math.ceil((a.length - 1) / 2)) ? a[a.length - 1] : Math.round(this._med(a.slice(-4)) * 100) / 100;
+  },
+  _divEvents(tk, Y, hoy, q){
+    const r = this._load().d[tk];
+    if (!r || !Array.isArray(r.x) || !r.x.length) return [];
+    const ys = String(Y), ev = [], x = this._divClean(r.x);
+    x.forEach(p => { if (String(p[0]).slice(0, 4) === ys) ev.push({ t: 'd', tk, d: p[0], amt: p[1], q, est: false }); });
+    const per = this._divFreq(r.x, hoy);
+    if (per) {
+      const amt = this._divNext(x), d0 = this._add(hoy, -3);
+      this._divProject(r.x, per, d0 > ys + '-01-01' ? d0 : ys + '-01-01', ys + '-12-31')
+        .forEach(d => ev.push({ t: 'd', tk, d, amt, q, est: true }));
+    }
+    return ev;
+  },
+  // ¿Toca leer los dividendos de este ticker? Sin dato, cada 7 días, o si desde la última
+  // lectura le tocaba un ex-dividendo (estimado): se mira si ya llegó el real.
+  _needDiv(tk, hoy){
+    const r = this._load().d[tk];
+    if (!r || !this._isDate(r.at) || !Array.isArray(r.x)) return true;
+    if (r.at >= hoy) return false;
+    if (this._days(r.at, hoy) >= 7) return true;
+    return this._divProject(r.x, this._divFreq(r.x, hoy), this._add(r.at, -3), hoy).length > 0;
+  },
+  // Velas diarias de un lote (sigue next_page_token, hasta 4 páginas). null si no hay respuesta.
+  async _bars(path){
+    const all = {};
+    let tok = '';
+    for (let p = 0; p < 4; p++) {
+      const d = await _alpacaFetch(path + (tok ? '&page_token=' + encodeURIComponent(tok) : ''), 15000);
+      if (!d || typeof d !== 'object') return p ? all : null;
+      const b = (d.bars && typeof d.bars === 'object') ? d.bars : {};
+      Object.keys(b).forEach(k => { all[k] = (all[k] || []).concat(Array.isArray(b[k]) ? b[k] : []); });
+      tok = d.next_page_token;
+      if (!tok) break;
+    }
+    return all;
+  },
+  // Dos peticiones por cada 30 símbolos (por debajo del tope del proxy y de las 10.000 velas por
+  // página): ~13 meses de velas ajustadas por splits y por splits+dividendos.
+  async _fetchDiv(tks){
+    const start = this._add(this._today(), -400), out = {};
+    for (let i = 0; i < tks.length; i += 30) {
+      const grp = tks.slice(i, i + 30);
+      const path = adj => '/v2/stocks/bars?symbols=' + grp.map(encodeURIComponent).join(',')
+        + '&timeframe=1Day&start=' + start + '&limit=10000&adjustment=' + adj + '&feed=iex&sort=asc';
+      const [s, sd] = await Promise.all([this._bars(path('split')), this._bars(path('split,dividend'))]);
+      if (!s || !sd) return null;                    // sin respuesta: se queda lo guardado
+      grp.forEach(tk => { const k2 = tk.replace('.', '/'); out[tk] = this._divDetect(s[tk] || s[k2], sd[tk] || sd[k2]); });
+    }
+    return out;
+  },
+
+  // ── RED: sólo lo que falta o venció; el pintado nunca espera a esto ─────────────────
+  async _pool(items, n, fn){
+    const q = items.slice();
+    const w = async () => { while (q.length) { const it = q.shift(); try { await fn(it); } catch(e){} } };
+    await Promise.all(Array.from({ length: Math.min(n, q.length) }, w));
+  },
+  _kick(stocks, payers, hoy){
+    const now = Date.now(), db = this._load(), held = new Set(payers);
+    // Resultados: la misma pauta que tenía la rejilla de EPS (otras piezas leen EPS._cache en
+    // vivo, como la clave de invalidación por earnings): se pide lo que no está en memoria o
+    // venció (día anterior, o un reporte cuya fecha ya pasó), con un intento por ticker cada
+    // 2 h (10 min si aún no hay nada guardado). Si un reporte de los últimos días aún no trae
+    // el dato, se vuelve a pedir cada 2 h: así sale «Superó/Falló» en cuanto Finnhub lo tenga.
+    if (!this._busyE && typeof EPS !== 'undefined' && EPS && typeof EPS.fetch === 'function') {
+      const need = [];
+      stocks.forEach(tk => {
+        const c = EPS._cache[tk], r = db.e[tk], t = this._triedE[tk] || 0;
+        const pend = !!r && Object.keys(r.q || {}).some(k => { const x = r.q[k]; return this._isDate(x.d) && x.d <= hoy && this._days(x.d, hoy) <= 4 && typeof x.a !== 'number'; });
+        const ok = !!c && !c.error && !(EPS._isStale && EPS._isStale(tk));
+        if (ok && !(pend && now - t >= 2 * 3600e3)) return;              // en memoria y al día
+        if (t && now - t < (r ? 2 * 3600e3 : 10 * 60e3)) return;          // intentado hace poco
+        need.push({ tk, force: ok && pend });
+      });
+      if (need.length) {
+        this._busyE = true;
+        need.forEach(o => { this._triedE[o.tk] = now; });
+        this._pool(need, 3, async o => {
+          const c = EPS._cache[o.tk];
+          if (c && (o.force || c.error || (EPS._isStale && EPS._isStale(o.tk)))) delete EPS._cache[o.tk];
+          await EPS.fetch(o.tk);
+        }).then(() => {
+          let ch = false;
+          need.forEach(o => { if (this._mergeEps(o.tk)) ch = true; });
+          if (ch) this._save(held);
+        }).catch(() => {}).then(() => { this._busyE = false; this.render(); });
+      }
+    }
+    // Dividendos: un lote con todas las posiciones a las que les toca (reintento a los 30 min).
+    if (!this._busyD && now - this._triedD > 30 * 60e3 && typeof _alpacaFetch === 'function') {
+      const need = payers.filter(tk => this._needDiv(tk, hoy));
+      if (need.length) {
+        this._busyD = true;
+        this._triedD = now;
+        this._fetchDiv(need).then(res => {
+          if (!res) return;
+          const db2 = this._load();
+          Object.keys(res).forEach(tk => { db2.d[tk] = { at: hoy, x: res[tk] }; });
+          this._save(held);
+        }).catch(() => {}).then(() => { this._busyD = false; this.render(); });
+      }
+    }
+  },
+  // Lo llama EPS.autoRefresh cuando refresca tickers vencidos (p. ej. tras un reporte).
+  refresh(tks){
+    let ch = false;
+    (tks || []).forEach(tk => { if (this._mergeEps(String(tk || '').toUpperCase())) ch = true; });
+    if (ch) { this._save(null); this.render(); }
+  },
+
+  // ── PINTADO ───────────────────────────────────────────────────────────────────────
+  // $0.28, −$0.08; con `ps` (importe por acción ya ajustado por _divClean) admite el medio
+  // centavo: $0.115.
+  _usd(v, ps){
+    const x = Math.abs(+v || 0), dec = (ps && Math.abs(x * 100 - Math.round(x * 100)) > 1e-6) ? 3 : 2;
+    return (v < 0 ? '−' : '') + '$' + x.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  },
+  _evHTML(e, hoy){
+    const en = getLang() === 'en';
+    const done = e.t === 'e' ? (typeof e.a === 'number' && e.d <= hoy) : (!e.est && e.d <= hoy);
+    const dd = +e.d.slice(8, 10), mm = +e.d.slice(5, 7) - 1, aprox = e.ap || e.est;
+    const fecha = (e.d === hoy && !done) ? _L('Hoy', 'Today') : (en ? this._mon[mm] + ' ' + dd : dd + ' ' + this._mes[mm]);
+    let det, cls = '';
+    if (e.t === 'e') {
+      if (done) {
+        const diff = typeof e.s === 'number' ? e.s : (typeof e.e === 'number' ? e.a - e.e : null);
+        if (diff == null) { det = 'EPS ' + this._usd(e.a); cls = 'fl'; }
+        else if (Math.abs(diff) < 0.005) { det = _L('En línea con lo esperado', 'In line with estimates'); cls = 'fl'; }
+        else { det = (diff > 0 ? _L('Superó', 'Beat') + ' +' : _L('Falló', 'Missed') + ' −') + this._usd(Math.abs(diff)); cls = diff > 0 ? 'up' : 'dn'; }
+      } else if (e.d < hoy) { det = _L('Resultado pendiente', 'Result pending'); cls = 'fl'; }
+      else det = typeof e.e === 'number' ? _L('EPS estimado ', 'Est. EPS ') + this._usd(e.e) : _L('Sin estimación de EPS', 'No EPS estimate');
+    } else {
+      const you = e.q > 0 ? e.amt * e.q : 0;
+      det = this._usd(e.amt, true) + ' ' + _L('por acción', 'per share')
+        + (you > 0 ? ' · ~' + (you < 0.01 ? '<$0.01' : this._usd(you)) + ' ' + _L('para ti', 'for you') : '');
+    }
+    const tag = e.t === 'e' ? _pvaTag(_L('Resultados', 'Earnings'), 'n') : _pvaTag(_L('Ex-dividendo', 'Ex-dividend'), 'g');
+    // Bajo la fecha, el estado: ✓ si ya pasó, «estimado» si es una proyección.
+    const ok = done ? '<span class="pva-cok" role="img" aria-label="' + _L('Hecho', 'Done') + '">' + _pvaSvg('<path d="M5 12.5l4.3 4.3L19 7"/>', 14, 2.6) + '</span>'
+             : e.est ? '<span class="pva-cest">' + _L('estimado', 'estimated') + '</span>' : '';
+    // Fecha (con «≈» si es estimada) y, debajo, la marca de hecho; a la derecha, avatar,
+    // ticker y pastilla de tipo, y bajo ellos el dato a todo el ancho.
+    return '<div class="pva-cev' + (done ? ' done' : '') + (e.d === hoy ? ' hoy' : '') + '">'
+      + '<span class="pva-cd"' + (aprox ? ' title="' + _L('Fecha aproximada', 'Approximate date') + '"' : '') + '>' + (aprox ? '≈ ' : '') + fecha + ok + '</span>'
+      + '<div class="pva-cb"><div class="pva-ct">' + _pvaAv(e.tk) + '<b>' + pvEsc(e.tk) + '</b>' + tag + '</div>'
+      + '<div class="pva-cx' + (cls ? ' ' + cls : '') + '">' + det + '</div></div></div>';
+  },
+  _gridHTML(ev, M, hoy){
+    const en = getLang() === 'en', months = Array.from({ length: 12 }, () => []);
+    ev.forEach(e => { const m = +String(e.d).slice(5, 7) - 1; if (m >= 0 && m < 12) months[m].push(e); });
+    return '<div class="pva-calg">' + months.map((list, m) => {
+      list.sort((a, b) => a.d.localeCompare(b.d) || (a.t === b.t ? 0 : (a.t === 'e' ? -1 : 1)) || a.tk.localeCompare(b.tk));
+      const n = list.length;
+      return '<div class="pva-cm' + (m === M ? ' now' : '') + '">'
+        + '<div class="pva-cmh"><b>' + (en ? this._MON : this._MES)[m] + '</b>'
+        + (m === M ? '<span class="pva-cnow">' + _L('Este mes', 'This month') + '</span>' : '')
+        + (n ? '<small>' + n + ' ' + (n === 1 ? _L('evento', 'event') : _L('eventos', 'events')) + '</small>' : '') + '</div>'
+        + (n ? list.map(e => this._evHTML(e, hoy)).join('') : '<p class="pva-c0">' + _L('Sin eventos', 'No events') + '</p>')
+        + '</div>';
+    }).join('') + '</div>';
+  },
+  // El año: eventos de todas las posiciones, la rejilla de meses y la nota de fuentes.
+  _yearHTML(stocks, payers, qty, Y, M, hoy){
+    const db = this._load(), ev = [];
+    stocks.forEach(tk => { ev.push.apply(ev, this._earnEvents(tk, Y, hoy)); });
+    payers.forEach(tk => { ev.push.apply(ev, this._divEvents(tk, Y, hoy, qty[tk])); });
+    // «Actualizando…» sólo mientras falta el primer dato de alguna posición, no en el refresco diario.
+    const loading = (this._busyE && stocks.some(tk => !db.e[tk])) || (this._busyD && payers.some(tk => !db.d[tk]));
+    return this._gridHTML(ev, M, hoy)
+      + '<p class="pva-foot2 pva-calnote">' + (loading ? '<b>' + _L('Actualizando el calendario…', 'Updating the calendar…') + '</b> ' : '')
+      + _L('Resultados de Finnhub; dividendos de Alpaca (fecha ex-dividendo e importe por acción). «≈» marca una fecha estimada: la de un resultado pasado sale del calendario habitual de la empresa y la de un dividendo futuro, de su frecuencia. «Para ti» usa las acciones que tienes hoy.',
+           'Earnings from Finnhub; dividends from Alpaca (ex-dividend date and amount per share). “≈” marks an estimated date: for a past report it comes from the company’s usual schedule, for a future dividend from its frequency. “For you” uses the shares you hold today.')
+      + '</p>';
+  },
+  // Plan gratuito: la misma rejilla con barras grises (nada real detrás del difuminado).
+  _skeletonHTML(M){
+    const en = getLang() === 'en', bar = w => '<div class="pv-sk-bar" style="width:' + w + '%"></div>';
+    return '<div class="pva-calg">' + this._MES.map((x, m) => '<div class="pva-cm' + (m === M ? ' now' : '') + '">'
+      + '<div class="pva-cmh"><b>' + (en ? this._MON : this._MES)[m] + '</b></div>'
+      + '<div class="pv-sk-p">' + bar(82 - (m % 3) * 9) + bar(54 + (m % 4) * 7) + '</div></div>').join('') + '</div>';
+  },
+
+  render(){
+    const host = document.getElementById('pvaCal');
+    if (!host) return;
+    const hoy = this._today(), Y = +hoy.slice(0, 4), M = +hoy.slice(5, 7) - 1;
+    const eb = document.getElementById('pvaCalEb'), h2 = document.getElementById('pvaCalTitle');
+    const ebT = _L('Calendario', 'Calendar'), h2T = _L('Resultados y dividendos ', 'Earnings and dividends ') + Y;
+    if (eb && eb.textContent !== ebT) eb.textContent = ebT;
+    if (h2 && h2.textContent !== h2T) h2.textContent = h2T;
+    // Posiciones: acciones (resultados) y acciones + ETF (dividendos), con las acciones de cada una.
+    const qty = {}, stocks = [], payers = [];
+    (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS) ? HOLDINGS : []).forEach(h => {
+      const tk = String((h && h.ticker) || '').toUpperCase().trim(), ty = String((h && h.type) || 'stock').toLowerCase();
+      if (!/^[A-Z][A-Z0-9.\-]{0,9}$/.test(tk) || (ty !== 'stock' && ty !== 'etf')) return;
+      if (!(tk in qty)) {
+        qty[tk] = 0;
+        payers.push(tk);
+        const info = (typeof _INFO_CACHE !== 'undefined') ? _INFO_CACHE[tk] : null;
+        const etf = ty === 'etf' || (typeof _isEtfTicker === 'function' && _isEtfTicker(tk, info))
+          || (typeof EPS !== 'undefined' && EPS._ETF && EPS._ETF.has(tk));
+        if (!etf) stocks.push(tk);
+      }
+      qty[tk] += (+h.qty > 0 ? +h.qty : 0);
+    });
+    const legend = '<div class="pva-cleg"><span><span class="pva-cdot"></span>' + _L('Resultados', 'Earnings') + '</span>'
+      + '<span><span class="pva-cdot g"></span>' + _L('Dividendo', 'Dividend') + '</span></div>';
+    const msg = t => '<div class="pva-card pva-empty">' + t + '</div>';
+    let html, side = legend;
+    if (!payers.length) {
+      side = '';
+      const any = typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS) && HOLDINGS.length > 0;
+      html = msg(any
+        ? _L('El calendario cubre acciones y ETF: tus posiciones no tienen resultados ni dividendos que enseñar aquí.', 'The calendar covers stocks and ETFs: your positions have no earnings or dividends to show here.')
+        : _L('Agrega posiciones y aquí verás, mes a mes, sus resultados trimestrales y sus dividendos del año.', 'Add positions to see their quarterly earnings and dividends for the year, month by month.'));
+    } else if (typeof _pvLocked === 'function' && _pvLocked()) {
+      html = this._skeletonHTML(M);
+    } else {
+      let ch = false;
+      stocks.forEach(tk => { if (this._mergeEps(tk)) ch = true; });   // lo que ya esté en memoria
+      if (ch) this._save(new Set(payers));
+      this._kick(stocks, payers, hoy);
+      const db = this._load();
+      if (!stocks.some(tk => db.e[tk]) && !payers.some(tk => db.d[tk])) {
+        // Sin un solo dato todavía: doce meses «Sin eventos» dirían algo falso. Se dice que
+        // carga, o que no se pudo y que se reintenta solo.
+        side = '';
+        html = msg((this._busyE || this._busyD)
+          ? _L('Cargando el calendario de tus posiciones…', 'Loading your positions’ calendar…')
+          : _L('Ahora no se pudieron traer los resultados y dividendos de tus posiciones. Se vuelve a intentar solo en unos minutos.', 'Your positions’ earnings and dividends could not be loaded right now. It will retry automatically in a few minutes.'));
+      } else html = this._yearHTML(stocks, payers, qty, Y, M, hoy);
+    }
+    if (side !== this._side) { _pvaSide('pvaCalSide', side); this._side = side; }
+    if (html === this._html && host.innerHTML) return;   // nada nuevo: ni se toca el DOM
+    const g0 = host.querySelector('.pva-calg'), sl = g0 ? g0.scrollLeft : 0;
+    host.innerHTML = html;
+    this._html = html;
+    // Celular: la rejilla es un carrusel por meses; abre en el mes actual y, en los repintados,
+    // se queda donde la dejó el usuario.
+    const g = host.querySelector('.pva-calg');
+    if (g && g.clientWidth > 0 && g.scrollWidth > g.clientWidth + 4) {
+      const key = Y + '-' + M;
+      if (this._key === key && g0) g.scrollLeft = sl;
+      else {
+        const c = g.querySelector('.pva-cm.now');
+        if (c) g.scrollLeft = c.getBoundingClientRect().left - g.getBoundingClientRect().left + g.scrollLeft - (parseFloat(getComputedStyle(g).paddingLeft) || 0);
+        this._key = key;
+      }
+    }
+  },
+};
+window.PV_CAL = PV_CAL;
 
 // ════════════════════════════════════════════════════════════════════════════
 //  PV_AI — Análisis del perfil de inversión con IA (inversionista experimentado)
@@ -13631,10 +14057,9 @@ function renderDeepPortfolioAnalysis(T) {
     _set('pvaHealth', emptyMsg('Tu portafolio está vacío. Conecta tu broker desde <b>Ajustes</b> para construir el análisis profundo — sectores, concentración, beta y diagnóstico se calcularán con tus datos reales.'));
     _set('port-rebal-recs', emptyMsg('Sin posiciones que rebalancear. Las recomendaciones aparecerán cuando agregues holdings.'));
     _set('port-pros-cons', emptyMsg('Los pros y contras se generan a partir de tus posiciones reales. Aún no hay nada que analizar.'));
-    _set('port-kpi-bar', '');
     _pvaSide('pvaRebSide', '');
-    // EPS sin posiciones: su propio mensaje (la sección se oculta sola si no hay tarjetas).
-    try { if (typeof EPS !== 'undefined') EPS.renderPortfolio(); } catch(e) {}
+    // Calendario de resultados y dividendos: sin posiciones, su propio mensaje.
+    try { if (typeof PV_CAL !== 'undefined') PV_CAL.render(); } catch(e) {}
     const _yl0 = document.getElementById('pa-year-label'); if (_yl0) _yl0.textContent = new Date().getFullYear();
     _set('port-expected-return', `
       <div class="pva-card pva-rcard pva-rcard-empty">
@@ -13645,7 +14070,9 @@ function renderDeepPortfolioAnalysis(T) {
     renderAssetDetailTable(T, m);
     return;
   }
-  try { if (typeof EPS !== 'undefined') EPS.renderPortfolio(); } catch(e) {}
+  // Calendario del año (resultados y dividendos de las posiciones). Pinta con lo guardado y
+  // pide en segundo plano sólo lo que falta o venció.
+  try { if (typeof PV_CAL !== 'undefined') PV_CAL.render(); } catch(e) {}
   // Fundamentales que le faltan al motor de rebalanceo para poder calificar (no bloquea el
   // render: cuando llegan, repinta). Sin esto la tabla salía entera en MANTENER.
   try { _pvxEnsureFundamentals(HOLDINGS.map(h => h.ticker)); } catch(e){}
@@ -14024,26 +14451,6 @@ function renderDeepPortfolioAnalysis(T) {
       <div class="pva-scn"><span class="pva-tag ${base >= 0 ? 'g' : 'r'}">Escenario base</span><b class="${_cls}">${_rngTxt}</b><p>Rango del retorno anual esperado (apreciación sobria + dividendos), no una promesa. Estimación basada en consenso.</p></div>
       <div class="pva-scn"><span class="pva-tag r">Escenario bajista</span><b class="dn">${_sgn(bear)}</b><p>En una corrección del mercado de ~20%, tu cartera (beta ${(m.portBeta||1).toFixed(2)}) caería alrededor de esto.</p></div>
     </div>`);
-
-  // KPI bar — sin duplicar Concentración (ya está en el grid superior + Health Score) ni la
-  // proyección puntual con veredicto "On Track" (eliminada por riesgo App Store). Estas
-  // cifras REFERENCIAN el retorno esperado, no lo recalculan (la tabla de desglose es la
-  // fuente autoritativa). Añade el ingreso por dividendos en $ (BLOQUE 7.2).
-  const _divIncome = m.items.reduce((s,i)=> s + (i.divYield||0) * (i.mktVal||0), 0);   // $/año en dividendos
-  // Métrica ajustada por riesgo: retorno esperado por unidad de beta, comparado con VOO
-  // (β 1.0, ER ~8.7%). Responde "¿el riesgo extra está pagando?".
-  const _vooER   = (ETF_DB.VOO && ETF_DB.VOO.expReturn) || 0.087;
-  const _riskAdj = (m.portBeta > 0) ? (expAnnual / m.portBeta) : 0;
-  const _beatsVoo = _riskAdj >= _vooER;
-  _set('port-kpi-bar', `
-    <div class="pva-g4">
-      <div class="pva-card pva-dtile"><small>Rendimiento por dividendo</small><b>${(m.expDiv*100).toFixed(1)}%<span>anual</span></b></div>
-      <div class="pva-card pva-dtile"><small>Ingreso por dividendos</small><b>~${_pvSym()}${Math.round(_divIncome).toLocaleString('en-US')}<span>/ año</span></b></div>
-      <div class="pva-card pva-dtile"><small>Retorno anual esperado</small><b class="${expAnnual >= 0 ? 'up' : 'dn'}">${_pvaSgn(expAnnual)}<span>estimado</span></b></div>
-      <div class="pva-card pva-dtile"><small>Retorno / riesgo frente a VOO</small><b>${(_riskAdj*100).toFixed(1)}%${_pvaTag(_beatsVoo ? 'Paga el riesgo' : '≤ VOO', _beatsVoo ? 'g' : 'a')}</b></div>
-    </div>
-    <p class="pva-foot2">Estimación basada en consenso de analistas — no es una meta ni una promesa de rendimiento. El retorno esperado es el mismo del panel superior y del desglose por activo. No es asesoría financiera.</p>
-  `);
 
   renderAssetDetailTable(T, m);
   // (La sección "Retornos de precio de la cartera" se retiró: el retorno de precio de las
@@ -50413,9 +50820,9 @@ html body #tab-noticias #posNewsCard .pnx-items > .sn-card .sn-card-sentiment { 
 /* ═══ ANÁLISIS — rediseño aprobado de la pestaña (analisis.png) ═══════════════════════════
    Cabecera navy con buscador y los 4 indicadores sobre la curva, y debajo: Retorno esperado ·
    Tus posiciones · Diagnóstico · Salud y diversificación · Fortalezas y riesgos · Análisis del
-   asesor · Rebalanceo · Dividendos · EPS. Marcado: #pvaHero y #analizar-portfolio-section
-   (renderDeepPortfolioAnalysis, renderAssetDetailTable, _pvAdvisorBlock, PV_AI.render,
-   _pvxSuggestHTML). Todas las clases son nuevas (pva-*).
+   asesor · Rebalanceo · Calendario de resultados y dividendos. Marcado: #pvaHero y
+   #analizar-portfolio-section (renderDeepPortfolioAnalysis, renderAssetDetailTable,
+   _pvAdvisorBlock, PV_AI.render, _pvxSuggestHTML, PV_CAL.render). Todas las clases son nuevas (pva-*).
    Cada regla cuelga de DOS ids (#tab-analizar + #pvaHero / #analizar-portfolio-section, con
    el prefijo «html body»): gana por especificidad a las capas anteriores de la pestaña —el
    bloque pvd/v8 de escritorio, html.pv-ipad, @media ≤700, las tallas de fuente de
@@ -50626,8 +51033,6 @@ html body #tab-analizar #analizar-portfolio-section .pva-diag { display:grid; gr
 html body #tab-analizar #analizar-portfolio-section .pva-dl { min-width:0; }
 html body #tab-analizar #analizar-portfolio-section .pva-big { font-size:18px; font-weight:500; line-height:1.7; color:var(--pva-slate); margin:0; }
 html body #tab-analizar #analizar-portfolio-section .pva-big strong, html body #tab-analizar #analizar-portfolio-section .pva-big b { color:var(--pva-ink); font-weight:800; }
-html body #tab-analizar #analizar-portfolio-section .pva-mkt { margin-top:22px; background:var(--pva-wash); border-radius:20px; padding:16px 20px; font-size:14.5px; line-height:1.65; color:var(--pva-slate); }
-html body #tab-analizar #analizar-portfolio-section .pva-mkt b { display:block; margin-bottom:3px; color:var(--pva-ink); font-weight:800; }
 html body #tab-analizar #analizar-portfolio-section .pva-note { margin:16px 0 0; font-size:13px; font-weight:600; line-height:1.5; color:var(--pva-muted); }
 html body #tab-analizar #analizar-portfolio-section .pva-recs { min-width:0; display:flex; flex-direction:column; border-left:1px solid var(--pva-line); padding-left:40px; }
 html body #tab-analizar #analizar-portfolio-section .pva-recs > .pva-lbl { margin-bottom:6px; }
@@ -50787,44 +51192,45 @@ html body #tab-analizar #analizar-portfolio-section .pva-disc { margin:0; max-wi
 html body #tab-analizar #analizar-portfolio-section .pva-rebfoot .rbl-export { height:44px; padding:0 20px; font-size:14px; }
 html body #tab-analizar #analizar-portfolio-section .pva-rebfoot .rbl-export svg { flex:none; }
 
-/* ── Dividendos y retorno por riesgo ── */
-html body #tab-analizar #analizar-portfolio-section .pva-g4 { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:16px; align-items:stretch; }
-html body #tab-analizar #analizar-portfolio-section .pva-dtile { padding:20px 22px; }
-html body #tab-analizar #analizar-portfolio-section .pva-dtile small { display:block; font-size:13.5px; font-weight:700; line-height:1.35; color:var(--pva-muted); }
-html body #tab-analizar #analizar-portfolio-section .pva-dtile b { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; margin-top:10px; font-size:28px; font-weight:800; letter-spacing:-.03em; line-height:1.1; color:var(--pva-ink); font-variant-numeric:tabular-nums; }
-html body #tab-analizar #analizar-portfolio-section .pva-dtile b.up { color:var(--pva-green); } html body #tab-analizar #analizar-portfolio-section .pva-dtile b.dn { color:var(--pva-red); }
-html body #tab-analizar #analizar-portfolio-section .pva-dtile b > span:not(.pva-tag) { font-size:13.5px; font-weight:700; letter-spacing:0; color:var(--pva-muted); }
-html body #tab-analizar #analizar-portfolio-section .pva-dtile b .pva-tag { align-self:center; font-size:12px; }
+/* Pie de nota directo sobre la página (lo usa el calendario). */
 html body #tab-analizar #analizar-portfolio-section .pva-foot2 { margin:14px 0 0; font-size:13px; font-weight:600; line-height:1.55; color:var(--pva-pg-muted); }
-html body #tab-analizar #analizar-portfolio-section #pvaSecDiv:not(:has(.pva-dtile)) { display:none; }
 /* La tarjeta del candado (plan gratuito) sigue la piel de la pestaña: filo y sin sombra. */
 html body #tab-analizar #analizar-portfolio-section .pv-lock-card { box-shadow:none; border:1px solid var(--pva-line); border-radius:24px; }
 
-/* ── EPS: las tarjetas de siempre con la piel nueva (sólo en esta pestaña) ── */
-html body #tab-analizar #analizar-portfolio-section #pvaSecEps:not(:has(.eps-card)) { display:none; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-sec-head { display:flex; justify-content:flex-end; margin:0 0 16px; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-toggle { display:inline-flex; padding:4px; background:var(--pva-card); border:1px solid var(--pva-line); border-radius:999px; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-tg { padding:7px 14px !important; border:0; border-radius:999px; background:none; color:var(--pva-muted); font-size:13px !important; font-weight:700; cursor:pointer; transition:background-color .22s var(--pva-ease), color .22s var(--pva-ease); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-tg.on { background:var(--pva-strong); color:var(--pva-on-strong); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-grid { display:flex !important; flex-wrap:wrap; gap:16px !important; align-items:stretch; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-slot { flex:1 1 280px; min-width:0; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-slot:empty { display:none; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card { height:100%; box-sizing:border-box; background:var(--pva-card) !important; border:1px solid var(--pva-line) !important; border-radius:24px !important; padding:20px 20px 14px !important; box-shadow:none !important; color:var(--pva-ink) !important; overflow:visible !important; transform:none !important; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card-head { margin:0 0 6px; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card-tk { font-size:15.5px !important; font-weight:800; letter-spacing:0; color:var(--pva-ink); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-xrow { gap:4px !important; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-xcol { padding:6px 2px !important; border-radius:10px; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-xcol.sel { background:var(--pva-bg); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-q { font-size:11.5px !important; font-weight:800; color:var(--pva-ink); line-height:1.3 !important; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-bm { display:block !important; font-size:11.5px; font-weight:800; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-diff { font-size:11.5px !important; font-weight:700; letter-spacing:0 !important; }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-bm.beat, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-diff.beat { color:var(--pva-green); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-bm.miss, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-diff.miss { color:var(--pva-red); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-fut, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-x-date { font-size:11.5px !important; color:var(--pva-muted); }
-html body #tab-analizar #analizar-portfolio-section #port-eps .eps-loading, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-empty { font-size:14px; font-weight:600; color:var(--pva-muted); }
-html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#22c55e"] { fill:var(--pva-green); }
-html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#ef4444"] { fill:var(--pva-red); }
-html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#ffffff"] { fill:var(--pva-card); stroke:var(--pva-muted); }
+/* ── Calendario: resultados y dividendos del año (PV_CAL) ── */
+/* Leyenda en el hueco derecho de la cabecera: punto navy = resultados, verde = dividendo. */
+html body #tab-analizar #analizar-portfolio-section .pva-cleg { display:flex; flex-wrap:wrap; align-items:center; gap:6px 18px; font-size:13px; font-weight:700; line-height:1.3; color:var(--pva-pg-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-cleg > span { display:inline-flex; align-items:center; gap:7px; white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-cdot { flex:none; width:9px; height:9px; border-radius:50%; background:var(--pva-strong); }
+html body #tab-analizar #analizar-portfolio-section .pva-cdot.g { background:var(--pva-green); }
+/* Doce tarjetas de mes; las de una misma fila, a la misma altura. */
+html body #tab-analizar #analizar-portfolio-section .pva-calg { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:16px; align-items:stretch; }
+html body #tab-analizar #analizar-portfolio-section .pva-cm { display:flex; flex-direction:column; min-width:0; box-sizing:border-box; background:var(--pva-card); border:1px solid var(--pva-line); border-radius:24px; padding:18px 16px 8px; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-cm.now { border:2px solid var(--pva-strong); padding:17px 15px 7px; }
+html body #tab-analizar #analizar-portfolio-section .pva-cmh { display:flex; align-items:center; gap:8px; min-height:26px; margin:0 0 4px; }
+html body #tab-analizar #analizar-portfolio-section .pva-cmh b { font-size:17px; font-weight:800; letter-spacing:-.015em; line-height:1.3; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-cnow { font-size:11.5px; font-weight:800; line-height:1; padding:5px 9px; border-radius:999px; background:var(--pva-strong); color:var(--pva-on-strong); white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-cmh small { margin-left:auto; font-size:12.5px; font-weight:700; line-height:1.3; color:var(--pva-muted); white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-c0 { margin:6px 0 10px; font-size:13px; font-weight:600; line-height:1.4; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-cm .pv-sk-p { margin:10px 0 12px; }
+/* Un evento: fecha (y la marca de hecho debajo) | avatar + ticker + pastilla, y el dato debajo. */
+html body #tab-analizar #analizar-portfolio-section .pva-cev { display:grid; grid-template-columns:58px minmax(0,1fr); column-gap:6px; align-items:start; padding:10px 0; }
+html body #tab-analizar #analizar-portfolio-section .pva-cev + .pva-cev { border-top:1px solid var(--pva-line); }
+html body #tab-analizar #analizar-portfolio-section .pva-cd { padding-top:4px; font-size:12.5px; font-weight:800; line-height:1.3; color:var(--pva-ink); white-space:nowrap; font-variant-numeric:tabular-nums; }
+html body #tab-analizar #analizar-portfolio-section .pva-cok { display:block; margin-top:5px; color:var(--pva-green); line-height:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-cest { display:block; margin-top:3px; font-size:11px; font-weight:700; line-height:1.2; color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-cb { min-width:0; }
+html body #tab-analizar #analizar-portfolio-section .pva-ct { display:flex; flex-wrap:wrap; align-items:center; gap:4px 7px; min-width:0; min-height:24px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ct .pva-av { width:24px; height:24px; border-radius:8px; font-size:11.5px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ct b { font-size:14.5px; font-weight:800; line-height:1.2; color:var(--pva-ink); }
+html body #tab-analizar #analizar-portfolio-section .pva-ct .pva-tag { font-size:11.5px; padding:4px 9px; }
+html body #tab-analizar #analizar-portfolio-section .pva-cx { margin-top:4px; font-size:13px; font-weight:700; line-height:1.45; color:var(--pva-slate); }
+html body #tab-analizar #analizar-portfolio-section .pva-cx.fl { color:var(--pva-muted); }
+/* Lo que ya pasó, atenuado: fecha y ticker en gris; el dato real conserva su color. */
+html body #tab-analizar #analizar-portfolio-section .pva-cev.done .pva-cd, html body #tab-analizar #analizar-portfolio-section .pva-cev.done .pva-ct b { color:var(--pva-muted); }
+html body #tab-analizar #analizar-portfolio-section .pva-cev.done .pva-ct .pva-av, html body #tab-analizar #analizar-portfolio-section .pva-cev.done .pva-ct .pva-tag { opacity:.62; }
+html body #tab-analizar #analizar-portfolio-section .pva-calnote { margin-top:16px; max-width:120ch; }
+html body #tab-analizar #analizar-portfolio-section .pva-calnote b { color:var(--pva-pg-ink); font-weight:800; }
 
 /* ═══ ESCRITORIO — cabecera en fila, medidas del diseño ═════════════════════════════════ */
 @media (min-width: 900px) {
@@ -50872,7 +51278,6 @@ html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#
   html body #tab-analizar #analizar-portfolio-section .pva-diag { grid-template-columns:minmax(0,1fr); gap:0; }
   html body #tab-analizar #analizar-portfolio-section .pva-recs { border-left:0; padding-left:0; border-top:1px solid var(--pva-line); margin-top:24px; padding-top:14px; }
   html body #tab-analizar #analizar-portfolio-section .pva-status { margin-top:10px; }
-  html body #tab-analizar #analizar-portfolio-section .pva-g4 { grid-template-columns:repeat(2, minmax(0,1fr)); }
   html body #tab-analizar #analizar-portfolio-section .pva-parts, html body #tab-analizar #analizar-portfolio-section .pva-parts.n2, html body #tab-analizar #analizar-portfolio-section .pva-parts.n4 { grid-template-columns:minmax(0,1fr); }
   html body #tab-analizar #analizar-portfolio-section .pva-read .pva-prose { columns:auto; max-width:78ch; }
 }
@@ -50889,6 +51294,14 @@ html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#
 @media (max-width: 959px) {
   html body #tab-analizar #analizar-portfolio-section .pva-hcard + .pva-g2 { grid-template-columns:minmax(0,1fr); }
   html body #tab-analizar #analizar-portfolio-section .pva-srow { max-height:none; }
+}
+/* Calendario en la web: 4 meses por fila desde 1360 px, 3 hasta 1100 y 2 por debajo, para
+   que cada evento quepa en dos líneas (el iPad va por orientación, en su bloque). */
+@media (max-width: 1359px) {
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-calg { grid-template-columns:repeat(3, minmax(0,1fr)); }
+}
+@media (max-width: 1099px) {
+  html:not(.pv-ipad) body #tab-analizar #analizar-portfolio-section .pva-calg { grid-template-columns:repeat(2, minmax(0,1fr)); }
 }
 /* Web de 701–899 y iPad en vertical: la pestaña no lleva margen lateral; las secciones sí.
    En la web de ese tramo (sin pv-ipad) se usan las medidas de tablet del iPad. */
@@ -50940,7 +51353,6 @@ html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#
   html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-big { font-size:17px; }
   html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-intro .pva-prose p { font-size:17px; }
   html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-read { padding:30px 30px; }
-  html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-dtile b { font-size:25px; }
   html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-ring,
   html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-ring svg { width:132px; height:132px; }
   html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-ring b { font-size:38px; }
@@ -50950,6 +51362,9 @@ html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#
   @media (min-width: 1100px) {
     html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-kpi b { font-size:31px; }
   }
+  /* Calendario: 3 meses por fila en horizontal, 2 en vertical. */
+  @media (orientation: landscape) { html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-calg { grid-template-columns:repeat(3, minmax(0,1fr)); } }
+  @media (orientation: portrait)  { html.pv-ipad body #tab-analizar #analizar-portfolio-section .pva-calg { grid-template-columns:repeat(2, minmax(0,1fr)); } }
 }
 
 /* ═══ CELULAR (≤700) — una columna, indicadores 2×2 sobre la curva ═════════════════════ */
@@ -51005,7 +51420,6 @@ html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#
   html body #tab-analizar #analizar-portfolio-section .pva-tnote { padding:12px 12px 10px; font-size:12.5px; }
   /* Diagnóstico */
   html body #tab-analizar #analizar-portfolio-section .pva-big { font-size:16px; line-height:1.65; }
-  html body #tab-analizar #analizar-portfolio-section .pva-mkt { padding:14px 16px; font-size:14px; border-radius:18px; }
   html body #tab-analizar #analizar-portfolio-section .pva-rec p { font-size:15px; }
   html body #tab-analizar #analizar-portfolio-section .pva-ri { width:38px; height:38px; border-radius:12px; }
   html body #tab-analizar #analizar-portfolio-section .pva-cta { flex-direction:column; align-items:flex-start; gap:16px; }
@@ -51049,16 +51463,14 @@ html body #tab-analizar #analizar-portfolio-section #port-eps svg circle[fill="#
   html body #tab-analizar #analizar-portfolio-section .pva-sghd p { font-size:14.5px; }
   html body #tab-analizar #analizar-portfolio-section .pva-sghd + .pva-rh + .pva-rr { border-top:1px solid var(--pva-line); }
   html body #tab-analizar #analizar-portfolio-section .pva-rebfoot { flex-direction:column; align-items:flex-start; gap:14px; padding:0 4px; }
-  /* Dividendos */
-  html body #tab-analizar #analizar-portfolio-section .pva-g4 { gap:10px; }
-  html body #tab-analizar #analizar-portfolio-section .pva-dtile { padding:16px 16px; }
-  html body #tab-analizar #analizar-portfolio-section .pva-dtile small { font-size:12.5px; }
-  html body #tab-analizar #analizar-portfolio-section .pva-dtile b { font-size:22px; }
+  /* Calendario: carrusel por meses a sangre, que abre en el mes actual (PV_CAL.render) y deja
+     asomar el siguiente. Todas las tarjetas a la altura del mes más largo, como páginas: con
+     alturas distintas quedaba un hueco bajo el mes visible y bordes desparejos a los lados. */
+  html body #tab-analizar #analizar-portfolio-section .pva-calg { display:flex; align-items:stretch; gap:12px; margin:0 -16px; padding:0 16px; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; scroll-snap-type:x mandatory; scroll-padding-inline:16px; scrollbar-width:none; -webkit-overflow-scrolling:touch; }
+  html body #tab-analizar #analizar-portfolio-section .pva-calg::-webkit-scrollbar { display:none; }
+  html body #tab-analizar #analizar-portfolio-section .pva-cm { flex:0 0 calc(100% - 44px); scroll-snap-align:start; padding:16px 16px 6px; }
+  html body #tab-analizar #analizar-portfolio-section .pva-cm.now { padding:15px 15px 5px; }
   html body #tab-analizar #analizar-portfolio-section .pva-foot2 { padding:0 4px; }
-  /* EPS: una tarjeta por fila */
-  html body #tab-analizar #analizar-portfolio-section #port-eps .eps-grid { gap:12px !important; }
-  html body #tab-analizar #analizar-portfolio-section #port-eps .eps-slot { flex-basis:100%; }
-  html body #tab-analizar #analizar-portfolio-section #port-eps .eps-card { padding:16px 14px 12px !important; }
 }
 
 /* ═══ OSCURO (body.dark-theme): los tokens oscuros de la app ════════════════════════════ */
@@ -51081,7 +51493,7 @@ html body.dark-theme #tab-analizar #pvaHero .research-search-bar:focus-within { 
 @media (min-width: 900px) {
   html:not(.pv-ipad) body.dark-theme #tab-analizar { --pva-hero:#0b1c30; --pva-pg-ink:#0b1c30; --pva-pg-muted:#7a879b; }
   html:not(.pv-ipad) body.dark-theme #tab-analizar #pvaHero { border:0; }
-  html:not(.pv-ipad) body.dark-theme #tab-analizar #analizar-portfolio-section :is(.pva-sh, .pva-foot, .pva-rebfoot, .pva-foot2, #port-eps .eps-sec-head) {
+  html:not(.pv-ipad) body.dark-theme #tab-analizar #analizar-portfolio-section :is(.pva-sh, .pva-foot, .pva-rebfoot, .pva-foot2) {
     --pva-bg:#eef1f8; --pva-slate:#33475f; --pva-muted:#7a879b; --pva-ink:#0b1c30; --pva-card:#fff; --pva-line:#e2e7f0;
     --pva-green:#0f8a5f; --pva-green-bg:#dcf6e9; --pva-amber:#b45309; --pva-amber-bg:#fdecd8; --pva-red:#c62828; --pva-red-bg:#ffe3df;
     --pva-btn:#0b1c30; --pva-btn-ink:#fff; --pva-strong:#0b1c30; --pva-on-strong:#fff;
@@ -51090,7 +51502,7 @@ html body.dark-theme #tab-analizar #pvaHero .research-search-bar:focus-within { 
 @media (min-width: 1100px) {
   html.pv-ipad body.dark-theme #tab-analizar { --pva-hero:#0b1c30; --pva-pg-ink:#0b1c30; --pva-pg-muted:#7a879b; }
   html.pv-ipad body.dark-theme #tab-analizar #pvaHero { border:0; }
-  html.pv-ipad body.dark-theme #tab-analizar #analizar-portfolio-section :is(.pva-sh, .pva-foot, .pva-rebfoot, .pva-foot2, #port-eps .eps-sec-head) {
+  html.pv-ipad body.dark-theme #tab-analizar #analizar-portfolio-section :is(.pva-sh, .pva-foot, .pva-rebfoot, .pva-foot2) {
     --pva-bg:#eef1f8; --pva-slate:#33475f; --pva-muted:#7a879b; --pva-ink:#0b1c30; --pva-card:#fff; --pva-line:#e2e7f0;
     --pva-green:#0f8a5f; --pva-green-bg:#dcf6e9; --pva-amber:#b45309; --pva-amber-bg:#fdecd8; --pva-red:#c62828; --pva-red-bg:#ffe3df;
     --pva-btn:#0b1c30; --pva-btn-ink:#fff; --pva-strong:#0b1c30; --pva-on-strong:#fff;
@@ -51111,7 +51523,7 @@ html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHe
 
 /* ═══ Movimiento reducido: sin desplazamientos ni transiciones ═══════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
-  html body #tab-analizar #pvaHero .research-search-bar .research-btn, html body #tab-analizar #analizar-portfolio-section .pva-btn, html body #tab-analizar #analizar-portfolio-section .pva-card, html body #tab-analizar #analizar-portfolio-section .pva-kpi, html body #tab-analizar #analizar-portfolio-section .pva-tr, html body #tab-analizar #analizar-portfolio-section #port-eps .eps-tg { transition:none !important; }
+  html body #tab-analizar #pvaHero .research-search-bar .research-btn, html body #tab-analizar #analizar-portfolio-section .pva-btn, html body #tab-analizar #analizar-portfolio-section .pva-card, html body #tab-analizar #analizar-portfolio-section .pva-kpi, html body #tab-analizar #analizar-portfolio-section .pva-tr { transition:none !important; }
   html body #tab-analizar #pvaHero .research-search-bar .research-btn:hover, html body #tab-analizar #pvaHero .research-search-bar .research-btn:active, html body #tab-analizar #analizar-portfolio-section .pva-btn:hover, html body #tab-analizar #analizar-portfolio-section .pva-btn:active { transform:none; }
 }
 </style>
