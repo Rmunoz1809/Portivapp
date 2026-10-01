@@ -153,6 +153,13 @@ Deno.serve(async (req) => {
     }
   }
 
+  // `start` con hora (p. ej. 2026-09-25T18:11:53.123Z) → sólo la fecha. Las versiones del
+  // app anteriores al 2026-10-01 mandaban la hora con milisegundos en 1D/5D: cada petición
+  // era una clave de caché distinta, ninguna acertaba, todas gastaban cuota de Alpaca y al
+  // llegar el 429 no había caché vencida que servir → gráfica vacía. Bajar a la fecha sólo
+  // amplía la ventana unas horas (el cliente filtra la última sesión).
+  path = path.replace(/([?&]start=)(\d{4}-\d{2}-\d{2})T[^&]*/i, "$1$2");
+
   const cacheKey = "alpaca:" + path;
   const ttl = ttlFor(path);
   const now = Date.now();

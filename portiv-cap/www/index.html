@@ -24271,10 +24271,13 @@ _yhChart._stub = true;   // lo lee PORTIV_HIST.ensureAsync para no montar la col
 // Ojo: el tier gratis sirve el feed de IEX (~2-3% del volumen). La forma de la curva es
 // correcta; el cierre puede diferir en centavos del cierre consolidado oficial.
 const ALPACA_PROXY = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/alpaca-proxy';
-let _alpacaDead = false;   // 500/403 del proxy (secrets mal puestas) → dejamos de insistir
+// Fuente caída (404 = función sin desplegar, 500 = secrets ausentes) → pausa de 5 min, no
+// para toda la sesión: antes un solo error dejaba TODAS las gráficas vacías hasta reabrir
+// el app, aunque el fallo fuera pasajero o un error de Alpaca reenviado por el proxy.
+let _alpacaDeadUntil = 0;
 
 async function _alpacaFetch(path, timeoutMs = 12000){
-  if (_alpacaDead || !_fhSupabaseOn()) return null;
+  if (Date.now() < _alpacaDeadUntil || !_fhSupabaseOn()) return null;
   // Credencial: JWT del usuario si hay sesión, si no la anon key.
   let _tok = null;
   try { _tok = await _pvAccessToken(); } catch(e){}
@@ -24298,13 +24301,9 @@ async function _alpacaFetch(path, timeoutMs = 12000){
     // 401 = token vencido a mitad de sesión. Transitorio: se recupera solo cuando
     // supabase-js refresca el token, así que NO se marca muerto.
     if (r.status === 401) return null;
-    // 500 = secrets ausentes, 404 = función sin desplegar. No tiene sentido reintentar
-    // en cada gráfica durante toda la sesión.
-    // 403 SÓLO mata la fuente si veníamos con sesión: sin ella significa "este endpoint
-    // pide cuenta" (el proxy recorta el tier anon a /v2/stocks/bars), y las velas —que sí
-    // están permitidas— deben seguir pidiéndose.
-    if (r.status === 500 || r.status === 404 || (r.status === 403 && _tok)) { _alpacaDead = true; return null; }
-    if (r.status === 403 || r.status === 429) return null;
+    // 500 = secrets ausentes, 404 = función sin desplegar: pausa corta. El resto (403, 429,
+    // errores de Alpaca reenviados) sólo falla ESTA petición.
+    if (r.status === 500 || r.status === 404) { _alpacaDeadUntil = Date.now() + 5 * 60e3; return null; }
     if (!r.ok) return null;
     return await r.json();
   } catch(e) { return null; }
@@ -24317,8 +24316,11 @@ function _alpacaPlan(period){
   const D = 86400000, now = Date.now();
   const iso = ms => new Date(ms).toISOString().slice(0, 10);
   switch (period) {
-    case '1d':  return { tf: '5Min',   start: new Date(now - 6*D).toISOString(),  intraday: true  };
-    case '5d':  return { tf: '30Min',  start: new Date(now - 10*D).toISOString(), intraday: true  };
+    // Fecha SIN hora: con `toISOString()` completo la URL cambiaba cada milisegundo, la caché
+    // compartida del proxy no acertaba nunca y cada 1D/5D gastaba una llamada a Alpaca. Al
+    // agotarse la cuota (429) no había caché que servir y la gráfica salía vacía.
+    case '1d':  return { tf: '5Min',   start: iso(now - 6*D),  intraday: true  };
+    case '5d':  return { tf: '30Min',  start: iso(now - 10*D), intraday: true  };
     case '1mo': return { tf: '1Day',   start: iso(now - 45*D)  };
     case '3mo': return { tf: '1Day',   start: iso(now - 105*D) };
     case '6mo': return { tf: '1Day',   start: iso(now - 200*D) };
@@ -32259,9 +32261,20 @@ async function setResearchPeriod(range, btn) {
 
   // 3. Cargar datos reales en segundo plano
   try {
-    const raw = await apiCall({action:'history', ticker:currentResearchTicker, period:range}, 8000)
+    const _tk = currentResearchTicker;
+    const _pide = () => apiCall({action:'history', ticker:_tk, period:range}, 8000)
       .catch(() => ({timestamps:[], closes:[]}));
-    const _real = raw?.closes?.filter(c => c != null).length >= 2;
+    const _ok = r => (r?.closes?.filter(c => c != null).length || 0) >= 2;
+    let raw = await _pide();
+    // Un fallo pasajero (429, red) dejaba la tarjeta en "Sin histórico" hasta volver a pulsar
+    // el período. Un reintento a los 2,5 s, sólo si el usuario sigue en esta acción y período.
+    if (!_ok(raw)) {
+      await new Promise(r => setTimeout(r, 2500));
+      if (_activeResearchRange !== range || currentResearchTicker !== _tk) return;
+      raw = await _pide();
+    }
+    if (currentResearchTicker !== _tk) return;
+    const _real = _ok(raw);
     const d = _real ? raw : { timestamps: [], closes: [], _synthetic: true };
     // FIX: solo se cachea (para reuso instantáneo) si es data REAL. La sintética nunca se
     // guarda como definitiva → el próximo click a este período vuelve a intentar la real.
