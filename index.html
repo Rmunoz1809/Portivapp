@@ -9477,34 +9477,49 @@ function sectorSections(ticker, info) {
              s: _lectura(det.nota) + (a ? ` · ${_medianaTxt(a, k)}` : ''),
              tone: TONO(det.nota) };
   };
-  const bloques = ['rent', 'crec', 'merc']
-    .map(p => ({ id: p, titulo: t[p] || _TITULOS_PILAR[p], filas: filas(p).map(_fila) }))
-    .filter(b => b.filas.length);
 
-  // ── Otros datos publicados ──────────────────────────────────────────────────────
-  // Lo que el proveedor sí da para esta empresa y el modelo de su sector no puntúa. No entra
-  // en la nota —el modelo del sector decide qué la mueve— pero se enseña con su mediana para
-  // no esconder nada de lo que hay. Sin ancla del sector no se muestra: un número suelto sin
-  // con qué compararlo no es un dato, es ruido.
+  // ── Todas las cifras publicadas, en su apartado ─────────────────────────────────
+  // Antes cada tabla traía solo las 3-4 métricas que el modelo del sector puntúa y el resto
+  // quedaba escondido en «Otros datos publicados». Ahora cada métrica del catálogo va a su
+  // apartado natural (rentabilidad, crecimiento, solidez, valoración, mercado): primero las
+  // que mueven la nota, debajo las demás, que se ven pero no la mueven. Sin mediana del
+  // sector se enseña igual, con la celda de mediana vacía.
+  const _GRUPO = {};
+  const _G = (p, ks) => ks.split(' ').forEach(k => { _GRUPO[k] = p; });
+  _G('rent', 'roe5Y roeTTM roa5Y roaTTM roi5Y roiTTM margenNeto5Y margenNetoTTM margenOper5Y margenOperTTM margenBrutoTTM margenPreTax5Y rotActivos rotInventario rotCobros ingresoEmpleado utilidadEmpleado cicloMargen');
+  _G('crec', 'crecIngr5Y crecIngr3Y crecIngrTTM crecIngrQ crecEps5Y crecEps3Y crecEpsTTM crecBookValue5Y crecTBV5Y crecEbitda5Y crecDividendo5Y crecMargen5Y');
+  _G('soli', 'deudaLPCapital deudaTotalCapital liquidezCorriente liquidezRapida cobInteres payout payoutFlujo flujoCajaAccion capexCagr5Y volatilidad runwayMeses');
+  _G('valo', 'peAdelantado peTTM peNormalizado peg evEbitda evIngresos evFcf ps pb ptbv pFlujoCaja pFcf dividendo');
+  _G('merc', 'fuerzaRel13s fuerzaRel26s fuerzaRel52s');
+  const extra = { rent: [], crec: [], soli: [], valo: [], merc: [] };
   const otros = [];
   for (const k of Object.keys(_CAT)) {
-    if (prof.m[k]) continue;
+    if (prof.m[k] && r.detalle[k]) continue;          // ya está arriba, puntuada
     const d = _CAT[k];
     if (d.escalaFija) continue;
     let x = null;
     try { x = d.deriva ? d.deriva(info) : _leer(info, d.campo); } catch (e) { x = null; }
     if (typeof x !== 'number' || !isFinite(x)) continue;
     const a = _ancla(r.perfilId, d.campo || k);
-    if (!a) continue;
-    const n = _anchorScore(x, a.v, d.dir);
-    otros.push({ l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
-                 v: _fmtMetrica(k, x),
-                 s: (n == null ? '' : _lectura(n) + ' · ') + _medianaTxt(a, k),
-                 tone: n == null ? 'mid' : TONO(n),
-                 _d: n == null ? 0 : Math.abs(n - 5.5) });
+    const n = a ? _anchorScore(x, a.v, d.dir) : null;
+    const f = { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
+                v: _fmtMetrica(k, x),
+                s: (n == null ? '' : _lectura(n)) + (a ? (n == null ? '' : ' · ') + _medianaTxt(a, k) : ''),
+                tone: n == null ? 'mid' : TONO(n),
+                fuera: true,
+                _d: n == null ? -1 : Math.abs(n - 5.5) };
+    (extra[_GRUPO[k]] || otros).push(f);
   }
-  // Primero lo que más se separa de sus pares: en un bloque largo, lo llamativo arriba.
-  otros.sort((x, y) => y._d - x._d);
+  // Dentro de las que no puntúan, primero lo que más se separa de sus pares.
+  const _ord = (x, y) => y._d - x._d;
+  Object.values(extra).forEach(v => v.sort(_ord));
+  otros.sort(_ord);
+  datos.push(...extra.valo);
+  health.push(...extra.soli.map(f => ({ kk: f.l, vv: f.v,
+    dd: f.s.replace(/ · (mediana .*)$/, ' ($1)') || 'sin mediana del sector', tone: f.tone, fuera: true })));
+  const bloques = ['rent', 'crec', 'merc']
+    .map(p => ({ id: p, titulo: t[p] || _TITULOS_PILAR[p], filas: filas(p).map(_fila).concat(extra[p]) }))
+    .filter(b => b.filas.length);
 
   return { datos, health, pros, riesgos, valText, valLabel, bloques, otros,
            tituloDatos: t.datos || 'Datos financieros',
@@ -20442,7 +20457,12 @@ function _pvxTablaValor(filas){
   const P = filas.map(d => Object.assign({ d }, _pvxPartirLectura(d.s)));
   const origenes = Array.from(new Set(P.map(p => p.origen)));
   const uno = origenes.length === 1;
-  const rows = P.map(p => '<div class="px-vr"><span class="vm">' + esc(_pvaLbl(p.d.l)) + '</span>'
+  // Las filas `fuera` (cifras publicadas que el modelo del sector no puntúa) van debajo,
+  // tras un separador que lo dice: se ven todas, pero no se confunden con las que mueven la nota.
+  let _sep = false;
+  const rows = P.map(p => (p.d.fuera && !_sep && (_sep = true)
+      ? '<div class="px-vsep">Otras cifras publicadas · no entran en la nota</div>' : '')
+    + '<div class="px-vr"><span class="vm">' + esc(_pvaLbl(p.d.l)) + '</span>'
     + '<b class="vv">' + esc(p.d.v) + '</b>'
     + '<span class="vmd">' + (p.med ? '<em>Mediana de pares </em>' + esc(p.med) + (!uno && p.origen ? ' <i>' + esc(p.origen) + '</i>' : '') : '') + '</span>'
     + '<span class="vl">' + _pvxLecturaPill(p.lect) + '</span></div>').join('');
@@ -29366,7 +29386,7 @@ function _renderQualAnalysis(a, el){
       const _tb = _pvxTablaValor(b.filas);
       FI += `<div class="px-card">${stitle(b.titulo, _pvxEbMediana(_tb.origen))}
         ${_tb.html}
-        <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero.</div></div>`;
+        <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero. Arriba, las que entran en la nota; debajo, el resto de cifras publicadas de este apartado.</div></div>`;
     }
   }
 
@@ -55345,6 +55365,7 @@ html body #tab-analizar #researchResults .pvx .px-vr .vv { font-size:17px; font-
 html body #tab-analizar #researchResults .pvx .px-vr .vmd { font-size:15px; font-weight:600; color:var(--pac-slate); font-variant-numeric:tabular-nums; }
 html body #tab-analizar #researchResults .pvx .px-vr .vmd em { display:none; font-style:normal; }
 html body #tab-analizar #researchResults .pvx .px-vr .vmd i { font-style:normal; font-size:12.5px; color:var(--pac-muted); }
+html body #tab-analizar #researchResults .pvx .px-vsep { padding:18px 0 8px; border-top:1px solid var(--pac-line); font-size:13px; font-weight:700; color:var(--pac-muted); }
 html body #tab-analizar #researchResults .pvx .px-otros > summary .px-sec-title { margin:0 !important; }
 html body #tab-analizar #researchResults .pvx .px-otros[open] > summary { margin-bottom:14px; }
 html body #tab-analizar #researchResults .pvx .px-otros-n { font-size:13px !important; font-weight:700; color:var(--pac-muted) !important; }
