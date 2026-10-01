@@ -57904,10 +57904,607 @@ html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:acti
 
 <!-- ═══ MOVIMIENTO · SEGUIMIENTO (#tab-watchlist) ═════════════════════════════════════════════ -->
 <style id="pvMovSeguimientoCss">
-/* MOVIMIENTO · Seguimiento — pendiente */
+/* MOVIMIENTO · Seguimiento — sólo lo que es CSS: la respuesta al pulsar, el foco del buscador,
+   la forma del destello del precio y el tinte de la fila recién agregada. Las entradas, los
+   destellos y los trazos van por JS (pvMovSeguimientoJs): la tabla se repinta entera con
+   innerHTML en cada refresco y una animación de clase volvería a entrar en cada tick.
+   Mismo patrón de selectores que pvSeguimientoCss (html body + dos ids) para ganarle sin
+   !important; las transiciones repiten las suyas de color y añaden la de transform. */
+
+/* Tinte con el que entra una fila nueva (en oscuro, blanco sobre la tarjeta oscura). */
+html body #tab-watchlist { --pvs-new: rgba(11,28,48,.075); }
+html body.dark-theme #tab-watchlist { --pvs-new: rgba(255,255,255,.08); }
+
+/* El destello de un tick (PVM.flash, sombra inset) tiñe la caja del precio: se le da forma de
+   pastilla con un relleno que el margen negativo compensa (el texto no se mueve) y se ajusta
+   al contenido en la rejilla de escritorio, donde antes se estiraba a toda la columna. */
+html body #tab-watchlist #wlCards .pwl-px { justify-self: start; border-radius: 9px; padding: 2px 7px; margin: -2px -7px; }
+
+/* Cierre de las sugerencias: el JS la pone sólo los 160 ms del fundido de salida (el código de
+   la pestaña ya escribió display:none en línea) y la quita al terminar o a los 400 ms. */
+html body #tab-watchlist #pwlHero #wlDropdown.pvs-dd-out { display: block !important; pointer-events: none; }
+
+/* Sugerencias en táctil: el :hover de pvSeguimientoCss no responde al dedo; esto sí. */
+html body #tab-watchlist #pwlHero #wlDropdown .wl-suggest:active { background: var(--pwl-wash); }
+
+/* Foco visible del botón «Agregar» y del botón del estado vacío (no tenían ninguno propio). */
+html body #tab-watchlist #pwlHero .pwl-add:focus-visible { outline: 2px solid var(--pwl-btn); outline-offset: 2px; }
+html body #tab-watchlist #wlCards .pwl-ebtn:focus-visible { outline: 2px solid var(--pwl-ink); outline-offset: 3px; }
+
+/* Todo lo que se mueve, sólo sin movimiento reducido: así, con él, mandan intactas las reglas
+   de pvSeguimientoCss (que ya quitan sus transiciones) y aquí no hay nada que deshacer. */
+@media (prefers-reduced-motion: no-preference) {
+  /* Pulsar: la fila se hunde un poco (en escritorio menos: la fila mide 1000 px y el mismo
+     factor se vería como un salto); los botones, la escala común. La fila no responde si lo
+     que se pulsa es su × (:has), que tiene su propia respuesta. */
+  html body #tab-watchlist #wlCards .pwl-row { transition: background-color .22s var(--pwl-ease), transform var(--pvm-fast) var(--pvm-ease); }
+  html body #tab-watchlist #wlCards .pwl-row:active:not(:has(.pwl-rm:active)) { transform: scale(.98); }
+  html body #tab-watchlist #pwlHero .pwl-add { transition: background-color .22s var(--pwl-ease), transform var(--pvm-fast) var(--pvm-ease); }
+  html body #tab-watchlist #pwlHero .pwl-add:active { transform: scale(var(--pvm-press)); }
+  html body #tab-watchlist #wlCards .pwl-rm { transition: background-color .22s var(--pwl-ease), color .22s var(--pwl-ease), transform var(--pvm-fast) var(--pvm-ease); }
+  html body #tab-watchlist #wlCards .pwl-rm:active { transform: scale(.9); }
+  html body #tab-watchlist #wlCards .pwl-ebtn { transition: background-color .22s var(--pwl-ease), transform var(--pvm-fast) var(--pvm-ease); }
+  html body #tab-watchlist #wlCards .pwl-ebtn:active { transform: scale(var(--pvm-press)); }
+  /* El anillo de foco del buscador aparece con un fundido en vez de saltar: el contorno existe
+     siempre, transparente, y :focus-within (pvSeguimientoCss, más específico) le da el color. */
+  html body #tab-watchlist #pwlHero .pwl-search { outline: 2px solid transparent; outline-offset: 3px; transition: outline-color var(--pvm-base) var(--pvm-ease); }
+}
+@media (prefers-reduced-motion: no-preference) and (min-width: 900px) {
+  html body #tab-watchlist #wlCards .pwl-row:active:not(:has(.pwl-rm:active)) { transform: scale(.99); }
+}
 </style>
 <script id="pvMovSeguimientoJs">
-/* MOVIMIENTO · Seguimiento — pendiente */
+/* MOVIMIENTO · Seguimiento (#tab-watchlist) — qué se mueve y por qué
+   ─────────────────────────────────────────────────────────────────────────────────────────
+   renderWatchlist() rehace la tabla entera con innerHTML en cada refresco (precios cada
+   5 min, la info de 52 semanas que llega de una en una, agregar, quitar), así que aquí se
+   envuelve —sin tocarla— y se compara el antes con el después:
+     · Primer pintado de la lista en la sesión → grupos y filas entran escalonados (pviaIn),
+       la minigráfica del día se dibuja y el marcador de 52 semanas llega desde el mínimo.
+     · Fila nueva (Agregar, o el alta desde Analizar) → entra y se tiñe un instante; las de
+       debajo se apartan deslizándose (FLIP) en vez de saltar.
+     · Fila que se va (la ×, o un alta que la API rechaza) → se pliega ANTES del repintado,
+       con su cabecera de sector si se queda vacía; la tabla se repinta al terminar.
+     · Tick de precio → destello verde/rojo en el precio, cuenta corta del precio y del % y
+       el punto «en vivo» late una vez. Nada vuelve a entrar.
+     · Dato que llega (nombre, precio, rango o serie que estaban en «—» o en línea plana) →
+       fundido; la línea plana respira mientras su serie está en camino (una carga).
+     · Sugerencias del buscador → el panel cae 6 px y las filas entran escalonadas; al
+       cerrarse se funde en 160 ms.
+   La entrada de la pestaña es de MOTION v7 (desliza #wlCards y el contenido del navy): las
+   aperturas no animan nada de aquí salvo el primer pintado de la sesión. Si un repintado
+   llega a mitad de una animación, el nodo nuevo la hereda en el mismo punto (carry): sin
+   saltos aunque la info de 52 semanas repinte la tabla mientras las filas aún entran.
+   Movimiento reducido: los ayudantes de PVM no crean nada y todo lo propio pasa por anim(),
+   que tampoco; agregar y quitar repintan al instante, como antes. */
+(function(){
+  'use strict';
+  var P = window.PVM, tab = document.getElementById('tab-watchlist'), box = document.getElementById('wlCards');
+  if (!P || !tab || !box || typeof window.renderWatchlist !== 'function') return;
+
+  /* Estado de la sesión. shown/drawn/knob: tickers ya presentados, con su minigráfica ya
+     dibujada y su marcador ya colocado (al quitarlos se olvidan: volver a agregarlos los
+     presenta de nuevo). last: precio y % del último pintado visible, para destellar el
+     cambio. vis: la pestaña se veía en el último pintado (si no, el siguiente es una
+     apertura y la anima MOTION v7). */
+  var S = { vis: false, list: false, empty: false, folding: false, shown: {}, drawn: {}, knob: {}, last: {} };
+  var SLOTS = ['_pvmA', '_pvmD', '_pvmF', '_pvmG', '_pvsA', '_pvsH', '_pvsK', '_pvsM'];
+  var ROLE = ['', '.pwl-px', '.pwl-chg', '.pwl-nm small', '.pwl-spk path', '.pwl-spk i', '.pwl-spk .pwl-pcl', '.pwl-trk i', '.pwl-rl'];
+  var CARD = ['.pwl-thd', '.pwl-th', '.pwl-eb', '.pwl-live', '.pwl-live i', '.pwl-ei', '.pwl-et', '.pwl-ed', '.pwl-ebtn'];
+
+  function off(){ return P.reduced(); }
+  function now(){ return (window.performance && performance.now) ? performance.now() : Date.now(); }
+  function q(el, s){ return el ? el.querySelector(s) : null; }
+  function qa(el, s){ return el ? Array.prototype.slice.call(el.querySelectorAll(s)) : []; }
+  function txt(el){ return el ? el.textContent : ''; }
+  /* Las cifras de un texto («8 empresas · 6 sectores» → «8 6»): con la app en inglés el
+     traductor reescribe las palabras, y comparar el texto entero daría «cambio» en cada tick. */
+  function nums(s){ return String(s || '').replace(/[^0-9]+/g, ' ').trim(); }
+  function rnd(v){ return (typeof v === 'number' && isFinite(v)) ? Math.round(v * 100) / 100 : null; }
+  function tk(t){ return String(t).replace(/[^A-Za-z0-9.\-]/g, ''); }     // = data-wl-t
+  function tOf(r){ return r.getAttribute('data-wl-t'); }
+  function rowOf(t){ return qa(box, '.pwl-row').filter(function(r){ return tOf(r) === t; })[0] || null; }
+  /* Nombre del sector como lo pintó renderWatchlist. Se apunta en el nodo la primera vez que
+     se lee —justo tras el repintado, antes de que el traductor (app en inglés) lo reescriba—
+     para que la cabecera no parezca nueva en cada tick por pasar de «Finanzas» a «Finance». */
+  function gname(g){ return g._pvsName != null ? g._pvsName : (g._pvsName = txt(q(g, 'b'))); }
+  function quote(t){ try { return (typeof _wlQuote === 'function' && _wlQuote(t)) || {}; } catch(e){ return {}; } }
+  function live(a){ try { return !!a && (a.pending || a.playState === 'running'); } catch(e){ return false; } }
+  function inView(el){
+    if (!P.painted(el)) return false;
+    var r = el.getBoundingClientRect(), vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    return r.bottom > 0 && r.top < vh;
+  }
+  /* Como run() de PVM: WAAPI, una ranura por nodo (la nueva cancela la anterior) y nada con
+     movimiento reducido. */
+  function anim(el, kf, op, slot){
+    if (!el || typeof el.animate !== 'function' || off()) return null;
+    slot = slot || '_pvsA';
+    try { if (el[slot]) el[slot].cancel(); } catch(e){}
+    try { return (el[slot] = el.animate(kf, op)); } catch(e){ return null; }
+  }
+  function fadeIn(el, dur){ if (el) P.enter([el], { from: 'fade', dur: dur || P.T().dur }); }
+  /* Cuenta corta (400 ms) que guarda su destino: si un repintado sustituye el nodo a mitad,
+     el nuevo la sigue desde la cifra que se estaba viendo. */
+  function count(el, to, fmt, from, dur){
+    if (!el || typeof fmt !== 'function' || !isFinite(to)) return;
+    if (el._pvmRaf && el._pvmNum != null && isFinite(el._pvmNum)) from = el._pvmNum;
+    dur = dur || 400;
+    el._pvsTo = to; el._pvsFmt = fmt; el._pvsEnd = now() + dur;
+    P.countTo(el, to, fmt, { from: from, dur: dur });
+  }
+  function knobX(k){
+    var a = k.getBoundingClientRect(), b = k.parentNode.getBoundingClientRect();
+    return a.left + a.width / 2 - b.left;
+  }
+  /* Largo del trazo como lo mide PVM.draw (con non-scaling-stroke, en píxeles de pantalla). */
+  function pathLen(p){
+    var len = 0;
+    try { len = p.getTotalLength(); } catch(e){}
+    try {
+      if (getComputedStyle(p).vectorEffect === 'non-scaling-stroke') {
+        var m = p.getScreenCTM();
+        if (m) len *= Math.max(1, Math.abs(m.a), Math.abs(m.d));
+      }
+    } catch(e){}
+    return len;
+  }
+
+  /* ── Herencia de animaciones entre repintados ─────────────────────────────────────────
+     Cada nodo animable tiene una clave estable (ticker + papel, o el nombre del sector).
+     Antes del repintado se apuntan sus animaciones WAAPI en curso; después, el nodo nuevo
+     con la misma clave las repite con los mismos fotogramas y en el mismo instante. Las de
+     CSS (hover, transiciones) no se tocan. */
+  function keyed(only){
+    var out = [];
+    if (only == null) {
+      CARD.forEach(function(s){ var el = q(box, s); if (el) out.push(['c' + s, el]); });
+      qa(box, '.pwl-grp').forEach(function(g){ out.push(['g|' + gname(g), g]); });
+    }
+    qa(box, '.pwl-row').forEach(function(r){
+      var t = tOf(r);
+      if (only != null && t !== only) return;
+      ROLE.forEach(function(s){ var el = s ? q(r, s) : r; if (el) out.push([t + '|' + s, el]); });
+    });
+    return out;
+  }
+  function mine(a){
+    if (!a || a.playState === 'idle' || a.playState === 'finished') return false;
+    if (window.CSSAnimation && a instanceof window.CSSAnimation) return false;
+    if (window.CSSTransition && a instanceof window.CSSTransition) return false;
+    /* Lo que se queda aplicado al terminar (el pliegue) no se hereda nunca: un nodo nuevo con
+       la misma clave nacería plegado. */
+    try { var f = a.effect.getTiming().fill; if (f === 'forwards' || f === 'both') return false; } catch(e){}
+    return true;
+  }
+  function grab(only){
+    var m = {};
+    keyed(only).forEach(function(p){
+      var el = p[1], list = [];
+      try { list = el.getAnimations ? el.getAnimations().filter(mine) : []; } catch(e){}
+      if (list.length || el._pvmRaf) m[p[0]] = { el: el, a: list };
+    });
+    return m;
+  }
+  function clone(a, from, to){
+    try {
+      var ef = a.effect, tm = ef.getTiming(), slot = null;
+      SLOTS.forEach(function(s){ if (from[s] === a) slot = s; });
+      var kf = ef.getKeyframes().map(function(k){
+        var o = {};
+        Object.keys(k).forEach(function(n){
+          if (n === 'computedOffset' || (n === 'composite' && k[n] === 'auto') || (n === 'offset' && k[n] == null)) return;
+          o[n] = k[n];
+        });
+        return o;
+      });
+      /* Un trazo a medio dibujar: la serie nueva puede traer más puntos, así que el guion se
+         mide otra vez sobre el trazo nuevo (misma fracción dibujada, largo correcto). */
+      var dash = slot === '_pvmD' && from.style && from.style.strokeDasharray && typeof to.getTotalLength === 'function';
+      if (dash) {
+        var len = pathLen(to);
+        if (!(len > 0)) { a.cancel(); return; }
+        to.style.strokeDasharray = len + ' ' + len;
+        kf = [{ strokeDashoffset: len }, { strokeDashoffset: 0 }];
+      }
+      var b = to.animate(kf, { duration: tm.duration, delay: tm.delay, endDelay: tm.endDelay, easing: tm.easing,
+                               fill: tm.fill, iterations: tm.iterations, direction: tm.direction });
+      if (a.currentTime != null) b.currentTime = a.currentTime;
+      if (slot) to[slot] = b;
+      if (dash) { var back = function(){ to.style.strokeDasharray = ''; }; b.addEventListener('finish', back); b.addEventListener('cancel', back); }
+      a.cancel();
+    } catch(e){}
+  }
+  function carry(old, only){
+    if (!old) return;
+    keyed(only).forEach(function(p){
+      var o = old[p[0]], el = p[1];
+      if (!o || o.el === el) return;
+      o.a.forEach(function(a){ clone(a, o.el, el); });
+      if (o.el._pvmRaf && typeof o.el._pvsFmt === 'function') {
+        try { cancelAnimationFrame(o.el._pvmRaf); } catch(e){}
+        o.el._pvmRaf = 0;
+        count(el, o.el._pvsTo, o.el._pvsFmt, o.el._pvmNum, Math.max(60, (o.el._pvsEnd || 0) - now()));
+      }
+    });
+  }
+
+  /* ── Piezas de movimiento ─────────────────────────────────────────────────────────────── */
+  /* La serie del día se dibuja de izquierda a derecha; la punteada del cierre anterior (la
+     referencia) aparece antes que ella y el punto del último precio, cuando la línea llega. */
+  function drawSpark(r, delay){
+    var spk = q(r, '.pwl-spk');
+    if (!spk || spk.getAttribute('data-st') !== 'ok' || !inView(r)) return false;
+    var t = P.T(), path = q(spk, 'path'), dot = q(spk, 'i'), pcl = q(spk, '.pwl-pcl');
+    if (!path) return false;
+    delay = delay || 0;
+    P.draw(path, { delay: delay, dur: t.slow });
+    if (pcl) {
+      var o = parseFloat(getComputedStyle(pcl).opacity);
+      anim(pcl, [{ opacity: 0 }, { opacity: isFinite(o) ? o : .55 }], { duration: 240, delay: delay, easing: P.ease, fill: 'backwards' });
+    }
+    if (dot) anim(dot, [{ opacity: 0, transform: 'scale(.3)' }, { opacity: 1, transform: 'none' }],
+                  { duration: 260, delay: delay + Math.round(t.slow * .8), easing: P.ease, fill: 'backwards' });
+    return true;
+  }
+  /* El marcador de 52 semanas llega a su sitio desde el mínimo del rango (el borde izquierdo):
+     se lee como «el precio está aquí dentro de su año». Sólo transform. */
+  function placeKnob(r, delay){
+    var k = q(r, '.pwl-trk i');
+    if (!k || !inView(r)) return false;
+    var dx = Math.max(0, knobX(k));
+    anim(k, [{ opacity: 0, transform: 'translateX(' + (-dx).toFixed(1) + 'px)' }, { opacity: 1, transform: 'none' }],
+         { duration: P.T().slow, delay: delay || 0, easing: P.ease, fill: 'backwards' }, '_pvsK');
+    return true;
+  }
+  /* Fila recién agregada: un velo neutro (sombra inset, como PVM.flash, sobre el fondo y el
+     radio de la fila) que se sostiene un momento y se apaga. Neutro porque verde/rojo ya
+     significan subida/bajada. */
+  function hilite(r, delay){
+    var c = '';
+    try { c = getComputedStyle(r).getPropertyValue('--pvs-new').trim(); } catch(e){}
+    var on = 'inset 0 0 0 999px ' + (c || 'rgba(11,28,48,.075)');
+    anim(r, [{ boxShadow: on }, { boxShadow: on, offset: .3 }, { boxShadow: 'inset 0 0 0 999px rgba(0,0,0,0)' }],
+         { duration: 900, delay: delay || 0, easing: 'ease-out', fill: 'backwards' }, '_pvsH');
+  }
+  /* Algo que cambió de sitio en el repintado (una fila nueva lo empujó, cambió de sector):
+     se desliza desde donde se veía. */
+  function flip(el, dy){
+    if (Math.abs(dy) < 1) return;
+    anim(el, [{ transform: 'translateY(' + dy.toFixed(1) + 'px)' }, { transform: 'none' }],
+         { duration: P.T().dur, easing: P.ease }, '_pvsM');
+  }
+  /* El punto «Precios en vivo» late una vez cuando un refresco trae precios nuevos. */
+  function ping(dot){
+    if (!dot) return;
+    var c = '';
+    try { c = getComputedStyle(dot).backgroundColor; } catch(e){}
+    var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(c || '');
+    var rgb = m ? m[1] + ',' + m[2] + ',' + m[3] : '15,138,95';
+    anim(dot, [{ boxShadow: '0 0 0 0 rgba(' + rgb + ',.45)' }, { boxShadow: '0 0 0 7px rgba(' + rgb + ',0)' }],
+         { duration: 800, easing: 'cubic-bezier(.33,1,.68,1)' });
+  }
+  /* Línea plana de una serie que está en camino (data-st="wait"): respira. startTime 0 ancla
+     la fase al reloj del documento, así que la del nodo repintado sigue en el mismo punto. */
+  function breathe(root){
+    if (off()) return;
+    qa(root, '.pwl-spk[data-st="wait"] line').forEach(function(l){
+      if (l._pvsW || typeof l.animate !== 'function') return;
+      try {
+        var a = l.animate([{ opacity: 1 }, { opacity: .3 }], { duration: 900, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out' });
+        a.startTime = 0; l._pvsW = a;
+      } catch(e){}
+    });
+  }
+  function waits(root){
+    return qa(root, '.pwl-spk line').filter(function(l){ return l._pvsW; }).map(function(l){ return l._pvsW; });
+  }
+  function emptyIn(card){
+    P.enter([q(card, '.pwl-ei')].filter(Boolean), { from: 'scale' });
+    P.enter([q(card, '.pwl-et'), q(card, '.pwl-ed'), q(card, '.pwl-ebtn')].filter(Boolean), { delay: P.T().step });
+  }
+  /* ¿Este repintado es el de la apertura de la pestaña? showTab llama a renderWatchlist justo
+     después de _pvTabEnter, que acaba de crear la animación de #wlCards. Cubre las aperturas
+     que el observador de clase no ve (showTab sobre la misma pestaña, cambio de idioma). */
+  function tabJustEntered(){
+    var a = box._pvAnim;
+    try { return !!a && a.playState !== 'finished' && a.playState !== 'idle' && (a.currentTime == null || a.currentTime < 80); }
+    catch(e){ return false; }
+  }
+
+  /* ── Antes y después del repintado ────────────────────────────────────────────────────── */
+  function kindOf(){
+    var card = q(box, '#pwlCard');
+    return card ? (card.classList.contains('pwl-empty') ? 'empty' : 'list') : null;
+  }
+  function snap(vis){
+    /* Las respiraciones de las líneas que se van a sustituir se apuntan siempre, también con
+       la pestaña oculta: una animación infinita sobre un nodo ya fuera del DOM no acaba nunca. */
+    var B = { kind: kindOf(), rows: {}, grp: {}, eb: null, live: null, old: null, waits: waits(box) };
+    if (!vis) return B;
+    B.old = grab();
+    var eb = q(box, '.pwl-eb'); if (eb) B.eb = nums(txt(eb));
+    var lv = q(box, '.pwl-live'); if (lv) B.live = lv.classList.contains('on');
+    qa(box, '.pwl-grp').forEach(function(g){
+      B.grp[gname(g)] = { top: g.getBoundingClientRect().top, lt: g.offsetTop, n: nums(txt(q(g, 'small'))) };
+    });
+    qa(box, '.pwl-row').forEach(function(r){
+      var k = q(r, '.pwl-trk i');
+      B.rows[tOf(r)] = { top: r.getBoundingClientRect().top, lt: r.offsetTop,
+        kx: k ? knobX(k) : null, kl: k ? k.offsetLeft : null, ko: k ? +getComputedStyle(k).opacity : 1,
+        px: txt(q(r, '.pwl-px')), chg: txt(q(r, '.pwl-chg')), nm: txt(q(r, '.pwl-nm small')), rl: txt(q(r, '.pwl-rl')) };
+    });
+    return B;
+  }
+  /* Posiciones del pintado nuevo, medidas ANTES de heredar animaciones (que las moverían). */
+  function measure(){
+    var M = { rows: {}, grp: {} };
+    qa(box, '.pwl-row').forEach(function(r){
+      var k = q(r, '.pwl-trk i');
+      M.rows[tOf(r)] = { top: r.getBoundingClientRect().top, lt: r.offsetTop, kx: k ? knobX(k) : null, kl: k ? k.offsetLeft : null };
+    });
+    qa(box, '.pwl-grp').forEach(function(g){ M.grp[gname(g)] = { top: g.getBoundingClientRect().top, lt: g.offsetTop }; });
+    return M;
+  }
+  /* Primer pintado de la lista en la sesión: la llegada de los datos. Sólo lo que se ve (y
+     como mucho 12 nodos); el retardo deja de crecer tras PVM.T().max. */
+  function firstPaint(){
+    var t = P.T(), nodes = qa(box, '.pwl-grp, .pwl-row').filter(inView).slice(0, 12);
+    P.enter(nodes);
+    nodes.forEach(function(n, i){
+      if (!n.classList.contains('pwl-row')) return;
+      var d = Math.min(i, t.max) * t.step + Math.round(t.dur * .3);
+      drawSpark(n, d);
+      placeKnob(n, d);
+    });
+  }
+  /* Lo que cambió en una fila que ya estaba. Devuelve true si trajo un precio nuevo. */
+  function rowChanges(r, t, ob, nb){
+    if (!inView(r)) return false;
+    var v = quote(t), L = S.last[t], tick = false;
+    var px = q(r, '.pwl-px'), chg = q(r, '.pwl-chg'), np = rnd(v.price), nq = rnd(v.pct);
+    if (L && L.px != null && np != null && np !== L.px) {
+      /* Si la fila aún está entrando, sólo cuenta: el velo sobre una fila a media opacidad
+         se leería como un parpadeo. */
+      if (!live(r._pvmA)) P.flash(px, np > L.px ? 1 : -1);
+      count(px, v.price, window._wlUsd, L.px);
+      tick = true;
+    } else if (ob.px === '—' && np != null) fadeIn(px);
+    if (L && L.pct != null && nq != null && nq !== L.pct) { count(chg, v.pct, window._wlPctTxt, L.pct); tick = true; }
+    else if (ob.chg === '—' && nq != null) fadeIn(chg);
+    var nm = q(r, '.pwl-nm small');
+    if (nm && ob.nm === t && txt(nm) !== t) fadeIn(nm);                 // del ticker al nombre real
+    var rl = q(r, '.pwl-rl');
+    if (rl && ob.rl.indexOf('—') >= 0 && txt(rl).indexOf('—') < 0) fadeIn(rl);
+    /* El marcador se mueve sólo si cambió su sitio (offsetLeft, sin transformaciones); si no,
+       sigue la llegada heredada. Parte de donde se veía, con la opacidad que tenía. */
+    var k = q(r, '.pwl-trk i');
+    if (k && !S.knob[t]) placeKnob(r, 0);
+    else if (k && ob.kl != null && nb && nb.kl != null && Math.abs(ob.kl - nb.kl) >= .5)
+      anim(k, [{ transform: 'translateX(' + (ob.kx - nb.kx).toFixed(1) + 'px)', opacity: isFinite(ob.ko) ? ob.ko : 1 }, { transform: 'none', opacity: 1 }],
+           { duration: P.T().dur, easing: P.ease }, '_pvsK');
+    if (!S.drawn[t]) drawSpark(r, 0);
+    return tick;
+  }
+  /* Repintado con la pestaña a la vista que no es una apertura: altas, bajas ya plegadas,
+     ticks y datos que llegan. `fresh`: la tarjeta acaba de pasar de vacía a lista. */
+  function changes(B, M, fresh){
+    var t = P.T(), news = [], ticked = false, flips = 0;
+    var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (fresh) P.enter([q(box, '.pwl-thd'), q(box, '.pwl-th')].filter(Boolean), { from: 'fade' });
+    var eb = q(box, '.pwl-eb');
+    if (eb && B.eb != null && nums(txt(eb)) !== B.eb) fadeIn(eb, 240);
+    qa(box, '.pwl-grp, .pwl-row').forEach(function(n){
+      var isRow = n.classList.contains('pwl-row'), key = isRow ? tOf(n) : gname(n);
+      var ob = isRow ? (S.shown[key] ? B.rows[key] : null) : B.grp[key];
+      var nb = isRow ? M.rows[key] : M.grp[key];
+      if (!ob) { news.push(n); return; }
+      if (nb && Math.abs(ob.lt - nb.lt) >= 1 && flips < 12 && ((ob.top < vh && ob.top > -120) || inView(n))) {
+        flips++; flip(n, ob.top - nb.top);
+      }
+      if (!isRow) { var sm = q(n, 'small'); if (sm && nums(txt(sm)) !== ob.n) fadeIn(sm, 240); return; }
+      if (rowChanges(n, key, ob, nb)) ticked = true;
+    });
+    if (news.length) {
+      /* El tinte dice «esta es la que acabas de agregar»: con más de tres filas nuevas a la
+         vez (la lista que llega de la nube) sería ruido, así que sólo entran. */
+      var ins = news.filter(inView).slice(0, 12);
+      var mark = news.filter(function(n){ return n.classList.contains('pwl-row'); }).length <= 3;
+      P.enter(ins);
+      ins.forEach(function(n, i){
+        if (!n.classList.contains('pwl-row')) return;
+        var d = Math.min(i, t.max) * t.step;
+        if (mark) hilite(n, d);
+        drawSpark(n, d + Math.round(t.dur * .3));
+        placeKnob(n, d + Math.round(t.dur * .3));
+      });
+    }
+    var lv = q(box, '.pwl-live');
+    if (lv && B.live != null) {
+      var on = lv.classList.contains('on');
+      if (on !== B.live) fadeIn(lv, 240);
+      else if (on && ticked) ping(q(lv, 'i'));
+    }
+  }
+  function after(B, vis){
+    B.waits.forEach(function(a){ try { a.cancel(); } catch(e){} });
+    if (!vis) return;                         // pestaña oculta: nada que ver, nada que apuntar
+    var entering = !S.vis || tabJustEntered();
+    S.vis = true;
+    var kind = kindOf(), card = q(box, '#pwlCard'), rows = qa(box, '.pwl-row'), here = {};
+    rows.forEach(function(r){ here[tOf(r)] = 1; });
+    Object.keys(S.shown).forEach(function(t){
+      if (!here[t]) { delete S.shown[t]; delete S.drawn[t]; delete S.knob[t]; delete S.last[t]; }
+    });
+    var calm = off(), M = (!calm && !entering && kind === 'list') ? measure() : null;
+    carry(B.old);
+    if (!calm) {
+      if (kind === 'empty') { if (!S.empty || (B.kind === 'list' && !entering)) emptyIn(card); }
+      else if (kind === 'list') {
+        if (entering) { if (!S.list) firstPaint(); }
+        else changes(B, M, B.kind !== 'list');
+      }
+    }
+    if (kind === 'empty') S.empty = true;
+    if (kind === 'list') S.list = true;
+    rows.forEach(function(r){
+      var t = tOf(r), spk = q(r, '.pwl-spk'), v = quote(t);
+      S.shown[t] = 1;
+      if (spk && spk.getAttribute('data-st') === 'ok') S.drawn[t] = 1;
+      if (q(r, '.pwl-trk i')) S.knob[t] = 1;
+      S.last[t] = { px: rnd(v.price), pct: rnd(v.pct) };
+    });
+    breathe(box);
+  }
+
+  /* ── Quitar: plegar antes del repintado ───────────────────────────────────────────────
+     Las filas cuyo ticker ya no está en WATCHLIST_TICKERS (la × o un alta que la API
+     rechazó) se pliegan —alto, relleno y opacidad: PVM.expand sólo anima el alto, y con
+     box-sizing:border-box quedarían los 28 px del relleno— junto con la cabecera de su
+     sector si se queda vacía. Los datos ya se guardaron; sólo se aplaza el repintado, y los
+     que lleguen mientras tanto se funden en el que cierra el pliegue. */
+  function goneRows(){
+    var keep = {};
+    try { WATCHLIST_TICKERS.forEach(function(t){ keep[tk(t)] = 1; }); } catch(e){ return []; }
+    return qa(box, '.pwl-row').filter(function(r){ return !keep[tOf(r)] && !r._pvsFold; });
+  }
+  function fold(rows, done){
+    var els = rows.slice(), t = P.T(), left, fin = false, longest = 0, guard = 0;
+    qa(box, '.pwl-grp').forEach(function(g){
+      var any = false, all = true;
+      for (var n = g.nextElementSibling; n && !n.classList.contains('pwl-grp'); n = n.nextElementSibling) {
+        if (!n.classList.contains('pwl-row')) continue;
+        any = true;
+        if (els.indexOf(n) < 0 && !n._pvsFold) all = false;
+      }
+      if (any && all) els.push(g);
+    });
+    left = els.length;
+    function end(){ if (fin) return; fin = true; clearTimeout(guard); done(); }
+    function one(){ if (--left <= 0) end(); }
+    els.forEach(function(el){
+      var cs = getComputedStyle(el), h = el.offsetHeight;
+      var dur = Math.round(Math.min(t.dur * 1.15, 260 + h * .35));
+      longest = Math.max(longest, dur);
+      el._pvsFold = true;
+      el.style.pointerEvents = 'none';      // una segunda × durante el pliegue no repite el aviso
+      el.style.overflow = 'hidden';
+      var a = anim(el, [
+        { height: h + 'px', paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: 1 },
+        { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 }
+      ], { duration: dur, easing: P.easeIO, fill: 'forwards' }, '_pvsA');
+      if (a) { a.addEventListener('finish', one); a.addEventListener('cancel', one); } else one();
+    });
+    guard = setTimeout(end, longest + 250);   // el repintado llega aunque no llegue el 'finish'
+  }
+
+  /* ── Envoltorios (las llamadas por nombre, incluidos los onclick, pasan por aquí) ────── */
+  var render0 = window.renderWatchlist;
+  window.renderWatchlist = function(){
+    if (S.folding) return;                    // lo repinta el final del pliegue, con lo último
+    var vis = P.painted(box);
+    if (vis && S.vis && !off() && !tabJustEntered()) {
+      var gone = goneRows();
+      if (gone.length) {
+        S.folding = true;
+        try { fold(gone, function(){ S.folding = false; window.renderWatchlist(); }); return; }
+        catch(e){ S.folding = false; }          // si el pliegue falla, se repinta ya, como antes
+      }
+    }
+    var B = snap(vis), res = render0.apply(this, arguments);
+    try { after(B, vis); } catch(e){}
+    return res;
+  };
+
+  /* _wlDayPaint repinta sólo la minigráfica de un ticker cuando llega su serie: hereda lo que
+     estuviera en curso y, si es la primera vez que esa fila tiene serie, la dibuja. */
+  var day0 = window._wlDayPaint;
+  if (typeof day0 === 'function') {
+    window._wlDayPaint = function(t){
+      var vis = S.vis && P.painted(box), k = tk(t), old = vis ? grab(k) : null, w = waits(rowOf(k));
+      var res = day0.apply(this, arguments);
+      w.forEach(function(a){ try { a.cancel(); } catch(e){} });
+      if (vis) {
+        try {
+          carry(old, k);
+          var r = rowOf(k), spk = q(r, '.pwl-spk');
+          if (r && spk && spk.getAttribute('data-st') === 'ok' && !S.drawn[k]) {
+            if (S.shown[k] && !off()) drawSpark(r, 0);
+            S.drawn[k] = 1;
+          }
+          breathe(r);
+        } catch(e){}
+      }
+      return res;
+    };
+  }
+
+  /* Al salir de la pestaña, el próximo pintado visible será una apertura (MOTION v7). */
+  if (window.MutationObserver) {
+    new MutationObserver(function(){ if (!tab.classList.contains('active')) S.vis = false; })
+      .observe(tab, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  /* ── Sugerencias del buscador (#wlDropdown) ───────────────────────────────────────────
+     El código de la pestaña sólo escribe display e innerHTML; un observador lo convierte en
+     movimiento: al abrirse, el panel cae 6 px y las filas entran escalonadas; con cada letra,
+     sólo entran (fundido) las sugerencias que no estaban; «Buscando…» respira mientras llega
+     la búsqueda remota; al cerrarse, .pvs-dd-out lo sostiene visible 160 ms mientras se funde.
+     Si se reabre en ese momento, la salida se corta y vuelve a entrar. */
+  var dd = document.getElementById('wlDropdown');
+  if (dd && window.MutationObserver) (function(){
+    var open = dd.style.display !== 'none', keys = [], out = null, outT = 0, breath = null;
+    var keysOf = function(items){ return items.map(function(it){ return txt(it.firstElementChild).trim(); }); };
+    var stop = function(){
+      var a = out; out = null; clearTimeout(outT);
+      dd.classList.remove('pvs-dd-out');
+      if (a) { try { a.cancel(); } catch(e){} }
+    };
+    var calmBreath = function(){ if (breath) { try { breath.cancel(); } catch(e){} breath = null; } };
+    var enter = function(full){
+      var items = qa(dd, '.wl-suggest'), k = keysOf(items);
+      calmBreath();
+      if (full) {
+        anim(dd, [{ opacity: 0, transform: 'translateY(-6px)' }, { opacity: 1, transform: 'none' }],
+             { duration: 220, easing: P.ease, fill: 'backwards' });
+        P.enter(items.slice(0, 10), { delay: 30, step: 28, max: 6, rise: 6, dur: 280 });
+      } else {
+        var add = items.filter(function(it, i){ return keys.indexOf(k[i]) < 0; });
+        if (add.length) P.enter(add.slice(0, 10), { from: 'fade', step: 20, max: 6, dur: 200 });
+      }
+      keys = k;
+      var w = q(dd, '.wl-suggest[style*="cursor:default"] span');
+      if (w && !off() && typeof w.animate === 'function') {
+        try { breath = w.animate([{ opacity: 1 }, { opacity: .4 }], { duration: 700, iterations: Infinity, direction: 'alternate', easing: 'ease-in-out' }); } catch(e){}
+      }
+    };
+    var leave = function(){
+      calmBreath();
+      if (off() || !P.painted(box)) return;
+      dd.classList.add('pvs-dd-out');
+      var a = anim(dd, [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-4px)' }],
+                   { duration: 160, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' });
+      if (!a) { dd.classList.remove('pvs-dd-out'); return; }
+      out = a;
+      var end = function(){ if (out === a) stop(); };
+      outT = setTimeout(end, 400);
+      a.addEventListener('finish', end);
+    };
+    new MutationObserver(function(recs){
+      var kids = false;
+      recs.forEach(function(r){ if (r.type === 'childList') kids = true; });
+      if (dd.style.display !== 'none') {
+        var again = !open || !!out;
+        if (out) stop();
+        open = true;
+        if (again) enter(true); else if (kids) enter(false);
+      } else if (open) {
+        open = false; keys = [];
+        leave();
+      }
+    }).observe(dd, { attributes: true, attributeFilter: ['style'], childList: true });
+  })();
+})();
 </script>
 <!-- ═══ fin MOVIMIENTO · SEGUIMIENTO ═══ -->
 
