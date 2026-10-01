@@ -35877,38 +35877,6 @@ function _pviaSrcPill(s){
        + `<i style="background:${color}">${pvEsc(name.charAt(0).toUpperCase())}</i>${pvEsc(name)}</a>`;
 }
 
-// La respuesta no aparece de golpe: entra palabra por palabra, como si se escribiera, con un
-// tope de ~2.4 s aunque sea larga. Las fuentes (pastillas) entran al final. Sin efecto con
-// «reducir movimiento».
-function _pviaReveal(card){
-  try {
-    if (!card || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)) return;
-    const walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, {
-      acceptNode: n => (n.parentElement && n.parentElement.closest('.pvia-srcs')) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
-    });
-    const nodes = []; let n;
-    while ((n = walker.nextNode())) if (n.nodeValue.trim()) nodes.push(n);
-    let words = 0; nodes.forEach(t => { words += (t.nodeValue.match(/\S+/g) || []).length; });
-    if (!words) return;
-    const step = Math.min(28, 2400 / words);          // ms entre palabra y palabra
-    let k = 0;
-    nodes.forEach(t => {
-      const frag = document.createDocumentFragment();
-      t.nodeValue.split(/(\s+)/).forEach(part => {
-        if (!part) return;
-        if (!part.trim()) { frag.appendChild(document.createTextNode(part)); return; }
-        const w = document.createElement('span');
-        w.className = 'pvia-w'; w.textContent = part;
-        w.style.animationDelay = Math.round(k++ * step) + 'ms';
-        frag.appendChild(w);
-      });
-      t.parentNode.replaceChild(frag, t);
-    });
-    const srcs = card.querySelector('.pvia-srcs');
-    if (srcs) srcs.style.animationDelay = Math.round(k * step) + 'ms';
-  } catch (e) {}
-}
-
 function _aiChatAddMsg(role, html, sources){
   const wrap = document.getElementById('aiChatMessages');
   if(!wrap) return;
@@ -35940,7 +35908,6 @@ function _aiChatAddMsg(role, html, sources){
   if(typing && typing.parentNode === wrap) wrap.insertBefore(div, typing); else wrap.appendChild(div);
   // Primer mensaje: fuera la bienvenida y aparece el hilo.
   const page = wrap.closest('.ai-chat-page'); if(page) page.classList.remove('pvia-empty');
-  if (role !== 'user') _pviaReveal(div.querySelector('.pvia-card'));
   // Una respuesta más alta que el hilo se muestra desde su principio (se va escribiendo de
   // arriba abajo); lo demás, al final del hilo como siempre.
   const _top = div.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
@@ -52740,8 +52707,9 @@ html body.dark-theme #tab-aianalyst #aiChatLockWrap .pvia-sp i { outline: 1px so
 /* ── Toda la pantalla y entrada suave (pedido de Rafael, 30-sep) ──
    En conversación el chat usa todo el ancho, alineado con la cabecera; las respuestas se
    quedan en ~78 % (tope 1100 px) para leerse bien y tus mensajes en ~60 %. La bienvenida
-   sigue en una columna centrada. Los mensajes entran deslizándose, la respuesta aparece
-   palabra por palabra (_pviaReveal) y la bienvenida entra escalonada al abrir la pestaña. */
+   sigue en una columna centrada. Tus mensajes entran deslizándose; la respuesta NO se
+   escribe letra a letra: la tarjeta crece desde el tamaño de la burbuja de los tres puntos
+   hasta su tamaño final (clip-path, sin escalar el texto). La bienvenida entra escalonada. */
 @media (min-width: 900px) {
   html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-page { --pvia-gut: var(--pvd-pad, 32px); --pvia-col: 100vw; }
   html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main > * { width: min(820px, calc(100% - 2 * var(--pvia-gut))); }
@@ -52750,10 +52718,12 @@ html body.dark-theme #tab-aianalyst #aiChatLockWrap .pvia-sp i { outline: 1px so
 }
 html.pv-ipad body #tab-aianalyst #aiChatLockWrap > .pvia-page { --pvia-gut: 28px; --pvia-col: 100vw; }
 @keyframes pviaIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-@keyframes pviaWord { from { opacity: 0; } to { opacity: 1; } }
-html body #tab-aianalyst #aiChatLockWrap .pvia-msg { animation: pviaIn .45s var(--pvia-ease) both; }
-html body #tab-aianalyst #aiChatLockWrap .pvia-w { animation: pviaWord .32s ease-out both; }
-html body #tab-aianalyst #aiChatLockWrap .pvia-card .pvia-srcs { animation: pviaIn .4s var(--pvia-ease) both; }
+@keyframes pviaGrow {
+  from { clip-path: inset(0 calc(100% - 76px) calc(100% - 48px) 0 round 6px 22px 22px 22px); }
+  to   { clip-path: inset(0 0 0 0 round 6px 22px 22px 22px); }
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-me { animation: pviaIn .45s var(--pvia-ease) both; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-ai .pvia-card { animation: pviaGrow .55s var(--pvia-ease) both; }
 html body #tab-aianalyst #aiChatLockWrap #aiChatTyping.show { animation: pviaIn .35s var(--pvia-ease) both; }
 html body #tab-aianalyst #aiChatLockWrap .pvia-hello > * { animation: pviaIn .55s var(--pvia-ease) both; }
 html body #tab-aianalyst #aiChatLockWrap .pvia-hello > :nth-child(2) { animation-delay: .07s; }
@@ -52761,8 +52731,8 @@ html body #tab-aianalyst #aiChatLockWrap .pvia-hello > :nth-child(3) { animation
 html body #tab-aianalyst #aiChatLockWrap .pvia-hello > :nth-child(n+4) { animation-delay: .21s; }
 html body #tab-aianalyst #aiChatLockWrap .pvia-chips { animation: pviaIn .55s var(--pvia-ease) .26s both; }
 @media (prefers-reduced-motion: reduce) {
-  html body #tab-aianalyst #aiChatLockWrap .pvia-msg, html body #tab-aianalyst #aiChatLockWrap .pvia-w,
-  html body #tab-aianalyst #aiChatLockWrap .pvia-card .pvia-srcs, html body #tab-aianalyst #aiChatLockWrap #aiChatTyping.show,
+  html body #tab-aianalyst #aiChatLockWrap .pvia-me, html body #tab-aianalyst #aiChatLockWrap .pvia-ai .pvia-card,
+  html body #tab-aianalyst #aiChatLockWrap #aiChatTyping.show,
   html body #tab-aianalyst #aiChatLockWrap .pvia-hello > *, html body #tab-aianalyst #aiChatLockWrap .pvia-chips { animation: none !important; }
 }
 </style>
