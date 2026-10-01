@@ -4380,26 +4380,29 @@ window._pvAwaitIAP = function(totalMs){
         </div>
       </div>
 
-      <!-- Your Positions -->
+      <!-- Tus posiciones — rediseño (estilos en <style id="pvPosTablaCss">). Los textos fijos
+           de la cabecera y de las columnas se repintan en el idioma activo desde
+           _pvPosHeadI18n (renderTable); aquí van en español. -->
       <div class="stitch-card holdings-card">
         <div class="holdings-head">
           <div>
-            <div class="stitch-card-title">Tus Posiciones</div>
-            <div class="holdings-sub">Vista en vivo de tus activos actuales</div>
+            <div class="pvpt-eyebrow">Portafolio</div>
+            <div class="stitch-card-title">Tus posiciones</div>
+            <div class="holdings-sub">Vista en vivo de tus activos</div>
           </div>
         </div>
         <div class="ptable-wrap">
           <table>
             <thead><tr>
-              <th style="text-align:left">Símbolo</th>
-              <th>Qty</th>
+              <th style="text-align:left">Activo</th>
+              <th>Cantidad</th>
               <th>Precio</th>
-              <th>Day $</th><th>Day %</th>
-              <th>Mkt Val</th>
-              <th>Día $</th><th>Día %</th>
+              <th>Hoy $</th><th>Hoy %</th>
+              <th>Valor</th>
+              <th>Hoy $</th><th>Hoy %</th>
               <th>Costo</th>
-              <th>G/L $</th><th>G/L %</th>
-              <th title="Reinvertir dividendos (DRIP)">Reinvest</th>
+              <th>Ganancia $</th><th>Ganancia %</th>
+              <th title="Reinvertir dividendos (DRIP)">Reinversión</th>
               <th></th>
             </tr></thead>
             <tbody id="posRows"></tbody>
@@ -15568,11 +15571,10 @@ function usdSigned(n, dec) {
 }
 function pctSigned(n) { return (n>=0?'+':'') + n.toFixed(2) + '%'; }
 
-// Paleta de avatares determinista por ticker
+// Avatar neutro de Portiv: cuadrado redondeado con la INICIAL del ticker, sin colores por
+// ticker (fondo y tinta en pvPosTablaCss, los mismos de la tabla de la pestaña Análisis).
 function _posAvatar(ticker) {
-  const p = ['#0891b2','#6366f1','#0e5fa8','#1e3a5f','#04162c','#7c3aed','#ea580c','#374259','#b45309','#be123c'];
-  const ci = ticker.split('').reduce((s,ch) => s + ch.charCodeAt(0), 0) % p.length;
-  return `<span class="pos-avatar" style="background:${p[ci]}">${ticker.slice(0,2).toUpperCase()}</span>`;
+  return `<span class="pos-avatar" aria-hidden="true">${pvEsc(_pnxLetter(ticker))}</span>`;
 }
 
 // Una fila de posición (incluye su drawer de Trade)
@@ -15619,27 +15621,36 @@ function posRowHTML(h, idx, c, T) {
   const reinv = (h.reinvest === false) ? 'No' : 'Yes';
   const isOpen = activeDrawer && activeDrawer.idx === idx;
   const avatar = _posAvatar(h.ticker);
+  // Debajo del ticker, el nombre de la empresa; si el bróker manda el propio ticker como
+  // nombre («GOOGL · GOOGL»), el sector (_pnxSub, el mismo criterio de Noticias por posición).
+  // Si tampoco hay sector curado, el sector canónico del análisis; sin dato real, nada.
+  const sub = (() => {
+    const s = _pnxSub(h, h.ticker);
+    if (s && s.toUpperCase() !== String(h.ticker).toUpperCase()) return s;
+    try { const cs = _canonicalSector(h.ticker); return (cs && cs !== 'Sin clasificar') ? cs : ''; } catch(e){ return ''; }
+  })();
+  // «Hoy %» y «Ganancia %» van en pastilla (pvpt-pill); sin dato del día, «—» sin color.
   return `
   <tr class="pos-row" id="row-${idx}">
     <td><div class="td-inner"><div class="sym-cell" style="display:flex;align-items:center;gap:10px">
       ${avatar}
-      <div style="min-width:0">
+      <div class="pvpt-tx" style="min-width:0">
         ${(() => { const _q = _pvSearchSym(h); return _q
           ? `<div class="sym sym-link" onclick="quickSearch('${_q}')" title="Analizar ${_q}">${h.ticker}${_pvTargetMark(h)}</div>`
           : `<div class="sym" style="cursor:help" title="${h.ticker} cotiza fuera de EE. UU. y tu bróker no nos dice en qué bolsa: buscarlo abriría la empresa estadounidense que usa ese mismo símbolo.">${h.ticker}${_pvTargetMark(h)}</div>`; })()}
-        <div class="sym-sub">${pvEsc(h.name)}</div>
+        ${sub ? `<div class="sym-sub" title="${pvEsc(sub)}">${pvEsc(sub)}</div>` : ''}
       </div>
     </div></div></td>
     <td><div class="td-inner" style="font-variant-numeric:tabular-nums">${h.qty.toFixed(4)}</div></td>
     <td><div class="td-inner" style="font-variant-numeric:tabular-nums">${_pvPx(h.price)}</div></td>
     <td><div class="td-inner ${pccEff}" style="font-variant-numeric:tabular-nums">${dayAmtTxt}</div></td>
-    <td><div class="td-inner ${pccEff}" style="font-weight:600;font-variant-numeric:tabular-nums">${dayPctTxt}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill ${pccEff}">${dayPctTxt}</span></div></td>
     <td><div class="td-inner" style="font-weight:600;font-variant-numeric:tabular-nums">${usd(round2(c.mktVal))}</div></td>
     <td><div class="td-inner ${pcc}" style="font-variant-numeric:tabular-nums">${usdSigned(round2(c.dayChgAbs),2)}</div></td>
-    <td><div class="td-inner ${pccEff}" style="font-weight:600;font-variant-numeric:tabular-nums">${dayPctTxt}</div></td>
-    <td><div class="td-inner" style="color:#8a96a3;font-variant-numeric:tabular-nums">${usd(round2(h.costBasis))}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill ${pccEff}">${dayPctTxt}</span></div></td>
+    <td><div class="td-inner pvpt-cost" style="font-variant-numeric:tabular-nums">${usd(round2(h.costBasis))}</div></td>
     <td><div class="td-inner ${gc}" style="font-weight:700;font-variant-numeric:tabular-nums">${usdSigned(round2(c.gl))}</div></td>
-    <td><div class="td-inner ${gc}" style="font-variant-numeric:tabular-nums">${pctSigned(c.glPct)}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill ${gc}">${pctSigned(c.glPct)}</span></div></td>
     <td><div class="td-inner">${_dripPill(h, idx)}</div></td>
     <td><div class="td-inner"><button class="pos-menu-btn ${isOpen?'active':''}" onclick="toggleDrawer(${idx})" title="Operar ${h.ticker}">&#8942;</button></div></td>
   </tr>
@@ -15672,19 +15683,46 @@ function groupTotalHTML(label, mkt, cost, day, gl, prevClose) {
   const glPct = cost > 0 ? gl/cost*100 : 0;
   const dc = day >= 0 ? 'pos' : 'neg';
   const gc = gl  >= 0 ? 'pos' : 'neg';
+  // Los % van en una pastilla «plana» (pvpt-pill flat: mismo relleno, sin fondo) para que
+  // las cifras queden alineadas con las pastillas de las filas de arriba.
   return `<tr class="pos-total-row">
     <td><div class="td-inner" style="text-align:left"><strong>Total ${label}</strong></div></td>
     <td></td><td></td><td></td>
-    <td><div class="td-inner ${dc}" style="font-weight:700">${pctSigned(dPct)}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill flat ${dc}">${pctSigned(dPct)}</span></div></td>
     <td><div class="td-inner" style="font-weight:700">${usd(mkt)}</div></td>
     <td><div class="td-inner ${dc}">${usdSigned(day,2)}</div></td>
-    <td><div class="td-inner ${dc}">${pctSigned(dPct)}</div></td>
-    <td><div class="td-inner" style="color:#8a96a3">${usd(cost)}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill flat ${dc}">${pctSigned(dPct)}</span></div></td>
+    <td><div class="td-inner pvpt-cost">${usd(cost)}</div></td>
     <td><div class="td-inner ${gc}" style="font-weight:700">${usdSigned(gl)}</div></td>
-    <td><div class="td-inner ${gc}">${pctSigned(glPct)}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill flat ${gc}">${pctSigned(glPct)}</span></div></td>
     <td></td>
     <td></td>
   </tr>`;
+}
+
+// Textos fijos de la tarjeta «Tus posiciones» en el idioma activo: antetítulo, título,
+// subtítulo y las 13 columnas (en el orden del <thead>; las ocultas por CSS también llevan
+// texto). El HTML trae el español; sólo se escribe lo que cambia, para no disparar
+// mutaciones (y el traductor en vivo) en cada tick de 30 s.
+function _pvPosHeadI18n(){
+  const TH = [
+    ['Activo','Asset'], ['Cantidad','Shares'], ['Precio','Price'], ['Hoy $','Today $'], ['Hoy %','Today %'],
+    ['Valor','Value'], ['Hoy $','Today $'], ['Hoy %','Today %'], ['Costo','Cost'],
+    ['Ganancia $','Gain $'], ['Ganancia %','Gain %'], ['Reinversión','Reinvest'], ['','']
+  ];
+  try {
+    const tb = $('posRows'), table = tb && tb.closest('table');
+    if (!table) return;
+    const set = (el, txt) => { if (el && el.textContent !== txt) el.textContent = txt; };
+    const ths = table.tHead ? table.tHead.querySelectorAll('th') : [];
+    ths.forEach((th, i) => { const p = TH[i]; if (p) set(th, _L(p[0], p[1])); });
+    if (ths[11]) { const tt = _L('Reinvertir dividendos (DRIP)', 'Reinvest dividends (DRIP)'); if (ths[11].title !== tt) ths[11].title = tt; }
+    const card = table.closest('.holdings-card');
+    if (!card) return;
+    set(card.querySelector('.pvpt-eyebrow'), _L('Portafolio', 'Portfolio'));
+    set(card.querySelector('.stitch-card-title'), _L('Tus posiciones', 'Your positions'));
+    set(card.querySelector('.holdings-sub'), _L('Vista en vivo de tus activos', 'Live view of your assets'));
+  } catch(e){}
 }
 
 // `opts.force` = este repintado lo pidió el usuario (abrir el cajón, cambiar de
@@ -15693,10 +15731,13 @@ function groupTotalHTML(label, mkt, cost, day, gl, prevClose) {
 function renderTable(T, opts) {
   const tbody = $('posRows');
   let html = '';
+  _pvPosHeadI18n();
+  if (!activeDrawer) _pvptDrw = null;   // sólo presentación (ver _pvptDrawerAnim)
 
+  // `tot` va tras «Total » en la fila de subtotal, en sentence case («Total acciones»).
   const GROUPS = [
-    { key:'stock', label:'Acciones' },
-    { key:'etf',   label:'ETFs y fondos cerrados' },
+    { key:'stock', label:_L('Acciones','Stocks'), tot:_L('acciones','stocks') },
+    { key:'etf',   label:_L('ETFs y fondos cerrados','ETFs & closed-end funds'), tot:_L('ETFs y fondos cerrados','ETFs & closed-end funds') },
   ];
 
   GROUPS.forEach(g => {
@@ -15705,7 +15746,10 @@ function renderTable(T, opts) {
       .filter(o => ((o.h.type || 'stock') === g.key));
     if (!items.length) return;
 
-    html += `<tr class="pos-group"><td colspan="13"><div class="pos-group-inner"><span class="pos-group-caret">&#9662;</span>${g.label}</div></td></tr>`;
+    // Cabecera del grupo: nombre y conteo. No hay plegado (nunca lo hubo): sin el ▾ que lo sugería.
+    const nPos = items.length;
+    const cnt = nPos === 1 ? _L('1 posición', '1 position') : _L(nPos + ' posiciones', nPos + ' positions');
+    html += `<tr class="pos-group"><td colspan="13"><div class="pos-group-inner"><span class="pvpt-gname">${g.label}</span><span class="pvpt-gcount">${cnt}</span></div></td></tr>`;
 
     // FIX: subtotales = SUMA de los valores YA redondeados que muestra cada fila → sin deriva.
     let gMkt = 0, gCost = 0, gDay = 0, gGl = 0, gPrev = 0;
@@ -15718,7 +15762,7 @@ function renderTable(T, opts) {
       gPrev += round2(c.prevClose * h.qty);
       html += posRowHTML(h, idx, c, T);
     });
-    html += groupTotalHTML(g.label, round2(gMkt), round2(gCost), round2(gDay), round2(gGl), round2(gPrev));
+    html += groupTotalHTML(g.tot, round2(gMkt), round2(gCost), round2(gDay), round2(gGl), round2(gPrev));
   });
 
   // Efectivo y money market: ya no tienen filas propias en la tabla (pedido de Rafael, 30-sep);
@@ -15803,15 +15847,15 @@ function renderTable(T, opts) {
   const dc = dayAbs >= 0 ? 'pos' : 'neg';
   const gc = T.gl  >= 0 ? 'pos' : 'neg';
   $('posFoot').innerHTML = `<tr>
-    <td style="text-align:left">Total posiciones</td>
+    <td style="text-align:left">${_L('Total posiciones', 'Total positions')}</td>
     <td></td><td></td><td></td>
-    <td class="${dc}" style="font-variant-numeric:tabular-nums">${pctSigned(dayPct)}</td>
+    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${dc}">${pctSigned(dayPct)}</span></td>
     <td style="font-variant-numeric:tabular-nums">${usd(totMkt)}</td>
     <td class="${dc}" style="font-variant-numeric:tabular-nums">${usdSigned(dayAbs,2)}</td>
-    <td class="${dc}" style="font-variant-numeric:tabular-nums">${pctSigned(dayPct)}</td>
-    <td style="font-variant-numeric:tabular-nums;color:#8a96a3">${usd(T.cost)}</td>
+    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${dc}">${pctSigned(dayPct)}</span></td>
+    <td class="pvpt-cost" style="font-variant-numeric:tabular-nums">${usd(T.cost)}</td>
     <td class="${gc}" style="font-variant-numeric:tabular-nums">${usdSigned(T.gl)}</td>
-    <td class="${gc}" style="font-variant-numeric:tabular-nums">${pctSigned(glPct)}</td>
+    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${gc}">${pctSigned(glPct)}</span></td>
     <td></td>
     <td></td>
   </tr>`;
@@ -15825,6 +15869,25 @@ function renderTable(T, opts) {
   updateCash();
 }
 
+// Cajón de operar — estado SÓLO de presentación (pvPosTablaCss). El cajón se repinta entero
+// con innerHTML en cada renderTable (abrir, Comprar/Vender, Por dinero/Por acciones y el tick
+// de 30 s), así que una transición CSS nunca llega a correr. Se recuerda qué se pintó la
+// última vez para: animar la apertura UNA vez (no en cada tick) y deslizar la pastilla de
+// los segmentados desde el lado anterior sólo cuando el lado cambió. No toca activeDrawer
+// ni el orden de nada: lo lee. renderTable lo vacía cuando no hay cajón abierto.
+// `var` y no `let`: renderTable (más arriba en el archivo) lo lee y no debe tropezar con la TDZ.
+var _pvptDrw = null;
+function _pvptDrawerAnim(idx, mode, orderType){
+  const prev = _pvptDrw;
+  _pvptDrw = { idx, mode, orderType };
+  if (!prev || prev.idx !== idx) return { open: true, modeFrom: -1, typeFrom: -1 };
+  const M = ['buy', 'sell'], O = ['money', 'shares', 'all'];
+  const modeFrom = prev.mode !== mode ? M.indexOf(prev.mode) : -1;
+  // Al cambiar de lado el segmentado de tipo cambia de forma (2 ↔ 3 opciones): no se desliza.
+  const typeFrom = (modeFrom < 0 && prev.orderType !== orderType) ? O.indexOf(prev.orderType) : -1;
+  return { open: false, modeFrom, typeFrom };
+}
+
 function buildDrawer(idx, T) {
   const h = HOLDINGS[idx];
   const c = calcH(h);
@@ -15834,6 +15897,14 @@ function buildDrawer(idx, T) {
   const isMoney   = orderType === 'money';
   const isShares  = orderType === 'shares';
   const isAll     = orderType === 'all';
+  // Presentación: posición de la pastilla de cada segmentado y de dónde viene (ver arriba).
+  const anim   = _pvptDrawerAnim(idx, mode, orderType);
+  const modeAt = mode === 'sell' ? 1 : 0;
+  const typeAt = isAll ? 2 : (isShares ? 1 : 0);
+  const typeN  = mode === 'sell' ? 3 : 2;
+  const dCls   = (anim.open ? ' pvpt-open' : '') + (anim.modeFrom >= 0 ? ' pvpt-mfrom' + anim.modeFrom : '');
+  const mCls   = ' pvpt-seg pvpt-n2 pvpt-at' + modeAt + (anim.modeFrom >= 0 ? ' pvpt-from' + anim.modeFrom : '');
+  const tCls   = ' pvpt-seg pvpt-n' + typeN + ' pvpt-at' + typeAt + (anim.typeFrom >= 0 ? ' pvpt-from' + anim.typeFrom : '');
 
   const qBtns = isMoney
     ? [100,250,500,1000].map(v=>`<button class="qbtn" onclick="setAmt(${idx},${v})">${_pvSym()}${v}</button>`).join('')
@@ -15852,16 +15923,16 @@ function buildDrawer(idx, T) {
   // flex-wrap + gap corto: en iPhone las dos líneas iban en una sola fila y
   // "Cash post-venta" se salía de la tarjeta.
   const sellAllBlock = `
-    <div style="background:var(--red-bg);border-radius:12px;padding:14px 16px;margin-bottom:14px">
+    <div class="pvpt-sellall" style="background:var(--red-bg);border-radius:12px;padding:14px 16px;margin-bottom:14px">
       <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">Vender toda la posición</div>
       <div style="display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12px;color:var(--text2);line-height:1.6">
-        <span>${h.qty.toFixed(4)} shares · ${usd(c.mktVal)}</span>
-        <span>Cash post-venta: ${usd(CASH + c.mktVal)}</span>
+        <span>${h.qty.toFixed(4)} ${_L('acciones','shares')} · ${usd(c.mktVal)}</span>
+        <span>${_L('Efectivo tras la venta','Cash after sale')}: ${usd(CASH + c.mktVal)}</span>
       </div>
     </div>`;
 
   return `
-  <div class="trade-drawer">
+  <div class="trade-drawer${dCls}">
     <div class="drawer-header">
       <div class="drawer-id">
         <div class="drawer-ticker">${h.ticker}</div>
@@ -15874,12 +15945,14 @@ function buildDrawer(idx, T) {
       </div>
     </div>
 
-    <div class="mode-toggle">
+    <div class="mode-toggle${mCls}">
+      <span class="pvpt-thumb" aria-hidden="true"></span>
       <button class="mode-btn buy ${mode==='buy'?'active':''}" onclick="setMode(${idx},'buy')">Comprar</button>
       <button class="mode-btn sell ${mode==='sell'?'active':''}" onclick="setMode(${idx},'sell')">Vender</button>
     </div>
 
-    <div class="order-type-toggle">
+    <div class="order-type-toggle${tCls}">
+      <span class="pvpt-thumb" aria-hidden="true"></span>
       <button class="order-type-btn ${mode} ${isMoney?'active':''}" onclick="setOrderType(${idx},'money')">Por dinero</button>
       <button class="order-type-btn ${mode} ${isShares?'active':''}" onclick="setOrderType(${idx},'shares')">Por acciones</button>
       ${mode==='sell'?`<button class="order-type-btn ${mode} ${isAll?'active':''}" onclick="setOrderType(${idx},'all')">Todo</button>`:''}
@@ -15896,6 +15969,7 @@ function buildDrawer(idx, T) {
             oninput="updatePreview(${idx})"
             onkeydown="if(event.key==='Enter') requestTrade(${idx})">
         </div>
+        <div class="pvpt-hint" aria-live="polite"></div>
       </div>
       <div class="input-group">
         <div class="input-label">Montos rápidos</div>
@@ -15907,7 +15981,7 @@ function buildDrawer(idx, T) {
 
     <div class="preview-block" id="preview-${idx}" style="display:none">
       <div class="preview-item">
-        <div class="preview-label">Shares</div>
+        <div class="preview-label">${_L('Acciones','Shares')}</div>
         <div class="preview-value" id="prev-shares-${idx}">—</div>
         <div class="preview-sub" id="prev-shares-sub-${idx}"></div>
       </div>
@@ -15920,7 +15994,7 @@ function buildDrawer(idx, T) {
         <div class="preview-value" id="prev-pos-${idx}">—</div>
       </div>
       <div class="preview-item">
-        <div class="preview-label">${mode==='buy'?'Cash restante':'Cash post-venta'}</div>
+        <div class="preview-label">${mode==='buy'?_L('Efectivo restante','Cash left'):_L('Efectivo tras la venta','Cash after sale')}</div>
         <div class="preview-value" id="prev-cash-${idx}">—</div>
       </div>
     </div>`}
@@ -16015,6 +16089,26 @@ function setOrderType(idx, type) {
   }
 }
 
+// Línea de ayuda bajo el importe del cajón (sólo presentación, no decide nada): por dinero,
+// cuántas acciones son («≈ 3.67 acciones de BAC»); por acciones, cuánto dinero («≈ $199.65»).
+// La llama updatePreview, que ya corre con cada tecla, con los montos rápidos (setAmt) y al
+// reponer el importe tras un repintado; sin importe o sin precio queda vacía.
+function _pvptHint(idx){
+  try {
+    const inp = document.getElementById(`amt-${idx}`);
+    const grp = inp && inp.closest('.input-group');
+    const el  = grp && grp.querySelector('.pvpt-hint');
+    if (!el) return;
+    const h = HOLDINGS[idx], v = parseFloat(inp.value), px = h ? +h.price : 0;
+    let txt = '';
+    if (h && v > 0 && px > 0) {
+      if (((activeDrawer && activeDrawer.orderType) || 'money') === 'shares') txt = '≈ ' + usd(v * px);
+      else { const q = v / px, qs = q >= 1 ? q.toFixed(2) : q.toFixed(4); txt = _L(`≈ ${qs} acciones de ${h.ticker}`, `≈ ${qs} shares of ${h.ticker}`); }
+    }
+    if (el.textContent !== txt) el.textContent = txt;
+  } catch(e){}
+}
+
 function setAmt(idx, val) {
   const inp = document.getElementById(`amt-${idx}`);
   if (!inp) return;
@@ -16023,6 +16117,7 @@ function setAmt(idx, val) {
 }
 
 function updatePreview(idx) {
+  _pvptHint(idx);   // sólo presentación: «≈ 3.67 acciones de BAC» / «≈ $199.65»
   const h = HOLDINGS[idx];
   const c = calcH(h);
   const mode      = activeDrawer.mode;
@@ -16061,7 +16156,7 @@ function updatePreview(idx) {
   // buyAsset rechazaba en silencio. Se corta aquí.
   if (!(h.price > 0)) warn = `Sin precio de ${h.ticker} todavía. Espera a que cargue la cotización.`;
   else if (mode === 'buy'  && amt    > CASH + 0.01)       warn = `Cash insuficiente. Tienes ${usd(CASH)} disponible.`;
-  if (!warn && mode === 'sell' && shares > h.qty + 0.0001)  warn = `Máximo ${h.qty.toFixed(4)} shares disponibles.`;
+  if (!warn && mode === 'sell' && shares > h.qty + 0.0001)  warn = _L(`Máximo ${h.qty.toFixed(4)} acciones disponibles.`, `Max ${h.qty.toFixed(4)} shares available.`);
   if (!warn && mode === 'sell' && amt    > c.mktVal + 0.01) warn = `No puedes vender más de ${usd(c.mktVal)}.`;
 
   warnEl.textContent = warn;
@@ -16075,11 +16170,11 @@ function updatePreview(idx) {
     const newCash = mode === 'buy' ? CASH - exact : CASH + exact;
 
     document.getElementById(`prev-shares-${idx}`).textContent =
-      `${mode==='buy'?'+':'−'}${shares.toFixed(4)} shares`;
+      `${mode==='buy'?'+':'−'}${shares.toFixed(4)} ${_L('acciones','shares')}`;
     document.getElementById(`prev-shares-sub-${idx}`).textContent =
       `@ ${_pvPx(h.price)}`;
     document.getElementById(`prev-amt-${idx}`).textContent     = usd(exact);
-    document.getElementById(`prev-pos-${idx}`).textContent     = `${usd(newPos)} (${newQty.toFixed(4)} sh)`;
+    document.getElementById(`prev-pos-${idx}`).textContent     = `${usd(newPos)} (${newQty.toFixed(4)} ${_L('acc.','sh')})`;
     document.getElementById(`prev-cash-${idx}`).textContent    = usd(newCash);
 
     previewEl.style.display = 'flex';
@@ -16149,13 +16244,13 @@ function requestTrade(idx) {
 
   const rows = [
     { l: 'Operación', v: mode === 'buy' ? '▲ Compra' : '▼ Venta' },
-    { l: 'Shares', v: `${mode==='buy'?'+':'−'}${shares.toFixed(4)} sh` },
+    { l: _L('Acciones','Shares'), v: `${mode==='buy'?'+':'−'}${shares.toFixed(4)} ${_L('acc.','sh')}` },
     { l: 'Precio por share', v: _pvPx(h.price) },
     { l: 'Monto total', v: usd(exact) },
-    { l: 'Qty resultante', v: `${newQty.toFixed(4)} shares` },
+    { l: _L('Cantidad resultante','Resulting qty'), v: `${newQty.toFixed(4)} ${_L('acciones','shares')}` },
     { l: 'Posición resultante', v: usd(newQty * h.price) },
     { l: '% del portafolio', v: `${newPct}%` },
-    { l: mode==='buy' ? 'Cash restante' : 'Cash post-venta', v: usd(newCash) },
+    { l: mode==='buy' ? _L('Efectivo restante','Cash left') : _L('Efectivo tras la venta','Cash after sale'), v: usd(newCash) },
     ...(realizedGL !== null ? [{ l: 'G/L realizado', v: `${sign(realizedGL)}${usd(Math.abs(realizedGL))}`, cls: realizedGL >= 0 ? 'pos' : 'neg' }] : []),
   ];
   $('modalRows').innerHTML = rows.map(r =>
@@ -53492,6 +53587,545 @@ html body.dark-theme #tab-noticias #pvpTop .pvp-dot { outline:1px solid rgba(255
 @media (prefers-reduced-motion: reduce) {
   html body #tab-noticias #pvpTop :is(.pvp-feat, .pvp-btn, .pvp-ar, .pvp-n, .pvp-va),
   html body #tab-noticias #pvpTop #todayNews > .sn-card { transition:none !important; }
+}
+</style>
+<style id="pvPosTablaCss">
+/* ═══ «TUS POSICIONES» (pestaña Portafolio) — tabla y cajón de operar ═══════════════════════
+   Rediseño con el lenguaje aprobado de la tabla «Tus posiciones» de Análisis (pvAnalisisCss):
+   tarjeta blanca con filo de 1px, cabecera con antetítulo, columnas en español y en sentence
+   case, avatar neutro con la inicial, nombre de la empresa (o sector) bajo el ticker, cifras
+   tabulares, «Hoy %» y «Ganancia %» en pastilla, filas de total sobre lavado gris.
+   Marcado: .holdings-card de #tab-portfolio (#posRows y #posFoot), lo pintan posRowHTML,
+   groupTotalHTML, renderTable y buildDrawer; clases nuevas pvpt-*.
+   Especificidad: cada regla cuelga de DOS ids —#tab-portfolio:not(#pvpt-x); el :not(#…) sólo
+   suma un id, como en pvAnalisisCss/pvPanoramaCss— con el prefijo «html body»: gana a las capas
+   anteriores (base, Stitch, html:root/v8 de escritorio, html.pv-ipad, @media ≤899/≤700, tallas
+   de html:root:not(.pv-ipad) y body.dark-theme) sin tocarlas; donde usan !important se responde
+   con !important.
+   Columnas: cuáles se ven lo siguen decidiendo las capas viejas (#posRows td:nth-child(n)
+   {display:none}: Precio sólo desde 1501 px; en ≤899 Activo · Hoy % · Ganancia % · ⋮). Aquí no
+   se toca el `display` de ninguna celda.
+   Tabla: sin sombras, desenfoques, degradados ni animaciones de entrada; sólo hover.
+   Cajón de operar: movimiento (despliegue con clip-path, desplazamientos, color y escala), nunca
+   opacidad ni desenfoque; prefers-reduced-motion lo apaga todo. El cajón se repinta entero con
+   innerHTML, así que las animaciones que dependen del estado anterior las pide buildDrawer con
+   clases (pvpt-open, pvpt-mfrom*, pvpt-from*), nunca en cada tick.
+   Orden: tokens → tarjeta y cabecera → tabla → cajón → anchos (≥1501, tablet, ≤899, celular)
+   → oscuro → movimiento reducido. */
+
+/* Colores animables (con @property se interpolan; sin él cambian a mitad del recorrido). Hacen
+   falta porque las capas viejas fijan color y fondo de los botones del cajón con !important, y
+   una animación no puede con un !important: se anima la variable, no la propiedad. */
+@property --pvpt-lbl { syntax: '<color>'; inherits: false; initial-value: #5b6b84; }
+@property --pvpt-cta { syntax: '<color>'; inherits: false; initial-value: #0b1c30; }
+
+/* ── Tokens (claro) ── */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card {
+  --pvpt-card: #fff; --pvpt-line: #e2e7f0; --pvpt-line-hi: #cfd7e3; --pvpt-wash: #f4f6fa;
+  --pvpt-chip: #eef1f8; --pvpt-chip-ink: #0b1c30;
+  --pvpt-ink: #0b1c30; --pvpt-slate: #33475f; --pvpt-muted: #7a879b;
+  --pvpt-green: #0f8a5f; --pvpt-green-bg: #dcf6e9; --pvpt-red: #c62828; --pvpt-red-bg: #ffe3df;
+  --pvpt-strong: #0b1c30; --pvpt-btn: #0b1c30; --pvpt-btn-ink: #fff;
+  --pvpt-r: 30px;
+  /* cajón de operar */
+  --pvpt-d-r: 28px;
+  --pvpt-d-buy: #0b1c30; --pvpt-d-buy-hi: #1b3553; --pvpt-d-buy-ink: #fff;
+  --pvpt-d-sell: #c62828; --pvpt-d-sell-hi: #ad1f1f; --pvpt-d-sell-ink: #fff;
+  --pvpt-d-off: #5b6b84; --pvpt-d-lbl: #8a96ab; --pvpt-d-ph: #b3bdcc;
+  --pvpt-d-track: #eef1f8; --pvpt-d-track2: #f4f6fb; --pvpt-d-thumb2: #fff; --pvpt-d-thumb2-line: #d5dcea;
+  --pvpt-d-fact: #42516b;
+  --pvpt-d-up: #157f4a; --pvpt-d-up-bg: #e7f6ee; --pvpt-d-dn: #c62828; --pvpt-d-dn-bg: #fdecec;
+  --pvpt-d-dis: #eef1f8; --pvpt-d-dis-ink: #9aa6ba;
+  --pvpt-ease: cubic-bezier(.2,.8,.2,1);
+}
+
+/* ═══ TARJETA Y CABECERA ═══════════════════════════════════════════════════════════════ */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card {
+  background: var(--pvpt-card) !important; border: 1px solid var(--pvpt-line) !important;
+  border-radius: var(--pvpt-r) !important; box-shadow: none !important; padding: 0 !important;
+  overflow: hidden !important; color: var(--pvpt-ink); font-family: var(--font); -webkit-font-smoothing: antialiased;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head {
+  display: flex !important; align-items: flex-end; justify-content: space-between; gap: 16px !important;
+  margin: 0 !important; padding: 30px 32px 16px !important; border: 0 !important; background: none !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-eyebrow { font-size: 13.5px; font-weight: 700; line-height: 1.3; color: var(--pvpt-muted); margin: 0 0 6px; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head .stitch-card-title {
+  font-family: inherit !important; font-size: 24px !important; font-weight: 800 !important; letter-spacing: -.025em !important;
+  line-height: 1.15 !important; color: var(--pvpt-ink) !important; margin: 0 !important; text-transform: none !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head .holdings-sub {
+  font-family: inherit !important; font-size: 14px !important; font-weight: 600 !important; line-height: 1.5 !important;
+  color: var(--pvpt-muted) !important; margin: 6px 0 0 !important;
+}
+
+/* ═══ TABLA ════════════════════════════════════════════════════════════════════════════ */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap { margin: 0 !important; padding: 0 10px 10px !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap > table { width: 100% !important; border-collapse: collapse !important; font-family: inherit !important; }
+
+/* Cabecera de columnas: sentence case, sin espaciado ni mayúsculas */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th {
+  padding: 10px 8px 12px !important; background: transparent !important; border: 0 !important;
+  border-bottom: 1px solid var(--pvpt-line) !important;
+  font-family: inherit !important; font-size: 13px !important; font-weight: 700 !important; line-height: 1.3 !important;
+  letter-spacing: 0 !important; text-transform: none !important; color: var(--pvpt-muted) !important;
+  text-align: right !important; white-space: nowrap !important; vertical-align: bottom !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th:first-child { text-align: left !important; padding-left: 22px !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th:last-child { padding-right: 16px !important; padding-left: 4px !important; }
+
+/* Celdas: el aire vive en .td-inner; la celda no pinta nada propio */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-group, .pos-total-row) {
+  background: transparent !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-group, .pos-total-row) > td {
+  padding: 0 !important; border: 0 !important; background: transparent !important;
+  vertical-align: middle !important; font-family: inherit !important; letter-spacing: 0 !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row > td { border-top: 1px solid var(--pvpt-line) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) .td-inner {
+  padding: 12px 8px !important; font-family: inherit !important; font-size: 14.5px !important; font-weight: 600 !important;
+  line-height: 1.3 !important; letter-spacing: 0 !important; color: var(--pvpt-slate) !important;
+  text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) > td:first-child .td-inner { padding-left: 22px !important; text-align: left !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) > td:last-child .td-inner { padding-right: 16px !important; padding-left: 4px !important; }
+/* Hoy $ y Ganancia $ en verde/rojo (Ganancia $ más fuerte); el costo en slate. Mismo prefijo
+   que la regla de arriba + la clase: si no, el slate de la celda ganaría al verde/rojo. */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) .td-inner.pos { color: var(--pvpt-green) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) .td-inner.neg { color: var(--pvpt-red) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) .td-inner.pvpt-cost { color: var(--pvpt-slate) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row .td-inner:is(.pos, .neg) { font-weight: 700 !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row > td:nth-child(10) .td-inner { font-weight: 800 !important; }
+
+/* Activo: avatar neutro (inicial), ticker y nombre/sector */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-cell { display: flex !important; align-items: center !important; gap: 12px !important; min-width: 0; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-avatar {
+  flex: 0 0 auto; display: grid !important; place-items: center; box-sizing: border-box;
+  width: 40px !important; height: 40px !important; border-radius: 12px !important;
+  background: var(--pvpt-chip) !important; color: var(--pvpt-ink) !important;
+  font-family: inherit !important; font-size: 16px !important; font-weight: 800 !important; line-height: 1 !important; letter-spacing: 0 !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pvpt-tx { flex: 1 1 auto; min-width: 0; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym {
+  font-family: inherit !important; font-size: 15.5px !important; font-weight: 800 !important; line-height: 1.3 !important;
+  letter-spacing: -.01em !important; color: var(--pvpt-ink) !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-sub {
+  display: block !important; max-width: 150px; margin: 1px 0 0 !important;
+  font-family: inherit !important; font-size: 13px !important; font-weight: 600 !important; line-height: 1.35 !important;
+  color: var(--pvpt-muted) !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Pastillas de «Hoy %» y «Ganancia %»; .flat (totales) = mismo relleno sin fondo → cifras alineadas */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill {
+  display: inline-block; padding: 5px 10px; border-radius: 999px; background: transparent;
+  font-family: inherit; font-size: 13.5px; font-weight: 800; line-height: 1.25; letter-spacing: 0;
+  color: var(--pvpt-muted); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill.pos { color: var(--pvpt-green); background: var(--pvpt-green-bg); }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill.neg { color: var(--pvpt-red); background: var(--pvpt-red-bg); }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill.flat { background: transparent; }
+
+/* Grupos: nombre en sentence case y conteo; sin el ▾ (no hay plegado) */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-group-inner {
+  display: flex !important; align-items: center !important; flex-wrap: wrap; gap: 6px 10px !important;
+  margin: 0 !important; padding: 26px 22px 10px !important; background: transparent !important; border: 0 !important;
+  font-family: inherit !important; font-size: 13px !important; font-weight: 800 !important; line-height: 1.3 !important;
+  letter-spacing: 0 !important; text-transform: none !important; color: var(--pvpt-ink) !important; text-align: left !important;
+  white-space: normal !important;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-group:first-child .pos-group-inner { padding-top: 16px !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pvpt-gcount {
+  display: inline-flex; align-items: center; padding: 3px 9px; border-radius: 999px;
+  background: var(--pvpt-chip); color: var(--pvpt-slate); font-size: 12px; font-weight: 700; line-height: 1.3; white-space: nowrap;
+}
+
+/* Totales: lavado gris, etiqueta en sentence case y cifras en negrita */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-total-row > td { background: var(--pvpt-wash) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-total-row .td-inner { padding-top: 13px !important; padding-bottom: 13px !important; font-weight: 800 !important; color: var(--pvpt-ink) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-total-row .td-inner :is(strong, b) { font-weight: 800; }
+/* La etiqueta de total puede partirse en dos líneas cuando falta sitio («Total ETFs y fondos
+   cerrados» fijaba el ancho mínimo de la columna Activo y desbordaba la tarjeta). */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-total-row > td:first-child .td-inner,
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:first-child { white-space: normal !important; overflow: visible !important; }
+/* Total de posiciones (pie): el mismo lavado con la raya de suma encima, como el promedio de Análisis */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td {
+  padding: 14px 8px !important; background: var(--pvpt-wash) !important; border: 0 !important; border-top: 2px solid var(--pvpt-strong) !important;
+  font-family: inherit !important; font-size: 14.5px !important; font-weight: 800 !important; line-height: 1.3 !important; letter-spacing: 0 !important;
+  color: var(--pvpt-ink) !important; text-align: right !important; white-space: nowrap !important; font-variant-numeric: tabular-nums;
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:first-child { padding-left: 22px !important; text-align: left !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:last-child { padding-right: 16px !important; padding-left: 4px !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td.pos { color: var(--pvpt-green) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td.neg { color: var(--pvpt-red) !important; }
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td.pvpt-cost { color: var(--pvpt-slate) !important; }
+
+/* Reinversión: pastilla neutra («Sí»); apagada («No») sólo con el filo. _dripPill pinta su
+   estilo en línea y no se toca: el apagado se reconoce por su color en línea (#8a96a3). */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .drip-pill {
+  box-sizing: border-box; min-width: 46px !important; height: 30px; padding: 0 12px !important;
+  border: 1px solid transparent !important; border-radius: 999px !important;
+  background: var(--pvpt-chip) !important; color: var(--pvpt-chip-ink) !important;
+  font-family: inherit !important; font-size: 13px !important; font-weight: 800 !important; line-height: 1 !important;
+  transition: background-color .22s var(--pvpt-ease), border-color .22s var(--pvpt-ease), color .22s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .drip-pill[style*="color:#8a96a3"] {
+  background: transparent !important; border-color: var(--pvpt-line) !important; color: var(--pvpt-muted) !important;
+}
+
+/* ⋮ (abre el cajón): sin borde; activo = navy */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-menu-btn {
+  display: inline-grid !important; place-items: center; box-sizing: border-box; vertical-align: middle;
+  width: 34px !important; height: 34px !important; margin: 0 !important; padding: 0 !important;
+  border: 0 !important; border-radius: 11px !important; background: transparent !important; box-shadow: none !important;
+  color: var(--pvpt-slate) !important; font-family: inherit !important; font-size: 18px !important; font-weight: 800 !important; line-height: 1 !important;
+  cursor: pointer; transition: background-color .22s var(--pvpt-ease), color .22s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-menu-btn.active { background: var(--pvpt-btn) !important; color: var(--pvpt-btn-ink) !important; }
+
+/* Hover de fila (sólo ratón) y respuesta al pulsar (táctil); la fila con el cajón abierto se queda marcada */
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row > td { transition: background-color .22s var(--pvpt-ease); }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row:hover > td { background: var(--pvpt-wash) !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-link:hover { text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 3px; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-menu-btn:not(.active):hover { background: var(--pvpt-chip) !important; color: var(--pvpt-ink) !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .drip-pill:hover { border-color: var(--pvpt-line-hi) !important; }
+}
+@media (hover: none) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row:active > td { background: var(--pvpt-wash) !important; }
+}
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row:has(+ tr.trade-drawer-row.open) > td { background: var(--pvpt-wash) !important; }
+
+/* ═══ CAJÓN DE OPERAR (Comprar / Vender) ═══════════════════════════════════════════════ */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.trade-drawer-row > td {
+  padding: 0 !important; border: 0 !important; background: transparent !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer {
+  box-sizing: border-box !important; max-width: 680px !important; margin: 2px 12px 16px !important; padding: 28px 32px !important;
+  background: var(--pvpt-card) !important; border: 1px solid var(--pvpt-line) !important; border-radius: var(--pvpt-d-r) !important;
+  box-shadow: none !important; animation: none; color: var(--pvpt-ink); font-family: var(--font);
+  text-align: left; white-space: normal; letter-spacing: 0; -webkit-font-smoothing: antialiased;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer :is(div, span, button, input) { font-family: inherit; }
+
+/* Cabecera: ticker y precio; dos pastillas (valor · peso y G/L); cerrar en círculo */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-header {
+  display: grid !important; grid-template-columns: minmax(0,1fr) auto; align-items: start;
+  gap: 12px 16px !important; margin: 0 0 22px !important; flex-wrap: nowrap !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-id { display: flex !important; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; min-width: 0; padding-top: 4px; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-ticker {
+  font-size: 28px !important; font-weight: 800 !important; letter-spacing: -.03em !important; line-height: 1.1 !important; color: var(--pvpt-ink) !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-price {
+  font-size: 17px !important; font-weight: 600 !important; line-height: 1.2 !important; color: var(--pvpt-muted) !important; font-variant-numeric: tabular-nums;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-close {
+  grid-column: 2; grid-row: 1; justify-self: end; align-self: start;
+  display: grid !important; place-items: center; box-sizing: border-box;
+  width: 40px !important; height: 40px !important; margin: 0 !important; padding: 0 0 2px !important;
+  border: 1px solid var(--pvpt-line) !important; border-radius: 50% !important; background: var(--pvpt-card) !important;
+  color: var(--pvpt-slate) !important; font-size: 22px !important; font-weight: 500 !important; line-height: 1 !important;
+  box-shadow: none !important; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background-color .2s var(--pvpt-ease), color .2s var(--pvpt-ease), transform .15s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-close:active { transform: scale(.94); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-facts { grid-column: 1 / -1; display: flex !important; flex-wrap: wrap; align-items: center; gap: 8px !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer :is(.drawer-mktval, .drawer-gl) {
+  display: inline-flex; align-items: center; padding: 6px 12px !important; border: 0 !important; border-radius: 999px !important;
+  font-size: 13px !important; font-weight: 700 !important; line-height: 1.3 !important; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-mktval { background: var(--pvpt-chip) !important; color: var(--pvpt-d-fact) !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-gl { font-weight: 800 !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-gl.pos { background: var(--pvpt-d-up-bg) !important; color: var(--pvpt-d-up) !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-gl.neg { background: var(--pvpt-d-dn-bg) !important; color: var(--pvpt-d-dn) !important; }
+
+/* Segmentados con pastilla deslizante. La pastilla (.pvpt-thumb) se coloca con pvpt-at0/1/2 y
+   mide 1/n del carril (pvpt-n2 / pvpt-n3). La etiqueta se colorea con --pvpt-lbl (animable). */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg {
+  position: relative !important; display: grid !important; grid-auto-flow: column; grid-auto-columns: minmax(0,1fr);
+  box-sizing: border-box !important; width: 100% !important; gap: 0 !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-n2 { --pvpt-n: 2; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-n3 { --pvpt-n: 3; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg > .pvpt-thumb {
+  position: absolute; z-index: 0; top: var(--pvpt-pad); bottom: var(--pvpt-pad); left: var(--pvpt-pad);
+  width: calc((100% - 2 * var(--pvpt-pad)) / var(--pvpt-n)); box-sizing: border-box; border-radius: var(--pvpt-tr);
+  pointer-events: none; transform: translateX(0);
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-at1 > .pvpt-thumb { transform: translateX(100%); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-at2 > .pvpt-thumb { transform: translateX(200%); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg > button {
+  position: relative; z-index: 1; display: flex !important; align-items: center; justify-content: center;
+  min-width: 0; height: 100%; margin: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important;
+  --pvpt-lbl: var(--pvpt-off); color: var(--pvpt-lbl) !important;
+  letter-spacing: 0 !important; text-transform: none !important; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg > button.active { --pvpt-lbl: var(--pvpt-on); }
+/* Comprar / Vender: carril #eef1f8, pastilla navy (comprar) o roja (vender), etiqueta blanca encima */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle.pvpt-seg {
+  --pvpt-pad: 5px; --pvpt-tr: 13px;
+  height: 52px; margin: 0 0 12px !important; padding: 5px !important;
+  background: var(--pvpt-d-track) !important; border: 0 !important; border-radius: 18px !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle > .pvpt-thumb { background: var(--pvpt-d-buy); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle.pvpt-at1 > .pvpt-thumb { background: var(--pvpt-d-sell); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle > button {
+  --pvpt-off: var(--pvpt-d-off); padding: 0 12px !important; border-radius: 13px !important;
+  font-size: 15.5px !important; font-weight: 800 !important; line-height: 1 !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle > button.buy { --pvpt-on: var(--pvpt-d-buy-ink); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle > button.sell { --pvpt-on: var(--pvpt-d-sell-ink); }
+/* Por dinero / Por acciones (/ Todo): más bajo, carril con filo y pastilla blanca */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .order-type-toggle.pvpt-seg {
+  --pvpt-pad: 4px; --pvpt-tr: 10px;
+  height: 40px; margin: 0 0 24px !important; padding: 4px !important;
+  background: var(--pvpt-d-track2) !important; border: 1px solid var(--pvpt-line) !important; border-radius: 14px !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .order-type-toggle > .pvpt-thumb { background: var(--pvpt-d-thumb2); border: 1px solid var(--pvpt-d-thumb2-line); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .order-type-toggle > button {
+  --pvpt-off: var(--pvpt-d-off); --pvpt-on: var(--pvpt-ink);
+  flex: none !important; padding: 0 8px !important; border-radius: 10px !important;
+  font-size: 13.5px !important; font-weight: 700 !important; line-height: 1 !important;
+}
+
+/* Importe: etiqueta gris, campo alto con «$», línea de ayuda debajo */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-row { display: block !important; margin: 0 !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .input-group { display: block !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .input-group + .input-group { margin-top: 16px !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .input-label {
+  display: block; margin: 0 0 8px !important; font-size: 13px !important; font-weight: 600 !important; line-height: 1.3 !important;
+  letter-spacing: 0 !important; text-transform: none !important; color: var(--pvpt-d-lbl) !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-wrap { position: relative !important; display: block !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-wrap .prefix {
+  position: absolute !important; left: 22px !important; top: 50% !important; transform: translateY(-50%) !important; z-index: 1;
+  font-size: 26px !important; font-weight: 700 !important; line-height: 1 !important; color: var(--pvpt-d-lbl) !important;
+  pointer-events: none; transition: color .2s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-wrap:focus-within .prefix { color: var(--pvpt-ink) !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-input {
+  display: block; box-sizing: border-box !important; width: 100% !important; height: 72px !important; margin: 0 !important;
+  padding: 0 22px 0 48px !important; border: 1px solid var(--pvpt-line) !important; border-radius: 22px !important;
+  background: var(--pvpt-card) !important; color: var(--pvpt-ink) !important; box-shadow: none !important; outline: none !important;
+  font-size: 30px !important; font-weight: 800 !important; line-height: 1.2 !important; letter-spacing: -.02em !important;
+  font-variant-numeric: tabular-nums; -webkit-appearance: none; appearance: none; -moz-appearance: textfield;
+  transition: border-color .2s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-input.no-prefix { padding-left: 22px !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-input:is(:focus, :focus-visible) {
+  border: 1.5px solid var(--pvpt-ink) !important; outline: none !important; box-shadow: none !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .amount-input::placeholder {
+  font-size: 22px !important; font-weight: 700 !important; letter-spacing: -.01em; color: var(--pvpt-d-ph) !important; opacity: 1;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-hint {
+  min-height: 18px; margin: 8px 2px 0; font-size: 13px; font-weight: 600; line-height: 1.4;
+  color: var(--pvpt-d-lbl); font-variant-numeric: tabular-nums; white-space: normal;
+}
+
+/* Montos rápidos: pastillas con filo; el último (Max cash / Max / Vender todo) en gris */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .quick-amounts { display: flex !important; flex-wrap: wrap !important; gap: 8px !important; margin: 0 !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .qbtn {
+  box-sizing: border-box; height: 40px; margin: 0 !important; padding: 0 16px !important;
+  border: 1px solid var(--pvpt-line) !important; border-radius: 999px !important; background: var(--pvpt-card) !important;
+  color: var(--pvpt-ink) !important; box-shadow: none !important;
+  font-size: 14.5px !important; font-weight: 700 !important; line-height: 1 !important; letter-spacing: 0 !important; font-variant-numeric: tabular-nums;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background-color .2s var(--pvpt-ease), transform .12s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .quick-amounts > .qbtn:last-child { color: var(--pvpt-d-off) !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .qbtn:active { transform: scale(.96); background: var(--pvpt-chip) !important; }
+
+/* Aviso, resumen y «vender toda la posición» en el mismo lenguaje */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .warn {
+  margin: 16px 0 0 !important; padding: 11px 14px !important; border: 0 !important; border-radius: 14px !important;
+  background: var(--pvpt-d-dn-bg) !important; color: var(--pvpt-d-dn) !important;
+  font-size: 13px !important; font-weight: 600 !important; line-height: 1.45 !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .preview-block {
+  margin: 16px 0 0 !important; padding: 14px 18px !important; gap: 12px 16px !important; flex-wrap: wrap !important;
+  background: var(--pvpt-wash) !important; border: 0 !important; border-radius: 18px !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .preview-item { flex: 1 1 calc(50% - 8px) !important; max-width: calc(50% - 8px) !important; min-width: 0 !important; gap: 3px !important; background: none !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .preview-label {
+  font-size: 12.5px !important; font-weight: 600 !important; letter-spacing: 0 !important; text-transform: none !important; color: var(--pvpt-d-lbl) !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .preview-value { font-size: 15px !important; font-weight: 800 !important; color: var(--pvpt-ink) !important; white-space: normal !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .preview-sub { font-size: 12px !important; font-weight: 600 !important; color: var(--pvpt-d-lbl) !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-sellall {
+  margin: 0 !important; padding: 16px 18px !important; border-radius: 18px !important; background: var(--pvpt-d-dn-bg) !important;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-sellall > div:first-child { color: var(--pvpt-d-dn) !important; font-size: 14.5px !important; font-weight: 800 !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-sellall > div:last-child { color: var(--pvpt-slate) !important; font-size: 13px !important; font-weight: 600 !important; }
+
+/* Acción: navy para comprar, rojo para vender; deshabilitado en gris claro (sin opacidad) */
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-cta { display: block !important; margin: 24px 0 0 !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .exec-btn {
+  --pvpt-cta: var(--pvpt-d-buy);
+  display: flex !important; align-items: center; justify-content: center; box-sizing: border-box !important;
+  width: 100% !important; height: 58px !important; margin: 0 !important; padding: 0 20px !important;
+  border: 1px solid transparent !important; border-radius: 20px !important; box-shadow: none !important; opacity: 1 !important;
+  background: var(--pvpt-cta) !important; color: var(--pvpt-d-buy-ink) !important;
+  font-size: 16.5px !important; font-weight: 800 !important; line-height: 1 !important; letter-spacing: -.01em !important;
+  cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background-color .25s var(--pvpt-ease), color .25s var(--pvpt-ease), border-color .25s var(--pvpt-ease), transform .15s var(--pvpt-ease);
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .exec-btn.sell { --pvpt-cta: var(--pvpt-d-sell); color: var(--pvpt-d-sell-ink) !important; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .exec-btn:disabled {
+  --pvpt-cta: var(--pvpt-d-dis); color: var(--pvpt-d-dis-ink) !important; border-color: var(--pvpt-line) !important; cursor: not-allowed;
+}
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .exec-btn:not(:disabled):active { transform: scale(.98); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-cta-note {
+  display: block !important; margin: 10px 0 0 !important; text-align: center !important;
+  font-size: 12.5px !important; font-weight: 600 !important; line-height: 1.4 !important; color: var(--pvpt-d-lbl) !important;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-close:hover { background: var(--pvpt-chip) !important; color: var(--pvpt-ink) !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .qbtn:hover { background: var(--pvpt-chip) !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .exec-btn.buy:not(:disabled):hover { --pvpt-cta: var(--pvpt-d-buy-hi); }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .exec-btn.sell:not(:disabled):hover { --pvpt-cta: var(--pvpt-d-sell-hi); }
+}
+
+/* ── Animaciones del cajón: sólo movimiento y color, nunca opacidad ni desenfoque ── */
+/* 1. Apertura: se despliega desde la fila (clip-path de arriba abajo) y los bloques suben 10 px
+      escalonados. Sólo la primera vez que se pinta ese cajón (pvpt-open), no en cada tick. */
+@keyframes pvptDrawerOpen { from { clip-path: inset(0 0 100% 0 round var(--pvpt-d-r)); } to { clip-path: inset(0 0 0 0 round var(--pvpt-d-r)); } }
+@keyframes pvptRise { from { transform: translateY(10px); } to { transform: translateY(0); } }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-open { animation: pvptDrawerOpen .45s var(--pvpt-ease) backwards; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-open > * { animation: pvptRise .45s var(--pvpt-ease) backwards; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-open > :nth-child(2) { animation-delay: .04s; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-open > :nth-child(3) { animation-delay: .08s; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-open > :nth-child(4) { animation-delay: .12s; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-open > :nth-child(n+5) { animation-delay: .16s; }
+/* 2-3. Pastilla de los segmentados: entra desde donde estaba (pvpt-from0/1/2) cuando cambió el
+      lado o el tipo de orden; la de Comprar/Vender cambia además de navy a rojo (o al revés). */
+@keyframes pvptFrom0 { from { transform: translateX(0); } }
+@keyframes pvptFrom1 { from { transform: translateX(100%); } }
+@keyframes pvptFrom2 { from { transform: translateX(200%); } }
+@keyframes pvptModeFrom0 { from { transform: translateX(0); background-color: var(--pvpt-d-buy); } }
+@keyframes pvptModeFrom1 { from { transform: translateX(100%); background-color: var(--pvpt-d-sell); } }
+@keyframes pvptLblOn  { from { --pvpt-lbl: var(--pvpt-off); } }
+@keyframes pvptLblOff { from { --pvpt-lbl: var(--pvpt-on); } }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-from0 > .pvpt-thumb { animation: pvptFrom0 .38s var(--pvpt-ease); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-from1 > .pvpt-thumb { animation: pvptFrom1 .38s var(--pvpt-ease); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-from2 > .pvpt-thumb { animation: pvptFrom2 .38s var(--pvpt-ease); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle.pvpt-from0 > .pvpt-thumb { animation-name: pvptModeFrom0; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .mode-toggle.pvpt-from1 > .pvpt-thumb { animation-name: pvptModeFrom1; }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg:is(.pvpt-from0, .pvpt-from1, .pvpt-from2) > button.active { animation: pvptLblOn .38s var(--pvpt-ease); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-from0 > button:nth-of-type(1),
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-from1 > button:nth-of-type(2),
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .pvpt-seg.pvpt-from2 > button:nth-of-type(3) { animation: pvptLblOff .38s var(--pvpt-ease); }
+/*    El botón de acción pasa de navy a rojo (o al revés) si ya estaba habilitado. */
+@keyframes pvptCtaFromBuy  { from { --pvpt-cta: var(--pvpt-d-buy); } }
+@keyframes pvptCtaFromSell { from { --pvpt-cta: var(--pvpt-d-sell); } }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-mfrom0 .exec-btn.sell:not(:disabled) { animation: pvptCtaFromBuy .3s var(--pvpt-ease); }
+html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer.pvpt-mfrom1 .exec-btn.buy:not(:disabled) { animation: pvptCtaFromSell .3s var(--pvpt-ease); }
+/* 4-5. Habilitado ↔ deshabilitado, foco del campo y pulsaciones: transiciones de arriba. */
+
+/* ═══ ANCHOS ═══════════════════════════════════════════════════════════════════════════ */
+/* Desde 1501 px se ve además Precio (capas viejas): 10 columnas en la misma columna de la
+   rejilla. Y de 900 a 1099 (ventana estrecha del Mac) la tarjeta es más angosta. En los dos
+   casos el nombre y el aire se ajustan un punto para que la tabla quepa sin desplazarse. */
+@media (min-width: 1501px), (min-width: 900px) and (max-width: 1099px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-sub { max-width: 110px; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th:not(:first-child):not(:last-child),
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) > td:not(:first-child):not(:last-child) .td-inner,
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:not(:first-child):not(:last-child) { padding-left: 6px !important; padding-right: 6px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill { padding-left: 8px; padding-right: 8px; }
+}
+
+/* Tablet: web de 701–899 y el iPad (html.pv-ipad) — radio 28 y menos aire, como pvAnalisisCss */
+@media (min-width: 701px) and (max-width: 899px) {
+  html:not(.pv-ipad) body #tab-portfolio:not(#pvpt-x) .holdings-card { --pvpt-r: 28px; }
+  html:not(.pv-ipad) body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head { padding: 26px 26px 14px !important; }
+  html:not(.pv-ipad) body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap { padding: 0 8px 8px !important; }
+}
+@media (min-width: 701px) {
+  html.pv-ipad body #tab-portfolio:not(#pvpt-x) .holdings-card { --pvpt-r: 28px; }
+  html.pv-ipad body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head { padding: 26px 26px 14px !important; }
+  html.pv-ipad body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap { padding: 0 8px 8px !important; }
+  html.pv-ipad body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head .stitch-card-title { font-size: 23px !important; }
+}
+
+/* ≤899: las capas viejas dejan Activo · Hoy % · Ganancia % · ⋮. Las cifras miden lo justo y
+   Activo se queda con el resto; el nombre no empuja la columna (ancho 0 + min-width 100%). */
+@media (max-width: 899px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th:not(:first-child),
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) > td:not(:first-child),
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:not(:first-child) { width: 1% !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr > td:first-child { max-width: none !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-sub { width: 0; min-width: 100%; max-width: none; }
+}
+
+/* Celular (≤700): radio 24, tarjeta a todo el ancho, cifras y pastillas más compactas */
+@media (max-width: 700px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card { --pvpt-r: 24px; --pvpt-d-r: 24px; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head { padding: 20px 16px 10px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-eyebrow { font-size: 12.5px; margin-bottom: 4px; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head .stitch-card-title { font-size: 21px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .holdings-head .holdings-sub { font-size: 13.5px !important; margin-top: 4px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap { padding: 0 4px 4px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th { padding: 8px 5px 9px !important; font-size: 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th:first-child { padding-left: 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .ptable-wrap thead th:last-child { padding-right: 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) .td-inner { padding: 11px 5px !important; font-size: 14px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) > td:first-child .td-inner { padding-left: 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr:is(.pos-row, .pos-total-row) > td:last-child .td-inner { padding-right: 8px !important; padding-left: 2px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-cell { gap: 10px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym { font-size: 15px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-sub { font-size: 12.5px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill { padding: 4px 8px; font-size: 12.5px; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-group-inner { padding: 20px 12px 8px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-group:first-child .pos-group-inner { padding-top: 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pvpt-gcount { font-size: 11.5px; padding: 2px 8px; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-total-row .td-inner { font-size: 13.5px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td { padding: 12px 5px !important; font-size: 13.5px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:first-child { padding-left: 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posFoot td:last-child { padding-right: 8px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-menu-btn { width: 32px !important; height: 32px !important; border-radius: 10px !important; }
+  /* Cajón */
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer { margin: 2px 0 12px !important; padding: 20px 18px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-header { margin-bottom: 18px !important; gap: 10px 12px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-ticker { font-size: 24px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-price { font-size: 15.5px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer :is(.drawer-mktval, .drawer-gl) { font-size: 12.5px !important; padding: 5px 10px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .order-type-toggle.pvpt-seg { margin-bottom: 20px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .order-type-toggle > button { font-size: 13px !important; padding: 0 4px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .qbtn { padding: 0 14px !important; font-size: 14px !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer .drawer-cta { margin-top: 20px !important; }
+}
+@media (max-width: 359px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pos-avatar { width: 30px !important; height: 30px !important; border-radius: 9px !important; font-size: 13px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .sym-cell { gap: 8px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-pill { padding: 3px 6px; font-size: 12px; }
+}
+
+/* ═══ OSCURO (body.dark-theme): los tokens oscuros de la app, como pvAnalisisCss y pvPosicionCss ═ */
+html body.dark-theme #tab-portfolio:not(#pvpt-x) .holdings-card {
+  --pvpt-card: var(--surface, #0f1623); --pvpt-line: rgba(255,255,255,.08); --pvpt-line-hi: rgba(255,255,255,.16); --pvpt-wash: rgba(255,255,255,.04);
+  --pvpt-chip: rgba(255,255,255,.07); --pvpt-chip-ink: #e8edf7;
+  --pvpt-ink: #e8edf7; --pvpt-slate: #aab4c2; --pvpt-muted: #8a96a3;
+  --pvpt-green: #4ade80; --pvpt-green-bg: rgba(74,222,128,.12); --pvpt-red: #f87171; --pvpt-red-bg: rgba(248,113,113,.14);
+  --pvpt-strong: #cbd5e6; --pvpt-btn: #e8edf7; --pvpt-btn-ink: #0b1c30;
+  --pvpt-d-buy: #e8edf7; --pvpt-d-buy-hi: #cbd5e6; --pvpt-d-buy-ink: #0b1c30;
+  --pvpt-d-sell: #d94a4a; --pvpt-d-sell-hi: #c23f3f; --pvpt-d-sell-ink: #fff;
+  --pvpt-d-off: #8a96a3; --pvpt-d-lbl: #8a96a3; --pvpt-d-ph: #5d6b80;
+  --pvpt-d-track: rgba(255,255,255,.07); --pvpt-d-track2: rgba(255,255,255,.04); --pvpt-d-thumb2: rgba(255,255,255,.1); --pvpt-d-thumb2-line: rgba(255,255,255,.14);
+  --pvpt-d-fact: #aab4c2;
+  --pvpt-d-up: #4ade80; --pvpt-d-up-bg: rgba(74,222,128,.12); --pvpt-d-dn: #f87171; --pvpt-d-dn-bg: rgba(248,113,113,.14);
+  --pvpt-d-dis: rgba(255,255,255,.06); --pvpt-d-dis-ink: #6b7a90;
+}
+
+/* ═══ Movimiento reducido: sin animaciones ni transiciones (todo queda en su estado final) ═══ */
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows :is(td, .drip-pill, .pos-menu-btn),
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer,
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer * { animation: none !important; transition: none !important; }
+  html body #tab-portfolio:not(#pvpt-x) #posRows .trade-drawer :is(.qbtn, .exec-btn, .drawer-close):active { transform: none !important; }
 }
 </style>
 </body>
