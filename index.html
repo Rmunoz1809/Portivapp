@@ -57268,10 +57268,637 @@ html body #tab-portfolio .pvmp-pre { opacity:0; }
 
 <!-- ═══ MOVIMIENTO · NOTICIAS (#tab-noticias) ═════════════════════════════════════════════════ -->
 <style id="pvMovNoticiasCss">
-/* MOVIMIENTO · Noticias — pendiente */
+/* ═══ MOVIMIENTO · NOTICIAS — pulsación, realce y revelado ═════════════════════════════════════
+   Lo que entra, cambia o destella lo mueve pvMovNoticiasJs, con la Web Animations API: si una
+   animación no llega a correr, todo se queda como lo pinta el CSS. Aquí sólo va la respuesta al
+   pulsar, el realce con ratón, el tinte neutro de «aquí está» y el estado previo del revelado
+   al hacer scroll (.pvn-pre: la pone y la quita el JS, nunca el marcado).
+   Las tarjetas _snCard de «Noticias más importantes» y de «Noticias por posición» llevan
+   transform:none !important y una transition !important en sus capas (pvPanoramaCss,
+   pvPosicionCss), y una animación nunca vence a un !important: se pulsan y se elevan con las
+   propiedades sueltas `scale` y `translate`, que no toca ninguna capa, y su transition se
+   responde con un id más (:not(#pvn-x)). */
+html body #tab-noticias { --pvn-wash: rgba(11,28,48,.07); }
+html body.dark-theme #tab-noticias { --pvn-wash: rgba(232,237,247,.09); }
+
+html body #tab-noticias .pvn-pre { opacity: 0; }
+
+/* ── Pulsar: la pieza cede un punto y vuelve (--pvm-fast). Los colores siguen en .22s. ── */
+html body #tab-noticias #pvpTop .pvp-btn { transition: background-color .22s var(--pvp-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-noticias #pvpTop .pvp-va { transition: border-color .22s var(--pvp-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-noticias #pvpTop .pvp-ar { transition: background-color .22s var(--pvp-ease), border-color .22s var(--pvp-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-noticias #pvpTop :is(.pvp-btn, .pvp-va):active { transform: scale(var(--pvm-press)); }
+html body #tab-noticias #pvpTop .pvp-ar:active { transform: scale(.98); }
+html body #tab-noticias #posNewsCard .pnx-row { transition: background-color .22s var(--pnx-ease), color .22s var(--pnx-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-noticias #posNewsCard .pnx-row:active { transform: scale(.98); }
+html body #tab-noticias #posNewsCard .pnx-retry { transition: border-color .22s var(--pnx-ease), background-color .22s var(--pnx-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-noticias #posNewsCard .pnx-retry:active { transform: scale(var(--pvm-press)); }
+html body #tab-noticias :is(#thisWeekCard, #nextWeekCard) .pvw-rm { transition: background .22s var(--pvw-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-noticias :is(#thisWeekCard, #nextWeekCard) .pvw-rm:active { transform: scale(var(--pvm-press)); }
+
+/* ── Tarjetas _snCard: pulsar con `scale`; con ratón, 1 px de elevación con `translate` ── */
+html body #tab-noticias #pvpTop #todayNews > .sn-card:not(#pvn-x),
+html body #tab-noticias #posNewsCard .pnx-items > .sn-card:not(#pvn-x) {
+  transition: border-color .22s var(--pvm-ease), scale var(--pvm-fast) var(--pvm-ease), translate var(--pvm-base) var(--pvm-ease) !important;
+}
+html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:active { scale: .98; }
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:hover { translate: 0 -1px; }
+}
+
+/* ── Movimiento reducido: ni escala ni elevación ni transiciones; lo revelado, visible ── */
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-noticias .pvn-pre { opacity: 1 !important; }
+  html body #tab-noticias #pvpTop :is(.pvp-btn, .pvp-va, .pvp-ar),
+  html body #tab-noticias #posNewsCard :is(.pnx-row, .pnx-retry),
+  html body #tab-noticias :is(#thisWeekCard, #nextWeekCard) .pvw-rm { transition: none; }
+  html body #tab-noticias #pvpTop :is(.pvp-btn, .pvp-va, .pvp-ar):active,
+  html body #tab-noticias #posNewsCard :is(.pnx-row, .pnx-retry):active,
+  html body #tab-noticias :is(#thisWeekCard, #nextWeekCard) .pvw-rm:active { transform: none; }
+  html body #tab-noticias #pvpTop #todayNews > .sn-card:not(#pvn-x),
+  html body #tab-noticias #posNewsCard .pnx-items > .sn-card:not(#pvn-x) { transition: none !important; }
+  html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:is(:active, :hover) { scale: none; translate: none; }
+}
 </style>
 <script id="pvMovNoticiasJs">
-/* MOVIMIENTO · Noticias — pendiente */
+/* ═══ MOVIMIENTO · NOTICIAS — qué se mueve, cuándo y por qué ═══════════════════════════════════
+   El lenguaje de Portiv IA (PVM) en la pestaña Noticias. Se engancha desde aquí a las funciones
+   de la pestaña —envolviéndolas: su lógica y sus datos no cambian— y a unos pocos
+   MutationObserver.
+
+   · Panorama del mercado (renderNewsTab). Cuando las noticias LLEGAN con la pestaña delante
+     (el «Buscando…» de la primera carga), la destacada crece desde el alto que tenía hasta el
+     suyo —clip-path, como la respuesta de Portiv IA— y su contenido entra escalonado; detrás,
+     «También importante hoy» y «Noticias más importantes». En un refresco sólo entra la noticia
+     NUEVA (se reconoce por su titular original, así que traducirla no cuenta como nueva); si
+     sólo cambió el idioma, su titular se funde. Otra destacada → su contenido cambia con medio
+     recorrido. «● Actualizado …»: el texto se funde y el punto emite dos ondas con cada set.
+   · Esta semana / Próxima semana (#thisWeekNews, #nextWeekNews). Esqueleto → contenido entra
+     escalonado; un evento nuevo en un refresco entra solo; las cifras cuentan; tocar un día de
+     la tira tiñe su tarjeta al llegar (_pvwGo); «Leer contexto completo» se despliega y se
+     pliega (_pvwCtx).
+   · Noticias por posición (_pnxRenderList, showStockNews, _pnxTap). La lista entra la primera
+     vez; si el movimiento de hoy la reordena, cada fila se desliza a su sitio nuevo (FLIP) y el
+     % que cambió destella; elegir otra posición cambia el panel (PVM.swap) y sus noticias
+     entran escalonadas; en el celular el detalle se despliega y se pliega bajo su fila.
+   · Bajo el pliegue: al abrir la pestaña, lo que queda por debajo de la ventana entra cuando el
+     scroll lo trae, una vez por sesión.
+   · Lector (#newsModal): su apertura ya la anima la capa global (.nm-layout). Aquí sólo lo que
+     llega DESPUÉS: «Cómo afecta al mercado» crece desde su esqueleto y el resumen IA que
+     sustituye al instantáneo entra con un fundido.
+
+   Reglas: nada se anima mientras la pestaña entra —showTab la deja .active sin .visible hasta
+   el fotograma siguiente y lo que se pinta ahí ya entra con su bloque de MOTION v7— ni con la
+   pestaña oculta. Los bloques de MOTION v7 (#snFeatured, #pvpMost, #thisWeekCard, #nextWeekCard,
+   #posNewsCard) nunca se animan en opacidad ni en transform: la destacada sólo en clip-path.
+   Con movimiento reducido no se crea ninguna animación y todo queda en su estado final. */
+(function(){
+  'use strict';
+  var P = window.PVM, TAB = document.getElementById('tab-noticias');
+  if (!P || !TAB) return;
+
+  function $(id){ return document.getElementById(id); }
+  function list(x){
+    if (!x) return [];
+    if (x.nodeType === 1) return [x];
+    try { return Array.prototype.slice.call(x); } catch(e){ return []; }
+  }
+  function qa(root, sel){ try { return root ? list(root.querySelectorAll(sel)) : []; } catch(e){ return []; } }
+  function vh(){ return window.innerHeight || document.documentElement.clientHeight || 0; }
+  var phoneMQ = window.matchMedia ? window.matchMedia('(max-width: 700px)') : null;
+  function phone(){ return !!(phoneMQ && phoneMQ.matches); }
+
+  /* ¿Se puede animar? Pestaña delante, ya entrada y app en primer plano. */
+  function settled(){
+    return TAB.classList.contains('active') && TAB.classList.contains('visible') && !document.hidden && !P.reduced();
+  }
+  function anim(el, kf, opts, slot){
+    if (!el || typeof el.animate !== 'function') return null;
+    try {
+      if (slot && el[slot]) { try { el[slot].cancel(); } catch(e){} }
+      var a = el.animate(kf, opts);
+      if (slot) el[slot] = a;
+      return a;
+    } catch(e){ return null; }
+  }
+
+  /* rise(nodos, op) — la entrada pviaIn de PVM.enter (mismas medidas, PVM.T, y misma regla de
+     escalonado), pero con las propiedades sueltas `translate`/`scale` en vez de `transform`:
+     las tarjetas _snCard tienen transform:none !important y ninguna animación lo vence, y así
+     además compone con el :hover/:active de cada pieza en vez de pisarlo.
+     op.from: 'below' (por defecto), 'scale' o 'fade'. */
+  function rise(nodes, op){
+    if (P.reduced()) return;
+    op = op || {};
+    var t = P.T(), els = list(nodes).filter(P.painted);
+    var dur = op.dur || t.dur, step = op.step != null ? op.step : t.step,
+        max = op.max != null ? op.max : t.max, d = op.rise != null ? op.rise : t.rise,
+        delay = op.delay || 0, from = op.from;
+    var k0 = from === 'scale' ? { opacity: 0, scale: '.96' } : from === 'fade' ? { opacity: 0 } : { opacity: 0, translate: '0 ' + d + 'px' };
+    var k1 = from === 'scale' ? { opacity: 1, scale: '1' } : from === 'fade' ? { opacity: 1 } : { opacity: 1, translate: '0 0' };
+    els.forEach(function(el, i){
+      anim(el, [k0, k1], { duration: dur, delay: delay + Math.min(i, max) * step, easing: P.ease, fill: 'backwards' }, '_pvnA');
+    });
+  }
+
+  /* later(nodos) — lo que está bajo el pliegue entra (rise) cuando el scroll lo trae a la vista,
+     una vez: como PVM.reveal, con rise. .pvn-pre sólo la pone y la quita esto; si el nodo se
+     repinta antes, el nuevo nace visible. Anidados (el panel de una posición y sus noticias): lo
+     que ya se ve dentro de un nodo que entra viaja con él —dos entradas a la vez se sumarían—;
+     lo que sigue por debajo espera su turno. */
+  var io = null;
+  function later(nodes){
+    if (P.reduced() || typeof IntersectionObserver !== 'function') return;
+    var els = list(nodes).filter(P.painted);
+    if (!els.length) return;
+    if (!io) io = new IntersectionObserver(function(entries){
+      var hit = [];
+      entries.forEach(function(en){ if (en.isIntersecting) { io.unobserve(en.target); hit.push(en.target); } });
+      if (!hit.length) return;
+      var batch = hit.filter(function(el){ var up = el.parentElement; return !(up && up.closest('.pvn-pre')); });
+      hit.forEach(function(el){ el.classList.remove('pvn-pre'); });
+      var h = vh();
+      batch.forEach(function(el){
+        qa(el, '.pvn-pre').forEach(function(d){
+          if (d.getBoundingClientRect().top < h) { io.unobserve(d); d.classList.remove('pvn-pre'); }
+        });
+      });
+      rise(batch, { step: 60, max: 4 });
+    }, { rootMargin: '0px 0px -4% 0px' });
+    els.forEach(function(el){
+      if (el.classList.contains('pvn-pre')) return;
+      el.classList.add('pvn-pre');
+      io.observe(el);
+    });
+  }
+
+  /* Huecos que se revelan al hacer scroll, una vez por sesión: hijos de los bloques de MOTION v7
+     (nunca el bloque). La clave es su posición dentro de la sección, así que un repintado con
+     la misma forma no vuelve a revelarse. */
+  var SLOTS = [
+    ['#pvpMost', '.pvp-sh, #todayNews > .sn-card'],
+    ['#thisWeekCard', '.pvw-sh, .pvw-wk, .pvw-lrow, .pvw-day, .pvw-b-ctx, .pvw-b-themes'],
+    ['#nextWeekCard', '.pvw-sh, .pvw-wk, .pvw-lrow, .pvw-day, .pvw-b-ctx, .pvw-b-themes'],
+    ['#posNewsCard', '.pnx-head, .pnx-lbl, .pnx-list, .pnx-main']
+  ];
+  /* Marca el hueco de `el` como ya revelado (llegó con su propia entrada). */
+  function done(el){
+    for (var i = 0; i < SLOTS.length; i++) {
+      var root = document.querySelector(SLOTS[i][0]);
+      if (!root || !root.contains(el)) continue;
+      var k = qa(root, SLOTS[i][1]).indexOf(el);
+      if (k >= 0) P.first('pvn:rv:' + SLOTS[i][0] + ':' + k);
+      return;
+    }
+  }
+  /* Al abrir la pestaña: lo que pinta por debajo de la ventana espera al scroll. */
+  function arm(){
+    if (P.reduced()) return;
+    var h = vh(), below = [];
+    SLOTS.forEach(function(s){
+      qa(document.querySelector(s[0]), s[1]).forEach(function(el, i){
+        if (!P.painted(el) || !P.first('pvn:rv:' + s[0] + ':' + i)) return;
+        if (el.getBoundingClientRect().top >= h - 4) below.push(el);
+      });
+    });
+    later(below);
+  }
+
+  /* arrive(nodos, op) — llegada de datos: lo que se ve entra ya, escalonado; lo de debajo del
+     pliegue, al hacer scroll; lo que quedó por encima (ya se pasó) o fuera, a un lado, en un
+     carrusel del celular no se toca: cuando se llegue a verlo ya estará en su sitio. */
+  function arrive(nodes, op){
+    var h = vh(), w = window.innerWidth || document.documentElement.clientWidth || 0, vis = [], below = [];
+    list(nodes).filter(P.painted).forEach(function(el){
+      var r = el.getBoundingClientRect();
+      done(el);
+      if (w && (r.left >= w || r.right <= 0)) return;
+      if (r.top >= h - 4) below.push(el); else if (r.bottom > 0) vis.push(el);
+    });
+    rise(vis, op);
+    later(below);
+  }
+
+  /* La tarjeta crece desde el alto que tenía (h0) hasta el suyo, como la respuesta de Portiv IA
+     (pviaGrow): clip-path, sin escalar el texto ni mover el layout. r: radio de sus esquinas. */
+  function grow(el, h0, r){
+    if (!el || P.reduced() || !P.painted(el)) return 0;
+    var H = el.getBoundingClientRect().height;
+    if (!(h0 > 0) || H - h0 < 8) return 0;
+    var R = ' round ' + (r || 0) + 'px)';
+    anim(el, [{ clipPath: 'inset(0px 0px ' + Math.round(H - h0) + 'px 0px' + R }, { clipPath: 'inset(0px 0px 0px 0px' + R }],
+         { duration: Math.round(P.T().dur * 1.25), easing: P.ease }, '_pvnG');
+    return H - h0;
+  }
+  /* Lo que va debajo de una tarjeta que crece baja con su borde —misma duración y curva— en vez
+     de saltar de golpe a su sitio nuevo: translate de -Δ a 0, sólo en lo que se ve. Se mueven
+     los hijos de los bloques (los bloques son de MOTION v7); `skip`: lo que ya entra por su
+     cuenta. */
+  function push(nodes, delta, skip){
+    if (P.reduced() || !(delta > 1)) return;
+    var h = vh(), dur = Math.round(P.T().dur * 1.25);
+    list(nodes).forEach(function(el){
+      if (!el || !P.painted(el) || (skip && skip.indexOf(el) >= 0)) return;
+      var r = el.getBoundingClientRect();
+      if (r.top - delta >= h || r.bottom <= 0) return;           // se veía antes del salto
+      anim(el, [{ translate: '0 ' + (-Math.round(delta)) + 'px' }, { translate: '0 0' }], { duration: dur, easing: P.ease }, '_pvnU');
+    });
+  }
+  /* fold(el, abrir, alTerminar) — PVM.expand de uno en uno por nodo: la orden que llega mientras
+     corre otra (un doble toque) espera (queue) y se lanza al terminar; caduca al segundo y
+     medio, y pasado 1 s el nodo deja de contar como ocupado, por si el final no llegara. Además
+     repara un detalle de PVM.expand: al empezar cancela la animación anterior del nodo (aunque
+     ya hubiera terminado) y el 'cancel' de ésta, que llega un fotograma después, devuelve el
+     overflow de entonces: a mitad de un pliegue el contenido se saldría de la caja. Se vuelve a
+     poner mientras dure (_pvmE: la ranura de PVM.expand). */
+  function busy(el){ return !!(el._pvnBusy && Date.now() - el._pvnBusy < 1000); }
+  function queue(el, go){ el._pvnNext = { at: Date.now(), go: go }; }
+  function fold(el, open, done){
+    var prev = el._pvmE;
+    el._pvnBusy = Date.now();
+    P.expand(el, open, function(){
+      el._pvnBusy = 0;
+      try { if (done) done(); } catch(e){}
+      var nx = el._pvnNext;
+      el._pvnNext = null;
+      if (nx && Date.now() - nx.at < 1500) { try { nx.go(); } catch(e){} }
+    });
+    if (prev && prev !== el._pvmE) {
+      try {
+        prev.addEventListener('cancel', function(){
+          var a = el._pvmE;
+          if (a && a.playState !== 'finished' && a.playState !== 'idle') el.style.overflow = 'hidden';
+        }, { once: true });
+      } catch(e){}
+    }
+  }
+
+  /* Tinte neutro que sube y se apaga: «aquí está» (no es un precio: ni verde ni rojo). */
+  function wash(el, delay){
+    if (!el || P.reduced()) return;
+    var c = '';
+    try { c = getComputedStyle(TAB).getPropertyValue('--pvn-wash').trim(); } catch(e){}
+    var z = 'inset 0 0 0 999px rgba(0,0,0,0)';
+    anim(el, [{ boxShadow: z }, { boxShadow: 'inset 0 0 0 999px ' + (c || 'rgba(11,28,48,.07)'), offset: .3 }, { boxShadow: z }],
+         { duration: 1300, delay: delay || 0, easing: 'ease-out' }, '_pvnW');
+  }
+  /* El mismo texto con otras palabras (otra hora, otro idioma): se funde, no salta. */
+  function fadeIn(el){
+    if (!el || P.reduced() || !P.painted(el)) return;
+    anim(el, [{ opacity: .2 }, { opacity: 1 }], { duration: 360, easing: P.ease }, '_pvnF');
+  }
+  /* Dos ondas desde el punto verde de «Actualizado»: llegó un set nuevo. */
+  function ping(dot){
+    if (!dot || P.reduced() || !P.painted(dot)) return;
+    anim(dot, [{ boxShadow: '0 0 0 0 rgba(52,211,153,.55)' }, { boxShadow: '0 0 0 7px rgba(52,211,153,0)' }],
+         { duration: 1100, iterations: 2, easing: 'cubic-bezier(.33,1,.68,1)' }, '_pvnP');
+  }
+
+  /* ── Noticias ya vistas en la sesión, por su titular ORIGINAL (h_en si se tradujo) → el texto
+     que se pintó la última vez. Clave nueva = noticia que llega; misma clave con otro texto =
+     la misma noticia traducida. ── */
+  var heads = new Map();
+  function norm(s){ return String(s == null ? '' : s).replace(/\s+/g, ' ').trim().toLowerCase().slice(0, 80); }
+  function headOf(el){ return el.querySelector('.sn-card-headline, .pvp-at > b'); }
+  function keyOf(el){
+    var m = /openNewsByKey\('([^']+)'/.exec(el.getAttribute('onclick') || ''), n = null;
+    try { if (m && typeof _newsReg !== 'undefined') n = _newsReg.get(m[1]); } catch(e){}
+    if (n) return norm(n.h_en || n.h || n.headline);
+    var h = headOf(el);
+    return norm(h ? h.textContent : '');
+  }
+  function scan(nodes){
+    var out = { added: [], changed: [] };
+    list(nodes).forEach(function(el){
+      var k = keyOf(el), h = headOf(el), txt = h ? h.textContent : '';
+      if (!k) return;
+      if (!heads.has(k)) out.added.push(el);
+      else if (h && heads.get(k) !== txt) out.changed.push(h);
+      heads.set(k, txt);
+    });
+    return out;
+  }
+  /* Número de un texto de cifra («$13,851.60», «-0.81%», «+$9,651.60+229.8%» → el primero). */
+  function num(s){
+    var v = parseFloat(String(s == null ? '' : s).replace(/[−–]/g, '-').replace(/[^0-9.+\-]/g, ''));
+    return isFinite(v) ? v : NaN;
+  }
+  function sgn(now, before){ var d = num(now) - num(before); return d > 0 ? 1 : d < 0 ? -1 : 0; }
+
+  /* Envuelve una función global de la pestaña: `before` toma el estado anterior y `after` anima
+     la diferencia. Lo que devuelve y lo que lanza la original no cambia. Las declaraciones
+     function de nivel superior viven en window: quien las llama por nombre (también los onclick
+     en línea) pasa por aquí. */
+  function wrap(name, before, after){
+    var orig = window[name];
+    if (typeof orig !== 'function' || orig._pvnOrig) return;
+    var w = function(){
+      var s = null;
+      try { if (before) s = before.apply(this, arguments); } catch(e){}
+      var r = orig.apply(this, arguments);
+      try { if (after) after.call(this, s, arguments); } catch(e){}
+      return r;
+    };
+    w._pvnOrig = orig;
+    window[name] = w;
+  }
+
+  /* ═══ PANORAMA DEL MERCADO ═══════════════════════════════════════════════════════════════ */
+  function featKey(){
+    try {
+      var n = (typeof _currentFeaturedNews !== 'undefined') ? _currentFeaturedNews : null;
+      return n ? norm(n.h_en || n.h || n.headline) : '';
+    } catch(e){ return ''; }
+  }
+  function txt(id){ var e = $(id); return e ? e.textContent : ''; }
+  /* «Menciona»: ticker → su % del día (sólo las posiciones lo llevan). */
+  function pills(){
+    var m = {};
+    qa($('snFeatTickers'), '.pvp-tkp').forEach(function(p){ var s = p.querySelector('span'); if (s) m[p.firstChild ? p.firstChild.textContent : ''] = s.textContent; });
+    return m;
+  }
+  wrap('renderNewsTab', function(){
+    var feat = $('snFeatured'), story = feat && feat.querySelector('.pvp-story'), most = $('pvpMost');
+    var s = {
+      loading: !!(story && story._snMode === 'loading'), key: featKey(), title: txt('snFeatTitle'),
+      solo: !!(feat && feat.classList.contains('pvp-solo')), mostOff: !!(most && most.classList.contains('pvp-off')),
+      alsoN: qa($('snAlso'), '.pvp-ar').length, mostN: qa($('todayNews'), '.sn-card').length,
+      upd: txt('todayNewsUpdated'), eb: txt('pvpEbUpd'), pills: pills(), hF: 0, hS: 0
+    };
+    if (feat && settled()) { s.hF = feat.getBoundingClientRect().height; s.hS = story ? story.getBoundingClientRect().height : 0; }
+    return s;
+  }, function(s){
+    if (!s) return;
+    var feat = $('snFeatured'), story = feat && feat.querySelector('.pvp-story'), most = $('pvpMost');
+    var alsoAll = qa($('snAlso'), '.pvp-ar'), cardsAll = qa($('todayNews'), '.sn-card');
+    var a = scan(alsoAll), c = scan(cardsAll);
+    if (!settled()) return;
+    var t = P.T(), key = featKey(), ready = !!(story && story._snMode !== 'loading'), lag = 0;
+    var kids = story ? list(story.children) : [], arrived = s.loading && ready && !!key, grew = 0;
+    if (arrived) {
+      /* «Buscando…» → noticia: la tarjeta crece y su contenido entra; lo de debajo baja con su
+         borde. En el celular la tarjeta es la historia (el carrusel va fuera, debajo); en iPad
+         y escritorio, la destacada entera. Crece sólo si se veía: con ella por encima de la
+         ventana el navegador ya corrige el salto anclando el scroll, y empujar lo de debajo lo
+         movería dos veces. */
+      var r = 0, g = phone() ? story : feat, h0 = phone() ? s.hS : s.hF, gr = g.getBoundingClientRect();
+      try { r = parseFloat(getComputedStyle(feat).getPropertyValue('--pvp-r')) || 0; } catch(e){}
+      if (gr.top + h0 > 0 && gr.top < vh()) grew = grow(g, h0, r);
+      rise(kids);
+      lag = 2 * t.step;
+    } else if (ready && key && s.key && key !== s.key) {
+      /* Llegó una más importante: el contenido cambia con medio recorrido (la tarjeta no se
+         funde: en el celular monta sobre la curva del navy). */
+      rise(kids, { rise: Math.round(t.rise / 2), step: Math.round(t.step * .66) });
+      lag = t.step;
+    } else if (ready && key && key === s.key) {
+      if (s.title && txt('snFeatTitle') !== s.title) { fadeIn($('snFeatTitle')); fadeIn($('snFeatDesc')); }   // la misma, en otro idioma
+      /* La misma destacada con precios nuevos: destella el % que cambió en «Menciona». */
+      qa($('snFeatTickers'), '.pvp-tkp').forEach(function(p){
+        var sp = p.querySelector('span'), was = s.pills[p.firstChild ? p.firstChild.textContent : ''];
+        if (sp && was != null && sp.textContent !== was) P.flash(p, sgn(sp.textContent, was));
+      });
+    }
+    /* «También importante hoy» y la rejilla: si la sección estaba vacía (o llega con la
+       destacada) entra entera —aunque alguna ya se viera en otro sitio, como las noticias de
+       una posición—; si no, sólo lo nuevo. El título de «También importante» entra con ella. */
+    var alsoIn = (arrived || !s.alsoN) ? alsoAll.slice() : a.added.slice(), ah = feat && feat.querySelector('.pvp-also-h');
+    if (s.solo && ah && !feat.classList.contains('pvp-solo')) alsoIn.unshift(ah);
+    if (alsoIn.length) arrive(alsoIn, { delay: lag });
+    a.changed.forEach(fadeIn);
+    var mostIn = (arrived || !s.mostN) ? cardsAll.slice() : c.added.slice(), sh = most && most.querySelector('.pvp-sh');
+    if (s.mostOff && sh && !most.classList.contains('pvp-off')) mostIn.unshift(sh);
+    /* Empujar: no hace falta en la rejilla si sus tarjetas entran (nacen invisibles en su sitio). */
+    if (grew) push((phone() ? qa(feat, '.pvp-also') : []).concat(qa(document, '#pvpMost > *, #thisWeekCard > *, #nextWeekCard > *, #posNewsCard > *')),
+                   grew, cardsAll.length && mostIn.indexOf(cardsAll[0]) >= 0 ? mostIn.concat($('todayNews')) : mostIn);
+    if (mostIn.length) arrive(mostIn, { delay: lag ? lag + t.step : 0, max: 5 });
+    c.changed.forEach(fadeIn);
+    /* «● Actualizado …» (en el celular, la hora del antetítulo). */
+    var upd = $('todayNewsUpdated'), eb = $('pvpEbUpd');
+    if (upd && upd.textContent && upd.textContent !== s.upd) { fadeIn(upd); ping(document.querySelector('#pvpUpd > i')); }
+    if (eb && eb.textContent && eb.textContent !== s.eb) fadeIn(eb);
+  });
+
+  /* ═══ NOTICIAS POR POSICIÓN ══════════════════════════════════════════════════════════════ */
+  /* Lista: la primera vez entra escalonada; luego cada fila se desliza desde donde estaba (FLIP:
+     se mide antes de reescribirla) y el % que cambió destella en verde o rojo. */
+  wrap('_pnxRenderList', function(){
+    var lst = $('tickerBtns'), mv = $('posNewsMoves');
+    if (!lst) return null;
+    var s = { html: lst._tbLastHtml, mv: mv ? mv._pnxLastHtml : '', had: qa(lst, '.pnx-ai').length, rows: null };
+    if (settled() && P.painted(lst)) {
+      s.rows = {};
+      qa(lst, '.pnx-ai[data-tk]').forEach(function(ai){
+        var b = ai.querySelector('.pnx-rt b');
+        s.rows[ai.getAttribute('data-tk')] = { top: ai.getBoundingClientRect().top, pct: b ? b.textContent : '' };
+      });
+    }
+    return s;
+  }, function(s){
+    var lst = $('tickerBtns'), mv = $('posNewsMoves');
+    if (!s || !lst || !settled()) return;
+    if (mv && mv._pnxLastHtml !== s.mv) rise(qa(mv, '.pnx-mv'), { from: s.mv ? 'fade' : 'scale', step: 50 });
+    if (lst._tbLastHtml === s.html) return;
+    var rows = qa(lst, '.pnx-ai[data-tk]');
+    if (!rows.length) { arrive(qa(lst, '.pnx-empty')); return; }
+    if (!s.had) { arrive(rows, { max: 8 }); return; }
+    if (!s.rows) return;
+    var t = P.T(), h = vh();
+    rows.forEach(function(ai){
+      var o = s.rows[ai.getAttribute('data-tk')];
+      if (!o) { arrive(ai); return; }
+      var r = ai.getBoundingClientRect(), dy = Math.round(o.top - r.top);
+      if (!((r.top < h && r.bottom > 0) || (o.top < h && o.top + r.height > 0))) return;   // fuera de la vista antes y después
+      if (Math.abs(dy) > 1 && !P.reduced()) anim(ai, [{ translate: '0 ' + dy + 'px' }, { translate: '0 0' }], { duration: t.dur, easing: P.ease }, '_pvnA');
+      var b = ai.querySelector('.pnx-rt b');
+      if (b && o.pct && b.textContent !== o.pct) P.flash(ai.querySelector('.pnx-row'), sgn(b.textContent, o.pct));
+    });
+  });
+
+  /* Detalle: otra posición → el panel cambia (cabecera, cifras y etiqueta con PVM.swap; sus
+     noticias, escalonadas detrás); en el celular, además, se despliega bajo su fila. La misma
+     posición con datos nuevos → destella el precio o la cifra que cambió y entra sólo la
+     noticia nueva. */
+  function vals(panel){
+    var px = panel.querySelector('.pnx-px b');
+    return { px: px ? px.textContent : '', st: qa(panel, '.pnx-st b').map(function(b){ return b.textContent; }) };
+  }
+  wrap('showStockNews', function(){
+    var panel = $('newsContainer');
+    return panel ? { tk: window._snOpenTicker, html: panel._pnLastHtml, v: vals(panel),
+                     had: qa(panel, '.pnx-items > .sn-card').length } : null;
+  }, function(s){
+    var panel = $('newsContainer');
+    if (!s || !panel) return;
+    var cards = qa(panel, '.pnx-items > .sn-card'), n = scan(cards);
+    if (!settled() || !P.painted(panel)) return;
+    var t = P.T();
+    /* Cambio de posición = cambió la abierta. (En el celular _pnxRenderList saca el panel de la
+       lista para reescribirla y _pnxSync lo devuelve a su fila: eso no es abrir otra.) */
+    if (window._snOpenTicker !== s.tk) {
+      if (phone()) { fold(panel, true); arrive(cards, { delay: Math.round(t.step * 1.5) }); }
+      else {
+        qa(panel, '.pnx-ph, .pnx-stats, .pnx-nl, .pnx-items > .pnx-state').forEach(function(el){ P.swap(el); });
+        arrive(cards, { delay: 2 * t.step });
+      }
+      return;
+    }
+    if (panel._pnLastHtml === s.html) return;
+    var v = vals(panel);
+    if (s.v.px && v.px !== s.v.px) P.flash(panel.querySelector('.pnx-px b'), sgn(v.px, s.v.px));
+    qa(panel, '.pnx-st').forEach(function(st, i){          // valor y ganancia (no «Acciones»)
+      if (i < 2 && s.v.st[i] != null && v.st[i] !== s.v.st[i]) P.flash(st, sgn(v.st[i], s.v.st[i]));
+    });
+    /* Del «cargando» a sus noticias entran todas; después, sólo la que llega. */
+    if (!s.had) arrive(cards); else if (n.added.length) arrive(n.added);
+    n.changed.forEach(fadeIn);
+  });
+
+  /* Celular: tocar la posición abierta la PLIEGA (antes se vaciaba de golpe). La fila deja de
+     verse abierta en el acto —fondo y chevron, con sus .22s— y el detalle se pliega; al
+     terminar, la original la cierra de verdad (estado y panel vacío). Un toque mientras el
+     detalle se abre o se pliega espera a que termine (fold). */
+  var origTap = window._pnxTap;
+  if (typeof origTap === 'function' && !origTap._pvnOrig) {
+    var tap = function(tk){
+      var panel = $('newsContainer'), self = this, args = arguments;
+      if (panel && phone() && settled() && busy(panel)) { queue(panel, function(){ window._pnxTap.apply(self, args); }); return; }
+      if (!panel || !phone() || window._snOpenTicker !== tk || !settled() || !P.painted(panel)) return origTap.apply(this, arguments);
+      var ai = panel.closest('.pnx-ai'), row = ai && ai.querySelector('.pnx-row');
+      if (ai) ai.classList.remove('on');
+      if (row) row.setAttribute('aria-expanded', 'false');
+      fold(panel, false, function(){ if (window._snOpenTicker === tk) origTap.apply(self, args); });
+    };
+    tap._pvnOrig = origTap;
+    window._pnxTap = tap;
+  }
+
+  /* ═══ ESTA SEMANA / PRÓXIMA SEMANA ═══════════════════════════════════════════════════════ */
+  function weekSnap(el){
+    var s = { real: !!el.querySelector('.pvw'), evs: new Set(), stats: [] };
+    qa(el, '.pvw-ev-t').forEach(function(h){ s.evs.add(norm(h.textContent)); });
+    qa(el, '.pvw-stat b').forEach(function(b){ s.stats.push(parseInt(b.textContent, 10)); });
+    return s;
+  }
+  function byTop(a, b){ return a.getBoundingClientRect().top - b.getBoundingClientRect().top; }
+  function onWeek(el){
+    var prev = el._pvnSnap, s = weekSnap(el);
+    el._pvnSnap = s;
+    if (!s.real || !settled()) return;
+    if (!prev || !prev.real) {
+      /* Esqueleto → semana: entra en el orden en que se ve (en iPad y celular el contexto va
+         antes que los días) y la pastilla de volatilidad aparece con ella. */
+      arrive(qa(el, '.pvw-wk, .pvw-lrow, .pvw-day, .pvw-b-ctx, .pvw-b-themes').sort(byTop), { max: 6 });
+      var sec = el.closest('.pvw-sec'), vol = sec && sec.querySelector('.pvw-vol');
+      if (vol) arrive(vol, { from: 'scale', delay: P.T().step });
+      return;
+    }
+    /* Refresco: entra sólo el evento nuevo; las cifras del resumen cuentan hasta su valor. */
+    var added = qa(el, '.pvw-ev:not(.pvw-ev--empty)').filter(function(ev){
+      var h = ev.querySelector('.pvw-ev-t');
+      return h && !prev.evs.has(norm(h.textContent));
+    });
+    if (added.length) arrive(added);
+    qa(el, '.pvw-stat b').forEach(function(b, i){
+      var to = parseInt(b.textContent, 10), from = prev.stats[i];
+      if (isFinite(to) && isFinite(from) && to !== from) P.countTo(b, to, function(v){ return String(Math.round(v)); }, { from: from });
+    });
+  }
+
+  /* Tocar un día de la tira baja hasta su fila (_pvwGo): su tarjeta se tiñe al llegar, para que
+     el ojo sepa dónde aterrizó. El retardo deja pasar el desplazamiento suave. */
+  wrap('_pvwGo', null, function(s, args){
+    if (!settled()) return;
+    var row = $(args[0]), card = row && row.querySelector('.pvw-dcard');
+    if (card) wash(card, 180);
+  });
+
+  /* «Leer contexto completo» ↔ «Ver menos» (iPad y celular): el resto del contexto se despliega
+     en vez de aparecer. Al plegar, el botón cambia ya y el texto se va plegando con un
+     display:block en línea que se retira al final. Un toque a medias espera su turno (fold). */
+  var origCtx = window._pvwCtx;
+  if (typeof origCtx === 'function' && !origCtx._pvnOrig) {
+    var ctx = function(btn){
+      var card = btn && btn.closest && btn.closest('.pvw-ctx'), rest = card && card.querySelector('.pvw-rest');
+      var self = this, args = arguments;
+      if (!rest || !settled()) return origCtx.apply(this, arguments);
+      if (busy(rest)) { queue(rest, function(){ window._pvwCtx.apply(self, args); }); return; }
+      if (!card.classList.contains('is-open')) {
+        var r = origCtx.apply(this, arguments);
+        if (P.painted(rest)) fold(rest, true);
+        return r;
+      }
+      if (!P.painted(rest)) return origCtx.apply(this, arguments);
+      rest.style.display = 'block';
+      var r2 = origCtx.apply(this, arguments);
+      fold(rest, false, function(){ rest.style.display = ''; });
+      return r2;
+    };
+    ctx._pvnOrig = origCtx;
+    window._pvwCtx = ctx;
+  }
+
+  /* ═══ OBSERVADORES ═══════════════════════════════════════════════════════════════════════ */
+  /* Lo que ya estuviera pintado antes de este bloque no cuenta como llegada. */
+  scan(qa(document, '#snAlso .pvp-ar, #todayNews > .sn-card, #newsContainer .pnx-items > .sn-card'));
+  if (typeof MutationObserver === 'function') {
+    /* Esta semana / Próxima semana: las repintan varios motores (PORTIV_NEWS, el outlook, el
+       verificador de fechas); se observa el resultado en vez de cada uno. */
+    var weeks = [$('thisWeekNews'), $('nextWeekNews')].filter(Boolean);
+    weeks.forEach(function(el){ el._pvnSnap = weekSnap(el); });
+    var moW = new MutationObserver(function(recs){
+      weeks.forEach(function(el){
+        if (recs.some(function(r){ return r.target === el; })) { try { onWeek(el); } catch(e){} }
+      });
+    });
+    weeks.forEach(function(el){ moW.observe(el, { childList: true }); });
+
+    /* Al terminar de entrar la pestaña (showTab añade .visible un fotograma después), lo que
+       queda bajo el pliegue espera al scroll. */
+    new MutationObserver(function(recs){
+      var on = recs.some(function(r){ return !/(^|\s)visible(\s|$)/.test(r.oldValue || ''); });
+      if (on && TAB.classList.contains('visible') && TAB.classList.contains('active')) { try { arm(); } catch(e){} }
+    }).observe(TAB, { attributes: true, attributeFilter: ['class'], attributeOldValue: true });
+
+    /* «No se pudieron cargar las noticias» + «Reintentar» (lo escribe _pnxFetch, a destiempo). */
+    var panel = $('newsContainer');
+    if (panel) new MutationObserver(function(recs){
+      if (!settled()) return;
+      recs.forEach(function(r){
+        if (!r.target.classList || !r.target.classList.contains('pnx-items')) return;
+        list(r.addedNodes).forEach(function(nd){
+          if (nd.nodeType === 1 && nd.classList.contains('pnx-state') && nd.querySelector('.pnx-retry')) rise(nd);
+        });
+      });
+    }).observe(panel, { childList: true, subtree: true });
+
+    /* Lector: lo que se pinta en la misma tanda que lo abre ya entra con él; lo que llega
+       después —el análisis de «Cómo afecta al mercado», el resumen IA mejorado— entra aquí. */
+    var modal = $('newsModal');
+    if (modal) new MutationObserver(function(recs){
+      var opened = false, mkt = false, ai = false;
+      recs.forEach(function(r){
+        if (r.type === 'attributes') {
+          if (r.target === modal && modal.classList.contains('open') && !/(^|\s)open(\s|$)/.test(r.oldValue || '')) opened = true;
+          return;
+        }
+        if (r.target.id === 'nmMktBody') mkt = true;
+        else if (r.target.id === 'nmAiInline') ai = true;
+      });
+      var live = modal.classList.contains('open') && !opened && !P.reduced();
+      if (mkt) {
+        var body = $('nmMktBody');
+        if (body && body.querySelector('.nm-ai-skel-line')) body._pvnH = body.getBoundingClientRect().height;
+        else if (body) {
+          var h0 = body._pvnH, card = body.firstElementChild;
+          body._pvnH = 0;
+          if (live && card) { grow(card, h0, 12); rise(card.children, { rise: 6, step: 50, max: 4 }); }
+        }
+      }
+      if (ai && live) { var b = $('nmAiInline'); if (b) rise(b.children, { rise: 6, step: 50, max: 4 }); }
+    }).observe(modal, { attributes: true, attributeFilter: ['class'], attributeOldValue: true, childList: true, subtree: true });
+  }
+})();
 </script>
 <!-- ═══ fin MOVIMIENTO · NOTICIAS ═══ -->
 
