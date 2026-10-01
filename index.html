@@ -4356,7 +4356,6 @@ window._pvAwaitIAP = function(totalMs){
           <div class="pvph-eb" data-pvph="eb">Valor total del portafolio</div>
           <div class="pvph-vrow">
             <div class="stitch-val" id="perf-total">$0.00</div>
-            <div class="stitch-badge pos" id="perf-period-val">—</div>
           </div>
           <div class="pvph-today" id="pvphToday"><span data-pvph="hoy">Hoy</span> <span class="perf-metric-val" id="perf-day">—</span></div>
         </div>
@@ -4389,7 +4388,7 @@ window._pvAwaitIAP = function(totalMs){
       <div class="pvph-row" id="pvphRow">
         <div class="stitch-chart-card pvph-card pvph-rend">
           <div class="pvph-ch">
-            <div class="pvph-cht"><div class="pvph-ceb" data-pvph="yours">Tu portafolio</div><div class="pvph-ct" data-pvph="rend">Rendimiento</div></div>
+            <div class="pvph-cht"><div class="pvph-ceb" data-pvph="yours">Tu portafolio</div><div class="pvph-ctrow"><div class="pvph-ct" data-pvph="rend">Rendimiento</div><div class="stitch-badge pos" id="perf-period-val">—</div></div></div>
             <div class="pvph-segs" id="pvphSegs"><div class="pvph-seg" id="periodBtns">
               <button class="period-btn" data-period="1D" onclick="setPeriod('1D',this)">1D</button>
               <button class="period-btn" data-period="1W" onclick="setPeriod('1W',this)">1W</button>
@@ -4449,7 +4448,7 @@ window._pvAwaitIAP = function(totalMs){
               <th>Hoy $</th><th>Hoy %</th>
               <th>Costo</th>
               <th>Ganancia $</th><th>Ganancia %</th>
-              <th title="Reinvertir dividendos (DRIP)">Reinversión</th>
+              <th title="Reinvertir dividendos (DRIP)">Reinvertir</th>
               <th></th>
             </tr></thead>
             <tbody id="posRows"></tbody>
@@ -4936,6 +4935,84 @@ window._pvAwaitIAP = function(totalMs){
     .rbl-export:hover { background:#0a2547; }
     .rbl-export .material-symbols-outlined { font-size:18px; }
   </style>
+<style id="pvPosMovilCss">
+/* ═══ «Tus posiciones» y orden de tarjetas en una columna (pedido de Rafael, 1-oct) ═════════
+   · Celular (≤899): bajo cada fila, una segunda línea (tr.pvpt-mrow, la pinta posRowHTML) con
+     «Costo $X» a la izquierda, alineado con el ticker, y «Reinvertir [Sí/No]» a la derecha: las
+     dos columnas que no caben en el ancho del celular. Fila y segunda línea se leen como una
+     sola: el filo va encima de la fila, nunca entre las dos. Desde 900 px no se pinta (Costo y
+     Reinvertir ya son columnas de la tabla).
+   · Orden (≤1099: celular, iPad en vertical y web estrecha, donde Rendimiento y Distribución van
+     apiladas): Rendimiento → Tus posiciones → Distribución. #pvphRow pasa a display:contents para
+     que sus dos tarjetas sean piezas de la rejilla de la página; el DOM no se mueve, así que las
+     reglas de pvPortHeroCss (que cuelgan de #pvphRow) siguen valiendo. Este bloque va antes que
+     pvPortHeroCss en el archivo: el segundo :not(#…) le da un id más para ganarle. */
+html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pvpt-mrow { display:none; }
+@media (max-width: 899px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pvpt-mrow { display:table-row; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pvpt-mrow > td { padding:0 !important; border:0 !important; background:transparent !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row:has(+ tr.pvpt-mrow) .td-inner { padding-bottom:4px !important; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-mline {
+    display:flex; align-items:center; justify-content:space-between; gap:12px; min-width:0;
+    padding:0 16px 12px 74px;
+    font-family:var(--font); font-size:12.5px; font-weight:600; line-height:1.3; color:var(--pvpt-muted);
+  }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-mk { display:inline-flex; align-items:center; gap:8px; min-width:0; white-space:nowrap; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-mk b { font-weight:700; color:var(--pvpt-ink); font-variant-numeric:tabular-nums; }
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows .pvpt-mline .drip-pill { height:26px; min-width:42px !important; padding:0 10px !important; font-size:12px !important; }
+  /* El lavado de la fila (pulsada o con el cajón abierto) cubre también su segunda línea. */
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row:active + tr.pvpt-mrow > td,
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pvpt-mrow:has(+ tr.trade-drawer-row.open) > td,
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card #posRows > tr.pos-row:has(+ tr.pvpt-mrow + tr.trade-drawer-row.open) > td { background:var(--pvpt-wash) !important; }
+}
+@media (max-width: 700px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-mline { padding:0 12px 11px 62px; }
+}
+@media (max-width: 359px) {
+  html body #tab-portfolio:not(#pvpt-x) .holdings-card .pvpt-mline { padding-left:50px; gap:8px; font-size:12px; }
+}
+@media (max-width: 1099px) {
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) {
+    display:grid !important; grid-template-columns:minmax(0,1fr) !important;
+    grid-template-areas:"header" "rend" "positions" "dist" "sidebar" !important;
+  }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > #pvphRow { display:contents !important; }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > #pvphRow > .pvph-rend { grid-area:rend; }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > #pvphRow > #assetDistCard { grid-area:dist; }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > .holdings-card { grid-area:positions; }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > .stitch-sidebar { grid-area:sidebar; }
+}
+@media (max-width: 899px) {
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) { row-gap:14px !important; column-gap:0 !important; }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > :is(#pvphHero, .holdings-card, .stitch-sidebar),
+  html body #tab-portfolio .stitch-layout:not(#pvph-x):not(#pvpm-x) > #pvphRow > * { margin-top:0 !important; margin-bottom:0 !important; }
+}
+/* ── Pastilla del cambio del periodo junto a «Rendimiento» (antes iba junto al valor total de la
+   cabecera). _renderHeaderBadge le pone .stitch-badge pos/neg/flat; fuera la flecha vieja. ── */
+html body #tab-portfolio #pvphRow .pvph-ctrow { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; min-width:0; }
+html body #tab-portfolio #pvphRow #perf-period-val {
+  display:inline-flex !important; align-items:center !important; width:auto !important; height:auto !important; min-height:0 !important;
+  margin:0 !important; padding:5px 11px !important; border:0 !important; border-radius:999px !important; box-shadow:none !important;
+  font-family:var(--font) !important; font-size:13px !important; font-weight:800 !important; line-height:1.25 !important;
+  letter-spacing:0 !important; font-variant-numeric:normal !important; white-space:nowrap !important;
+  background:var(--pvph-green-bg) !important; color:var(--pvph-green) !important;
+}
+html body #tab-portfolio #pvphRow #perf-period-val.neg  { background:var(--pvph-red-bg) !important; color:var(--pvph-red) !important; }
+html body #tab-portfolio #pvphRow #perf-period-val.flat { background:var(--pvph-track, #eef1f8) !important; color:var(--pvph-slate, #33475f) !important; }
+html body #tab-portfolio #pvphRow #perf-period-val::before,
+html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !important; display:none !important; }
+@media (max-width: 899px) {
+  html body #tab-portfolio #pvphRow #perf-period-val { font-size:12.5px !important; padding:4px 10px !important; }
+}
+/* Escritorio y tableta: la pastilla va en la misma línea que «Rendimiento»; si con los
+   periodos no cabe todo en una línea, los periodos bajan a la siguiente (no se encogen). */
+@media (min-width: 900px) {
+  html body #tab-portfolio #pvphRow .pvph-ch { flex-wrap:wrap; row-gap:14px; }
+  html body #tab-portfolio #pvphRow .pvph-cht { flex:1 0 auto; }
+  html body #tab-portfolio #pvphRow .pvph-ctrow { flex-wrap:nowrap; }
+  html body #tab-portfolio #pvphRow .pvph-segs { flex:0 0 auto; }
+}
+</style>
   <!-- ═══ ANÁLISIS DE PORTAFOLIO — rediseño (estilos en <style id="pvAnalisisCss">) ═══
        Orden: indicadores sobre la curva navy → Retorno esperado → Tus posiciones →
        Diagnóstico → Salud y diversificación → Fortalezas y riesgos → Análisis del asesor →
@@ -16053,6 +16130,8 @@ function _pvTargetMark(h){
     return PT.crossed(h.ticker, px) ? '<span class="pv-tgt-mark" title="Cruzó tu precio objetivo" aria-label="Cruzó tu precio objetivo">&#9670;</span>' : '';
   } catch(e){ return ''; }
 }
+// Celular: tras la fila va tr.pvpt-mrow (Costo y Reinvertir, que no caben como columnas; ver
+// pvPosMovilCss). Desde 900 px no se pinta.
 function posRowHTML(h, idx, c, T) {
   // FIX: priceChg y día% derivan del MISMO prevClose que calcH → $ y % coherentes en la fila.
   const priceChg  = h.price - c.prevClose;
@@ -16102,6 +16181,10 @@ function posRowHTML(h, idx, c, T) {
     <td><div class="td-inner">${_dripPill(h, idx)}</div></td>
     <td><div class="td-inner"><button class="pos-menu-btn ${isOpen?'active':''}" onclick="toggleDrawer(${idx})" title="Operar ${h.ticker}">&#8942;</button></div></td>
   </tr>
+  <tr class="pvpt-mrow"><td colspan="13"><div class="pvpt-mline">
+    <span class="pvpt-mk">${_L('Costo', 'Cost')} <b>${usd(round2(h.costBasis))}</b></span>
+    <span class="pvpt-mk">${_L('Reinvertir', 'Reinvest')} ${_dripPill(h, idx)}</span>
+  </div></td></tr>
   <tr class="trade-drawer-row ${isOpen?'open':''}" id="drawer-${idx}">
     <td class="trade-drawer-cell" colspan="13">${isOpen ? buildDrawer(idx, T) : ''}</td>
   </tr>`;
@@ -16156,7 +16239,7 @@ function _pvPosHeadI18n(){
   const TH = [
     ['Activo','Asset'], ['Cantidad','Shares'], ['Precio','Price'], ['Hoy $','Today $'], ['Hoy %','Today %'],
     ['Valor','Value'], ['Hoy $','Today $'], ['Hoy %','Today %'], ['Costo','Cost'],
-    ['Ganancia $','Gain $'], ['Ganancia %','Gain %'], ['Reinversión','Reinvest'], ['','']
+    ['Ganancia $','Gain $'], ['Ganancia %','Gain %'], ['Reinvertir','Reinvest'], ['','']
   ];
   try {
     const tb = $('posRows'), table = tb && tb.closest('table');
@@ -16545,7 +16628,9 @@ const _PVPH_PER_TXT = {
 };
 function _pvphPerTxt(p){ const t = _PVPH_PER_TXT[p]; return t ? _L(t[0], t[1]) : String(p || ''); }
 // La línea «Hoy» de la cabecera sólo cuando la pastilla NO es ya el cambio del día.
-function _pvphTodayLine(show){ const t = document.getElementById('pvphToday'); if (t) t.hidden = !show; }
+// La pastilla del periodo vive en la tarjeta Rendimiento (pedido de Rafael, 1-oct), así que la
+// línea «Hoy» de la cabecera se ve siempre, también en 1D.
+function _pvphTodayLine(){ const t = document.getElementById('pvphToday'); if (t) t.hidden = false; }
 
 // Rótulos del control segmentado: los data-period no cambian, sólo lo que se lee. También los
 // botones que unlockPeriods() agrega después (3A…), vía el MutationObserver de _pvphInit.
