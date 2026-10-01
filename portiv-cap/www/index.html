@@ -38555,9 +38555,32 @@ if (document.readyState === 'loading') {
   #authOverlay #authEmailWrap>div{overflow:hidden;min-height:0;}
   #authOverlay #authEmailWrap.open{grid-template-rows:1fr;opacity:1;margin-top:18px;}
 
-  /* Estado "Cargando…": el mismo mark + un anillo con los colores de la app */
-  #authOverlay .av-boot-ring{width:30px;height:30px;border-radius:50%;border:3px solid var(--pvr-wash,#F1F4F9);border-top-color:var(--pvr-navy,#0B1E36);animation:authSpin .8s linear infinite;}
-  #authOverlay .av-boot-txt{font-size:13px;font-weight:600;color:var(--pvr-muted,#68788C);}
+  /* Estado "Cargando…": la teja del logo de Portiv dentro de un anillo fino. Sólo gira el
+     arco (transform del ::before); la teja y el texto no se mueven. Sin fundidos, desenfoques
+     ni sombras. Mientras #authBoot está visible se oculta la cabecera de la tarjeta (.av-head:
+     logo + «Portiv») para no repetir el logo; con el login a la vista no cambia nada.
+     Base = WebView sin :has() (iOS < 15.4): la cabecera no se puede ocultar con CSS, así que
+     queda el anillo fino solo, sin teja, debajo de ella, como el cargador de antes. */
+  #authOverlay .av-boot-ring{position:relative;width:32px;height:32px;display:flex;align-items:center;justify-content:center;}
+  #authOverlay .av-boot-ring::before{content:"";position:absolute;inset:0;box-sizing:border-box;border-radius:50%;border:2px solid var(--pvr-line,#E6EAF0);border-top-color:var(--pvr-navy,#0B1E36);animation:authSpin .9s linear infinite;}
+  #authOverlay .av-boot-tile{display:none;width:48px;height:48px;border-radius:15px;background:var(--pvr-navy,#0B1E36);align-items:center;justify-content:center;}
+  #authOverlay .av-boot-tile svg{display:block;}
+  #authOverlay .av-boot-txt{margin-top:4px;font-size:15px;font-weight:700;color:var(--pvr-slate,#33475F);}
+  @supports selector(:has(*)){
+    /* !important: la cabecera lleva display:flex en línea */
+    #authCard:has(> #authBoot:not([style*="none"])) > .av-head{display:none !important;}
+    #authOverlay .av-boot-ring{width:80px;height:80px;}
+    #authOverlay .av-boot-tile{display:flex;}
+  }
+  /* Movimiento reducido: el arco se queda quieto (sigue viéndose el cuarto de vuelta navy) */
+  @media (prefers-reduced-motion: reduce){
+    #authOverlay .av-boot-ring::before{animation:none;}
+  }
+  /* Tema oscuro (body.dark-theme): la cortina sigue clara —fondo y tarjeta van en línea—, así
+     que el cargador conserva sus colores claros; se fijan para que no hereden tokens oscuros. */
+  body.dark-theme #authOverlay .av-boot-ring::before{border-color:#E6EAF0;border-top-color:#0B1E36;}
+  body.dark-theme #authOverlay .av-boot-tile{background:#0B1E36;}
+  body.dark-theme #authOverlay .av-boot-txt{color:#33475F;}
 
   /* Escritorio con ventana baja (app de Mac ~650–750 px de alto): con el formulario
      de correo desplegado la tarjeta mide ~815 px y, centrada en una capa fija sin
@@ -38587,7 +38610,7 @@ if (document.readyState === 'loading') {
  <div style="display:flex;flex-direction:column;align-items:center;gap:18px;width:100%;max-width:420px;">
   <div id="authCard" style="width:100%;background:#ffffff;border:1px solid var(--pvr-line,#E6EAF0);border-radius:var(--pvr-r-card,28px);padding:34px 26px 28px;box-shadow:0 18px 44px -16px rgba(11,28,48,0.16), 0 1px 2px rgba(20,30,45,.06);box-sizing:border-box;">
 
-    <div style="display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px;">
+    <div class="av-head" style="display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:22px;">
       <!-- El mark va en una teja cuadrada (r=4px) en vez de un círculo con sombra difusa:
            es la misma geometría recta que usan las tarjetas y los botones de la app. -->
       <div style="width:62px;height:62px;border-radius:20px;background:var(--pvr-navy,#0B1E36);box-shadow:0 10px 24px -10px rgba(11,30,54,.55);display:flex;align-items:center;justify-content:center;">
@@ -38603,7 +38626,17 @@ if (document.readyState === 'loading') {
     </div>
 
     <div id="authBoot" style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:6px 0 12px;width:100%;">
-      <div class="av-boot-ring"></div>
+      <div class="av-boot-ring" aria-hidden="true">
+        <div class="av-boot-tile">
+          <svg viewBox="0 0 52 44" width="27" height="23">
+            <g fill="#fff">
+              <rect x="11" y="28" width="5" height="9" rx="1.5"/><rect x="19" y="23" width="5" height="14" rx="1.5"/><rect x="27" y="26" width="5" height="11" rx="1.5"/><rect x="35" y="19" width="5" height="18" rx="1.5"/>
+              <polyline points="12,22 20,17 27,20 37,12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="37.5" cy="11.5" r="2.6" fill="#fff"/>
+            </g>
+          </svg>
+        </div>
+      </div>
       <div class="av-boot-txt">Cargando tu portafolio</div>
     </div>
 
