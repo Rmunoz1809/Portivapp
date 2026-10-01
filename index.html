@@ -13563,6 +13563,22 @@ function _buildRebalPlan(m){
   } catch(e){ return { rows: [], text: '(no disponible)', sig: '' }; }
 }
 
+// Lo que llevas en el año (YTD), en fracción (0.084 = +8.4%): el MISMO número que el botón
+// «YTD» del Portafolio (PORTIV_CHART.generate, la serie que dibuja la línea) y, si no hay
+// serie, valor de hoy frente a _baseForYTD() como hace la tarjeta. null si no hay base.
+function _pvaYtdPct(T) {
+  try {
+    if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.generate) {
+      const ds = PORTIV_CHART.generate('YTD');
+      if (ds && ds.values && ds.values.length >= 2 && isFinite(ds.changePct)) return ds.changePct / 100;
+    }
+  } catch (e) {}
+  try {
+    const base = _baseForYTD(), tot = T && T.total;
+    if (base > 0 && isFinite(tot)) return (tot - base) / base;
+  } catch (e) {}
+  return null;
+}
 function renderDeepPortfolioAnalysis(T) {
   if (!document.getElementById('port-deep-analysis')) return;
   try { if (typeof PV_AI !== 'undefined') PV_AI.render(); } catch(e){}  // análisis IA (sección propia, debajo)
@@ -13940,8 +13956,10 @@ function renderDeepPortfolioAnalysis(T) {
 
   // ── La escala «Tu rango para el año»: de −30% a +20%, ampliada de 5 en 5 si el escenario
   // bajista o el techo del base se salen. Sólo posiciona lo ya calculado arriba.
-  const _lo = Math.min(-30, Math.floor((bear*100 - 4) / 5) * 5);
-  const _hi = Math.max(20, Math.ceil((baseHi*100 + 4) / 5) * 5);
+  const ytd = _pvaYtdPct(T);                 // lo que llevas en el año (null: sin base)
+  const _y0 = ytd == null ? 0 : ytd;
+  const _lo = Math.min(-30, Math.floor((Math.min(bear, _y0)*100 - 4) / 5) * 5);
+  const _hi = Math.max(20, Math.ceil((Math.max(baseHi, _y0)*100 + 4) / 5) * 5);
   const _pos = v => Math.max(0, Math.min(100, (v*100 - _lo) / (_hi - _lo) * 100));
   const _pB = _pos(bear), _pL = _pos(baseLo), _pH = _pos(baseHi), _pA = _pos(base), _p0 = _pos(0);
   const _pM = (_pL + _pH) / 2;
@@ -13965,7 +13983,7 @@ function renderDeepPortfolioAnalysis(T) {
       <div class="pva-rng">
         <h3>Tu rango para el año</h3>
         <p class="pva-cap">Escala de ${_fmtEdge(_lo)} a ${_fmtEdge(_hi)}.</p>
-        <div class="pva-scale" role="img" aria-label="Escenario bajista ${_sgn(bear)}; escenario base ${_rngTxt}; promedio ${_sgn(base)}">
+        <div class="pva-scale${ytd == null ? '' : ' has-ytd'}" role="img" aria-label="Escenario bajista ${_sgn(bear)}; escenario base ${_rngTxt}; promedio ${_sgn(base)}${ytd == null ? '' : '; llevas ' + _sgn(ytd) + ' en el año'}">
           <div class="pva-axis"></div>
           <div class="pva-zero" style="left:${_pZ(_p0)}%"><span${Math.abs(_p0 - _pA) < 22 ? ' class="off"' : ''}>0%</span></div>
           <div class="pva-band ${_cls}" style="left:${_pZ(_pL)}%;width:${_pZ(Math.max(1.5, _pH - _pL))}%"></div>
@@ -13973,6 +13991,7 @@ function renderDeepPortfolioAnalysis(T) {
           <div class="pva-dot" style="left:${_pZ(_pB)}%"></div>
           <div class="pva-flag dn ${_anchor(_pB)}${_clash ? ' low' : ''}" style="left:${_pZ(_pB)}%">${_sgn(bear)}</div>
           <div class="pva-flag ${_cls} ${_anchor(_pM)}" style="left:${_pZ(_pM)}%">${_rngTxt}</div>
+          ${ytd == null ? '' : `<div class="pva-ytd" style="left:${_pZ(_pos(ytd))}%"></div><div class="pva-ytdlab ${_anchor(_pos(ytd))}" style="left:${_pZ(_pos(ytd))}%">${_L('Llevas', 'You are at')} ${_sgn(ytd)} ${_L('en', 'in')} ${year}</div>`}
         </div>
       </div>
       <div class="pva-scn"><span class="pva-tag ${base >= 0 ? 'g' : 'r'}">Escenario base</span><b class="${_cls}">${_rngTxt}</b><p>Rango del retorno anual esperado (apreciación sobria + dividendos), no una promesa. Estimación basada en consenso.</p></div>
@@ -50163,6 +50182,10 @@ html body #tab-analizar #analizar-portfolio-section .pva-flag.l { transform:tran
 html body #tab-analizar #analizar-portfolio-section .pva-flag.low { top:32px; }
 html body #tab-analizar #analizar-portfolio-section .pva-avg { position:absolute; top:52px; width:3px; height:28px; margin-left:-1.5px; border-radius:2px; background:var(--pva-strong); }
 html body #tab-analizar #analizar-portfolio-section .pva-avg span { position:absolute; top:34px; left:50%; transform:translateX(-50%); font-size:12px; font-weight:800; color:var(--pva-ink); white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-scale.has-ytd { height:146px; }
+html body #tab-analizar #analizar-portfolio-section .pva-ytd { position:absolute; top:56px; width:20px; height:20px; margin-left:-10px; box-sizing:border-box; border-radius:50%; background:var(--pva-strong); border:4px solid var(--pva-card); z-index:2; }
+html body #tab-analizar #analizar-portfolio-section .pva-ytdlab { position:absolute; top:112px; transform:translateX(-50%); font-size:12px; font-weight:800; line-height:1; padding:6px 10px; border-radius:99px; background:var(--pva-strong); color:var(--pva-on-strong); white-space:nowrap; }
+html body #tab-analizar #analizar-portfolio-section .pva-ytdlab.l { transform:translateX(-14px); } html body #tab-analizar #analizar-portfolio-section .pva-ytdlab.r { transform:translateX(calc(-100% + 14px)); }
 html body #tab-analizar #analizar-portfolio-section .pva-avg span.l { left:-6px; transform:none; } html body #tab-analizar #analizar-portfolio-section .pva-avg span.r { left:auto; right:-6px; transform:none; }
 html body #tab-analizar #analizar-portfolio-section .pva-scn b { display:block; font-size:32px; font-weight:800; letter-spacing:-.03em; line-height:1.1; margin:14px 0 10px; font-variant-numeric:tabular-nums; }
 html body #tab-analizar #analizar-portfolio-section .pva-scn b.nd { color:var(--pva-muted); }
