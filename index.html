@@ -56571,28 +56571,48 @@ html body.dark-theme .pvm-skel {
     return r;
   }
 
-  /* expand(el, abrir, alTerminar) — despliega o pliega `el` animando su alto. Al ABRIR, `el`
-     ya tiene que estar visible (quítale antes tu clase o tu display:none); al CERRAR, ocúltalo
-     en `alTerminar`, que llega con el alto ya en cero. El alto sólo se anima en este nodo y
-     mientras dura: al acabar vuelve a ser el suyo (auto). */
+  /* expand(el, abrir, alTerminar) — despliega o pliega `el` animando su alto y su relleno
+     vertical. Al ABRIR, `el` ya tiene que estar visible (quítale antes tu clase o tu
+     display:none); al CERRAR, ocúltalo en `alTerminar`, que llega con el alto ya en cero. Todo
+     se anima sólo en este nodo y mientras dura: al acabar vuelve a ser lo suyo (auto).
+
+     El relleno va con el alto: con box-sizing:border-box un alto 0 no baja del relleno, y la
+     caja aparecía y desaparecía con un escalón de 2×padding (lo vio Seguimiento: 28 px).
+
+     Doble toque a mitad (abrir mientras se cierra o al revés): sale desde donde está ahora, no
+     desde cero. El overflow propio del nodo se guarda UNA vez por gesto (_pvmOv) y sólo lo
+     devuelve la animación vigente: el 'cancel' de la anterior llega un fotograma tarde y, si
+     lo soltara, el contenido se saldría de la caja en pleno pliegue (lo vio Noticias). Si el
+     gesto queda interrumpido, `alTerminar` de esa orden ya no llega: manda la nueva. */
   function expand(el, open, done){
     var cb = function(){ try { if (done) done(); } catch(e){} };
-    if (!ok(el)) { cb(); return; }
-    var t = T(), h = open ? el.scrollHeight : el.offsetHeight;
-    var prevOv = el.style.overflow;
+    if (!ok(el) || !painted(el)) { cb(); return; }
+    var t = T(), cur = el._pvmE, from = null;
+    if (cur && (cur.playState === 'running' || cur.playState === 'paused')) {
+      var s0 = getComputedStyle(el);
+      from = { height: s0.height, paddingTop: s0.paddingTop, paddingBottom: s0.paddingBottom, opacity: s0.opacity };
+      el._pvmE = null;                        // su 'cancel' ya no es el de la animación vigente
+      try { cur.cancel(); } catch(e){}
+    }
+    if (el._pvmOv === undefined) el._pvmOv = el.style.overflow;
+    var cs = getComputedStyle(el);
+    var full = { height: cs.height, paddingTop: cs.paddingTop, paddingBottom: cs.paddingBottom, opacity: cs.opacity };
+    var zero = { height: '0px', paddingTop: '0px', paddingBottom: '0px', opacity: 0 };
+    var start = from || (open ? zero : full), end = open ? full : zero;
+    var dist = Math.abs((parseFloat(end.height) || 0) - (parseFloat(start.height) || 0));
     el.style.overflow = 'hidden';
-    var a = run(el,
-      open ? [{ height: '0px', opacity: 0 }, { height: h + 'px', opacity: 1 }]
-           : [{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }],
-      { duration: Math.round(Math.min(t.dur * 1.15, 260 + h * .35)), easing: open ? EASE : EASE_IO,
+    var a = run(el, [start, end],
+      { duration: Math.round(Math.min(t.dur * 1.15, 260 + dist * .35)), easing: open ? EASE : EASE_IO,
         fill: open ? 'backwards' : 'forwards' }, '_pvmE');
-    if (!a) { el.style.overflow = prevOv; cb(); return; }
+    function restore(){ el.style.overflow = el._pvmOv || ''; el._pvmOv = undefined; }
+    if (!a) { restore(); cb(); return; }
     a.addEventListener('finish', function(){
-      el.style.overflow = prevOv;
+      if (el._pvmE !== a) return;
+      restore();
       cb();
       if (!open) { try { a.cancel(); } catch(e){} }   // ya oculto: suelta el alto 0 retenido
     });
-    a.addEventListener('cancel', function(){ el.style.overflow = prevOv; });
+    a.addEventListener('cancel', function(){ if (el._pvmE === a && el._pvmOv !== undefined) restore(); });
   }
 
   /* reveal(nodos, op) — lo que está por debajo del pliegue entra (pviaIn) cuando el scroll lo
