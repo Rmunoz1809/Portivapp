@@ -4505,41 +4505,58 @@ window._pvAwaitIAP = function(totalMs){
        nítida y el muro se leía como un bug. El overlay se pinta solo con
        html.pv-free (ver .pv-lock en el bloque de CSS del candado). -->
   <div class="pv-lock pv-lock-page" id="aiChatLockWrap">
-  <div class="ai-chat-page">
+  <!-- Rediseño de Portiv IA (sep-2026): sólo el chat. Estilos en el bloque pvIaCss, al final
+       del documento. .pvia-empty = todavía sin mensajes: se ve la bienvenida centrada y el hilo
+       no; la quita _aiChatAddMsg con el primer mensaje. Los ids aiChat* son los de siempre. -->
+  <div class="ai-chat-page pvia-page pvia-empty">
 
-    <!-- Header -->
-    <div class="ai-chat-header">
-      <div class="ai-chat-header-avatar">P</div>
-      <div class="ai-chat-header-info">
-        <div class="ai-chat-header-name">Portiv IA</div>
-        <div class="ai-chat-header-sub">Analista de portafolio inteligente</div>
+    <header class="pvia-hero">
+      <div class="pvia-hero-txt">
+        <div class="pvia-eyebrow">Tu analista</div>
+        <h1 class="pvia-title">Portiv IA</h1>
       </div>
-      <div class="ai-chat-header-badge">En línea</div>
-    </div>
+      <span class="pvia-live"><i aria-hidden="true"></i>En línea</span>
+    </header>
 
-    <!-- Messages -->
-    <div class="ai-chat-messages" id="aiChatMessages"></div>
-
-    <!-- Typing indicator -->
-    <div class="ai-typing-wrap" id="aiChatTyping" style="padding:0 20px 8px;">
-      <div class="ai-msg-bot-avatar">P</div>
-      <div class="ai-typing-bubble"><span></span><span></span><span></span></div>
-    </div>
-
-    <!-- Input area -->
-    <div class="ai-chat-inputarea">
-      <div class="ai-chat-chips" id="aiChatSuggestions">
-        <button class="ai-chat-chip" onclick="aiChatQuick('¿Cómo van mis posiciones hoy?')">¿Cómo van mis posiciones hoy?</button>
-        <button class="ai-chat-chip" onclick="aiChatQuick('¿Hay noticias importantes de mi portafolio?')">Noticias de mi portafolio</button>
-        <button class="ai-chat-chip" onclick="aiChatQuick('¿Por qué se movió el mercado hoy?')">¿Por qué se movió el mercado hoy?</button>
+    <div class="pvia-main">
+      <!-- Hilo: se desplaza por dentro. El indicador de escritura va DENTRO y al final;
+           _aiChatAddMsg mete cada mensaje antes que él. -->
+      <div class="pvia-thread" id="aiChatMessages" role="log" aria-live="polite">
+        <div class="pvia-msg pvia-ai" id="aiChatTyping" aria-hidden="true">
+          <span class="pvia-av"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.9 5.2 5.1 1.8-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.8z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg></span>
+          <div class="pvia-body"><div class="pvia-typing"><i></i><i></i><i></i></div></div>
+        </div>
       </div>
-      <div class="ai-chat-inputbar">
+
+      <!-- Bienvenida (sólo sin mensajes) -->
+      <div class="pvia-hello">
+        <span class="pvia-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.9 5.2 5.1 1.8-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.8z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg></span>
+        <h2>¿En qué te ayudo hoy?</h2>
+        <p>Pregúntame por tus posiciones, el mercado o una noticia. Contesto con tus datos de hoy.</p>
+      </div>
+
+      <!-- Compositor. Las preguntas rápidas van DETRÁS en el marcado (en computadora se ven
+           debajo); en iPad y celular el CSS las sube por encima con `order`. -->
+      <div class="pvia-bar">
         <textarea id="aiChatInput" rows="1" placeholder="Escribe tu pregunta…"
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();aiChatSend();}"></textarea>
-        <button id="aiChatSendBtn" class="ai-chat-send" onclick="aiChatSend()" aria-label="Enviar">
+        <button id="aiChatSendBtn" class="pvia-send" type="button" onclick="aiChatSend()" aria-label="Enviar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2 .4 6.4Z" fill="currentColor"/></svg>
         </button>
+      </div>
+
+      <div class="pvia-chips" id="aiChatSuggestions">
+        <button type="button" class="pvia-chip" onclick="aiChatQuick('¿Cómo van mis posiciones hoy?')">¿Cómo van mis posiciones hoy?</button>
+        <button type="button" class="pvia-chip" onclick="aiChatQuick('¿Hay noticias importantes de mi portafolio?')">Noticias de mi portafolio</button>
+        <button type="button" class="pvia-chip" onclick="aiChatQuick('¿Por qué se movió el mercado hoy?')">¿Por qué se movió el mercado hoy?</button>
+      </div>
+
+      <!-- Pie: el texto gratuito lo escribe _chatFreeFootSync; cuál se ve lo decide el CSS
+           con html.pv-free (Pro: aviso sólo en computadora; en iPad y celular, nada). -->
+      <div class="pvia-foot" id="pviaFoot">
+        <span class="pvia-foot-free" id="pviaFootFree">Te quedan <b>5 de 5</b> preguntas gratis esta semana</span>
+        <span class="pvia-foot-pro">Portiv IA puede equivocarse. Revisa los datos importantes antes de invertir.</span>
       </div>
       <div class="ai-token-badge"><span id="aiChatTokenBadge"></span></div>
     </div>
@@ -19585,7 +19602,7 @@ function _pvTabEnter(pg){
   /* Ancla navy de cada pestaña. Watchlist y Ajustes no tienen clase propia
      para su cabecera: se cae al primer bloque que pinte (en Ajustes, dentro de
      .set-wrap, que es un envoltorio y no la cabecera). */
-  var navy = pg.querySelector('.pva-hero, .sn-header, .research-search-bar, .ai-chat-header, .stitch-header-left');
+  var navy = pg.querySelector('.pva-hero, .sn-header, .research-search-bar, .ai-chat-header, .pvia-hero, .stitch-header-left');
   if (!navy) {
     var c0 = pg.firstElementChild;
     while (c0 && !_pvIsPainted(c0)) c0 = c0.nextElementSibling;
@@ -34987,6 +35004,8 @@ function _weekCost(bucket){ return _weekCostGet(bucket).cost; }
 // pregunta en una decisión de racionamiento: el usuario deja de preguntar mucho antes de
 // llegar al tope y no llega a ver el producto, que es justo lo contrario de lo que la
 // cuota busca. El límite solo se nombra cuando se alcanza.
+// → CAMBIADO en el rediseño de Portiv IA (sep-2026): el diseño aprobado SÍ lo enseña bajo el
+//   compositor («Te quedan N de 5 preguntas gratis esta semana», ver _chatFreeFootSync).
 const _CHAT_FREE_WEEKLY_MSGS = 5;
 const _CHAT_FREE_LS_KEY = 'chat_free_week_msgs';
 
@@ -35000,6 +35019,19 @@ function _chatFreeBump(){
   try{ localStorage.setItem(_CHAT_FREE_LS_KEY, JSON.stringify({week:_chatWeekKey(), n:_chatFreeUsed()+1})); }catch(e){}
 }
 function _chatFreeExhausted(){ return _chatFreeUsed() >= _CHAT_FREE_WEEKLY_MSGS; }
+// Pie bajo el compositor del chat: cuántas preguntas gratis quedan. Aquí sólo se escribe el
+// texto; CUÁNDO se ve lo decide el CSS con html.pv-free (la misma clase que el candado,
+// síncrona y la que reescribe _pvApplyProClass en cada veredicto), así que un cambio de
+// entitlement no necesita repintar nada. Lo llaman _chatApplyFreeGate (todos los cambios de
+// entitlement pasan por ahí), la apertura de la pestaña y aiChatSend al descontar.
+function _chatFreeFootSync(){
+  try{
+    const el=document.getElementById('pviaFootFree'); if(!el) return;
+    const t=_CHAT_FREE_WEEKLY_MSGS, n=Math.max(0, t-_chatFreeUsed());
+    el.innerHTML=_L((n===1?'Te queda ':'Te quedan ')+'<b>'+n+' de '+t+'</b> preguntas gratis esta semana',
+                    'You have <b>'+n+' of '+t+'</b> free questions left this week');
+  }catch(e){}
+}
 
 // El candado del chat tapa la PANTALLA ENTERA (.pv-lock-page), así que para regalar los
 // diez mensajes no basta con dejar pasar la llamada: hay que quitar las clases del velo
@@ -35025,6 +35057,7 @@ function _chatApplyFreeGate(){
         sub.textContent='';   // el titular ya dice "Desbloquea Portiv Pro"
       }
     }
+    _chatFreeFootSync();
   }catch(e){}
 }
 // El bloqueo aplica EXCLUSIVAMENTE al bucket del chat (las demás features no bloquean el chat).
@@ -35535,9 +35568,11 @@ let _aiAnalystReady = false;
 function _aiAnalystInit(){
   if(!_aiAnalystReady){
     _aiAnalystReady = true;
-    // Saludo inicial
-    _aiChatAddMsg('bot', '¡Hola! Soy **Portiv IA**, tu analista de portafolio. Tengo acceso completo a tus posiciones, precios en tiempo real y noticias del mercado.\n\nPregúntame por qué se movió algo, si una posición está cara, o qué haría yo con tu cartera hoy.');
+    // Sin saludo del bot (rediseño sep-2026): mientras no hay mensajes se ve la bienvenida
+    // centrada del marcado (.pvia-empty), que ya dice qué se le puede preguntar.
   }
+  // La semana de la cuota gratuita pudo cambiar con la app abierta.
+  _chatFreeFootSync();
   // Sync token badge
   _aiRenderTokenBadge();
   // Scroll al final
@@ -35549,41 +35584,63 @@ function _aiRenderTokenBadge(){
   try { _renderTokenBadge(); } catch(e){}
 }
 
+// Destello de Portiv IA: avatar de cada respuesta. Mismo trazo que la marca de la bienvenida
+// y que el avatar del indicador de escritura (los dos, en el marcado de #tab-aianalyst).
+const _PVIA_SPARK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l1.9 5.2 5.1 1.8-5.1 1.9L12 17.5l-1.9-5.1L5 10.5l5.1-1.8z"/><path d="M18.5 15.5l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>';
+// Fuentes de una respuesta con búsqueda web: una pastilla con el nombre del MEDIO, sacado del
+// dominio (el título del resultado es el de la noticia, largo para una pastilla; va en el
+// title). El color del cuadrito es el de las tarjetas de Noticias (_SN_SRC_COLORS).
+const _PVIA_MEDIOS = {
+  'reuters.com':'Reuters', 'bloomberg.com':'Bloomberg', 'wsj.com':'WSJ', 'cnbc.com':'CNBC', 'ft.com':'FT',
+  'theverge.com':'The Verge', 'marketwatch.com':'MarketWatch', 'barrons.com':"Barron's",
+  'finance.yahoo.com':'Yahoo Finance', 'investing.com':'Investing.com', 'seekingalpha.com':'Seeking Alpha',
+  'nasdaq.com':'Nasdaq', 'fool.com':'Motley Fool', 'forbes.com':'Forbes', 'businessinsider.com':'Business Insider',
+  'apnews.com':'AP', 'nytimes.com':'NYT', 'elpais.com':'El País', 'expansion.com':'Expansión',
+  'eleconomista.es':'El Economista', 'eleconomista.com.mx':'El Economista', 'elfinanciero.com.mx':'El Financiero'
+};
+function _pviaSrcPill(s){
+  let host = '';
+  try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch(e){}
+  const k = Object.keys(_PVIA_MEDIOS).find(d => host === d || host.endsWith('.' + d));
+  const name = k ? _PVIA_MEDIOS[k] : host;
+  const color = (typeof _SN_SRC_COLORS !== 'undefined' && _SN_SRC_COLORS[name]) || '#44474d';
+  // s.url y s.title llegan de la búsqueda web del modelo (tercero): pvEsc() escapa también
+  // las comillas, así que no pueden cerrar el atributo e inyectar otros.
+  return `<a class="pvia-sp" href="${pvEsc(s.url)}" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener" title="${pvEsc(s.title || name)}">`
+       + `<i style="background:${color}">${pvEsc(name.charAt(0).toUpperCase())}</i>${pvEsc(name)}</a>`;
+}
+
 function _aiChatAddMsg(role, html, sources){
   const wrap = document.getElementById('aiChatMessages');
   if(!wrap) return;
-  const now = new Date();
-  const timeStr = now.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+  const timeStr = new Date().toLocaleTimeString(_L('es-MX','en-US'),{hour:'numeric',minute:'2-digit'});
   const div = document.createElement('div');
-  let srcHtml = '';
-  if(sources && sources.length){
-    srcHtml = '<div class="chat-sources" style="margin-top:8px;padding-top:8px;border-top:1px solid #e8eaf0;font-size:10px;color:#8a96a3;">Fuentes: '+
-      // s.url llega de la búsqueda web del modelo (tercero): interpolarla cruda dentro de
-      // href="…" permitía cerrar el atributo e inyectar otros. pvEsc() sí escapa comillas.
-      sources.slice(0,3).map((s,i)=>`<a href="${pvEsc(s.url)}" onclick="return _pvOpenExternal(this.href)" target="_blank" rel="noopener" style="color:#8a96a3;text-decoration:none;">[${i+1}] ${_chatEscape(s.title||s.url).slice(0,35)}</a>`).join(' · ')+
-      '</div>';
-  }
   if(role === 'user'){
-    // Iniciales del perfil (mismo patrón que profUpdateAvatar) → simétrico con el avatar "P" del bot.
-    const _fullName = document.getElementById('profFullName')?.value || '';
-    const _initials = _fullName.split(' ').filter(Boolean).slice(0,2).map(w=>w[0].toUpperCase()).join('') || 'Tú'.charAt(0);
-    div.className = 'ai-msg-user';
-    div.innerHTML =
-      `<div class="ai-msg-user-avatar">${_initials}</div>`+
-      `<div class="ai-msg-user-inner">`+
-        `<div class="ai-msg-user-meta"><span class="ai-msg-time">${timeStr}</span><span class="ai-msg-name">Tú</span></div>`+
-        `<div class="ai-msg-user-bubble">${_chatEscape(html)}</div>`+
-      `</div>`;
+    // Sin avatar de iniciales: la burbuja navy a la derecha ya dice quién habla.
+    div.className = 'pvia-msg pvia-me';
+    div.innerHTML = `<div><div class="pvia-meta">${timeStr}</div><div class="pvia-ub">${_chatEscape(html)}</div></div>`;
   } else {
-    div.className = 'ai-msg-bot';
+    // Sólo enlaces http(s): una URL de otro esquema no llega a pintarse como fuente.
+    const srcs = (sources || []).filter(s => s && /^https?:\/\//i.test(s.url || '')).slice(0,3);
+    const srcHtml = srcs.length
+      ? `<div class="pvia-srcs"><small>${_L('Fuentes','Sources')}</small>${srcs.map(_pviaSrcPill).join('')}</div>` : '';
+    // Una cifra con signo en negritas (**+$173.28**, **−1.8%**) va en verde o rojo, como en el
+    // resto de la app. Sólo si la negrita es la cifra entera: «**ADBE sube +2.90%**» no se toca.
+    const body = _chatMarkdown(html).replace(/<strong>([+\-−]\s?[$€]?\s?\d[\d.,]*\s?%?)<\/strong>/g,
+      (m, v) => `<strong class="${v.charAt(0) === '+' ? 'up' : 'dn'}">${v}</strong>`);
+    div.className = 'pvia-msg pvia-ai';
     div.innerHTML =
-      `<div class="ai-msg-bot-avatar">P</div>`+
-      `<div class="ai-msg-bot-body">`+
-        `<div class="ai-msg-meta"><span class="ai-msg-name">Portiv IA</span><span class="ai-msg-time">${timeStr}</span></div>`+
-        `<div class="ai-msg-bot-bubble">${_chatMarkdown(html)}${srcHtml}</div>`+
+      `<span class="pvia-av" aria-hidden="true">${_PVIA_SPARK}</span>`+
+      `<div class="pvia-body">`+
+        `<div class="pvia-meta"><b>Portiv IA</b>${timeStr}</div>`+
+        `<div class="pvia-card">${body}${srcHtml}</div>`+
       `</div>`;
   }
-  wrap.appendChild(div);
+  // El indicador de escritura vive dentro del hilo, al final: cada mensaje entra antes que él.
+  const typing = document.getElementById('aiChatTyping');
+  if(typing && typing.parentNode === wrap) wrap.insertBefore(div, typing); else wrap.appendChild(div);
+  // Primer mensaje: fuera la bienvenida y aparece el hilo.
+  const page = wrap.closest('.ai-chat-page'); if(page) page.classList.remove('pvia-empty');
   wrap.scrollTop = wrap.scrollHeight;
   return div;
 }
@@ -35624,7 +35681,7 @@ async function aiChatSend(){
     // pasó y cuándo vuelve la cuota; el muro lo abre el usuario si le interesa.
     const _m = _aiChatAddMsg('bot','Llegaste a tus **'+_CHAT_FREE_WEEKLY_MSGS+' mensajes** gratis de esta semana. Tu cuota se reinicia el lunes, así que puedes seguir preguntando entonces sin pagar nada.\n\nCon **Portiv Pro** el chat es ilimitado y no tienes que esperar.');
     try {
-      const _b = _m && _m.querySelector('.ai-msg-bot-bubble');
+      const _b = _m && _m.querySelector('.pvia-card');
       if (_b){
         const _cta = document.createElement('button');
         _cta.type = 'button'; _cta.className = 'chat-lim-cta'; _cta.textContent = 'Ver Portiv Pro';
@@ -35828,7 +35885,7 @@ ${ctx}`;
     // entera, así que cerrar justo al recibir la décima respuesta se la taparía al
     // usuario en la cara. El velo lo pone el intento nº11 (con su aviso en el hilo) o
     // _pvApplyProClass la próxima vez que se abra la app.
-    if(!_esPro){ _chatFreeBump(); }
+    if(!_esPro){ _chatFreeBump(); _chatFreeFootSync(); }
 
     // No cachear respuestas que usaron búsqueda web: son las más perecederas y, además,
     // el hit de caché no restituye las `sources` (se servirían sin fuentes).
@@ -51976,6 +52033,384 @@ body.dark-theme :is(#thisWeekCard,#nextWeekCard) .pvw-ev:focus-visible { outline
 @media (prefers-reduced-motion: reduce) {
   :is(#thisWeekCard,#nextWeekCard) .pvw-d, :is(#thisWeekCard,#nextWeekCard) .pvw-dcard, :is(#thisWeekCard,#nextWeekCard) .pvw-ev, :is(#thisWeekCard,#nextWeekCard) .pvw-go, :is(#thisWeekCard,#nextWeekCard) .pvw-card, :is(#thisWeekCard,#nextWeekCard) .pvw-rm, :is(#thisWeekCard,#nextWeekCard) .pvw-rm svg { transition:none; }
   :is(#thisWeekCard,#nextWeekCard) .pvw-d:hover, :is(#thisWeekCard,#nextWeekCard) .pvw-d:active, :is(#thisWeekCard,#nextWeekCard) .pvw-ev:hover .pvw-go { transform:none; }
+}
+</style>
+<style id="pvIaCss">
+/* ═══ Portiv IA — el chat (#tab-aianalyst), rediseño sep-2026 ═════════════════════════════
+   Sólo el chat: cabecera navy compacta; mientras no hay mensajes (.pvia-empty) una bienvenida
+   centrada con las tres preguntas rápidas, y después el hilo, que se desplaza por dentro, con
+   el compositor abajo.
+     · Computadora (≥900 px, sin pv-ipad): columna centrada de 820 px (772 de contenido). Al
+       abrir, el compositor y las preguntas van DENTRO de la bienvenida, las preguntas debajo.
+     · iPad (html.pv-ipad) y ventanas de 701–899 px: el compositor abajo, sobre la barra de
+       pestañas; las preguntas, centradas bajo el texto de la bienvenida.
+     · Celular (≤700 px): las preguntas apiladas a todo el ancho justo encima del compositor.
+   Todo cuelga de «html body #tab-aianalyst #aiChatLockWrap» (dos ids): gana a las capas
+   anteriores del chat —bloque base, pvd/v8 de escritorio, html.pv-ipad, @media ≤700/760,
+   tamaños de escritorio y body.dark-theme— sin tocarlas; sus clases (.ai-chat-header,
+   .ai-msg-*, .ai-chat-inputarea…) ya no están en el marcado. El ALTO de la página lo siguen
+   poniendo esas capas (.ai-chat-page, teclado abierto, candado): aquí no se toca.
+   Sin sombras, sin desenfoques y sin animaciones de entrada: sólo transiciones de .22s en
+   hover. Lo único que se mueve es el rebote (transform) de los tres puntos. */
+html body #tab-aianalyst #aiChatLockWrap > .pvia-page {
+  --pvia-hero: #0b1c30;           /* cabecera: navy también en tema oscuro */
+  --pvia-bg: #eef1f8;
+  --pvia-card: #fff;
+  --pvia-line: #e2e7f0;
+  --pvia-line-hi: #cfd7e3;        /* hover del compositor */
+  --pvia-line-focus: #aab6c8;     /* compositor con el foco */
+  --pvia-wash: #f4f6fa;           /* pastillas de fuente */
+  --pvia-ink: #0b1c30;
+  --pvia-slate: #33475f;
+  --pvia-muted: #7a879b;
+  --pvia-green: #0f8a5f;
+  --pvia-red: #c62828;
+  --pvia-navy: #0b1c30;           /* marca, avatar y burbuja propia */
+  --pvia-bullet: #0b1c30;
+  --pvia-chip-hi: #0b1c30;
+  --pvia-send: #0b1c30;
+  --pvia-send-ink: #fff;
+  --pvia-send-hi: #1d3252;
+  --pvia-dot-1: #9aa6b8;
+  --pvia-dot-2: #b3bdcb;
+  --pvia-dot-3: #ccd4df;
+  --pvia-scroll: #c3ccd9;
+  --pvia-ease: cubic-bezier(.22,1,.36,1);
+  --pvia-col: 772px;              /* ancho máximo del contenido */
+  --pvia-gut: 64px;               /* margen lateral mínimo (iPad) */
+  display: flex;
+  flex-direction: column;
+  background: var(--pvia-bg) !important;
+  color: var(--pvia-ink);
+  font-family: var(--font) !important;
+  -webkit-font-smoothing: antialiased;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-page button,
+html body #tab-aianalyst #aiChatLockWrap .pvia-page textarea { font-family: inherit; }
+
+/* ── Cabecera navy: «Tu analista» / Portiv IA y la pastilla «En línea» ──
+   En iPad y celular es lo primero de la pantalla (body.chat-active esconde la barra de marca),
+   así que su padding de arriba lleva el safe-area de la barra de estado; el mínimo cubre los
+   iPad que reportan safe-area-inset-top = 0. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-hero {
+  flex-shrink: 0;
+  display: flex; align-items: flex-end; justify-content: space-between; gap: 16px;
+  margin: 0;
+  padding: max(28px, calc(env(safe-area-inset-top, 0px) + 16px)) 28px 26px;
+  background: var(--pvia-hero);
+  color: #fff;
+  border: 0;
+  border-radius: 0 0 36px 36px;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-hero-txt { min-width: 0; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-eyebrow { margin: 0 0 3px; font-size: 13px; font-weight: 700; line-height: normal; color: rgba(255,255,255,.55); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-title { margin: 0; font-family: inherit; font-size: 28px; font-weight: 800; letter-spacing: -.03em; line-height: 1.1; color: #fff; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-live {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; line-height: normal; color: #fff; white-space: nowrap;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-live i { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; background: #34d399; }
+
+/* ── Bajo la cabecera: una columna centrada ──
+   El hilo ocupa TODO el ancho (la rueda del ratón y la barra de scroll funcionan en toda la
+   pantalla, no sólo sobre la columna) y centra su contenido con el padding; lo demás mide
+   la columna. `order` coloca las piezas: en iPad y celular las preguntas van ANTES que el
+   compositor; en computadora, después (que es el orden del marcado y el de tabulación). */
+html body #tab-aianalyst #aiChatLockWrap .pvia-main {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 0 0 16px;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-main > * {
+  flex-shrink: 0;
+  width: min(var(--pvia-col), calc(100% - 2 * var(--pvia-gut)));
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-main > .pvia-thread {
+  order: 0;
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 22px max(var(--pvia-gut), calc((100% - var(--pvia-col)) / 2)) 0;
+  scrollbar-width: thin; scrollbar-color: var(--pvia-scroll) transparent;
+}
+
+/* ── Estados: sin mensajes (bienvenida) / en conversación (hilo) ── */
+html body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-thread { display: none; }
+html body #tab-aianalyst #aiChatLockWrap > .pvia-page:not(.pvia-empty) .pvia-hello,
+html body #tab-aianalyst #aiChatLockWrap > .pvia-page:not(.pvia-empty) .pvia-chips { display: none; }
+/* Si la bienvenida no cabe (pantalla muy baja) se desplaza en vez de recortarse. */
+html body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main { overflow-y: auto; }
+
+/* ── Bienvenida: marca, saludo y qué se le puede preguntar ──
+   margin-top:auto aquí y margin-bottom:auto en las preguntas: el grupo queda centrado en el
+   hueco que deja el compositor. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-hello {
+  order: 1; margin-top: auto;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-mark {
+  display: grid; place-items: center; width: 56px; height: 56px; margin: 0 0 20px;
+  border-radius: 18px; background: var(--pvia-navy); color: #fff;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-mark svg { display: block; width: 26px; height: 26px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-hello h2 { margin: 0; font-family: inherit; font-size: 28px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; color: var(--pvia-ink); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-hello p { margin: 10px 0 0; max-width: 44ch; font-size: 16px; font-weight: 400; line-height: 1.6; color: var(--pvia-slate); }
+
+/* ── Preguntas rápidas ── */
+html body #tab-aianalyst #aiChatLockWrap .pvia-chips {
+  order: 2; margin: 26px 0 auto;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-chip {
+  -webkit-appearance: none; appearance: none;
+  margin: 0; padding: 10px 16px;
+  background: var(--pvia-card); border: 1px solid var(--pvia-line); border-radius: 999px; box-shadow: none;
+  font-size: 14px; font-weight: 700; line-height: normal; color: var(--pvia-ink);
+  white-space: nowrap; cursor: pointer;
+  transition: border-color .22s var(--pvia-ease);
+}
+
+/* ── Compositor: el textarea se autoajusta (oninput del marcado, tope 120 px). 16 px de
+   letra siempre: por debajo, iOS amplía la página al enfocar (ver ANTI-ZOOM). ── */
+html body #tab-aianalyst #aiChatLockWrap .pvia-bar {
+  order: 3; margin: 12px 0 0;
+  display: flex; align-items: flex-end; gap: 10px;
+  padding: 7px 7px 7px 18px;
+  background: var(--pvia-card); border: 1px solid var(--pvia-line); border-radius: 22px;
+  transition: border-color .22s var(--pvia-ease);
+}
+html body #tab-aianalyst #aiChatLockWrap #aiChatInput {
+  flex: 1 1 auto; min-width: 0; display: block;
+  margin: 0; padding: 10px 0; max-height: 120px; resize: none;
+  border: 0; border-radius: 0; outline: 0; background: transparent; box-shadow: none;
+  font-size: 16px; font-weight: 500; line-height: 22px; color: var(--pvia-ink);
+}
+html body #tab-aianalyst #aiChatLockWrap #aiChatInput::placeholder { color: var(--pvia-muted); opacity: 1; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-send {
+  flex-shrink: 0; display: grid; place-items: center;
+  width: 42px; height: 42px; margin: 0; padding: 0;
+  border: 0; border-radius: 14px; background: var(--pvia-send); color: var(--pvia-send-ink); box-shadow: none;
+  cursor: pointer;
+  transition: background-color .22s var(--pvia-ease);
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-send svg { display: block; width: 18px; height: 18px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-send:disabled { opacity: .45; cursor: default; }
+
+/* ── Pie bajo el compositor ──
+   Gratis: «Te quedan N de 5 preguntas…» (texto de _chatFreeFootSync). Pro: el aviso de
+   «puede equivocarse», sólo en computadora (ver abajo); en iPad y celular, nada. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-foot {
+  order: 4; margin: 8px 0 0;
+  font-size: 12px; font-weight: 600; line-height: normal; color: var(--pvia-muted); text-align: center;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-foot b { font-weight: 800; color: var(--pvia-ink); }
+html:not(.pv-free) body #tab-aianalyst #aiChatLockWrap .pvia-foot-free,
+html.pv-free body #tab-aianalyst #aiChatLockWrap .pvia-foot-pro,
+html:not(.pv-free) body #tab-aianalyst #aiChatLockWrap .pvia-foot { display: none; }
+html body #tab-aianalyst #aiChatLockWrap .ai-token-badge { order: 5; }
+
+/* ── Mensajes ── */
+html body #tab-aianalyst #aiChatLockWrap .pvia-msg + .pvia-msg { margin-top: 22px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-meta { margin: 0 0 7px; font-size: 12.5px; font-weight: 600; line-height: normal; color: var(--pvia-muted); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-meta b { margin-right: 7px; font-weight: 800; color: var(--pvia-ink); }
+/* Tuyo: burbuja navy a la derecha, con la hora encima. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-me { display: flex; justify-content: flex-end; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-me > div { min-width: 0; display: flex; flex-direction: column; align-items: flex-end; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-ub {
+  max-width: 560px; padding: 12px 16px;
+  background: var(--pvia-navy); color: #fff; border-radius: 22px 22px 6px 22px;
+  font-size: 15px; font-weight: 600; line-height: 1.45;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* Portiv IA: avatar con el destello, «Portiv IA · hora» encima y una tarjeta sin sombra. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-ai { display: flex; align-items: flex-start; gap: 12px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-av {
+  flex-shrink: 0; display: grid; place-items: center; width: 28px; height: 28px;
+  border-radius: 9px; background: var(--pvia-navy); color: #fff;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-av svg { display: block; width: 15px; height: 15px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-body { flex: 1; min-width: 0; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card {
+  padding: 15px 17px;
+  background: var(--pvia-card); border: 1px solid var(--pvia-line); border-radius: 6px 22px 22px 22px; box-shadow: none;
+  font-size: 15px; line-height: 1.62; color: var(--pvia-slate); overflow-wrap: anywhere;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-card p { margin: 0; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card p + p { margin-top: 10px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card strong { font-weight: 800; color: var(--pvia-ink); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card strong.up { color: var(--pvia-green); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card strong.dn { color: var(--pvia-red); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card a:not(.pvia-sp) { color: var(--pvia-ink); text-decoration: underline; text-underline-offset: 2px; }
+/* Listas: _chatMarkdown envuelve CADA viñeta en su propio <ul>, así que el aire de la lista
+   va entre bloques (párrafo→lista, lista→párrafo) y no dentro de cada ul. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-card ul { list-style: none; margin: 0; padding: 0; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card p + ul { margin-top: 10px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card ul + p { margin-top: 12px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card li { position: relative; margin: 0; padding: 6px 0 6px 17px; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card li::before {
+  content: ""; position: absolute; left: 1px; top: calc(6px + .62em);
+  width: 6px; height: 6px; border-radius: 50%; background: var(--pvia-bullet);
+}
+/* Botón «Ver Portiv Pro» del aviso de cuota agotada (aiChatSend lo cuelga de .pvia-card). */
+html body #tab-aianalyst #aiChatLockWrap .pvia-card .chat-lim-cta { font-family: inherit; }
+/* Fuentes: pastillas al pie de la tarjeta. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-srcs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--pvia-line);
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-srcs small { margin-right: 4px; font-size: 12px; font-weight: 700; color: var(--pvia-muted); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-sp {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 3px; border-radius: 999px; background: var(--pvia-wash);
+  font-size: 12.5px; font-weight: 700; line-height: 21px; color: var(--pvia-ink); text-decoration: none;
+  transition: background-color .22s var(--pvia-ease);
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-sp i {
+  display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%;
+  font-size: 10px; font-style: normal; font-weight: 800; line-height: 1; color: #fff;
+}
+
+/* ── Escribiendo…: tres puntos en una pastilla con borde. Sólo rebotan (transform), sin
+   fundidos. Va dentro del hilo, al final (ver _aiChatAddMsg). ── */
+html body #tab-aianalyst #aiChatLockWrap #aiChatTyping { display: none; }
+html body #tab-aianalyst #aiChatLockWrap #aiChatTyping.show { display: flex; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-typing {
+  display: inline-flex; gap: 5px; padding: 14px 17px;
+  background: var(--pvia-card); border: 1px solid var(--pvia-line); border-radius: 6px 22px 22px 22px;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-typing i {
+  display: block; width: 7px; height: 7px; border-radius: 50%; background: var(--pvia-dot-1);
+  animation: pviaBounce 1.2s ease-in-out infinite;
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-typing i:nth-child(2) { background: var(--pvia-dot-2); animation-delay: .15s; }
+html body #tab-aianalyst #aiChatLockWrap .pvia-typing i:nth-child(3) { background: var(--pvia-dot-3); animation-delay: .3s; }
+@keyframes pviaBounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
+
+/* ── Hover (sólo con ratón o trackpad: en táctil se quedaría pegado tras el toque) ── */
+@media (hover: hover) {
+  html body #tab-aianalyst #aiChatLockWrap .pvia-chip:hover { border-color: var(--pvia-chip-hi); }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-bar:hover { border-color: var(--pvia-line-hi); }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-send:hover:not(:disabled) { background: var(--pvia-send-hi); }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-sp:hover { background: var(--pvia-line); }
+}
+html body #tab-aianalyst #aiChatLockWrap .pvia-bar:focus-within { border-color: var(--pvia-line-focus); }
+
+/* ── Teclado virtual abierto (body.pv-kb-open, lo pone el script del teclado): sobre el
+   teclado sólo queda el compositor. Las preguntas y el pie robaban alto al hilo. ── */
+html body.pv-kb-open #tab-aianalyst #aiChatLockWrap #aiChatSuggestions,
+html body.pv-kb-open #tab-aianalyst #aiChatLockWrap .pvia-foot { display: none !important; }
+
+/* ═══ Computadora (≥900 px, sin pv-ipad) ═══════════════════════════════════════════════ */
+@media (min-width: 900px) {
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-page { --pvia-gut: 24px; }
+  /* La cabecera sigue a la barra superior (también navy) y se alinea con su marca. */
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-hero { padding: 20px var(--pvd-pad, 32px) 30px; border-radius: 0 0 40px 40px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-eyebrow { margin-bottom: 4px; font-size: 13.5px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-title { font-size: 32px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-live { padding: 8px 14px; font-size: 13.5px; }
+
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-main { padding-bottom: 22px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-main > .pvia-thread { padding-top: 34px; padding-bottom: 18px; }
+
+  /* Al abrir, todo el grupo (bienvenida, compositor, preguntas) centrado en el alto, con
+     40 px de más abajo, que lo sube un poco. Espaciadores y no justify-content:center: si
+     la ventana es muy baja, el grupo se desplaza en vez de quedar cortado por arriba. */
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main { padding-bottom: 40px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main::before,
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main::after { content: ""; flex: 1 1 0; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main::before { order: 0; min-height: 24px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-main::after { order: 9; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-hello { margin-top: 0; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-mark { width: 60px; height: 60px; margin-bottom: 22px; border-radius: 19px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-hello h2 { font-size: 32px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-hello p { margin: 10px 0 30px; max-width: 48ch; font-size: 16.5px; }
+  /* Compositor y, DEBAJO, las preguntas. */
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-bar { order: 2; margin-top: 6px; padding: 10px 10px 10px 22px; border-radius: 24px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-bar { margin-top: 0; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-chips { order: 3; margin: 16px 0 0; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap #aiChatInput { padding: 12px 0; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-send { width: 46px; height: 46px; border-radius: 15px; }
+
+  /* Pie: Pro ve el aviso de «puede equivocarse» en la conversación (no en la bienvenida);
+     el gratuito, su contador, que en la bienvenida va bajo las preguntas. */
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-foot { margin-top: 10px; font-size: 12.5px; }
+  html:not(.pv-ipad):not(.pv-free) body #tab-aianalyst #aiChatLockWrap .pvia-foot { display: block; }
+  html:not(.pv-ipad):not(.pv-free) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-foot { display: none; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-foot { margin-top: 18px; }
+
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-meta { font-size: 13px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-ub { padding: 12px 18px; font-size: 15.5px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-av { width: 32px; height: 32px; border-radius: 10px; }
+  html:not(.pv-ipad) body #tab-aianalyst #aiChatLockWrap .pvia-card { padding: 18px 22px; font-size: 15.5px; line-height: 1.68; }
+}
+
+/* ═══ Celular (≤700 px; también un iPad en Split View estrecho) ═════════════════════════ */
+@media (max-width: 700px) {
+  html body #tab-aianalyst #aiChatLockWrap > .pvia-page { --pvia-gut: 16px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-hero { padding: calc(env(safe-area-inset-top, 0px) + 14px) 16px 22px; border-radius: 0 0 30px 30px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-eyebrow { font-size: 12.5px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-title { font-size: 25px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-main { padding-bottom: 12px; }
+
+  /* Al abrir: la bienvenida centrada en el hueco libre y, abajo, al alcance del pulgar, las
+     preguntas apiladas a todo el ancho justo encima del compositor. */
+  html body #tab-aianalyst #aiChatLockWrap .pvia-hello { margin-top: auto; margin-bottom: auto; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-mark { width: 50px; height: 50px; margin-bottom: 16px; border-radius: 16px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-mark svg { width: 23px; height: 23px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-hello h2 { font-size: 24px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-hello p { margin-top: 8px; max-width: 30ch; font-size: 15px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-chips { flex-direction: column; align-items: stretch; margin: 16px 0 12px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-chip { padding: 13px 16px; border-radius: 18px; font-size: 14.5px; text-align: left; white-space: normal; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-bar { margin-top: 10px; }
+  html body #tab-aianalyst #aiChatLockWrap > .pvia-empty .pvia-bar { margin-top: 0; }
+
+  html body #tab-aianalyst #aiChatLockWrap .pvia-ai { gap: 10px; }
+  html body #tab-aianalyst #aiChatLockWrap .pvia-ub { max-width: 300px; }
+}
+
+/* ═══ Navegador estrecho (761–899 px, sin pv-ipad): el chat a pantalla completa, como en
+   el celular. En este tramo la barra de arriba es .dash-topbar-mobile, que en el chat no se
+   escondía: empujaba la página 58 px hacia abajo y el compositor quedaba DEBAJO de la barra
+   de pestañas (ya pasaba antes del rediseño). Mismo alto que la regla del celular
+   (body.chat-active .ai-chat-page). ═══ */
+@media (min-width: 761px) and (max-width: 899px) {
+  html:not(.pv-ipad) body.chat-active .dash-topbar-mobile,
+  html:not(.pv-ipad) body.chat-active .m-topbar { display: none !important; }
+  html:not(.pv-ipad) body.chat-active #tab-aianalyst { padding: 0 !important; }
+  html:not(.pv-ipad) body.chat-active #tab-aianalyst .ai-chat-page { height: calc(100dvh - (64px + env(safe-area-inset-bottom, 0px))) !important; }
+}
+
+/* ═══ Tema oscuro: superficies oscuras, bordes finos y texto claro (como pvPosicionCss y
+   pvSemanaCss). La cabecera sigue navy. ═══════════════════════════════════════════════ */
+html body.dark-theme #tab-aianalyst #aiChatLockWrap > .pvia-page {
+  --pvia-bg: var(--bg, #0b111c);
+  --pvia-card: var(--surface, #0f1623);
+  --pvia-line: rgba(255,255,255,.08);
+  --pvia-line-hi: rgba(255,255,255,.16);
+  --pvia-line-focus: rgba(255,255,255,.26);
+  --pvia-wash: rgba(255,255,255,.06);
+  --pvia-ink: #e8edf7;
+  --pvia-slate: #aab4c2;
+  --pvia-muted: #8a96a3;
+  --pvia-green: #4ade80;
+  --pvia-red: #f87171;
+  --pvia-navy: #1d3252;
+  --pvia-bullet: #8fa3bf;
+  --pvia-chip-hi: rgba(232,237,247,.45);
+  --pvia-send: #e8edf7;
+  --pvia-send-ink: #0b1c30;
+  --pvia-send-hi: #fff;
+  --pvia-dot-1: #7d8a9e;
+  --pvia-dot-2: #627085;
+  --pvia-dot-3: #4b576a;
+  --pvia-scroll: rgba(255,255,255,.18);
+}
+/* Los medios de color oscuro (Bloomberg #1A1A2E) se perdían sobre la pastilla oscura. */
+html body.dark-theme #tab-aianalyst #aiChatLockWrap .pvia-sp i { outline: 1px solid rgba(255,255,255,.16); outline-offset: -1px; }
+
+/* ═══ Movimiento reducido: los puntos quietos ═══ */
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-aianalyst #aiChatLockWrap .pvia-typing i { animation: none; }
 }
 </style>
 </body>
