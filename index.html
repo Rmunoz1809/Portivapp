@@ -5276,7 +5276,7 @@ window._pvAwaitIAP = function(totalMs){
     <!-- 4 métricas destacadas -->
     <div class="ra-metrics4">
       <div class="ra-mcard"><div class="ra-mlabel" id="rfl-mktcap">Capitalización</div><div class="ra-mval" id="rf-mktcap">—</div></div>
-      <div class="ra-mcard"><div class="ra-mlabel" id="rfl-pe">PER (12 meses)</div><div class="ra-mval" id="rf-pe">—</div></div>
+      <div class="ra-mcard"><div class="ra-mlabel" id="rfl-pe">PE (12 meses)</div><div class="ra-mval" id="rf-pe">—</div></div>
       <div class="ra-mcard"><div class="ra-mlabel" id="rfl-divy">Rentabilidad por dividendo</div><div class="ra-mval" id="rf-divy">—</div></div>
       <div class="ra-mcard"><div class="ra-mlabel" id="rfl-range">Rango de 52 semanas</div><div class="ra-mval ra-mval-sm" id="rf-range">—</div></div>
       <!-- Objetivo de consenso de los analistas (antes, bloque aparte #r-rec-block). Sin dato, oculto. -->
@@ -8330,9 +8330,9 @@ const _CAT = {
   volatilidad:      { campo:'3MonthADReturnStd',  dir:-1, lbl:'Volatilidad (3 meses)' },
 
   // ── Valoración ──
-  peAdelantado:     { campo:'forwardPE',          dir:-1, lbl:'P/E adelantado' },
-  peTTM:            { campo:'peTTM',              dir:-1, lbl:'P/E' },
-  peNormalizado:    { campo:'peNormalizedAnnual', dir:-1, lbl:'P/E normalizado' },
+  peAdelantado:     { campo:'forwardPE',          dir:-1, lbl:'PE adelantado' },
+  peTTM:            { campo:'peTTM',              dir:-1, lbl:'PE' },
+  peNormalizado:    { campo:'peNormalizedAnnual', dir:-1, lbl:'PE normalizado' },
   peg:              { campo:'pegTTM',             dir:-1, lbl:'PEG' },
   evEbitda:         { campo:'evEbitdaTTM',        dir:-1, lbl:'EV / EBITDA' },
   evIngresos:       { campo:'evRevenueTTM',       dir:-1, lbl:'EV / Ingresos' },
@@ -9351,7 +9351,7 @@ const _LEE = {
   pb:{ bien:'cotiza con descuento sobre su valor contable frente al sector', mal:'paga prima sobre valor contable frente al sector' },
   ptbv:{ bien:'cotiza más barata sobre valor tangible que sus pares, que es la vara con la que se compra un banco',
          mal:'paga prima sobre valor tangible frente a la banca mediana: hay que creerse que ese retorno superior se mantiene para justificarla' },
-  pFlujoCaja:{ bien:'barata sobre el flujo que de verdad genera (la vara correcta aquí, no el P/E)', mal:'cara sobre el flujo que genera' },
+  pFlujoCaja:{ bien:'barata sobre el flujo que de verdad genera (la vara correcta aquí, no el PE)', mal:'cara sobre el flujo que genera' },
   pFcf:{ bien:'barata sobre caja libre', mal:'cara sobre caja libre' },
   dividendo:{ bien:'renta por dividendo por encima del sector', mal:'renta por dividendo por debajo del sector: se compra por otra cosa' },
 
@@ -20177,8 +20177,8 @@ const _PVA_GLOSARIO = [
   [/\btodo el stack\b/gi, 'todos sus productos'], [/\bel stack\b/gi, 'el conjunto de productos'], [/\bstack\b/gi, 'conjunto de productos'],
   [/\bplugins?\b/gi, 'complementos'], [/\bprosumer\b/gi, 'semiprofesional'], [/\benterprise\b/gi, 'grandes empresas'],
   [/\bgenerative credits\b/gi, 'créditos de IA generativa'], [/\brevenue\b/gi, 'ingresos'],
-  [/\bp\/e fwd\b/gi, 'PER adelantado'], [/\bp\/e adelantado\b/gi, 'PER adelantado'], [/\bp\/e normalizado\b/gi, 'PER normalizado'],
-  [/\bp\/e\b/gi, 'PER'], [/\bev ?\/ ?ebitda\b/gi, 'EV/EBITDA'], [/\bev ?\/ ?ingresos\b/gi, 'EV/ingresos'],
+  [/\bp\/e (?:ttm\b|\(trailing\))/gi, 'PE (12 meses)'], [/\b(?:p\/e (?:fwd\b|forward\b|adelantado\b|\(forward\))|forward p\/e\b)/gi, 'PE adelantado'], [/\bp\/e normalizado\b/gi, 'PE normalizado'],
+  [/\bp\/e\b/gi, 'PE'], [/\bPER\b(?![A-Za-zÁÉÍÓÚÑáéíóúñ])/g, 'PE'], [/\bev ?\/ ?ebitda\b/gi, 'EV/EBITDA'], [/\bev ?\/ ?ingresos\b/gi, 'EV/ingresos'],
   [/\bev ?\/ ?flujo de caja libre\b/gi, 'EV/flujo de caja libre'], [/\bpeg\b/g, 'PEG'],
 ];
 function _pvaEs(t){
@@ -20190,10 +20190,10 @@ function _pvaEs(t){
   });
   return s;
 }
-// Etiquetas de métricas del catálogo sectorial, en la tabla de valoración: PER en vez de P/E y
+// Etiquetas de métricas del catálogo sectorial, en la tabla de valoración: PE (no PER ni P/E) y
 // sentence case en los cocientes («Precio / Valor contable» → «Precio / valor contable»).
 function _pvaLbl(l){
-  return _pvaEs(String(l || '')).replace(/^PER$/, 'PER (12 meses)')
+  return _pvaEs(String(l || '')).replace(/^PE$/, 'PE (12 meses)')
     .replace(/\s\/\s([A-ZÁÉÍÓÚ])([a-záéíóúñ])/g, (m, a, b) => ' / ' + a.toLowerCase() + b);
 }
 
@@ -26349,8 +26349,8 @@ function _pvFinancialsReported(ticker){
 
 // ── Pintado de la tarjeta #r-fscore en la ficha ────────────────────────────
 // Asíncrona e idempotente por ticker: el contenedor guarda data-ticker y el
-// resultado se descarta si el usuario ya cambió de ficha. Paleta neutra: los
-// ✓/✗/— y las zonas no son datos financieros, así que no llevan verde/rojo.
+// resultado se descarta si el usuario ya cambió de ficha. Rediseño (oct-2026): dos paneles,
+// ✓ en verde y ✗ en rojo, y la Z sobre su escala de zonas (rojo < 1.81 < ámbar < 2.99 < verde).
 // TODO gate: sin entitlement por ahora; si se restringe, envolver aquí.
 const _pvNum2 = v => (typeof v === 'number' && isFinite(v)) ? v.toFixed(2).replace('.', ',') : 'No disponible';
 function _pvPaintFScore(ticker, info){
@@ -26381,32 +26381,56 @@ function _pvPaintFScore(ticker, info){
     const { t, t1 } = res;
     const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
     let h = head;
+    const n2 = v => (typeof v === 'number' && isFinite(v)) ? v.toFixed(2) : null;
+    const ICO = {
+      ok: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.6 8.4l2.9 2.9 5.9-6.6"/></svg>',
+      ko: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 4.6l6.8 6.8M11.4 4.6l-6.8 6.8"/></svg>',
+      nd: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 8h7"/></svg>'
+    };
+    const est = x => x === true ? 'ok' : x === false ? 'ko' : 'nd';
 
-    // Piotroski
+    // Piotroski: nota grande con pastilla, 9 tramos (cumplidas en verde, fallidas en rojo,
+    // sin datos en gris) y la lista de pruebas.
     const f = computePiotroski(t, t1 || {});
-    const sinDatos = 9 - f.validas;
-    h += '<div class="pvt-row"><div class="pvt-dir">Piotroski F-Score</div>' +
-         '<div class="pvt-line"><strong>' + f.total + '/9</strong>' + (sinDatos ? ' · ' + sinDatos + (sinDatos === 1 ? ' prueba sin datos' : ' pruebas sin datos') : '') + '</div>' +
-         '<div class="pvf-tests">' +
-         f.tests.map(x => '<div class="pvf-test"><span class="pvf-mark">' + (x.ok === true ? '✓' : x.ok === false ? '✗' : '—') + '</span><span>' + esc(x.texto) + (x.ok === null ? ' <em class="pvf-nd">(No disponible)</em>' : '') + '</span></div>').join('') +
-         '</div></div>';
+    const fallidas = f.validas - f.total, sinDatos = 9 - f.validas;
+    const fNiv = f.total >= 7 ? ['g', 'Alta'] : f.total >= 4 ? ['a', 'Media'] : ['r', 'Baja'];
+    const pio = '<div class="pvsc-panel">' +
+      '<div class="pvsc-k">Piotroski F-Score</div>' +
+      '<div class="pvsc-top"><div class="pvsc-big">' + f.total + '<small>/9</small></div>' +
+        (f.validas ? '<em class="pvsc-pill ' + fNiv[0] + '">' + fNiv[1] + '</em>' : '') + '</div>' +
+      '<div class="pvsc-seg" aria-hidden="true">' + '<i class="ok"></i>'.repeat(f.total) + '<i class="ko"></i>'.repeat(fallidas) + '<i></i>'.repeat(sinDatos) + '</div>' +
+      '<p class="pvsc-sub">' + (f.validas ? f.total + ' de ' + f.validas + ' pruebas cumplidas' + (sinDatos ? ' · ' + sinDatos + ' sin datos' : '') : 'Sin datos suficientes') + '</p>' +
+      '<ul class="pvsc-list">' + f.tests.map(x => '<li><span class="pvsc-ic ' + est(x.ok) + '">' + ICO[est(x.ok)] + '</span><span>' +
+        esc(x.texto) + (x.ok === null ? ' <em>Sin datos</em>' : '') + '</span></li>').join('') + '</ul>' +
+      '</div>';
 
-    // Altman
-    h += '<div class="pvt-row"><div class="pvt-dir">Altman Z-Score</div>';
+    // Altman: valor con pastilla, escala de zonas con el punto de la empresa y los cinco cocientes.
+    let alt = '<div class="pvsc-panel"><div class="pvsc-k">Altman Z-Score</div>';
     if (perfilId && ALTMAN_PERFILES_EXCLUIDOS.indexOf(perfilId) >= 0) {
-      h += '<div class="pvt-line">No aplica en este sector</div>';
+      alt += '<div class="pvsc-na">No aplica en este sector</div>' +
+             '<p class="pvsc-sub">La fórmula se calibró con empresas industriales; los balances de bancos, aseguradoras y REIT no encajan en ella.</p>';
     } else {
       const z = computeAltmanZ(t, mcap);
-      h += '<div class="pvt-line">' + (z.z != null ? '<strong>' + _pvNum2(z.z) + '</strong> · ' + esc(z.zona) : 'No disponible' + (z.motivo ? ' <em class="pvf-nd">(' + esc(z.motivo) + ')</em>' : '')) + '</div>' +
-           '<div class="pvf-tests">' +
-           z.componentes.map(c => '<div class="pvf-test pvf-comp"><span>' + esc(c.nombre) + '</span><span class="pvf-val">' + _pvNum2(c.valor) + '</span></div>').join('') +
-           '</div>';
+      if (z.z != null) {
+        const zNiv = z.z > 2.99 ? ['g', 'Menor tensión'] : z.z < 1.81 ? ['r', 'Mayor tensión'] : ['a', 'Zona intermedia'];
+        const TOPE = 6, pct = v => (Math.max(0, Math.min(v, TOPE)) / TOPE * 100).toFixed(2) + '%';
+        alt += '<div class="pvsc-top"><div class="pvsc-big">' + n2(z.z) + '</div><em class="pvsc-pill ' + zNiv[0] + '">' + zNiv[1] + '</em></div>' +
+               '<div class="pvsc-zbar" aria-hidden="true"><i class="r" style="width:' + pct(1.81) + '"></i><i class="a" style="width:' + pct(2.99 - 1.81) + '"></i><i class="g"></i>' +
+               '<b style="left:' + pct(z.z) + '"></b></div>' +
+               '<div class="pvsc-zl" aria-hidden="true"><span style="left:' + pct(1.81) + '">1.81</span><span style="left:' + pct(2.99) + '">2.99</span></div>' +
+               '<p class="pvsc-sub">' + esc(String(z.zona || '').replace(/(\d),(\d)/g, '$1.$2')) + '</p>';
+      } else {
+        alt += '<div class="pvsc-na">No disponible</div>' + (z.motivo ? '<p class="pvsc-sub">' + esc(z.motivo) + '</p>' : '');
+      }
+      alt += '<div class="pvsc-rows">' + z.componentes.map(c => '<div class="pvsc-row"><span>' + esc(c.nombre) + '</span>' +
+             (n2(c.valor) != null ? '<b>' + n2(c.valor) + '</b>' : '<em>Sin dato</em>') + '</div>').join('') + '</div>';
     }
-    h += '</div>';
+    alt += '</div>';
+    h += '<div class="pvsc-grid">' + pio + alt + '</div>';
 
     const yT = t.year || (t.endDate || '').slice(0, 4), yP = t1 ? (t1.year || (t1.endDate || '').slice(0, 4)) : null;
-    h += '<div class="pvt-note" style="font-style:normal;margin-top:10px">Calculado con los estados anuales reportados a la SEC (formulario 10-K) de los ejercicios ' +
-         (yP ? esc(yP) + ' y ' : '') + esc(yT) + '. Sin ajustes ni estimaciones.</div>';
+    h += '<p class="pvsc-foot">Calculado con los estados anuales reportados a la SEC (formulario 10-K) de los ejercicios ' +
+         (yP ? esc(yP) + ' y ' : '') + esc(yT) + '. Sin ajustes ni estimaciones.</p>';
     el.innerHTML = h;
   }).catch(() => { if (el.dataset.ticker === tk) el.innerHTML = ''; });
 }
@@ -26753,9 +26777,9 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
     const _hiF  = info.fiftyTwoWeekHigh, _loF = info.fiftyTwoWeekLow;
     const _set  = (id,val)=>{ const el=document.getElementById(id); if(el) el.textContent=val; };
     const _etfP = _isEtfTicker(ticker, info) ? _etfProfile(ticker, info) : null;
-    // Un fondo no tiene capitalización ni PER propios: en su lugar, patrimonio y comisión.
+    // Un fondo no tiene capitalización ni PE propio: en su lugar, patrimonio y comisión.
     _set('rfl-mktcap', _etfP ? 'Patrimonio' : 'Capitalización');
-    _set('rfl-pe',     _etfP ? 'Comisión anual' : 'PER (12 meses)');
+    _set('rfl-pe',     _etfP ? 'Comisión anual' : 'PE (12 meses)');
     _set('rfl-divy',   _etfP ? 'Distribución' : 'Rentabilidad por dividendo');
     _set('rf-mktcap', _etfP ? (_etfP.aum || mcStr) : mcStr);
     _set('rf-pe', _etfP
@@ -26811,8 +26835,8 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   const nf = v => v!=null ? v.toFixed(2) : 'N/A';
 
   const mets = [
-    {l:'P/E TTM',       v: pe!=null?xf(pe):'N/A',    s: pe!=null?(pe<15?'Valor':pe<25?'Justo':pe<40?'Premium':'Extendido'):''},
-    {l:'Forward P/E',   v: fpe!=null?xf(fpe):'N/A',  s: pe&&fpe?(fpe<pe?'↓ Ganancias mejoran':'↑ Desaceleración'):''},
+    {l:'PE (12 meses)',       v: pe!=null?xf(pe):'N/A',    s: pe!=null?(pe<15?'Valor':pe<25?'Justo':pe<40?'Premium':'Extendido'):''},
+    {l:'PE adelantado',   v: fpe!=null?xf(fpe):'N/A',  s: pe&&fpe?(fpe<pe?'↓ Ganancias mejoran':'↑ Desaceleración'):''},
     {l:'ROE',           v: pf(roe),                   s: roe!=null?(roe>0.25?'Excepcional':roe>0.15?'Sólido':roe>0.08?'Moderado':'Bajo'):''},
     {l:'ROA',           v: pf(roa),                   s: roa!=null?(roa>0.12?'Excelente':roa>0.06?'Bueno':'Bajo'):''},
     {l:'ROIC',          v: roic!=null?pf(roic):'N/A', s: roic!=null?(roic>0.15?'Sobre WACC':roic>0.08?'Adecuado':'Bajo WACC'):''},
@@ -27462,8 +27486,8 @@ function _stockFactsForPrompt(ticker, info){
     const _sc = (typeof buildSectorAIContext === 'function') ? buildSectorAIContext(ticker, info) : '';
     if (_sc) { L.push('', _sc); return L.join('\n'); }
   } catch(e){}
-  add('P/E (trailing)', info.trailingPE != null ? (+info.trailingPE).toFixed(1) : null);
-  add('P/E (forward)', info.forwardPE != null ? (+info.forwardPE).toFixed(1) : null);
+  add('PE (12 meses)', info.trailingPE != null ? (+info.trailingPE).toFixed(1) : null);
+  add('PE adelantado', info.forwardPE != null ? (+info.forwardPE).toFixed(1) : null);
   add('PEG', info.pegRatio != null ? (+info.pegRatio).toFixed(2) : null);
   add('EV/EBITDA', info.enterpriseToEbitda != null ? (+info.enterpriseToEbitda).toFixed(1) : null);
   add('P/S', info.priceToSales != null ? (+info.priceToSales).toFixed(1) : null);
@@ -27539,17 +27563,17 @@ function _buildQualAnalysis(ticker, info){
     else if (peg < 2)   valLabel='Precio razonable';
     else if (peg < 3.5) valLabel='Algo cara';
     else                valLabel='Cara';
-    valText = `PEG ${peg.toFixed(2)}` + (fpe!=null?`, P/E fwd ${fpe.toFixed(1)}x`:'') + (evEb!=null?`, EV/EBITDA ${evEb.toFixed(1)}x`:'') + '. ';
+    valText = `PEG ${peg.toFixed(2)}` + (fpe!=null?`, PE adelantado ${fpe.toFixed(1)}x`:'') + (evEb!=null?`, EV/EBITDA ${evEb.toFixed(1)}x`:'') + '. ';
   } else if (pe != null){
     // Mismos cortes (15/25/40) que la lectura "barata / valuación justa / premium / exigente"
     // de la fila P/E de abajo: antes un P/E de 16x salía "Barata" arriba y "valuación
     // justa" en la tabla, en la misma tarjeta.
-    if (pe<=0)      valLabel='En pérdidas (sin P/E)';
+    if (pe<=0)      valLabel='En pérdidas (sin PE)';
     else if (pe<15) valLabel='Barata';
     else if (pe<25) valLabel='Precio razonable';
     else if (pe<40) valLabel='Algo cara';
     else            valLabel='Cara';
-    valText = (pe>0?`P/E ${pe.toFixed(1)}x`:'En pérdidas') + (fpe!=null?`, fwd ${fpe.toFixed(1)}x`:'') + '. ';
+    valText = (pe>0?`PE ${pe.toFixed(1)}x`:'En pérdidas') + (fpe!=null?`, adelantado ${fpe.toFixed(1)}x`:'') + '. ';
   } else { valLabel='Datos insuficientes'; valText=''; }
   if (tgt!=null && px){ const up=((tgt/px-1)*100); valText += `Consenso de ${numA||'—'} analistas: objetivo $${tgt.toFixed(2)} (${up>=0?'+':''}${up.toFixed(0)}%).`; }
 
@@ -27569,8 +27593,8 @@ function _buildQualAnalysis(ticker, info){
     cr:   cr==null?'' : cr>2?'muy líquida' : cr>1?'liquidez adecuada' : 'liquidez ajustada',
   };
   const datos=[
-    {l:'P/E TTM', v:(pe!=null&&pe>0)?xf(pe):'—', s:N.pe},
-    {l:'P/E Forward', v:xf(fpe), s:N.fpe},
+    {l:'PE (12 meses)', v:(pe!=null&&pe>0)?xf(pe):'—', s:N.pe},
+    {l:'PE adelantado', v:xf(fpe), s:N.fpe},
     {l:'PEG', v:nf(peg), s:N.peg},
     {l:'EV/EBITDA', v:xf(evEb), s:N.evEb},
     {l:'P/S', v:xf(ps), s:N.ps},
@@ -27596,7 +27620,7 @@ function _buildQualAnalysis(ticker, info){
     if (pm!=null && pm<0)       riesgos.push('Pérdidas netas: el negocio aún no es rentable');
     if (revG!=null && revG<0)   riesgos.push(`Ingresos en contracción (${(revG*100).toFixed(0)}%)`);
     if (peg!=null && peg>3.5)   riesgos.push('Valuación exigente (PEG alto): poco margen para decepcionar');
-    else if (pe!=null && pe>50) riesgos.push(`P/E ${pe.toFixed(0)}x: el precio descuenta crecimiento casi perfecto`);
+    else if (pe!=null && pe>50) riesgos.push(`PE ${pe.toFixed(0)}x: el precio descuenta crecimiento casi perfecto`);
     if (cr!=null && cr<1)       riesgos.push(`Liquidez ajustada (current ratio ${cr.toFixed(2)})`);
     if (!riesgos.length)        riesgos.push('Sin banderas cuantitativas claras con los datos disponibles');
   }
@@ -27895,7 +27919,7 @@ function _peerGapText(ticker, rows){
   const parts = [];
   const peM = median('pe');
   if (typeof self.pe==='number' && isFinite(self.pe) && self.pe>0 && peM!=null && peM>0){
-    parts.push(`cotiza a ${self.pe.toFixed(1)}x P/E, ${self.pe<peM?'más barata que':'con prima sobre'} la mediana de sus rivales (${peM.toFixed(1)}x)`);
+    parts.push(`cotiza a ${self.pe.toFixed(1)}x PE, ${self.pe<peM?'más barata que':'con prima sobre'} la mediana de sus rivales (${peM.toFixed(1)}x)`);
   }
   // Liderazgo SOLO con la métrica en positivo: ser el "mejor" margen neto de un grupo en
   // el que todos pierden dinero no es una fortaleza, y decirlo contradice la cifra
@@ -27930,7 +27954,7 @@ function _renderPeersInto(host, ticker, rows){
   }
   host.innerHTML = `<div class="px-card">${_pvxStitle('Comparación con competidores')}
     <div class="px-cmp-wrap"><table class="px-cmp">
-      <thead><tr><th>Empresa</th><th>PER</th><th>Crec. ingresos</th><th>Margen neto</th><th>ROE</th></tr></thead>
+      <thead><tr><th>Empresa</th><th>PE</th><th>Crec. ingresos</th><th>Margen neto</th><th>ROE</th></tr></thead>
       <tbody>${rows.map(r=>`<tr class="${r.self?'self':''}"><td class="tk">${esc(r.ticker)}</td><td>${fx(r.pe)}</td><td>${fp(r.revG)}</td><td>${fp(r.netM)}</td><td>${fp(r.roe)}</td></tr>`).join('')}</tbody>
     </table></div>
     ${_posBlock}
@@ -28020,7 +28044,7 @@ function _pvxFairValue(info){
   if (eps > 0 && g != null && g > 0){
     const fpe = Math.min(35, Math.max(10, g * 100));
     add('Múltiplo justo por crecimiento', eps * fpe,
-        `El P/E de ${fpe.toFixed(0)}x que le corresponde a una empresa que crece ${pct(g)} al año.`);
+        `El PE de ${fpe.toFixed(0)}x que le corresponde a una empresa que crece ${pct(g)} al año.`);
   }
   // 4) Valor en libros justificado: P/B = (ROE − g) / (r − g). Cuanto más rinde el
   //    patrimonio, más caro se justifica pagarlo.
@@ -28033,7 +28057,7 @@ function _pvxFairValue(info){
   if (ps > 0 && pm != null && pm > 0){
     const fps = pm * 20;
     add('Múltiplo de ventas de referencia', px * (fps / ps),
-        `Su margen neto del ${pct(pm)} a un P/E de mercado de 20x son ${fps.toFixed(1)}x ventas; cotiza a ${ps.toFixed(1)}x.`);
+        `Su margen neto del ${pct(pm)} a un PE de mercado de 20x son ${fps.toFixed(1)}x ventas; cotiza a ${ps.toFixed(1)}x.`);
   }
   // 6) EV/EBITDA de referencia: 10x de base, hasta 20x si crece de verdad.
   if (evEb > 0){
@@ -28629,7 +28653,7 @@ function _pvxKpPeers(ticker, metric){
   try {
     if (!metric || typeof _peersRowsGet !== 'function') return '';
     const M = { roe:{l:'Retorno sobre el patrimonio (ROE)', u:'%'}, netM:{l:'Margen neto', u:'%'},
-                revG:{l:'Crecimiento de ingresos', u:'%'},        pe:{l:'Múltiplo P/E', u:'x'} }[metric];
+                revG:{l:'Crecimiento de ingresos', u:'%'},        pe:{l:'Múltiplo PE', u:'x'} }[metric];
     if (!M) return '';
     const rows = _peersRowsGet(ticker);
     if (!Array.isArray(rows) || rows.length < 2) return '';
@@ -29163,7 +29187,7 @@ function _renderQualAnalysis(a, el){
     if (rg.quarters && rg.quarters.length){
       const maxA = Math.max.apply(null, rg.quarters.map(q=>Math.abs(q.actual)).concat([0.01]));
       barras = `<div class="px-eps"><div class="px-eps-h">EPS por trimestre</div>
-        <div class="px-eps-b">${rg.quarters.map(q=>`<div class="px-eps-c${q.est?' est':''}"><b>$${q.actual.toFixed(2)}</b><i style="--h:${Math.max(.06, Math.abs(q.actual)/maxA).toFixed(3)}"></i></div>`).join('')}</div>
+        <div class="px-eps-b">${rg.quarters.map(q=>`<div class="px-eps-c${q.est?' est':(q.beat?' g':' r')}"><b>$${q.actual.toFixed(2)}</b><i style="--h:${Math.max(.06, Math.abs(q.actual)/maxA).toFixed(3)}"></i></div>`).join('')}</div>
         <div class="px-eps-l">${rg.quarters.map(q=>`<div><span>${esc(q.label)}${q.y?` '${String(q.y).slice(-2)}`:''}</span>${q.est ? '<em class="px-lp n">Previsión</em>' : (q.beat ? '<em class="px-lp g">Superó</em>' : '<em class="px-lp r">Falló</em>')}</div>`).join('')}</div></div>`;
     }
     // Sin trimestres ni cifras de crecimiento, no hay tarjeta.
@@ -44020,7 +44044,7 @@ document.addEventListener('DOMContentLoaded', function(){
       </div>
       <div class="pvs-kg" style="margin-top:8px">
         <div class="pvs-k"><div class="pvs-k-l">Market Cap</div><div class="pvs-k-v">$4.90T</div></div>
-        <div class="pvs-k"><div class="pvs-k-l">P/E Ratio (TTM)</div><div class="pvs-k-v">39.9</div></div>
+        <div class="pvs-k"><div class="pvs-k-l">PE (12 meses)</div><div class="pvs-k-v">39.9</div></div>
         <div class="pvs-k"><div class="pvs-k-l">Dividend Yield</div><div class="pvs-k-v">0.32%</div></div>
         <div class="pvs-k"><div class="pvs-k-l">52W Range</div><div class="pvs-k-v" style="font-size:13px;line-height:1.25">$201.50 –<br>$344.57</div></div>
       </div>
@@ -44058,8 +44082,8 @@ document.addEventListener('DOMContentLoaded', function(){
       <div class="pvs-c">
         <div class="pvs-sect"><span class="pvs-sect-t">Datos financieros</span><span class="pvs-sect-s" style="color:#a9791f;border-color:#ecdcbe">5.9<small>/10</small></span></div>
         <div style="margin-top:8px">
-          ${_fr('P/E TTM','premium','#b3261e','39.9x')}
-          ${_fr('P/E Forward','ganancias mejoran','#1f7a4d','31.1x')}
+          ${_fr('PE (12 meses)','premium','#b3261e','39.9x')}
+          ${_fr('PE adelantado','ganancias mejoran','#1f7a4d','31.1x')}
           ${_fr('PEG','algo cara','#b3261e','2.65')}
           ${_fr('EV/EBITDA','premium','#b3261e','30.8x')}
           ${_fr('P/S','alta','#b3261e','10.8x')}
@@ -44131,20 +44155,20 @@ document.addEventListener('DOMContentLoaded', function(){
         <div class="pvs-sect"><span class="pvs-sect-t">Comparación con competidores</span></div>
         <div class="pvs-c-d">La misma acción se ve distinta al lado de sus rivales. Aquí AAPL contra sus competidores del sector.</div>
         <table class="pvs-tbl">
-          <tr><th>Empresa</th><th>P/E</th><th>Crec. ingresos</th><th>Margen</th></tr>
+          <tr><th>Empresa</th><th>PE</th><th>Crec. ingresos</th><th>Margen</th></tr>
           <tr class="me"><td>AAPL</td><td>39.9x</td><td>12.8%</td><td>27.1%</td></tr>
           <tr><td>GOOGL</td><td>17.3x</td><td>20.1%</td><td>30.9%</td></tr>
           <tr><td>META</td><td>22.3x</td><td>27.6%</td><td>39.1%</td></tr>
           <tr><td>AMZN</td><td>21.1x</td><td>15.8%</td><td>10.4%</td></tr>
           <tr><td>NFLX</td><td>23.4x</td><td>16.0%</td><td>24.6%</td></tr>
         </table>
-        <div class="pvs-quote"><b>Posición de mercado.</b> AAPL cotiza a 39.9x P/E, con prima sobre la mediana de sus rivales (21.7x). Encabeza a su grupo en ROE. Tiene ~18-20% de los smartphones por unidades, pero captura la mayor parte del beneficio de todo el sector. Su foso es el ecosistema (iOS, App Store, servicios), que retiene al cliente y genera ingresos recurrentes de alto margen. Domina la gama alta, donde está casi todo el dinero.</div>
+        <div class="pvs-quote"><b>Posición de mercado.</b> AAPL cotiza a 39.9x PE, con prima sobre la mediana de sus rivales (21.7x). Encabeza a su grupo en ROE. Tiene ~18-20% de los smartphones por unidades, pero captura la mayor parte del beneficio de todo el sector. Su foso es el ecosistema (iOS, App Store, servicios), que retiene al cliente y genera ingresos recurrentes de alto margen. Domina la gama alta, donde está casi todo el dinero.</div>
       </div>
 
       <div class="pvs-c">
         <div class="pvs-sect"><span class="pvs-sect-t">Valoración</span></div>
         <div style="margin-top:8px"><span class="pvs-val">Algo cara</span></div>
-        <div class="pvs-nota-b">PEG 2.65, P/E fwd 31.1x, EV/EBITDA 30.8x. Cotiza con prima; exige que el crecimiento se mantenga para justificarse.</div>
+        <div class="pvs-nota-b">PEG 2.65, PE adelantado 31.1x, EV/EBITDA 30.8x. Cotiza con prima; exige que el crecimiento se mantenga para justificarse.</div>
       </div>
 
       <div class="pvs-c">
@@ -44181,7 +44205,7 @@ document.addEventListener('DOMContentLoaded', function(){
           <span class="pvs-sc-t" style="color:#5a6474;background:#eef1f6">MÚLTIPLO JUSTO POR CRECIMIENTO</span>
           <div class="pvs-sc-v">$328.40</div>
           <div class="pvs-sc-d" style="color:#b3261e">−1%</div>
-          <div class="pvs-sc-b">El P/E de 18x que le corresponde a una empresa que crece 8.6% al año.</div>
+          <div class="pvs-sc-b">El PE de 18x que le corresponde a una empresa que crece 8.6% al año.</div>
         </div>
       </div>
 
@@ -55093,6 +55117,9 @@ html body #tab-analizar #researchResults .pvx .px-eps-c b { margin-bottom:8px; f
 html body #tab-analizar #researchResults .pvx .px-eps-c i { display:block; width:100%; max-width:64px; height:calc(150px * var(--h, 1)); border-radius:12px 12px 0 0; background:var(--pac-strong); }
 html body #tab-analizar #researchResults .pvx .px-eps-c.est i { background:transparent; border:2px dashed var(--pac-ink); border-bottom:0; box-sizing:border-box; }
 html body #tab-analizar #researchResults .pvx .px-eps-c.est b { color:var(--pac-slate); }
+/* Barra en verde si superó lo esperado y en rojo si falló (como sus pastillas); la previsión, punteada. */
+html body #tab-analizar #researchResults .pvx .px-eps-c.g i { background:var(--pac-green); }
+html body #tab-analizar #researchResults .pvx .px-eps-c.r i { background:var(--pac-red); }
 html body #tab-analizar #researchResults .pvx .px-eps-l { display:flex; gap:24px; padding:12px 8px 0; }
 html body #tab-analizar #researchResults .pvx .px-eps-l > div { flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; gap:7px; }
 html body #tab-analizar #researchResults .pvx .px-eps-l span { font-size:13.5px; font-weight:700; color:var(--pac-slate); white-space:nowrap; }
@@ -55420,6 +55447,53 @@ html body.dark-theme #tab-analizar #researchResults .ra-mcard { background:trans
 /* Lo que va directo sobre la página: en escritorio e iPad apaisado el fondo sigue claro. */
 @media (min-width: 900px) {
   html:not(.pv-ipad) body.dark-theme #tab-analizar #researchResults .pvx .px-disclaimer { color:#7a879b !important; }
+}
+
+/* ═══ Solidez contable (#r-fscore: F-Score y Z-Score) — rediseño ═══
+   Dos paneles sobre lavado gris: nota grande con pastilla, 9 tramos y la lista con ✓ verde / ✗ rojo;
+   la Z con su escala de zonas (rojo < 1.81 < ámbar < 2.99 < verde) y los cinco cocientes con su valor. */
+html body #r-fscore .pvsc-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; margin-top:18px; align-items:start; }
+html body #r-fscore .pvsc-panel { min-width:0; padding:22px 22px 20px; border-radius:22px; background:var(--pac-wash, #f4f6fa); }
+html body #r-fscore .pvsc-k { font-size:13px; font-weight:700; color:var(--pac-muted, #7a879b); }
+html body #r-fscore .pvsc-top { display:flex; align-items:center; gap:12px; margin:8px 0 14px; }
+html body #r-fscore .pvsc-big { font-size:40px; line-height:1; font-weight:800; letter-spacing:-.02em; color:var(--pac-ink, #0b1c30); font-variant-numeric:tabular-nums; }
+html body #r-fscore .pvsc-big small { margin-left:2px; font-size:20px; font-weight:700; letter-spacing:0; color:var(--pac-muted, #7a879b); }
+html body #r-fscore .pvsc-pill { display:inline-flex; align-items:center; height:26px; padding:0 11px; border-radius:999px; font-size:12.5px; font-weight:800; font-style:normal; }
+html body #r-fscore .pvsc-pill.g { background:var(--pac-green-bg, #dcf6e9); color:var(--pac-green, #0f8a5f); }
+html body #r-fscore .pvsc-pill.a { background:var(--pac-amber-bg, #fdecd8); color:var(--pac-amber, #b45309); }
+html body #r-fscore .pvsc-pill.r { background:var(--pac-red-bg, #ffe3df); color:var(--pac-red, #c62828); }
+html body #r-fscore .pvsc-seg { display:grid; grid-template-columns:repeat(9, minmax(0, 1fr)); gap:4px; }
+html body #r-fscore .pvsc-seg i { height:8px; border-radius:999px; background:var(--pac-line-hi, #cfd7e3); }
+html body #r-fscore .pvsc-seg i.ok { background:var(--pac-green, #0f8a5f); }
+html body #r-fscore .pvsc-seg i.ko { background:var(--pac-red, #c62828); }
+html body #r-fscore .pvsc-sub { margin:10px 0 0; font-size:13.5px; line-height:1.45; color:var(--pac-muted, #7a879b); }
+html body #r-fscore .pvsc-list { list-style:none; margin:16px 0 0; padding:0; display:grid; gap:10px; }
+html body #r-fscore .pvsc-list li { display:flex; align-items:flex-start; gap:10px; font-size:14.5px; line-height:1.4; color:var(--pac-slate, #33475f); }
+html body #r-fscore .pvsc-list em { font-style:normal; color:var(--pac-muted, #7a879b); }
+html body #r-fscore .pvsc-ic { flex:0 0 22px; width:22px; height:22px; margin-top:-1px; border-radius:50%; display:grid; place-items:center; }
+html body #r-fscore .pvsc-ic svg { width:13px; height:13px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
+html body #r-fscore .pvsc-ic.ok { background:var(--pac-green-bg, #dcf6e9); color:var(--pac-green, #0f8a5f); }
+html body #r-fscore .pvsc-ic.ko { background:var(--pac-red-bg, #ffe3df); color:var(--pac-red, #c62828); }
+html body #r-fscore .pvsc-ic.nd { background:var(--pac-track, #eef1f8); color:var(--pac-muted, #7a879b); }
+html body #r-fscore .pvsc-na { margin:8px 0 0; font-size:22px; font-weight:800; color:var(--pac-ink, #0b1c30); }
+html body #r-fscore .pvsc-zbar { position:relative; display:flex; height:10px; margin:4px 10px 0; }
+html body #r-fscore .pvsc-zbar i { height:100%; }
+html body #r-fscore .pvsc-zbar i.r { background:var(--pac-red, #c62828); border-radius:999px 0 0 999px; }
+html body #r-fscore .pvsc-zbar i.a { background:var(--pac-amber-bar, #d68a2e); }
+html body #r-fscore .pvsc-zbar i.g { flex:1; background:var(--pac-green, #0f8a5f); border-radius:0 999px 999px 0; }
+html body #r-fscore .pvsc-zbar b { position:absolute; top:50%; width:20px; height:20px; box-sizing:border-box; border-radius:50%; background:var(--pac-card, #fff); border:4px solid var(--pac-ink, #0b1c30); transform:translate(-50%, -50%); }
+html body #r-fscore .pvsc-zl { position:relative; height:16px; margin:8px 10px 0; font-size:12px; font-weight:700; color:var(--pac-muted, #7a879b); font-variant-numeric:tabular-nums; }
+html body #r-fscore .pvsc-zl span { position:absolute; top:0; transform:translateX(-50%); }
+html body #r-fscore .pvsc-rows { margin-top:16px; }
+html body #r-fscore .pvsc-row { display:flex; justify-content:space-between; align-items:baseline; gap:14px; padding:11px 0; border-top:1px solid var(--pac-line, #e2e7f0); font-size:14px; color:var(--pac-slate, #33475f); }
+html body #r-fscore .pvsc-row b { font-weight:800; color:var(--pac-ink, #0b1c30); font-variant-numeric:tabular-nums; white-space:nowrap; }
+html body #r-fscore .pvsc-row em { font-style:normal; color:var(--pac-muted, #7a879b); white-space:nowrap; }
+html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:1.5; color:var(--pac-muted, #7a879b); }
+@media (max-width: 899px) {
+  html body #r-fscore .pvsc-grid { grid-template-columns:minmax(0, 1fr); gap:12px; margin-top:14px; }
+  html body #r-fscore .pvsc-panel { padding:18px 16px 16px; border-radius:20px; }
+  html body #r-fscore .pvsc-big { font-size:34px; }
+  html body #r-fscore .pvsc-list li { font-size:14px; }
 }
 
 /* ═══ Movimiento reducido ═══ */
