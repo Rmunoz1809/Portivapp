@@ -58530,10 +58530,807 @@ html body #tab-watchlist #wlCards .pwl-ebtn:focus-visible { outline: 2px solid v
 
 <!-- ═══ MOVIMIENTO · ANÁLISIS (#tab-analizar) ═════════════════════════════════════════════════ -->
 <style id="pvMovAnalisisCss">
-/* MOVIMIENTO · Análisis — pendiente */
+/* ═══ MOVIMIENTO · Análisis — el lenguaje de Portiv IA en la pestaña (pedido de Rafael, 1-oct) ═══
+   Lo que hace el CSS (lo que llega con datos lo mueve el JS de abajo, con window.PVM):
+     · La espera es la de Portiv IA: tres puntos que saltan en vez de un aro que gira — en el
+       botón «Analizar», en la carga de la ficha (dentro de la burbuja de Portiv IA), en
+       «Analizando MSFT…» y en «Generando tu análisis con IA…». El JS pone .pvan-typing y los
+       tres <i>; sin el JS se queda el aro de siempre.
+     · Periodo de la gráfica, pestañas del análisis y periodos del técnico: la marca del elegido
+       SE DESLIZA. Es un ::before del ancho de la pista recortado con clip-path al botón elegido
+       (lo que transiciona es el recorte: ni width ni left). El botón elegido sólo pierde su
+       fondo mientras la marca existe (.pvan-seg, la pone el JS).
+     · Pulsación (.96–.985) y foco visible en lo que se toca; hover sólo con ratón.
+     · El desplegable del buscador baja y la ficha de un punto clave entra, no aparecen.
+   Nada deja algo invisible si una animación no corre: cada animación parte de un estado que
+   ya es el final (fill backwards). Con movimiento reducido no se mueve nada. */
+
+/* Colores de los tres puntos: los de .pvia-typing (claro y oscuro). */
+html body #tab-analizar { --pvan-dot1:#9aa6b8; --pvan-dot2:#b3bdcb; --pvan-dot3:#ccd4df; }
+html body.dark-theme #tab-analizar { --pvan-dot1:#7d8a9e; --pvan-dot2:#627085; --pvan-dot3:#4b576a; }
+@keyframes pvanBounce { 0%, 60%, 100% { transform:translateY(0); } 30% { transform:translateY(calc(-1 * var(--pvan-jump, 4px))); } }
+@keyframes pvanDrop { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+
+/* ── La espera de Portiv IA ── */
+html body #tab-analizar .pvan-typing {
+  display:inline-flex; align-items:center; justify-content:center; gap:5px; flex:0 0 auto;
+  width:auto; height:auto; min-width:0; padding:0; border:0; border-radius:0; background:none; animation:none;
+}
+html body #tab-analizar .pvan-typing > i {
+  display:block; flex:none; width:7px; height:7px; border-radius:50%; background:var(--pvan-dot1);
+  animation:pvanBounce 1.2s ease-in-out infinite;
+}
+html body #tab-analizar .pvan-typing > i:nth-child(2) { background:var(--pvan-dot2); animation-delay:.15s; }
+html body #tab-analizar .pvan-typing > i:nth-child(3) { background:var(--pvan-dot3); animation-delay:.3s; }
+/* Carga de la ficha: la burbuja de «escribiendo…» de Portiv IA, centrada sobre su texto. */
+html body #tab-analizar #researchLoading .pvan-typing {
+  display:flex; width:max-content; margin:0 auto 14px; padding:14px 17px;
+  background:var(--pva-card, #fff); border:1px solid var(--pva-line, #e2e7f0); border-radius:6px 22px 22px 22px;
+}
+html body #tab-analizar #researchLoading #researchLoadingTxt { color:var(--pva-pg-muted, #7a879b) !important; font-weight:600; }
+/* «Analizar» mientras carga: el icono de la gráfica cede su sitio a los puntos (del color del texto). */
+html body #tab-analizar #pvaHero #researchBtn .pvan-bt { display:none; }
+html body #tab-analizar #pvaHero #researchBtn:disabled { opacity:1; cursor:progress; }
+html body #tab-analizar #pvaHero #researchBtn:disabled > svg { display:none; }
+html body #tab-analizar #pvaHero #researchBtn:disabled .pvan-bt { display:inline-flex; gap:3px; width:18px; height:18px; --pvan-jump:3px; }
+html body #tab-analizar #pvaHero #researchBtn .pvan-bt > i { width:4px; height:4px; background:currentColor; opacity:.95; }
+html body #tab-analizar #pvaHero #researchBtn .pvan-bt > i:nth-child(2) { opacity:.75; }
+html body #tab-analizar #pvaHero #researchBtn .pvan-bt > i:nth-child(3) { opacity:.55; }
+
+/* ── Indicador que se desliza ── */
+html body #tab-analizar #researchResults .pvan-seg { position:relative; isolation:isolate; }
+html body #tab-analizar #researchResults .pvan-seg::before {
+  content:""; position:absolute; z-index:-1; left:0; top:var(--pvan-y, 0px);
+  width:var(--pvan-sw, 100%); height:var(--pvan-h, 0px); pointer-events:none;
+  background:var(--pac-strong, #0b1c30);
+  clip-path:inset(0 var(--pvan-r, 100%) 0 var(--pvan-l, 0px) round 999px);
+  transition:clip-path var(--pvm-base) var(--pvm-ease);
+}
+html body #tab-analizar #researchResults .pvan-seg.pvan-snap::before { transition:none; }
+html body #tab-analizar:not(#pvan-a):not(#pvan-b) #researchResults .pvan-seg > :is(.active, .on) { background:transparent !important; box-shadow:none !important; }
+html body #tab-analizar:not(#pvan-a) #researchResults .pvan-seg > * { transition:color var(--pvm-base) var(--pvm-ease), transform var(--pvm-fast) var(--pvm-ease); }
+/* Celular: las pestañas del análisis son pastillas sueltas (sin pista): sin marca, el fondo
+   del botón cambia con una transición en vez de golpe. */
+@media (max-width: 700px) {
+  html body #tab-analizar:not(#pvan-a) #researchResults #r-tabs-host .px-tabs:not(.pvan-seg) .px-tab {
+    transition:background-color var(--pvm-base) var(--pvm-ease), border-color var(--pvm-base) var(--pvm-ease),
+               color var(--pvm-base) var(--pvm-ease), transform var(--pvm-fast) var(--pvm-ease);
+  }
+}
+
+/* ── Pulsación: lo que se toca cede un poco (no el elegido, que no hace nada) ── */
+html body #tab-analizar:not(#pvan-a) #researchResults :is(.ra-pills .ppill, #r-tabs-host .px-tab, #pvt-chips .period-btn):not(.active):not(.on):active { transform:scale(.96); }
+html body #tab-analizar:not(#pvan-a) #researchResults .ra-head-actions .ra-btn {
+  transition:border-color var(--pvm-base) var(--pvm-ease), background-color var(--pvm-base) var(--pvm-ease),
+             color var(--pvm-base) var(--pvm-ease), transform var(--pvm-fast) var(--pvm-ease);
+}
+html body #tab-analizar:not(#pvan-a) #researchResults .pvx .px-kp { transition:border-color var(--pvm-base) var(--pvm-ease), transform var(--pvm-fast) var(--pvm-ease); }
+html body #tab-analizar:not(#pvan-a) #researchResults .pvx .px-kp:active { transform:scale(.985); }
+html body #tab-analizar:not(#pvan-a) #researchResults :is(.pvx .px-retry, .pv-fin-card .pvt-btn) { transition:transform var(--pvm-fast) var(--pvm-ease), opacity var(--pvm-fast) var(--pvm-ease); }
+html body #tab-analizar:not(#pvan-a) #researchResults :is(.pvx .px-retry, .pv-fin-card .pvt-btn):active { transform:scale(.97); }
+html body #tab-analizar:not(#pvan-a) #researchResults .pvx .px-nw { transition:opacity var(--pvm-fast) var(--pvm-ease); }
+/* Hover sólo con ratón: el titular de una noticia cambia de tono (al toque ya responde la fila). */
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-analizar:not(#pvan-a) #researchResults .pvx .px-nw .h { transition:color var(--pvm-base) var(--pvm-ease); }
+  html body #tab-analizar:not(#pvan-a) #researchResults .pvx .px-nw:hover .h { color:var(--pac-slate) !important; }
+}
+/* Foco de teclado: sobre el navy el contorno navy de la app no se ve; aquí va en blanco. */
+html body #tab-analizar #researchResults .ra-header :focus-visible,
+html body #tab-analizar #pvaHero :focus-visible { outline:2px solid rgba(255,255,255,.72); outline-offset:3px; }
+
+/* ── Desplegable del buscador: baja 6 px desde la pastilla al abrirse ── */
+html body #tab-analizar #pvaHero .sdrop.open { animation:pvanDrop var(--pvm-base) var(--pvm-ease) backwards; }
+
+/* ── «Otros datos publicados»: el chevron vuelve a su sitio al EMPEZAR a plegar ── */
+html body #tab-analizar #researchResults .pvx .px-otros > summary::after { transition:transform var(--pvm-base) var(--pvm-ease); }
+html body #tab-analizar #researchResults .pvx .px-otros.pvan-closing > summary::after { transform:translateY(-4px); }
+
+/* ── Ficha de un punto clave (vive en <body>, se abre desde el análisis): el velo se funde con
+   la curva de la casa y las tarjetas entran como un mensaje de Portiv IA ── */
+html body .px-kpm { transition:opacity var(--pvm-base) var(--pvm-ease); }
+/* La primera vez el velo se crea ya abierto y la transición no tiene de dónde partir. */
+html body .px-kpm.open { animation:pvmFade var(--pvm-base) var(--pvm-ease) backwards; }
+html body .px-kpm.open .box > .px-card { animation:pvmIn var(--pvm-in) var(--pvm-ease) backwards; }
+html body .px-kpm.open .box > .px-card + .px-card { animation-delay:70ms; }
+html body .px-kpm.open .box > .x { animation:pvmFade var(--pvm-in) var(--pvm-ease) backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-analizar .pvan-typing > i,
+  html body #tab-analizar #pvaHero .sdrop.open,
+  html body .px-kpm.open, html body .px-kpm.open .box > * { animation:none !important; }
+  html body #tab-analizar #researchResults .pvan-seg::before,
+  html body #tab-analizar:not(#pvan-a) #researchResults .pvan-seg > *,
+  html body #tab-analizar:not(#pvan-a) #researchResults #r-tabs-host .px-tab,
+  html body #tab-analizar:not(#pvan-a) #researchResults .ra-head-actions .ra-btn,
+  html body #tab-analizar:not(#pvan-a) #researchResults .pvx :is(.px-kp, .px-retry, .px-nw, .px-nw .h),
+  html body #tab-analizar:not(#pvan-a) #researchResults .pv-fin-card .pvt-btn,
+  html body #tab-analizar #researchResults .pvx .px-otros > summary::after,
+  html body .px-kpm { transition:none !important; }
+  html body #tab-analizar:not(#pvan-a) #researchResults :is(.ra-pills .ppill, #r-tabs-host .px-tab, #pvt-chips .period-btn, .pvx .px-kp, .pvx .px-retry, .pv-fin-card .pvt-btn):active { transform:none !important; }
+}
 </style>
 <script id="pvMovAnalisisJs">
-/* MOVIMIENTO · Análisis — pendiente */
+/* ═══ MOVIMIENTO · Análisis — el JS ════════════════════════════════════════════════════════
+   Autocontenido: envuelve funciones de la pestaña (las declaraciones de nivel superior son
+   window.*, así que quien las llama por nombre —onclick incluidos— recibe la envoltura) y
+   observa el DOM de #tab-analizar. No toca showTab, MOTION v7 ni la base PVM.
+     1) Análisis del portafolio. Su LLEGADA —la primera pintada con datos y a la vista en la
+        sesión— cuenta los 4 indicadores desde 0 y dibuja lo que mide (rango del año, barras de
+        peso y retorno, anillo de salud, sectores) cuando su bloque se ve; lo de debajo del
+        pliegue entra al hacer scroll. Los repintados (cada tick, abrir la pestaña) no repiten
+        nada: la cifra que cambió cuenta desde la anterior y el precio que se movió destella.
+     2) Análisis del asesor (PV_AI): de «Generando…» a la carta, la tarjeta CRECE desde el alto
+        de la espera, como la respuesta de Portiv IA, y los apartados entran escalonados.
+     3) Cambio de vista portafolio ⇄ espera ⇄ ficha, leído de los display (un observador): la
+        ficha entra como una vista nueva y, al volver al portafolio, entra con la entrada de
+        pestaña de MOTION v7 — que en ese caso había animado la ficha que showTab escondió.
+     4) Dentro de la ficha: la nota cuenta al llegar, el precio en vivo cuenta hasta el nuevo,
+        el panel elegido entra, la pastilla del cambio del periodo aparece, la gráfica queda a
+        media luz si el periodo tarda, «Otros datos publicados» y la tira de «Precio objetivo»
+        se despliegan, y lo que llega tarde (competidores, técnico, F-Score…) entra fundido.
+     5) La marca deslizante de los segmentados (posición en variables CSS; ver pvMovAnalisisCss).
+   Con movimiento reducido no se crea nada: PVM sale solo y ok() hace la misma pregunta. */
+(function(){
+  'use strict';
+  var P = window.PVM, TAB = document.getElementById('tab-analizar');
+  if (!P || !TAB || typeof MutationObserver !== 'function') return;
+  var $ = function(id){ return document.getElementById(id); };
+  var EASE = P.ease;
+  var now = function(){ try { return performance.now(); } catch(e){ return Date.now(); } };
+  var slice = function(x){ try { return Array.prototype.slice.call(x || []); } catch(e){ return []; } };
+
+  function ok(el){ return !!(el && el.nodeType === 1 && typeof el.animate === 'function') && !P.reduced(); }
+  /* Una animación por nodo y ranura, como la base: repetir el gesto no apila movimientos. */
+  function anim(el, kf, o, slot){
+    if (!ok(el)) return null;
+    slot = slot || '_pvanA';
+    try { if (el[slot]) el[slot].cancel(); return (el[slot] = el.animate(kf, o)); } catch(e){ return null; }
+  }
+  function shown(el){ return !!el && el.style.display !== 'none' && P.painted(el); }
+  /* ¿Ya lo está moviendo MOTION v7 (_pvAnim) o PVM (_pvmA)? */
+  function busy(el){ var a = el && (el._pvAnim || el._pvmA); return !!(a && a.playState === 'running'); }
+  /* Lo que está bajo el candado del plan gratuito va difuminado: animarlo no lo ve nadie y
+     obliga a rehacer el desenfoque en cada fotograma del iPhone. */
+  function blurred(el){
+    for (var n = el; n && n !== TAB && n.nodeType === 1; n = n.parentElement) {
+      try { var f = getComputedStyle(n).filter; if (f && f !== 'none') return true; } catch(e){}
+    }
+    return false;
+  }
+  function inView(el){
+    if (!el) return false;
+    var r = el.getBoundingClientRect();
+    return r.bottom > 0 && r.top < (window.innerHeight || 0) - 4;
+  }
+  function wrap(obj, name, fn){
+    var orig = obj && obj[name];
+    if (typeof orig !== 'function' || orig._pvanWrap) return;
+    var w = function(){ return fn.call(this, orig, arguments); };
+    w._pvanWrap = 1;
+    try { obj[name] = w; } catch(e){}
+  }
+  function fade(nodes, delay){
+    slice(nodes).filter(P.painted).forEach(function(el, i){
+      anim(el, [{ opacity: 0 }, { opacity: 1 }], { duration: P.T().dur, delay: (delay || 0) + i * 30, easing: EASE, fill: 'backwards' }, '_pvanF');
+    });
+  }
+  function pop(nodes, delay){
+    slice(nodes).filter(P.painted).forEach(function(el, i){
+      anim(el, [{ opacity: 0, transform: 'scale(.35)' }, { opacity: 1, transform: 'none' }],
+           { duration: P.T().dur, delay: (delay || 0) + i * 40, easing: EASE, fill: 'backwards' }, '_pvanP');
+    });
+  }
+  /* Bloques que llegan: los que ya se ven entran escalonados; los de debajo, al hacer scroll. */
+  function arrive(nodes, delay){
+    var a = [], b = [];
+    slice(nodes).filter(P.painted).forEach(function(n){ (n.getBoundingClientRect().top < (window.innerHeight || 0) - 4 ? a : b).push(n); });
+    P.enter(a, { delay: delay || 0 });
+    if (b.length) P.reveal(b);
+  }
+
+  /* «73.7%», «−24.8%», «$1,234.56», «7.6», «58» → { v, f(x) }: f escribe x con el mismo
+     prefijo, signo, decimales, miles y sufijo. null si no es UNA cifra («+9% a +15%»). */
+  function num(txt){
+    var m = /^([^\d+\-−]*)([+\-−]?)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(\D*)$/.exec(String(txt == null ? '' : txt).trim());
+    if (!m) return null;
+    var pre = m[1], sg = m[2], dec = m[4] || '', suf = m[5], grp = m[3].indexOf(',') >= 0;
+    var v = parseFloat(m[3].replace(/,/g, '') + (dec ? '.' + dec : ''));
+    if (!isFinite(v)) return null;
+    if (sg === '-' || sg === '−') v = -v;
+    var minus = sg === '-' ? '-' : '−', d = dec.length;
+    return { v: v, d: d, f: function(x){
+      var s = Math.abs(x).toFixed(d);
+      if (grp) s = s.replace(/^\d+/, function(i){ return i.replace(/\B(?=(\d{3})+$)/g, ','); });
+      var z = +s === 0;
+      return pre + (x < 0 && !z ? minus : (sg === '+' && !z ? '+' : '')) + s + suf;
+    } };
+  }
+  /* La cifra de `el` cuenta hasta la que ya muestra, desde `from` (0 en una llegada). */
+  function count(el, from, dur){
+    var n = el && num(el.textContent);
+    if (!n || from == null || !isFinite(from) || Math.abs(from - n.v) < Math.pow(10, -n.d) / 2) return;
+    P.countTo(el, n.v, n.f, { from: from, dur: dur });
+  }
+
+  /* seen(nodo, fn): fn una vez, cuando el nodo entra en pantalla: lo que se dibuja no se dibuja
+     donde nadie lo ve. Se observan contenedores que el repintado no sustituye y fn busca sus
+     piezas al dispararse. */
+  var seenIO = null, seenFn = typeof WeakMap === 'function' ? new WeakMap() : null;
+  function seen(el, fn){
+    if (!el || !fn || P.reduced()) return;
+    if (typeof IntersectionObserver !== 'function' || !seenFn) { try { fn(); } catch(e){} return; }
+    if (!seenIO) seenIO = new IntersectionObserver(function(ents){
+      ents.forEach(function(en){
+        if (!en.isIntersecting) return;
+        var fs = seenFn.get(en.target) || [];
+        seenFn.delete(en.target); seenIO.unobserve(en.target);
+        fs.forEach(function(f){ try { f(); } catch(e){} });
+      });
+    }, { rootMargin: '0px 0px -10% 0px' });
+    seenFn.set(el, (seenFn.get(el) || []).concat(fn));
+    seenIO.observe(el);
+  }
+
+  /* Barras que crecen desde cero: las de la zona que están a la vista (todas con `all`), 12 como
+     mucho por gesto. Fuera la marca del precio de hoy del carril (su transform es !important). */
+  var BARS_X = '.pva-bar > i, .pva-sbar > i, .px-track > i, .rap-pil-fill, .px-anl-bar > i, .pvt-ind-bar > i, .px-pb .tr > i, .px-cons-bar > i, .pvsc-seg > i, .px-ez-rail .band';
+  var BARS_Y = '.px-eps-c > i';
+  function growIn(scope, delay, all){
+    if (!scope || !scope.querySelectorAll || blurred(scope)) return;
+    /* Cada barra crece una vez: dos avisos seguidos (su tarjeta y su bloque) no la repiten. */
+    var pick = function(sel, n){
+      var l = slice(scope.querySelectorAll(sel)).filter(function(e){ return !e._pvanGrown && P.painted(e) && (all || inView(e)); }).slice(0, n);
+      l.forEach(function(e){ e._pvanGrown = 1; });
+      return l;
+    };
+    P.grow(pick(BARS_X, 12), 'x', { delay: delay || 0, step: 30, max: 8 });
+    P.grow(pick(BARS_Y, 8), 'y', { delay: delay || 0, step: 45, max: 8 });
+  }
+
+  /* La espera de Portiv IA: los aros (.r-spinner, .pv-ai-spin) pasan a tres puntos. */
+  function typing(root){
+    if (!root || !root.querySelectorAll) return;
+    var sel = '.pv-ai-spin:not(.pvan-typing), .r-spinner:not(.pvan-typing)';
+    var list = slice(root.querySelectorAll(sel));
+    if (root.matches && root.matches(sel)) list.push(root);
+    list.forEach(function(s){ s.classList.add('pvan-typing'); s.setAttribute('aria-hidden', 'true'); s.innerHTML = '<i></i><i></i><i></i>'; });
+  }
+
+  /* ═══ 1) ANÁLISIS DEL PORTAFOLIO ═══════════════════════════════════════════════════════ */
+  var PA = { arrived: false, at: 0, last: null, kpiEls: [], scoreEl: null };
+  function paSec(){ return $('analizar-portfolio-section'); }
+  function paVisible(){ return TAB.classList.contains('active') && shown(paSec()); }
+  function arcOf(c){
+    var d = c ? String(c.getAttribute('stroke-dasharray') || '').split(/[\s,]+/).map(parseFloat) : [];
+    return (d.length > 1 && d[0] >= 0 && d[1] > 0) ? { a: d[0], c: d[1] } : null;
+  }
+  function paRead(){
+    var rows = {};
+    slice(document.querySelectorAll('#port-asset-detail .pva-tr:not(.pva-th):not(.pva-tot)')).forEach(function(r){
+      var t = r.querySelector('.pva-tkt b'), p = r.querySelector('.pva-px');
+      if (t && p) rows[t.textContent] = { row: r, el: p, meta: r.querySelector('.pva-meta > span'), n: num(p.textContent) };
+    });
+    return {
+      kpi: slice(document.querySelectorAll('#pvaKpis .pva-kpi > b')).map(function(b){
+        var s = b.parentNode.querySelector('small');
+        return { el: b, n: num(b.textContent), key: s ? s.textContent : '' };
+      }),
+      rows: rows,
+      score: document.querySelector('#pvaHealth .pva-ring b'),
+      ring: document.querySelector('#pvaHealth .pva-rprog')
+    };
+  }
+  function paKeep(cur){
+    var rows = {}, sc = cur.score && num(cur.score.textContent);
+    Object.keys(cur.rows).forEach(function(tk){ var n = cur.rows[tk].n; rows[tk] = n ? n.v : null; });
+    return { kpi: cur.kpi.map(function(k){ return { key: k.key, v: k.n ? k.n.v : null }; }), rows: rows, score: sc ? sc.v : null, arc: arcOf(cur.ring) };
+  }
+  /* El anillo de salud. En la llegada el arco se dibuja desde arriba hasta la nota (apagado
+     mientras espera: la punta redonda de un trazo de largo cero asomaría como un punto); si la
+     nota cambia, el arco va de la vieja a la nueva. */
+  function ring(c, from){
+    var g = arcOf(c), t = P.T();
+    if (!g || !ok(c)) return;
+    if (from == null)
+      anim(c, [{ strokeDashoffset: g.a, opacity: 0 }, { opacity: 1, offset: .12 }, { strokeDashoffset: 0, opacity: 1 }],
+           { duration: t.slow, delay: 60, easing: 'cubic-bezier(.33,1,.68,1)', fill: 'backwards' }, '_pvanR');
+    else if (Math.abs(from - g.a) > .5)
+      anim(c, [{ strokeDasharray: from + ' ' + g.c }, { strokeDasharray: g.a + ' ' + g.c }], { duration: t.dur, easing: EASE }, '_pvanR');
+  }
+  /* Tu rango para el año: la banda se abre desde su centro, los puntos (bajista, lo que llevas)
+     aparecen sobre ella y las etiquetas se funden después (llevan su propio transform). */
+  function vizReturn(){
+    var s = document.querySelector('#port-expected-return .pva-scale'), t = P.T();
+    if (!s || blurred(s)) return;
+    P.grow(s.querySelectorAll('.pva-band'), 'x', { origin: '50% 50%', delay: 60, dur: t.slow });
+    pop(s.querySelectorAll('.pva-dot, .pva-ytd'), 60 + t.slow * .3);
+    fade(s.querySelectorAll('.pva-avg, .pva-zero, .pva-flag, .pva-ytdlab'), 60 + t.slow * .4);
+  }
+  function vizTable(){
+    var h = $('port-asset-detail');
+    if (h && !blurred(h)) P.grow(slice(h.querySelectorAll('.pva-wt .pva-bar > i, .pva-ra .pva-bar > i')).filter(P.painted).slice(0, 12), 'x', { delay: 60, step: 25, max: 10 });
+  }
+  function vizHealth(){
+    var h = $('pvaHealth');
+    if (!h || blurred(h)) return;
+    ring(h.querySelector('.pva-rprog'), null);
+    count(h.querySelector('.pva-ring b'), 0, P.T().slow);
+    P.grow(slice(h.querySelectorAll('.pva-sub .pva-bar > i')).filter(P.painted).slice(0, 8), 'x', { delay: 160, step: 35, max: 7 });
+    var g = h.querySelector('.pva-g2');
+    if (g) seen(g, function(){ growIn(g, 60, true); });
+  }
+  function paArrive(cur){
+    PA.arrived = true; PA.at = now();
+    cur.kpi.forEach(function(k){ if (k.n) count(k.el, 0); });
+    seen($('port-expected-return'), vizReturn);
+    seen($('port-asset-detail'), vizTable);
+    seen($('pvaHealth'), vizHealth);
+    /* Bajo el pliegue: cada sección entra al llegar a ella (una vez en la sesión). Con el
+       candado, la pila difuminada no; la tarjeta de «Desbloquea Portiv Pro», sí. */
+    var later = slice(document.querySelectorAll('#analizar-portfolio-section > .pva-sec, #portDeepLockWrap .pv-lock-body > .pva-sec, #port-deep-analysis > .pva-sec'))
+      .filter(function(s){ return !blurred(s); });
+    var lc = document.querySelector('#portDeepLockWrap > .pv-lock-ov .pv-lock-card');
+    if (lc && P.painted(lc)) later.push(lc);
+    P.reveal(later);
+  }
+  /* La cifra nueva cuenta desde la anterior; si el nodo viejo aún estaba contando (la llegada),
+     sigue desde donde iba esa cuenta, que se retira. */
+  function recount(old, el, prev){
+    if (old && old !== el && old._pvmRaf) {
+      var s = num(old.textContent), from = isFinite(old._pvmNum) ? old._pvmNum : (s ? s.v : prev);
+      try { cancelAnimationFrame(old._pvmRaf); } catch(e){}
+      old._pvmRaf = 0;
+      count(el, from);
+    } else count(el, prev);
+  }
+  function paRefresh(prev, cur){
+    if (!prev) return;
+    cur.kpi.forEach(function(k, i){
+      if (k.n) recount(PA.kpiEls[i], k.el, prev.kpi[i] && prev.kpi[i].key === k.key ? prev.kpi[i].v : null);
+    });
+    if (cur.score && !blurred(cur.score)) {
+      recount(PA.scoreEl, cur.score, prev.score);
+      if (prev.arc) ring(cur.ring, prev.arc.a);
+    }
+    Object.keys(cur.rows).forEach(function(tk){
+      var c = cur.rows[tk], o = prev.rows[tk];
+      if (!c.n || o == null || Math.abs(o - c.n.v) < 1e-9) return;
+      P.flash(c.row, c.n.v > o ? 1 : -1);   // la fila del precio que se movió: verde o rojo
+      count(c.el, o);
+      if (c.meta) count(c.meta, o);
+    });
+  }
+  /* Un repintado a media llegada (los fundamentales o el régimen de mercado suelen llegar en
+     ese segundo) cambia los nodos: lo que se estaba dibujando sigue en los nuevos, en el mismo
+     punto, en vez de saltar al final. */
+  var CARRY = ['port-expected-return', 'port-asset-detail', 'pvaHealth'];
+  function paCarry(){
+    var out = [];
+    if (!PA.arrived || now() - PA.at > 3000) return out;
+    CARRY.forEach(function(id){
+      var c = $(id), list = [];
+      if (!c || typeof c.getAnimations !== 'function') return;
+      try { list = c.getAnimations({ subtree: true }); } catch(e){ return; }
+      list.forEach(function(a){
+        var el = a.effect && a.effect.target;
+        if (!el || el === c || a.playState !== 'running' || a.animationName || a.transitionProperty) return;
+        var idx = slice(c.getElementsByTagName(el.tagName)).indexOf(el);
+        if (idx < 0) return;
+        try { out.push({ id: id, tag: el.tagName, cls: el.getAttribute('class') || '', idx: idx, kf: a.effect.getKeyframes(), tm: a.effect.getTiming(), t: a.currentTime }); } catch(e){}
+      });
+    });
+    return out;
+  }
+  function paResume(list){
+    list.forEach(function(s){
+      var c = $(s.id), el = c && c.getElementsByTagName(s.tag)[s.idx];
+      if (!el || (el.getAttribute('class') || '') !== s.cls || !ok(el)) return;
+      try {
+        var kf = s.kf.map(function(k){ var o = {}; for (var p in k) if (p !== 'computedOffset' && k[p] != null) o[p] = k[p]; return o; });
+        el.animate(kf, s.tm).currentTime = s.t;
+      } catch(e){}
+    });
+  }
+  wrap(window, 'renderDeepPortfolioAnalysis', function(orig, args){
+    var carry = paCarry();
+    var r = orig.apply(this, args);
+    try {
+      var cur = paRead(), prev = PA.last;
+      PA.last = paKeep(cur);
+      if (paVisible()) {
+        if (!PA.arrived) { if (Object.keys(cur.rows).length) paArrive(cur); }
+        else { paResume(carry); paRefresh(prev, cur); }
+      }
+      PA.kpiEls = cur.kpi.map(function(k){ return k.el; });
+      PA.scoreEl = cur.score;
+    } catch(e){}
+    return r;
+  });
+
+  /* ═══ 2) ANÁLISIS DEL ASESOR ═══════════════════════════════════════════════════════════ */
+  function aiAfter(host, wasWait, wh){
+    typing(host);
+    if (!paVisible() || blurred(host) || !inView(host)) return;
+    var res = host.querySelector('.pva-intro, .pva-read'), t = P.T();
+    if (wasWait && res) {
+      /* La respuesta crece desde el alto de la espera (pviaGrow de Portiv IA). */
+      var R = getComputedStyle(res).borderTopLeftRadius || '30px', h = res.offsetHeight, from = Math.min(wh || 84, h);
+      anim(res, [{ clipPath: 'inset(0 0 ' + (h - from) + 'px 0 round ' + R + ')' }, { clipPath: 'inset(0 0 0 0 round ' + R + ')' }],
+           { duration: t.dur + 100, easing: EASE, fill: 'backwards' }, '_pvanG');
+      P.enter(slice(host.querySelectorAll('.pva-part, .pva-read')).filter(function(e){ return e !== res; }), { delay: 140 });
+      fade(host.querySelectorAll('.pva-foot'), 260);
+    } else if (wasWait && host.querySelector('.pva-aistate')) {
+      P.enter(host.firstElementChild, { rise: t.rise / 2 });
+    } else if (!wasWait && host.querySelector('.pv-ai-loading')) {
+      P.enter(host.firstElementChild, { rise: t.rise / 2 });   // empieza la espera
+    }
+  }
+  if (window.PV_AI) wrap(window.PV_AI, 'render', function(orig, args){
+    var host = $('port-ai-analysis'), w = host && host.querySelector('.pv-ai-loading'), wh = w ? w.offsetHeight : 0;
+    var r = orig.apply(this, args);
+    try { if (host) aiAfter(host, !!w, wh); } catch(e){}
+    return r;
+  });
+
+  /* ═══ 3) CAMBIO DE VISTA: portafolio ⇄ espera ⇄ ficha ══════════════════════════════════ */
+  var V = { view: '', tk: '', dim: [], dimTo: 0, enterT: 0, qualTk: '', scoreTk: '', panes: {}, fills: {}, perT: 0, perN: 0 };
+  function viewNow(){
+    if (!TAB.classList.contains('active')) return 'none';
+    if (shown($('researchResults'))) return 'stock';
+    var s = shown(paSec()), l = shown($('researchLoading')), e = $('researchEmpty');
+    if (l) return s ? 'portfolio-loading' : 'loading';
+    if (s) return 'portfolio';
+    if (shown(e) && (e.textContent || '').trim()) return 'error';
+    return 'none';
+  }
+  function viewCheck(){
+    var v = viewNow(), tk = v === 'stock' ? ((($('r-ticker') || {}).textContent) || '') : '', pv = V.view;
+    if (v === pv && tk === V.tk) return;
+    V.view = v; V.tk = tk;
+    if (pv === 'portfolio-loading') undim(v !== 'portfolio');
+    if (!pv || v === 'none') return;                             // primer vistazo o pestaña oculta
+    if (v === 'portfolio-loading') { if (pv === 'portfolio') dim(); else portfolioEnter(); }
+    else if (v === 'loading') loadingEnter(pv);
+    else if (v === 'stock') { if (pv !== 'none') stockEnter(); }
+    else if (v === 'portfolio') { if (pv !== 'portfolio-loading') portfolioEnter(); }
+    else if (v === 'error') P.enter(slice(($('researchEmpty') || {}).children), {});
+  }
+  /* «Analizar» desde el portafolio con la red lenta: lo que hay debajo queda a media luz (nunca
+     a cero) mientras llega la ficha. Los indicadores no: montan sobre el navy y translúcidos
+     lo teñirían de gris. */
+  function dim(){
+    undim(true);
+    slice(document.querySelectorAll('#analizar-portfolio-section > .pva-sec, #portDeepLockWrap')).filter(P.painted).forEach(function(el){
+      if (anim(el, [{ opacity: 1 }, { opacity: .55 }], { duration: 180, easing: 'ease-out', fill: 'forwards' }, '_pvanD')) V.dim.push(el);
+    });
+    V.dimTo = setTimeout(function(){ undim(false); }, 15000);   // tope: nunca se queda apagado
+  }
+  function undim(cut){
+    clearTimeout(V.dimTo);
+    var list = V.dim; V.dim = [];
+    list.forEach(function(el){
+      var a = el._pvanD; el._pvanD = null;
+      if (!cut && ok(el) && P.painted(el)) el.animate([{ opacity: .55 }, { opacity: 1 }], { duration: P.T().dur, easing: EASE });
+      try { if (a) a.cancel(); } catch(e){}
+    });
+  }
+  /* Vuelta al portafolio: si MOTION v7 no lo animó (animó la ficha, que showTab escondió justo
+     después), la entrada de pestaña se pide aquí, sobre la vista que de verdad se ve. */
+  function portfolioEnter(){
+    if (!paSec() || busy(paSec()) || typeof window._pvTabEnter !== 'function') return;
+    try { window._pvTabEnter(TAB); } catch(e){}
+  }
+  /* La espera de la ficha: la burbuja de Portiv IA entra como un mensaje. */
+  function loadingEnter(pv){
+    var l = $('researchLoading'), bar = document.querySelector('#pvaHero .research-search-bar');
+    typing(l);
+    if (pv === 'stock' && bar && P.painted(bar) && !busy(bar)) P.enter(bar, { from: 'above', rise: P.wide() ? 6 : 9 });
+    if (l && !busy(l)) P.enter(l, {});
+  }
+  /* La ficha entra como una vista nueva: el contenido del navy desde arriba (el navy no se
+     mueve ni se funde), los bloques escalonados; la nota cuenta y sus barras crecen cuando el
+     veredicto se ve. */
+  function stockEnter(){
+    var R = $('researchResults');
+    if (!R) return;
+    V.enterT = now(); V.scoreTk = ''; V.qualTk = ''; V.panes = {}; V.fills = {};   // otra apertura: todo llega de nuevo
+    var head = R.querySelector('.ra-header');
+    if (head) P.enter(slice(head.children).filter(P.painted), { from: 'above', rise: P.wide() ? 6 : 9, step: 50 });
+    arrive([R.querySelector('.ra-chart-card'), R.querySelector('.ra-side'), R.querySelector('.ra-metrics4'), $('r-analysis-card'), $('stockLockWrap')].filter(Boolean), 40);
+    var card = R.querySelector('.ra-rating-pro');
+    if (card) seen(card, function(){
+      scoreArrive();
+      P.grow([$('r-biz-bar'), $('r-val-bar')].filter(function(b){ return b && P.painted(b); }), 'x', { delay: 140, step: 70 });
+    });
+    cardsBars($('r-analysis'));   // lo que llega con la ficha (el análisis de un ETF se pinta al instante)
+  }
+  /* La nota de la empresa, cuando ya es definitiva: cuenta desde 0 y el veredicto aparece. */
+  function scoreArrive(){
+    var g = $('r-rating-general'), tk = V.tk;
+    if (!g || !tk || V.view !== 'stock' || V.scoreTk === tk || g.classList.contains('rap-pending')) return;
+    var card = g.closest('.ra-rating-pro');
+    if (card && !inView(card)) { seen(card, scoreArrive); return; }
+    V.scoreTk = tk;
+    count(g, 0, P.T().slow);
+    var lbl = $('r-rec-label');
+    if (lbl && P.painted(lbl)) P.enter(lbl, { rise: 6 });
+  }
+
+  /* ═══ 4) DENTRO DE LA FICHA ═══════════════════════════════════════════════════════════ */
+  /* El análisis de una acción nueva (no sus repintados): entra escalonado si llega después de
+     la ficha; si llegó con ella, ya entró con su bloque. Las barras, al verse cada tarjeta. */
+  function cardsBars(scope){
+    slice(scope && scope.querySelectorAll('.px-card')).forEach(function(c){
+      if (c.querySelector(BARS_X + ', ' + BARS_Y)) seen(c, function(){ growIn(c, 120, true); });
+    });
+  }
+  function qualAfter(el){
+    var tk = el.dataset.tk || '';
+    if (!tk || tk === V.qualTk) return;
+    V.qualTk = tk;
+    var pane = el.querySelector('.px-pane.on');
+    if (pane && !blurred(pane)) { V.panes[tk + ':' + (pane.dataset.pane || '')] = 1; cardsBars(pane); }
+    var lock = $('stockLockWrap');
+    if (V.view !== 'stock' || now() - V.enterT < 600 || (lock && lock.classList.contains('pvm-pre'))) return;
+    var list = [document.querySelector('#r-tabs-host .px-tabs'), document.querySelector('#r-rating-host > .px-card')];
+    if (pane && !blurred(pane)) list = list.concat(slice(pane.children));
+    arrive(list.filter(Boolean).slice(0, 10), 0);
+  }
+  wrap(window, '_renderQualAnalysis', function(orig, args){
+    var r = orig.apply(this, args);
+    try { var el = args[1]; if (el && el.id === 'r-analysis') qualAfter(el); } catch(e){}
+    return r;
+  });
+
+  /* Pestañas del análisis: el panel elegido entra (swap) y, la primera vez que se abre para
+     esta acción, sus barras crecen. Sólo si lo pidió el usuario: _pvxRepaint también llama
+     a _pvxTab para devolverle la pestaña en la que estaba, y eso no debe moverse. */
+  var tap = { el: null, t: 0 };
+  document.addEventListener('click', function(e){
+    var b = e.target && e.target.closest ? e.target.closest('#r-tabs-host .px-tab, #r-period-pills .ppill') : null;
+    if (!b) return;
+    tap.el = b; tap.t = now();
+    if (b.classList.contains('ppill') && !b.classList.contains('active')) V.perT = now();
+  }, true);
+  wrap(window, '_pvxTab', function(orig, args){
+    var btn = args[0], user = !!btn && tap.el === btn && now() - tap.t < 800;
+    var before = document.querySelector('#r-analysis .px-pane.on');
+    var r = orig.apply(this, args);
+    if (user) try {
+      var pane = document.querySelector('#r-analysis .px-pane.on'), rh = $('r-rating-host');
+      if (pane && pane !== before && !blurred(pane)) {
+        V.swapT = now();
+        if (pane.dataset.pane === 'ov' && shown(rh)) P.swap(rh);
+        P.swap(pane);
+        var key = V.qualTk + ':' + (pane.dataset.pane || '');
+        if (!V.panes[key]) { V.panes[key] = 1; cardsBars(pane); }
+      }
+    } catch(e){}
+    return r;
+  });
+
+  /* El precio en vivo (al abrir y cada 30 min): cuenta desde el que había hasta el nuevo. */
+  wrap(window, '_refreshResearchPrice', function(orig, args){
+    var tk = String(args[0] || '').toUpperCase(), el = $('r-price');
+    var before = el && ((($('r-ticker') || {}).textContent) || '') === tk ? num(el.textContent) : null;
+    var p = orig.apply(this, args);
+    if (before) Promise.resolve(p).then(function(){
+      var e2 = $('r-price'), n = e2 && num(e2.textContent);
+      if (n && V.view === 'stock' && V.tk === tk && Math.abs(n.v - before.v) >= .005) count(e2, before.v);
+    }, function(){});
+    return p;
+  });
+
+  /* Periodo de la gráfica: si los datos tardan (no están en caché), la gráfica queda a media
+     luz hasta que llegan —Chart.js ya deforma la línea al llegar— y la pastilla del cambio del
+     periodo entra al cambiar. */
+  wrap(window, 'setResearchPeriod', function(orig, args){
+    var p = orig.apply(this, args);
+    try {
+      if (p && typeof p.then === 'function') {
+        var w = document.querySelector('#researchResults .r-chart-wrap'), done = false;
+        V.perN++;
+        var tm = setTimeout(function(){
+          if (!done && w && !w._pvanD && shown($('researchResults')))
+            w._pvanD = anim(w, [{ opacity: 1 }, { opacity: .5 }], { duration: 180, easing: 'ease-out', fill: 'forwards' }, '_pvanDw');
+        }, 140);
+        var end = function(){
+          if (done) return;
+          done = true; clearTimeout(tm);
+          if (--V.perN > 0 || !w || !w._pvanD) return;
+          var a = w._pvanD; w._pvanD = null;
+          if (ok(w)) w.animate([{ opacity: .5 }, { opacity: 1 }], { duration: P.T().dur, easing: EASE });
+          try { a.cancel(); } catch(e){}
+        };
+        p.then(end, end);
+      }
+    } catch(e){}
+    return p;
+  });
+  wrap(window, '_updateChangeDisplay', function(orig, args){
+    var r = orig.apply(this, args);
+    try {
+      if (V.perT && now() - V.perT < 4000 && V.view === 'stock') {
+        V.perT = 0;
+        var s = document.querySelector('#r-change .ra-chg');
+        if (s) P.enter(s, { from: 'scale' });
+      }
+    } catch(e){}
+    return r;
+  });
+
+  /* «Añadir a tu lista» ⇄ «En tu lista»: el icono nuevo (+ / ✓) aparece al pulsar. */
+  wrap(window, 'toggleWatchlistFromResearch', function(orig, args){
+    var r = orig.apply(this, args);
+    try { anim(document.querySelector('#wlToggleBtn svg'), [{ opacity: 0, transform: 'scale(.4)' }, { opacity: 1, transform: 'none' }], { duration: P.T().dur, easing: EASE }); } catch(e){}
+    return r;
+  });
+
+  /* Tira de «Precio objetivo» (dentro del navy): se despliega y se pliega. Con formulario entra
+     sin animar el alto: el foco automático del campo, dentro de una caja recortada a media
+     altura, desplazaría su contenido. */
+  var TU = window.PV_TARGETS && window.PV_TARGETS._ui;
+  ['headTap', 'headClose', 'headForm'].forEach(function(name){
+    wrap(TU, name, function(orig, args){
+      var s = $('r-tgt-strip'), was = shown(s), self = this;
+      if (was && name !== 'headForm' && ok(s)) {
+        if (s._pvanShut) return;
+        s._pvanShut = 1;
+        var go = function(){ if (!s._pvanShut) return; s._pvanShut = 0; orig.apply(self, args); };
+        P.expand(s, false, go);
+        setTimeout(go, 900);   // sin fotogramas (app en segundo plano) 'finish' no llega: se cierra igual
+        return;
+      }
+      var r = orig.apply(this, args);
+      try {
+        if (shown(s)) {
+          if (s._pvmE) { try { s._pvmE.cancel(); } catch(e){} }   // un pliegue anterior sin terminar
+          if (!was) { if (s.querySelector('form, input')) P.enter(s, { from: 'above', rise: 6 }); else P.expand(s, true); }
+          else P.enter(slice(s.children), { from: 'fade' });
+        }
+      } catch(e){}
+      return r;
+    });
+  });
+
+  /* «Otros datos publicados» (<details>): se despliega animando el alto y se pliega igual (el
+     chevron gira al empezar, ver .pvan-closing). Si algo falla, se abre o cierra a secas. */
+  function details(d, s){
+    var t = P.T(), h0 = d.offsetHeight, open = !d.open, h1, prev = d.style.overflow, done = false;
+    if (open) { d.open = true; h1 = d.offsetHeight; }
+    else { h1 = s.offsetHeight; d.classList.add('pvan-closing'); }
+    var dur = Math.round(Math.min(t.dur * 1.15, 260 + Math.abs(h1 - h0) * .35));
+    var fin = function(){
+      if (done) return;
+      done = true; d.style.overflow = prev; d._pvanBusy = 0;
+      if (!open) { d.open = false; d.classList.remove('pvan-closing'); }
+    };
+    d.style.overflow = 'hidden'; d._pvanBusy = now() + dur + 400;
+    var a = d.animate([{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration: dur, easing: open ? EASE : P.easeIO });
+    a.addEventListener('finish', fin); a.addEventListener('cancel', fin);
+    setTimeout(fin, dur + 400);   // sin fotogramas (app en segundo plano) 'finish' no llega: que no se quede a medias
+    if (open) P.enter(slice(d.children).filter(function(c){ return c !== s; }), { from: 'fade', step: 0 });
+  }
+  document.addEventListener('click', function(e){
+    var s = e.target && e.target.closest ? e.target.closest('#researchResults details.px-otros > summary') : null;
+    if (!s || P.reduced()) return;
+    var d = s.parentNode;
+    e.preventDefault();
+    if (d._pvanBusy && now() < d._pvanBusy) return;
+    var want = !d.open;
+    try { details(d, s); } catch(err){ d._pvanBusy = 0; d.classList.remove('pvan-closing'); d.style.overflow = ''; d.open = want; }
+  }, true);
+
+  /* Lo que llega tarde a un panel que ya se ve (competidores, técnico, F-Score, retornos, tu
+     objetivo, noticias): su tarjeta entra con un fundido, una vez por acción. Los rellenos que
+     llegan con un pintado entero del análisis o con la ficha sólo se apuntan. */
+  function lazyFill(recs){
+    var full = recs.some(function(r){ return r.type === 'childList' && r.target.id === 'r-analysis'; });
+    var live = !full && V.view === 'stock' && now() - V.enterT > 700 && now() - (V.swapT || 0) > 350;   // no encima de la entrada del panel
+    recs.forEach(function(r){
+      if (r.type !== 'childList' || !r.addedNodes.length) return;
+      var h = r.target;
+      if (!h.closest || h.id === 'r-analysis' || !h.closest('#r-analysis .px-pane')) return;
+      var card = null;
+      slice(r.addedNodes).some(function(n){ return n.nodeType === 1 && n.classList.contains('px-card') && (card = n); });
+      card = card || h.closest('.px-card');
+      var id = h.id || (card && card.id) || '';
+      if (!card || !id) return;
+      var key = V.qualTk + '|' + id;
+      if (V.fills[key]) return;
+      V.fills[key] = 1;
+      if (live && h.closest('#r-analysis .px-pane.on') && P.painted(card) && !blurred(card) && inView(card)) {
+        P.enter(card, { rise: P.T().rise / 2 });
+        growIn(card, 100, true);
+      }
+    });
+    /* «Analizando MSFT…»: la tarjeta de espera entra como la burbuja de Portiv IA. */
+    var an = $('r-analysis');
+    if (full && an && an.querySelector('.pv-ai-spin') && an.dataset.tk && an._pvanWait !== an.dataset.tk
+        && V.view === 'stock' && now() - V.enterT > 300 && !blurred(an) && inView(an)) {
+      an._pvanWait = an.dataset.tk;
+      P.enter(an.firstElementChild, {});
+    }
+  }
+
+  /* ═══ 5) MARCA DESLIZANTE DE LOS SEGMENTADOS ═════════════════════════════════════════════
+     La posición del elegido va a variables CSS de la pista (--pvan-l/-r/-y/-h/-sw) y el CSS
+     transiciona el recorte. Al montar la pista, al cambiar de tamaño (vuelta a la vista,
+     ventana del Mac) y en los repintados se coloca sin animar (.pvan-snap); sólo se desliza
+     cuando cambia el elegido de una pista ya montada. En el celular las pestañas del análisis
+     son pastillas sueltas (pista transparente): ahí no hay marca. */
+  var SEG = '#r-period-pills, #r-tabs-host .px-tabs, #pvt-chips';
+  var segRO = typeof ResizeObserver === 'function' ? new ResizeObserver(function(ents){ ents.forEach(function(en){ segPut(en.target, false); }); }) : null;
+  function segMount(tr){
+    if (!tr || tr._pvanSeg) return;
+    tr._pvanSeg = 1; tr._pvanFresh = 1;
+    setTimeout(function(){ tr._pvanFresh = 0; }, 80);
+    if (segRO) segRO.observe(tr);
+    segPut(tr, false);
+  }
+  function segPut(tr, slide){
+    if (!tr.isConnected) { if (segRO) segRO.unobserve(tr); return; }
+    var cs = getComputedStyle(tr), bg = cs.backgroundColor || '';
+    if (!bg || bg === 'transparent' || /^rgba\([^)]*,\s*0\)$/.test(bg)) { tr.classList.remove('pvan-seg'); return; }
+    var on = tr.querySelector(':scope > .active, :scope > .on');
+    if (!on || !tr.offsetWidth) return;
+    var snap = !slide || !tr.classList.contains('pvan-seg') || P.reduced();
+    if (snap) tr.classList.add('pvan-snap');
+    tr.classList.add('pvan-seg');   // antes de medir: así la pista es el offsetParent de sus botones
+    var last = tr.lastElementChild, L = on.offsetLeft, W = on.offsetWidth;
+    var sw = Math.max(tr.clientWidth, last ? last.offsetLeft + last.offsetWidth + (parseFloat(cs.paddingRight) || 0) : 0);
+    tr.style.setProperty('--pvan-sw', sw + 'px');
+    tr.style.setProperty('--pvan-l', L + 'px');
+    tr.style.setProperty('--pvan-r', Math.max(0, sw - L - W) + 'px');
+    tr.style.setProperty('--pvan-y', on.offsetTop + 'px');
+    tr.style.setProperty('--pvan-h', on.offsetHeight + 'px');
+    if (snap) { void tr.offsetWidth; setTimeout(function(){ tr.classList.remove('pvan-snap'); }, 30); }
+  }
+
+  /* ═══ Un solo observador para la pestaña ═══════════════════════════════════════════════
+     La vista sólo cambia con el class de la pestaña o el style de sus cuatro bloques: el resto
+     de registros (cada repintado, cada cifra que cuenta) no la recalcula. */
+  var VIEW_IDS = { 'tab-analizar': 1, 'analizar-portfolio-section': 1, 'researchResults': 1, 'researchLoading': 1, 'researchEmpty': 1 };
+  function onMut(recs){
+    var segs = [], added = [], rated = false, view = false;
+    recs.forEach(function(r){
+      var t = r.target;
+      if (r.type === 'childList') {
+        for (var j = 0; j < r.addedNodes.length; j++) if (r.addedNodes[j].nodeType === 1) added.push(r.addedNodes[j]);
+        if (t.id === 'researchEmpty') view = true;
+      } else {
+        if (VIEW_IDS[t.id]) view = true;
+        if (r.attributeName === 'class') {
+          var p = t.parentNode;
+          if (t.id === 'r-rating-general' && /\brap-pending\b/.test(r.oldValue || '')) rated = true;
+          if (p && p._pvanSeg && segs.indexOf(p) < 0) segs.push(p);
+        }
+      }
+    });
+    if (view) viewCheck();
+    if (added.length) {
+      added.forEach(function(n){
+        typing(n);
+        if (n.matches && n.matches(SEG)) segMount(n);
+        if (n.querySelectorAll) slice(n.querySelectorAll(SEG)).forEach(segMount);
+      });
+      lazyFill(recs);
+    }
+    /* Se desliza sólo un cambio del usuario: no el «vuelve a 1M» de una ficha que acaba de entrar. */
+    segs.forEach(function(tr){ segPut(tr, !tr._pvanFresh && now() - V.enterT > 150); });
+    if (rated) scoreArrive();
+  }
+
+  /* ═══ Arranque ═══ */
+  typing(TAB);
+  var rb = $('researchBtn'), rbi = rb && rb.querySelector('svg');
+  if (rbi && !rb.querySelector('.pvan-bt')) rbi.insertAdjacentHTML('afterend', '<span class="pvan-typing pvan-bt" aria-hidden="true"><i></i><i></i><i></i></span>');
+  slice(TAB.querySelectorAll(SEG)).forEach(segMount);
+  V.view = viewNow();
+  V.tk = V.view === 'stock' ? ((($('r-ticker') || {}).textContent) || '') : '';
+  new MutationObserver(function(recs){ try { onMut(recs); } catch(e){} })
+    .observe(TAB, { subtree: true, childList: true, attributes: true, attributeFilter: ['class', 'style'], attributeOldValue: true });
+})();
 </script>
 <!-- ═══ fin MOVIMIENTO · ANÁLISIS ═══ -->
 </body>
