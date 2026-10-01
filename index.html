@@ -4344,47 +4344,86 @@ window._pvAwaitIAP = function(totalMs){
   <!-- ── Stitch layout (grid-areas: symmetric rows) ── -->
   <div class="stitch-layout">
 
-      <!-- Header: Total Portfolio Value -->
-      <div class="stitch-header">
-        <div class="stitch-header-left">
-          <div class="stitch-val-label">Valor Total del Portafolio</div>
-          <div class="stitch-val-row">
+      <!-- Cabecera navy del portafolio — rediseño (estilos en <style id="pvPortHeroCss">).
+           Valor total, el cambio del periodo activo con su etiqueta («en el año», «hoy»…) y el
+           cambio de hoy; a la derecha (debajo en iPad vertical y celular) los recuadros
+           Posiciones · Efectivo disponible · Ganancia total. Los ids son los de siempre y los
+           siguen escribiendo los mismos: _updatePerfTotals (perf-total, perf-day),
+           _renderHeaderBadge (perf-period-val) y renderTable (sb-*, y _pvphPaint para lo nuevo).
+           Los textos fijos van en español y _pvphI18n los repinta en el idioma activo. -->
+      <div class="pvph-hero" id="pvphHero">
+        <div class="pvph-main">
+          <div class="pvph-eb" data-pvph="eb">Valor total del portafolio</div>
+          <div class="pvph-vrow">
             <div class="stitch-val" id="perf-total">$0.00</div>
             <div class="stitch-badge pos" id="perf-period-val">—</div>
           </div>
+          <div class="pvph-today" id="pvphToday"><span data-pvph="hoy">Hoy</span> <span class="perf-metric-val" id="perf-day">—</span></div>
         </div>
-        <div class="period-btns" id="periodBtns">
-          <button class="period-btn" data-period="1D" onclick="setPeriod('1D',this)">1D</button>
-          <button class="period-btn" data-period="1W" onclick="setPeriod('1W',this)">1W</button>
-          <button class="period-btn" data-period="2W" onclick="setPeriod('2W',this)">2W</button>
-          <button class="period-btn active" data-period="1M" onclick="setPeriod('1M',this)">1M</button>
-          <button class="period-btn" data-period="3M" onclick="setPeriod('3M',this)">3M</button>
-          <button class="period-btn" data-period="6M" onclick="setPeriod('6M',this)">6M</button>
-          <button class="period-btn" data-period="1Y" onclick="setPeriod('1Y',this)">1Y</button>
-          <button class="period-btn" data-period="YTD" onclick="setPeriod('YTD',this)">YTD</button>
-          <button class="period-btn" data-period="ALL" onclick="setPeriod('ALL',this)">ALL</button>
-        </div>
-      </div>
-
-      <!-- Performance chart card (ancho completo) -->
-      <div class="stitch-card stitch-chart-card">
-        <div class="stitch-card-title-row">
-          <span class="stitch-card-title">Performance</span>
-          <div class="perf-metrics">
-            <div class="perf-metric">
-              <span class="perf-metric-label">Today</span>
-              <span class="perf-metric-val" id="perf-day">—</span>
-            </div>
-            <!-- Cambio del PERÍODO activo del chart (1W/2W/1M/…). Oculto en 1D: "Today" ya es
-                 el cambio del día → evita el choque que tenía la vieja métrica "1D". -->
-            <div class="perf-metric" id="perf-period-metric" style="display:none">
-              <span class="perf-metric-label" id="perf-active-label">1M</span>
-              <span class="perf-metric-val" id="perf-ytd">—</span>
-            </div>
+        <div class="pvph-tiles" id="pvphTiles">
+          <div class="pvph-tile" id="pvphTilePos">
+            <div class="pvph-tl" data-pvph="pos">Posiciones</div>
+            <div class="pvph-tv" id="sb-positions">$0.00</div>
+            <div class="pvph-ts" id="sb-poscount">—</div>
+          </div>
+          <div class="pvph-tile" id="pvphTileCash">
+            <div class="pvph-tl"><span class="pvph-long" data-pvph="cash">Efectivo disponible</span><span class="pvph-short" data-pvph="cashS">Efectivo</span></div>
+            <div class="pvph-tv" id="sb-cash">$0.00</div>
+            <div class="pvph-ts"><span id="pvphCashPct"></span><span class="pvph-long" id="pvphCashOf" data-pvph="cashOf"> del total</span></div>
+          </div>
+          <div class="pvph-tile" id="pvphTileGain" hidden>
+            <div class="pvph-tl"><span class="pvph-long" data-pvph="gain">Ganancia total</span><span class="pvph-short" data-pvph="gainS">Ganancia</span></div>
+            <div class="pvph-tv" id="pvphGain">—</div>
+            <div class="pvph-ts"><b id="pvphGainPct"></b><span class="pvph-long" data-pvph="gainOn"> sobre lo invertido</span></div>
           </div>
         </div>
-        <div class="perf-chart-wrap">
-          <canvas id="perfChart"></canvas>
+        <!-- «Valor total» ya es la cifra grande: su recuadro se retiró, el nodo sigue porque
+             renderTable lo escribe. -->
+        <span id="sb-total" hidden>$0.00</span>
+      </div>
+
+      <!-- Rendimiento y Distribución: lado a lado en escritorio, una debajo de otra en iPad
+           vertical y celular. El control de periodos vive en la cabecera de Rendimiento: mismos
+           botones, data-period y onclick de siempre; sólo cambian los rótulos (1S, 2S, 1A, Todo)
+           y YTD pasa delante de 1A. _pvphPerLabels los repinta en el idioma activo. -->
+      <div class="pvph-row" id="pvphRow">
+        <div class="stitch-chart-card pvph-card pvph-rend">
+          <div class="pvph-ch">
+            <div class="pvph-cht"><div class="pvph-ceb" data-pvph="yours">Tu portafolio</div><div class="pvph-ct" data-pvph="rend">Rendimiento</div></div>
+            <div class="pvph-segs" id="pvphSegs"><div class="pvph-seg" id="periodBtns">
+              <button class="period-btn" data-period="1D" onclick="setPeriod('1D',this)">1D</button>
+              <button class="period-btn" data-period="1W" onclick="setPeriod('1W',this)">1S</button>
+              <button class="period-btn" data-period="2W" onclick="setPeriod('2W',this)">2S</button>
+              <button class="period-btn active" data-period="1M" onclick="setPeriod('1M',this)">1M</button>
+              <button class="period-btn" data-period="3M" onclick="setPeriod('3M',this)">3M</button>
+              <button class="period-btn" data-period="6M" onclick="setPeriod('6M',this)">6M</button>
+              <button class="period-btn" data-period="YTD" onclick="setPeriod('YTD',this)">YTD</button>
+              <button class="period-btn" data-period="1Y" onclick="setPeriod('1Y',this)">1A</button>
+              <button class="period-btn" data-period="ALL" onclick="setPeriod('ALL',this)">Todo</button>
+            </div></div>
+          </div>
+          <div class="perf-chart-wrap">
+            <canvas id="perfChart"></canvas>
+          </div>
+          <!-- Métricas que _updatePerfTotals sigue escribiendo. La línea bajo el título se
+               retiró: el cambio del periodo y el de hoy ya están en la cabecera navy. -->
+          <div style="display:none">
+            <span id="perf-period-metric" style="display:none"><span id="perf-active-label">1M</span><span class="perf-metric-val" id="perf-ytd">—</span></span>
+          </div>
+        </div>
+        <!-- Distribución: anillo fino (renderDonut) y leyenda por peso (renderLegend), con el
+             efectivo como una porción más; los % son sobre el valor total. -->
+        <div class="pvph-card pvph-dist" id="assetDistCard">
+          <div class="pvph-ch">
+            <div class="pvph-cht"><div class="pvph-ceb" data-pvph="yours">Tu portafolio</div><div class="pvph-ct" data-pvph="dist">Distribución</div></div>
+          </div>
+          <div class="pvph-dbody">
+            <div class="pvph-donut">
+              <canvas id="donutChart"></canvas>
+              <div class="pvph-dc"><div class="pvph-dn" id="donutVal">—</div><div class="pvph-dl" id="pvphDonutLbl">posiciones</div></div>
+            </div>
+            <div class="pvph-lg" id="legend"></div>
+          </div>
         </div>
       </div>
 
@@ -4424,38 +4463,13 @@ window._pvAwaitIAP = function(totalMs){
         </div>
       </div>
 
-      <!-- Cuadro resumen: Valor Total / Posiciones / Efectivo (grid-area: summary) -->
-      <div class="stitch-card summary-box">
-        <div class="summary-box-item">
-          <div class="sb-label">Valor Total</div>
-          <div class="sb-val" id="sb-total">$0.00</div>
-        </div>
-        <div class="summary-box-item">
-          <div class="sb-label">Posiciones</div>
-          <div class="sb-val" id="sb-positions">$0.00</div>
-          <div class="sb-sub" id="sb-poscount">—</div>
-        </div>
-        <div class="summary-box-item">
-          <div class="sb-label">Efectivo disponible</div>
-          <div class="sb-val" id="sb-cash">$0.00</div>
-        </div>
-      </div>
+      <!-- (El cuadro resumen Valor total / Posiciones / Efectivo pasó a los recuadros de la
+           cabecera navy, #pvphTiles: mismos ids sb-*.) -->
 
       <!-- ── SIDEBAR (grid-area: sidebar) — alineado con Your Positions ── -->
       <div class="stitch-sidebar">
 
-      <!-- Asset Distribution -->
-      <div class="stitch-card" id="assetDistCard">
-        <div class="stitch-card-title">Distribución de Activos</div>
-        <div class="donut-wrap">
-          <canvas id="donutChart"></canvas>
-          <div class="donut-center">
-            <div class="donut-val" id="donutVal">—</div>
-            <div class="donut-lbl">posiciones</div>
-          </div>
-        </div>
-        <div class="legend" id="legend"></div>
-      </div>
+      <!-- (Distribución de activos subió junto a Rendimiento: #assetDistCard en #pvphRow.) -->
 
       <!-- Acciones rápidas: Agregar fondos / Retirar / Add Asset -->
       <div class="stitch-card" id="quickActionsCard">
@@ -16279,11 +16293,12 @@ function renderTable(T, opts) {
     <td></td>
   </tr>`;
 
-  // ── Cuadro resumen (al lado de la gráfica) ──
+  // ── Recuadros de la cabecera navy (Posiciones · Efectivo disponible · Ganancia total) ──
   if ($('sb-total'))     $('sb-total').textContent     = usd(T.total);
   if ($('sb-positions')) $('sb-positions').textContent = usd(T.mkt);
-  if ($('sb-poscount'))  $('sb-poscount').textContent  = HOLDINGS.length + ' activos';
+  if ($('sb-poscount'))  $('sb-poscount').textContent  = HOLDINGS.length === 1 ? _L('1 activo', '1 asset') : _L(HOLDINGS.length + ' activos', HOLDINGS.length + ' assets');
   if ($('sb-cash'))      $('sb-cash').textContent      = usd(cashTotal);
+  try { _pvphPaint(T, cashTotal); } catch(e) {}
 
   updateCash();
 }
@@ -16431,20 +16446,35 @@ function renderDonut(T) {
   // chart.js se carga bajo demanda (ya no viene en el <head>). Si aún no está, se pide y se
   // re-entra a esta misma función cuando llegue — así el resto del render no se bloquea.
   if (!window.Chart) { try { window._ensureChartJs().then(() => renderDonut(T)).catch(()=>{}); } catch(e){} return; }
-  const real  = HOLDINGS.map(h => calcH(h).mktVal);          // valores reales (para tooltip/leyenda)
-  const equal = real; // segmentos PROPORCIONALES al % real de cada posición
-  if (donutChart) { donutChart._realVals = real; donutChart.data.datasets[0].data = equal; donutChart.update('none'); return; }
-  const ctx = $('donutChart').getContext('2d');
-  donutChart = new Chart(ctx, {
-    type:'doughnut',
-    // Blindaje Retina (escala en cada dibujo + repintado al volver a verse): la dona también
-    // puede quedarse encogida a 1/dpr en WebKit.
-    plugins: (typeof portivRetinaGuard !== 'undefined') ? [portivRetinaGuard] : [],
-    data:{ labels:HOLDINGS.map(h=>h.ticker), datasets:[{ data: equal, backgroundColor:CHART_COLORS, borderColor: document.body.classList.contains('dark-theme') ? '#0b111c' : '#FFFFFF', borderWidth:3 }] },
-    options:{ cutout:'68%', plugins:{ legend:{display:false}, tooltip:{enabled:false} }, animation:{duration:300} }
-  });
-  donutChart._realVals = real;
+  // Rediseño de Distribución (pvPortHeroCss): anillo fino, una porción por posición de mayor a
+  // menor y el efectivo como una porción más (gris claro), con los colores de _pvphDist: las
+  // siete mayores de navy a menta y el resto en gris apagado. Etiquetas y colores se rehacen en
+  // cada pasada porque el orden cambia con los precios.
+  const D = _pvphDist(T);
+  const real = D.slices.map(x => x.val);                      // segmentos PROPORCIONALES al valor real
+  const cols = D.slices.map(x => x.col), labs = D.slices.map(x => x.label);
+  const ring = _pvphCardBg();                                  // el hueco entre porciones = fondo de la tarjeta
+  if (donutChart) {
+    donutChart._realVals = real;
+    donutChart.data.labels = labs;
+    const _ds = donutChart.data.datasets[0];
+    _ds.data = real; _ds.backgroundColor = cols; _ds.borderColor = ring;
+    donutChart.update('none');
+  } else {
+    const ctx = $('donutChart').getContext('2d');
+    donutChart = new Chart(ctx, {
+      type:'doughnut',
+      // Blindaje Retina (escala en cada dibujo + repintado al volver a verse): la dona también
+      // puede quedarse encogida a 1/dpr en WebKit.
+      plugins: (typeof portivRetinaGuard !== 'undefined') ? [portivRetinaGuard] : [],
+      data:{ labels:labs, datasets:[{ data: real, backgroundColor:cols, borderColor: ring, borderWidth:2 }] },
+      options:{ cutout:'84%', plugins:{ legend:{display:false}, tooltip:{enabled:false} }, animation:{duration:300} }
+    });
+    donutChart._realVals = real;
+  }
   $('donutVal').textContent = HOLDINGS.length;
+  const _dl = $('pvphDonutLbl');
+  if (_dl) _dl.textContent = HOLDINGS.length === 1 ? _L('posición', 'position') : _L('posiciones', 'positions');
 }
 
 // FIX: reparte pesos a 1 decimal que sumen EXACTAMENTE 100.0 (método del mayor residuo —
@@ -16464,17 +16494,195 @@ function reconcilePctTo100(values){
 function renderLegend(T) {
   const _lg = $('legend');
   if (!_lg) return;
-  // FIX: pesos reconciliados a 100.0% exacto (largest remainder) → la leyenda suma 100.0.
-  const weights = reconcilePctTo100(HOLDINGS.map(h => calcH(h).mktVal));
-  _lg.innerHTML = HOLDINGS.map((h,i) => {
-    const pct = (weights[i] || 0).toFixed(1);
-    return `<div class="legend-row">
-      <div class="leg-dot" style="background:${CHART_COLORS[i]}"></div>
-      <div class="leg-name">${h.ticker}</div>
-      <div class="leg-pct">${pct}%</div>
-    </div>`;
-  }).join('');
+  // Rediseño de Distribución (pvPortHeroCss): filas por peso — ticker, barra fina (relativa a la
+  // fila mayor) y %. Las siete mayores una a una; si quedan dos o más, una fila «Otras N»; el
+  // efectivo, la última. Pesos de _pvphDist: reconciliados a 100.0 sobre el valor TOTAL
+  // (posiciones + efectivo), igual que las porciones de la dona.
+  const D = _pvphDist(T);
+  const max = Math.max(0.0001, ...D.rows.map(r => r.w));
+  const esc = v => (typeof pvEsc === 'function') ? pvEsc(String(v)) : String(v);
+  _lg.innerHTML = D.rows.map(r => `<div class="pvph-lr${r.mu ? ' pvph-mu' : ''}">
+      <b>${esc(r.label)}</b>
+      <span class="pvph-bar"><i style="width:${(r.w > 0 ? Math.max(2, r.w / max * 100) : 0).toFixed(1)}%;background:${r.col}"></i></span>
+      <em>${_pvphShare(r.w)}</em>
+    </div>`).join('');
 }
+
+// ═══ Cabecera navy del Portafolio y Distribución — rediseño (estilos en pvPortHeroCss) ════════
+// Sólo presentación: formatos, rótulos en el idioma activo y qué se enseña según haya datos.
+// Los números son los de siempre (calcH, calcTotals, _calcRealDayChange, reconcilePctTo100).
+function _pvphTone(v){ const c = Math.round((+v || 0) * 100); return c > 0 ? 'pos' : (c < 0 ? 'neg' : 'flat'); }
+// «−$81.64» / «+$0.00»: signo tipográfico y el símbolo de la moneda activa (usd).
+function _pvphMoney(v){ const n = round2(+v || 0); return (n < 0 ? '−' : '+') + usd(Math.abs(n)); }
+// «−1.13 %» (en inglés «−1.13%»); un 0 redondeado va sin signo.
+function _pvphPct(p, dec){
+  const d = (dec == null) ? 1 : dec, n = +p || 0, r = Math.abs(n).toFixed(d);
+  return ((+r === 0) ? '' : (n < 0 ? '−' : '+')) + r + _L('\u00a0%', '%');
+}
+// Peso sin signo («31.0 %»): leyenda y parte del efectivo sobre el total.
+function _pvphShare(p){ return Math.abs(+p || 0).toFixed(1) + _L('\u00a0%', '%'); }
+// Etiqueta del periodo de la pastilla de la cabecera.
+const _PVPH_PER_TXT = {
+  '1D': ['hoy', 'today'], '1W': ['en 1 semana', 'past week'], '2W': ['en 2 semanas', 'past 2 weeks'],
+  '1M': ['en 1 mes', 'past month'], '3M': ['en 3 meses', 'past 3 months'], '6M': ['en 6 meses', 'past 6 months'],
+  'YTD': ['en el año', 'this year'], '1Y': ['en 1 año', 'past year'], '2Y': ['en 2 años', 'past 2 years'],
+  '3Y': ['en 3 años', 'past 3 years'], 'ALL': ['desde el inicio', 'all time'],
+};
+function _pvphPerTxt(p){ const t = _PVPH_PER_TXT[p]; return t ? _L(t[0], t[1]) : String(p || ''); }
+// La línea «Hoy» de la cabecera sólo cuando la pastilla NO es ya el cambio del día.
+function _pvphTodayLine(show){ const t = document.getElementById('pvphToday'); if (t) t.hidden = !show; }
+
+// Rótulos del control segmentado: los data-period no cambian, sólo lo que se lee. También los
+// botones que unlockPeriods() agrega después (3A…), vía el MutationObserver de _pvphInit.
+const _PVPH_PER_BTN = {
+  '1D': ['1D', '1D'], '1W': ['1S', '1W'], '2W': ['2S', '2W'], '1M': ['1M', '1M'], '3M': ['3M', '3M'],
+  '6M': ['6M', '6M'], 'YTD': ['YTD', 'YTD'], '1Y': ['1A', '1Y'], '2Y': ['2A', '2Y'], '3Y': ['3A', '3Y'], 'ALL': ['Todo', 'All'],
+};
+function _pvphPerLabels(){
+  const w = document.getElementById('periodBtns'); if (!w) return;
+  w.querySelectorAll('.period-btn[data-period]').forEach(b => {
+    const t = _PVPH_PER_BTN[b.dataset.period]; if (!t) return;
+    const v = _L(t[0], t[1]); if (b.textContent !== v) b.textContent = v;
+  });
+}
+
+// Textos fijos de la cabecera y de las dos tarjetas (marcados con data-pvph en el HTML).
+const _PVPH_TXT = {
+  eb: ['Valor total del portafolio', 'Total portfolio value'], hoy: ['Hoy', 'Today'],
+  pos: ['Posiciones', 'Positions'], cash: ['Efectivo disponible', 'Available cash'], cashS: ['Efectivo', 'Cash'],
+  cashOf: [' del total', ' of total'], gain: ['Ganancia total', 'Total gain'], gainS: ['Ganancia', 'Gain'],
+  gainOn: [' sobre lo invertido', ' on cost'], yours: ['Tu portafolio', 'Your portfolio'],
+  rend: ['Rendimiento', 'Performance'], dist: ['Distribución', 'Allocation'],
+};
+function _pvphI18n(){
+  const root = document.getElementById('tab-portfolio'); if (!root) return;
+  root.querySelectorAll('[data-pvph]').forEach(el => {
+    const t = _PVPH_TXT[el.getAttribute('data-pvph')]; if (!t) return;
+    const v = _L(t[0], t[1]); if (el.textContent !== v) el.textContent = v;
+  });
+  _pvphPerLabels();
+}
+
+// Reparto del valor total, una sola fuente para la dona y la leyenda. Orden por valor de mercado
+// (empates: el orden de HOLDINGS); el efectivo (CASH + money market, el mismo de «Efectivo
+// disponible») va al final. Los % salen de reconcilePctTo100 sobre posiciones + efectivo: así
+// suman 100.0 sobre el valor total sin tocar esa función (sus otros usos siguen igual).
+function _pvphDist(T){
+  const dark = document.body.classList.contains('dark-theme');
+  // Las siete mayores de fuerte a suave: navy → azul → verde agua → menta (en oscuro, de claro a
+  // apagado para que destaquen sobre la tarjeta oscura); el resto, un gris azulado apagado.
+  const PAL = dark ? ['#e8edf7', '#a9c3e8', '#6f9fd8', '#4a82c0', '#2fa596', '#5cc4a6', '#9edcc6']
+                   : ['#0b1c30', '#1f4371', '#2f6aa3', '#3d8fb8', '#33a596', '#69c4a8', '#a8dfcb'];
+  const MUTED = dark ? 'rgba(232,237,247,.26)' : '#c8d0dc';
+  const CASHC = dark ? 'rgba(232,237,247,.12)' : '#e2e7ee';
+  const items = HOLDINGS.map((h, i) => ({ i, t: h.ticker, val: Math.max(0, round2(calcH(h).mktVal)) }));
+  items.sort((a, b) => (b.val - a.val) || (a.i - b.i));
+  const cash = Math.max(0, round2(((T && T.cash) || 0) + ((T && T.mm) || 0)));
+  const w = reconcilePctTo100(items.map(x => x.val).concat([cash]));
+  items.forEach((x, k) => { x.w = w[k] || 0; x.col = k < 7 ? PAL[k] : MUTED; });
+  const cashW = w[items.length] || 0, cashLbl = _L('Efectivo', 'Cash');
+  const slices = items.map(x => ({ val: x.val, col: x.col, label: x.t }));
+  if (cash > 0) slices.push({ val: cash, col: CASHC, label: cashLbl });
+  const rest = items.slice(7);
+  const group = rest.length >= 2;                              // una sola «otra» se enseña con su nombre
+  const rows = (group ? items.slice(0, 7) : items).map(x => ({ label: x.t, w: x.w, col: x.col, mu: false }));
+  if (group) rows.push({ label: _L('Otras ', 'Other ') + rest.length, w: +rest.reduce((a, x) => a + x.w, 0).toFixed(1), col: MUTED, mu: true });
+  if (cash > 0) rows.push({ label: cashLbl, w: cashW, col: CASHC, mu: true });
+  return { slices, rows, cash };
+}
+// Fondo real de la tarjeta (claro u oscuro): el borde de cada porción es el hueco entre ellas.
+function _pvphCardBg(){
+  try {
+    const c = getComputedStyle(document.getElementById('assetDistCard')).backgroundColor;
+    if (c && !/rgba\(\s*0,\s*0,\s*0,\s*0\s*\)|transparent/.test(c)) return c;
+  } catch(e){}
+  return document.body.classList.contains('dark-theme') ? '#0f1623' : '#ffffff';
+}
+
+// Lo nuevo de la cabecera, en cada renderTable: el % del efectivo sobre el total, la ganancia
+// total y qué recuadros se ven. Sin datos no se inventa nada: sin posiciones no hay recuadro de
+// posiciones; sin costo conocido no hay ganancia; cartera vacía, ni recuadros ni Distribución.
+function _pvphPaint(T, cashTotal){
+  _pvphI18n();
+  const n = HOLDINGS.length, tot = +T.total || 0, cash = Math.max(0, +cashTotal || 0);
+  const has = n > 0 || cash > 0;
+  const tPos = $('pvphTilePos'), tCash = $('pvphTileCash'), tGain = $('pvphTileGain'), box = $('pvphTiles');
+  if (tPos) tPos.hidden = !(n > 0);
+  if (tCash) tCash.hidden = !has;
+  const cp = $('pvphCashPct'), co = $('pvphCashOf');
+  if (cp) cp.textContent = tot > 0 ? _pvphShare(cash / tot * 100) : '';
+  if (co) co.hidden = !(tot > 0);
+  // Ganancia total = Σ(valor de mercado − costo) de las posiciones CON costo, y su % sobre ese
+  // costo. Con las cotizaciones aún en vuelo (valor de posiciones en 0) se deja lo último pintado.
+  if (!(n > 0 && !(T.mkt > 0))) {
+    let gain = 0, cost = 0;
+    HOLDINGS.forEach(h => {
+      const cb = +h.costBasis;
+      if (isFinite(cb) && cb > 0) { gain += round2(calcH(h).mktVal) - round2(cb); cost += round2(cb); }
+    });
+    gain = round2(gain); cost = round2(cost);
+    if (tGain) tGain.hidden = !(cost > 0);
+    if (cost > 0) {
+      const tone = _pvphTone(gain), g = $('pvphGain'), gp = $('pvphGainPct');
+      if (g) { g.textContent = _pvphMoney(gain); g.className = 'pvph-tv ' + tone; }
+      if (gp) { gp.textContent = _pvphPct(gain / cost * 100, 1); gp.className = tone; }
+    }
+  }
+  if (box) box.hidden = !has;
+  const row = $('pvphRow'); if (row) row.classList.toggle('pvph-solo', !has);
+  _pvphFitTiles();
+}
+
+// Cifras largas en los recuadros (celular, tres en fila): se reduce un paso la letra de los tres
+// a la vez y, si aún no cabe, otro. Con la pestaña oculta no se mide (lo repite el ResizeObserver).
+function _pvphFitTiles(){
+  const box = document.getElementById('pvphTiles');
+  if (!box || !box.offsetParent) return;
+  box.classList.remove('pvph-fit1', 'pvph-fit2');
+  const over = () => Array.prototype.some.call(box.querySelectorAll('.pvph-tl, .pvph-tv, .pvph-ts'),
+    el => el.offsetParent && el.scrollWidth > el.clientWidth + 1);
+  if (!over()) return;
+  box.classList.add('pvph-fit1');
+  if (!over()) return;
+  box.classList.remove('pvph-fit1'); box.classList.add('pvph-fit2');
+}
+
+// Celular: el control segmentado se desliza de lado; al cambiar de periodo, el activo queda a
+// la vista (centrado en la franja). En escritorio no hay desborde y no se mueve nada.
+function _pvphSegReveal(){
+  const sc = document.getElementById('pvphSegs'), b = sc && sc.querySelector('.period-btn.active');
+  if (!sc || !b || sc.scrollWidth <= sc.clientWidth + 1) return;
+  const r = b.getBoundingClientRect(), f = sc.getBoundingClientRect();
+  const d = (r.left + r.width / 2) - (f.left + f.width / 2);
+  if (Math.abs(d) < 2) return;
+  let calm = false; try { calm = _pvReducedMotion(); } catch(e){}
+  try { sc.scrollBy({ left: d, behavior: calm ? 'auto' : 'smooth' }); } catch(e){ sc.scrollLeft += d; }
+}
+
+(function _pvphInit(){
+  try { _pvphPerLabels(); } catch(e){}
+  const w = document.getElementById('periodBtns');
+  if (w && !w._pvphObs) {
+    w._pvphObs = true;
+    try {
+      new MutationObserver(function(muts){
+        if (muts.some(m => m.type === 'childList')) _pvphPerLabels();
+        if (muts.some(m => m.type === 'attributes' && m.target.classList && m.target.classList.contains('active'))) _pvphSegReveal();
+      }).observe(w, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    } catch(e){}
+  }
+  const box = document.getElementById('pvphTiles');
+  if (box && window.ResizeObserver && !box._pvphRO) {
+    let lastW = -1;
+    box._pvphRO = new ResizeObserver(function(en){
+      const cw = Math.round((en[0] && en[0].contentRect.width) || 0);
+      if (cw === lastW) return;
+      lastW = cw;
+      _pvphFitTiles();
+    });
+    try { box._pvphRO.observe(box); } catch(e){}
+  }
+})();
 
 // ═══════════════════════════════════════════════════
 //  DRAWER LOGIC
@@ -20407,7 +20615,7 @@ function _pvTabEnter(pg){
   /* Ancla navy de cada pestaña (Seguimiento: .pwl-hero). Ajustes no tiene clase
      propia para su cabecera: se cae al primer bloque que pinte (dentro de
      .set-wrap, que es un envoltorio y no la cabecera). */
-  var navy = pg.querySelector('.pva-hero, .pwl-hero, .pvp-hero, .sn-header, .research-search-bar, .ai-chat-header, .pvia-hero, .stitch-header-left');
+  var navy = pg.querySelector('.pva-hero, .pwl-hero, .pvp-hero, .sn-header, .research-search-bar, .ai-chat-header, .pvia-hero, .pvph-hero, .stitch-header-left');
   if (!navy) {
     var c0 = pg.firstElementChild;
     while (c0 && !_pvIsPainted(c0)) c0 = c0.nextElementSibling;
@@ -23498,8 +23706,12 @@ function _renderHeaderDayBadge() {
     if (typeof _calcRealDayChange === 'function') { const dc = _calcRealDayChange(); day = dc.day; dayPct = dc.dayPct; }
     else if (typeof calcTotals === 'function') { const T = calcTotals(); day = T.day || 0; dayPct = pfDayChgPct(T); }
   } catch(e) {}
-  pv.textContent = `${day>=0?'+':'-'}${Math.abs(day).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} (${day>=0?'+':''}${dayPct.toFixed(2)}%)`;
-  pv.className = 'stitch-badge ' + (day >= 0 ? 'pos' : 'neg');
+  // Rediseño de la cabecera (pvPortHeroCss): monto con su símbolo, % con el formato de la
+  // cabecera y la etiqueta del periodo («hoy»). La pastilla ya ES el cambio del día, así que la
+  // línea «Hoy» de debajo se oculta para no decirlo dos veces.
+  pv.textContent = `${_pvphMoney(day)} (${_pvphPct(dayPct, 2)}) ${_pvphPerTxt('1D')}`;
+  pv.className = 'stitch-badge ' + _pvphTone(day);
+  _pvphTodayLine(false);
 }
 
 // Badge junto al "Total Portfolio Value": muestra el cambio del PERÍODO ACTIVO (1M/3M/…)
@@ -23517,8 +23729,11 @@ function _renderHeaderBadge(period, ds){
   if (_vals.length < 2 || new Set(_vals).size < 2){ _renderHeaderDayBadge(); return; }
   const chg = (typeof ds.change === 'number') ? ds.change : 0;
   const pct = ds.changePct;
-  pv.textContent = `${chg>=0?'+':'-'}${Math.abs(chg).toLocaleString('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2})} (${pct>=0?'+':''}${pct.toFixed(2)}%)`;
-  pv.className = 'stitch-badge ' + (pct >= 0 ? 'pos' : 'neg');
+  // Rediseño de la cabecera (pvPortHeroCss): la pastilla dice de qué periodo es el cambio.
+  // El color sigue al % como antes (sólo un 0.00 % exacto queda neutro).
+  pv.textContent = `${_pvphMoney(chg)} (${_pvphPct(pct, 2)}) ${_pvphPerTxt(period)}`;
+  pv.className = 'stitch-badge ' + (Math.round(pct * 100) === 0 ? 'flat' : (pct > 0 ? 'pos' : 'neg'));
+  _pvphTodayLine(true);
 }
 
 function setPeriod(period, btn) {
@@ -23653,8 +23868,8 @@ function _updatePerfTotals(activeP, ds) {
       el('perf-day').textContent = '—';
       el('perf-day').className = 'perf-metric-val';
     } else {
-      el('perf-day').textContent = `${sign(day)}${usd(Math.abs(day))} (${sign(dayPct)}${Math.abs(dayPct).toFixed(2)}%)`;
-      el('perf-day').className = 'perf-metric-val ' + (day >= 0 ? 'pos' : 'neg');
+      el('perf-day').textContent = `${_pvphMoney(day)} (${_pvphPct(dayPct, 2)})`;
+      el('perf-day').className = 'perf-metric-val ' + _pvphTone(day);
     }
   }
   const ap = activeP || (typeof activePeriod !== 'undefined' ? activePeriod : '1M');
@@ -55550,6 +55765,349 @@ html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:
 @media (prefers-reduced-motion: reduce) {
   html body #tab-analizar #researchResults .ra-head-actions .ra-btn { transition:none !important; }
   html body #tab-analizar #researchResults .ra-head-actions .ra-btn:active { transform:none; }
+}
+</style>
+<style id="pvPortHeroCss">
+/* ═══ PORTAFOLIO — cabecera navy, Rendimiento y Distribución (rediseño aprobado, port.py) ═════
+   Marcado: #pvphHero (valor total, pastilla del cambio del periodo activo con su etiqueta, línea
+   «Hoy» y los recuadros Posiciones · Efectivo disponible · Ganancia total) y #pvphRow (tarjeta
+   Rendimiento con el control segmentado #periodBtns y tarjeta Distribución #assetDistCard), en
+   #tab-portfolio .stitch-layout. Las clases son nuevas (pvph-*); de las viejas sólo quedan las
+   que el JS fuerza o busca (stitch-val, stitch-badge, perf-metric-val, period-btn,
+   stitch-chart-card, perf-chart-wrap) y a esas se les gana por especificidad: cada regla cuelga
+   de dos ids (#tab-portfolio + #pvphHero / #pvphRow, o el :not(#pvph-x)) con «html body», y
+   responde con !important donde las capas anteriores lo usan (bloque pvd/v8 de escritorio,
+   html.pv-ipad, @media ≤700/≤760, tallas de html:root:not(.pv-ipad) y body.dark-theme).
+   Nunca se fija display con !important en los botones de periodo: unlockPeriods() oculta los
+   que no tienen datos con un display:none en línea.
+   Tramos: escritorio (web, app de Mac e iPad apaisado, ≥1100) · tableta (iPad vertical, fijado a
+   1024, y web de 900–1099) · celular (≤899). Oscuro: body.dark-theme, por tokens.
+   Sin sombras, sin desenfoques y sin degradados (el relleno suave es el de la propia gráfica).
+   Orden: tokens → página y rejilla → cabecera → tarjetas → tableta → celular → oscuro →
+   movimiento reducido. */
+
+/* ── Tokens (claro) ── */
+html body #tab-portfolio {
+  --pvph-hero:var(--pvr-navy-bar,#0b1c30);   /* el navy de la barra superior: sin costura con ella */
+  --pvph-on:#fff; --pvph-on2:rgba(255,255,255,.55); --pvph-on3:rgba(255,255,255,.85);
+  --pvph-tile:rgba(255,255,255,.06); --pvph-tile-line:rgba(255,255,255,.10);
+  --pvph-mint:#7fe0b6; --pvph-rose:#ffa79f;  /* cifras +/− sobre el navy */
+  --pvph-card:#fff; --pvph-line:#e2e7f0; --pvph-line-hi:#cfd7e3; --pvph-track:#eef1f8;
+  --pvph-ink:#0b1c30; --pvph-slate:#33475f; --pvph-muted:#7a879b;
+  --pvph-thumb:#0b1c30; --pvph-thumb-ink:#fff;
+  --pvph-green:#0f8a5f; --pvph-green-bg:#dcf6e9; --pvph-red:#c62828; --pvph-red-bg:#ffe3df;
+  --pvph-r:30px; --pvph-r-hero:40px; --pvph-gut:var(--pvr-pad-x,16px);
+  --pvph-ease:cubic-bezier(.22,1,.36,1);
+}
+
+/* ═══ PÁGINA Y REJILLA ═════════════════════════════════════════════════════════════════════ */
+/* La cabecera arranca pegada a la barra superior en todos los equipos. */
+html body #tab-portfolio:not(#pvph-x) { padding-top:0 !important; }
+html body #tab-portfolio .stitch-layout:not(#pvph-x) { padding-top:0 !important; }
+/* Cabecera, la fila de las dos tarjetas y debajo Tus posiciones y Movimientos. Desde 900 px es
+   una rejilla (el celular apila en orden: la app la pasa a display:block por debajo de 761). */
+html body #tab-portfolio .stitch-layout:not(#pvph-x) {
+  grid-template-columns:minmax(0,1fr) !important;
+  grid-template-areas:"header" "row" "positions" "sidebar" !important;
+  align-content:start !important;
+}
+html body #tab-portfolio .stitch-layout:not(#pvph-x) > #pvphHero { grid-area:header; }
+html body #tab-portfolio .stitch-layout:not(#pvph-x) > #pvphRow  { grid-area:row; }
+@media (min-width: 900px) {
+  html body #tab-portfolio .stitch-layout:not(#pvph-x) { display:grid !important; row-gap:24px !important; column-gap:24px !important; }
+  /* Tus posiciones a todo el ancho: Movimientos debajo, a media columna, a la derecha (donde ya
+     estaba cuando compartía fila con Distribución). */
+  html body #tab-portfolio .stitch-layout:not(#pvph-x) > .stitch-sidebar {
+    display:grid !important; grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+    gap:24px !important; align-items:start !important;
+  }
+  html body #tab-portfolio .stitch-layout:not(#pvph-x) > .stitch-sidebar > #quickActionsCard { grid-column:2 !important; }
+}
+/* Donde la tabla de posiciones cabe al lado de Movimientos (los mismos tramos que ya usaba la
+   app: web desde 1440, o de 1320 a 1379 en ventanas bajas; iPad desde 1320), van lado a lado. */
+@media (min-width: 1440px) {
+  html:not(.pv-ipad) body #tab-portfolio .stitch-layout:not(#pvph-x) {
+    grid-template-columns:minmax(0,1fr) clamp(320px,27vw,380px) !important;
+    grid-template-areas:"header header" "row row" "positions sidebar" !important;
+  }
+  html:not(.pv-ipad) body #tab-portfolio .stitch-layout:not(#pvph-x) > .stitch-sidebar { display:flex !important; flex-direction:column !important; align-items:stretch !important; }
+}
+@media (min-width: 1320px) and (max-width: 1379px) and (max-height: 559px) {
+  html:not(.pv-ipad) body #tab-portfolio .stitch-layout:not(#pvph-x) {
+    grid-template-columns:minmax(0,1fr) clamp(320px,27vw,380px) !important;
+    grid-template-areas:"header header" "row row" "positions sidebar" !important;
+  }
+  html:not(.pv-ipad) body #tab-portfolio .stitch-layout:not(#pvph-x) > .stitch-sidebar { display:flex !important; flex-direction:column !important; align-items:stretch !important; }
+}
+@media (min-width: 1320px) {
+  html.pv-ipad body #tab-portfolio .stitch-layout:not(#pvph-x) {
+    grid-template-columns:minmax(0,1fr) clamp(320px,27vw,380px) !important;
+    grid-template-areas:"header header" "row row" "positions sidebar" !important;
+  }
+  html.pv-ipad body #tab-portfolio .stitch-layout:not(#pvph-x) > .stitch-sidebar { display:flex !important; flex-direction:column !important; align-items:stretch !important; }
+}
+
+/* Aviso «Sincronizando con tu broker…» (primer hijo de la pestaña): franja del mismo navy que
+   abre la cabecera, como ya hacía el escritorio. Mismo texto y mismo spinner. */
+html body #tab-portfolio:not(#pvph-x) > #snapSyncBanner.show {
+  margin:0 calc(50% - 50vw) !important; padding:14px max(var(--pvph-gut),calc(50vw - 50%)) 0 !important;
+  background:var(--pvph-hero) !important; border:0 !important; border-radius:0 !important; box-shadow:none !important;
+}
+html body #tab-portfolio:not(#pvph-x) > #snapSyncBanner .ssb-title { color:#fff !important; }
+html body #tab-portfolio:not(#pvph-x) > #snapSyncBanner .ssb-sub { color:rgba(255,255,255,.62) !important; }
+html body #tab-portfolio:not(#pvph-x) > #snapSyncBanner .ssb-spin { border-color:rgba(255,255,255,.22) !important; border-top-color:#fff !important; }
+
+/* ═══ CABECERA NAVY (escritorio: valor a la izquierda, recuadros a la derecha) ════════════════ */
+/* A sangre: de borde a borde de la ventana; el padding lateral calc(50vw - 50%) devuelve el
+   contenido a la columna de la pestaña, sea cual sea su margen en cada equipo. */
+html body #tab-portfolio #pvphHero {
+  display:flex; flex-direction:row; align-items:flex-end; justify-content:space-between; gap:40px;
+  box-sizing:border-box; position:relative; min-width:0;
+  margin:0 calc(50% - 50vw) 8px; padding:22px calc(50vw - 50%) 34px;
+  background:var(--pvph-hero); color:var(--pvph-on); border-radius:0 0 var(--pvph-r-hero) var(--pvph-r-hero);
+  font-family:var(--font); -webkit-font-smoothing:antialiased;
+}
+html body #tab-portfolio #pvphHero [hidden] { display:none !important; }
+html body #tab-portfolio #pvphHero .pvph-main { min-width:0; }
+html body #tab-portfolio #pvphHero .pvph-eb { font-size:13.5px; font-weight:700; line-height:1.3; letter-spacing:0; text-transform:none; color:var(--pvph-on2); margin:0 0 8px; }
+html body #tab-portfolio #pvphHero .pvph-vrow { display:flex; align-items:center; flex-wrap:wrap; gap:10px 16px; min-width:0; }
+/* Valor total: la app le pone .stitch-val (y .neg bajo el capital inicial); aquí siempre blanco. */
+html body #tab-portfolio #pvphHero #perf-total {
+  display:block !important; margin:0 !important; padding:0 !important; min-width:0 !important; background:none !important;
+  font-family:var(--font) !important; font-size:46px !important; font-weight:800 !important; line-height:1.05 !important;
+  letter-spacing:-.035em !important; font-variant-numeric:normal !important; font-feature-settings:normal !important;
+  color:var(--pvph-on) !important; white-space:nowrap;
+}
+/* Pastilla del cambio del periodo activo («−$81.64 (−1.13 %) en el año»). La app le pone
+   .stitch-badge pos/neg (y flat si es 0.00); fuera la flecha de .stitch-badge::before. */
+html body #tab-portfolio #pvphHero #perf-period-val {
+  display:inline-flex !important; align-items:center !important; width:auto !important; height:auto !important; min-height:0 !important;
+  margin:0 !important; padding:6px 12px !important; border:0 !important; border-radius:999px !important; box-shadow:none !important;
+  font-family:var(--font) !important; font-size:13.5px !important; font-weight:800 !important; line-height:1.25 !important;
+  letter-spacing:0 !important; font-variant-numeric:normal !important; white-space:nowrap !important;
+  background:var(--pvph-green-bg) !important; color:var(--pvph-green) !important;
+}
+html body #tab-portfolio #pvphHero #perf-period-val.neg  { background:var(--pvph-red-bg) !important; color:var(--pvph-red) !important; }
+html body #tab-portfolio #pvphHero #perf-period-val.flat { background:rgba(255,255,255,.12) !important; color:var(--pvph-on3) !important; }
+html body #tab-portfolio #pvphHero #perf-period-val::before,
+html body #tab-portfolio #pvphHero #perf-period-val::after { content:none !important; display:none !important; }
+/* «Hoy +$0.00 (0.00 %)»: pequeño; se oculta cuando la pastilla ya es el cambio del día. */
+html body #tab-portfolio #pvphHero .pvph-today { margin-top:12px; font-size:14px; font-weight:600; line-height:1.3; color:var(--pvph-on2); white-space:nowrap; }
+html body #tab-portfolio #pvphHero #perf-day {
+  font-family:var(--font) !important; font-size:inherit !important; font-weight:800 !important; line-height:inherit !important;
+  letter-spacing:0 !important; font-variant-numeric:normal !important; white-space:nowrap; color:var(--pvph-on3) !important;
+}
+html body #tab-portfolio #pvphHero #perf-day.pos { color:var(--pvph-mint) !important; }
+html body #tab-portfolio #pvphHero #perf-day.neg { color:var(--pvph-rose) !important; }
+
+/* Recuadros: relleno translúcido y hairline sobre el navy, en minúscula con la inicial en mayúscula. */
+html body #tab-portfolio #pvphHero .pvph-tiles { flex:0 0 auto; display:grid; grid-auto-flow:column; grid-auto-columns:216px; gap:12px; min-width:0; }
+html body #tab-portfolio #pvphHero .pvph-tile {
+  min-width:0; box-sizing:border-box; padding:14px 18px 15px; border-radius:18px;
+  background:var(--pvph-tile); border:1px solid var(--pvph-tile-line);
+}
+html body #tab-portfolio #pvphHero .pvph-tl { font-size:13px; font-weight:700; line-height:1.3; color:var(--pvph-on2); white-space:nowrap; margin:0 0 5px; }
+html body #tab-portfolio #pvphHero .pvph-tv { font-size:21px; font-weight:800; line-height:1.2; letter-spacing:-.02em; color:var(--pvph-on); white-space:nowrap; }
+html body #tab-portfolio #pvphHero .pvph-tv.pos { color:var(--pvph-mint); }
+html body #tab-portfolio #pvphHero .pvph-tv.neg { color:var(--pvph-rose); }
+html body #tab-portfolio #pvphHero .pvph-ts { font-size:13px; font-weight:600; line-height:1.3; min-height:1.3em; color:var(--pvph-on2); white-space:nowrap; margin-top:3px; }
+html body #tab-portfolio #pvphHero .pvph-ts b { font-weight:800; }
+html body #tab-portfolio #pvphHero .pvph-ts b.pos { color:var(--pvph-mint); }
+html body #tab-portfolio #pvphHero .pvph-ts b.neg { color:var(--pvph-rose); }
+html body #tab-portfolio #pvphHero .pvph-short { display:none; }
+/* Cifras largas (ver _pvphFitTiles): un paso y dos pasos menos, los tres recuadros a la vez. */
+html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit1 .pvph-tv { font-size:17px; }
+html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit2 .pvph-tv { font-size:14.5px; }
+html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit2 .pvph-tl,
+html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit2 .pvph-ts { font-size:11.5px; }
+
+/* ═══ TARJETAS: Rendimiento y Distribución, lado a lado y del mismo alto ═══════════════════════ */
+html body #tab-portfolio #pvphRow { display:grid; grid-template-columns:minmax(0,1fr) 500px; gap:24px; align-items:stretch; min-width:0; }
+html body #tab-portfolio #pvphRow.pvph-solo { grid-template-columns:minmax(0,1fr); }
+/* El bloque móvil viejo quitaba la tarjeta de la dona en ≤760 («por completo en móvil»); el
+   rediseño la enseña también en el celular. Cartera vacía: la regla siguiente (más específica). */
+html body #tab-portfolio #pvphRow > #assetDistCard { display:flex !important; }
+html body #tab-portfolio #pvphRow.pvph-solo > #assetDistCard { display:none !important; }
+html body #tab-portfolio #pvphRow .pvph-card {
+  display:flex; flex-direction:column; min-width:0; box-sizing:border-box;
+  margin:0 !important; padding:26px 28px 22px !important;
+  background:var(--pvph-card) !important; border:1px solid var(--pvph-line) !important;
+  border-radius:var(--pvph-r) !important; box-shadow:none !important;
+  font-family:var(--font); color:var(--pvph-ink); -webkit-font-smoothing:antialiased;
+  transition:border-color .22s var(--pvph-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-portfolio #pvphRow .pvph-card:hover { border-color:var(--pvph-line-hi) !important; }
+}
+html body #tab-portfolio #pvphRow .pvph-ch { display:flex; align-items:center; justify-content:space-between; gap:16px; min-width:0; }
+html body #tab-portfolio #pvphRow .pvph-cht { min-width:0; }
+html body #tab-portfolio #pvphRow .pvph-ceb { font-size:13.5px; font-weight:700; line-height:1.3; color:var(--pvph-muted); margin:0 0 4px; }
+html body #tab-portfolio #pvphRow .pvph-ct { font-size:20px; font-weight:800; line-height:1.25; letter-spacing:-.02em; color:var(--pvph-ink); margin:0; }
+
+/* Control segmentado: riel claro y el periodo activo en navy. */
+html body #tab-portfolio #pvphRow .pvph-segs { flex:0 1 auto; min-width:0; }
+html body #tab-portfolio #pvphRow #periodBtns {
+  display:flex !important; flex-wrap:nowrap !important; grid-template-columns:none !important; width:max-content;
+  gap:2px !important; margin:0 !important; padding:4px !important; position:static !important;
+  background:var(--pvph-track) !important; border:0 !important; border-radius:999px !important; box-shadow:none !important;
+}
+html body #tab-portfolio #pvphRow #periodBtns .period-btn {
+  -webkit-appearance:none; appearance:none; display:inline-grid; place-items:center;
+  flex:0 0 auto !important; width:auto !important; min-width:44px !important; height:34px !important;
+  margin:0 !important; padding:0 12px !important; border:0 !important; border-radius:999px !important; box-shadow:none !important;
+  background:transparent !important; color:var(--pvph-slate) !important;
+  font-family:var(--font) !important; font-size:13.5px !important; font-weight:700 !important; line-height:1 !important;
+  letter-spacing:0 !important; text-transform:none !important; white-space:nowrap !important; cursor:pointer;
+  transition:background-color .22s var(--pvph-ease), color .22s var(--pvph-ease) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  html body #tab-portfolio #pvphRow #periodBtns .period-btn:hover { color:var(--pvph-ink) !important; background:transparent !important; }
+}
+html body #tab-portfolio #pvphRow #periodBtns .period-btn.active,
+html body #tab-portfolio #pvphRow #periodBtns .period-btn.active:hover,
+html body #tab-portfolio #pvphRow #periodBtns .period-btn.active:focus,
+html body #tab-portfolio #pvphRow #periodBtns .period-btn.active:active {
+  background:var(--pvph-thumb) !important; color:var(--pvph-thumb-ink) !important; font-weight:800 !important;
+}
+html body #tab-portfolio #pvphRow #periodBtns .period-btn:focus-visible { outline:2px solid var(--pvph-ink); outline-offset:1px; }
+
+/* Gráfica: la de siempre (perfChart); el contenedor crece si Distribución es más alta. */
+html body #tab-portfolio #pvphRow .perf-chart-wrap {
+  position:relative !important; flex:1 1 auto; height:290px !important; min-height:0 !important;
+  margin:18px 0 0 !important; padding:0 !important;
+}
+
+/* Distribución: anillo fino con el número de posiciones y la leyenda por peso. */
+html body #tab-portfolio #pvphRow .pvph-dist { padding:26px 28px !important; }
+html body #tab-portfolio #pvphRow .pvph-dbody { flex:1 1 auto; display:grid; grid-template-columns:180px minmax(0,1fr); align-items:center; gap:30px; margin-top:14px; min-width:0; }
+html body #tab-portfolio #pvphRow .pvph-donut { position:relative; width:180px; height:180px; flex:none; }
+html body #tab-portfolio #pvphRow .pvph-donut canvas { display:block; }
+html body #tab-portfolio #pvphRow .pvph-dc { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none; }
+html body #tab-portfolio #pvphRow #donutVal {
+  margin:0 !important; font-family:var(--font) !important; font-size:34px !important; font-weight:800 !important; line-height:1 !important;
+  letter-spacing:-.03em !important; font-variant-numeric:normal !important; color:var(--pvph-ink) !important;
+}
+html body #tab-portfolio #pvphRow .pvph-dl { font-size:13px; font-weight:600; line-height:1.3; color:var(--pvph-muted); margin-top:5px; }
+html body #tab-portfolio #pvphRow #legend { display:flex !important; flex-direction:column !important; gap:0 !important; margin:0 !important; padding:0 !important; min-width:0; }
+html body #tab-portfolio #pvphRow .pvph-lr { display:grid; grid-template-columns:70px minmax(0,1fr) 56px; align-items:center; gap:12px; padding:7px 0; min-width:0; }
+html body #tab-portfolio #pvphRow .pvph-lr b { font-size:14.5px; font-weight:800; line-height:1.25; color:var(--pvph-ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+html body #tab-portfolio #pvphRow .pvph-lr.pvph-mu b { font-weight:700; color:var(--pvph-slate); }
+html body #tab-portfolio #pvphRow .pvph-bar { display:block; height:6px; border-radius:99px; background:var(--pvph-track); overflow:hidden; }
+html body #tab-portfolio #pvphRow .pvph-bar i { display:block; height:100%; border-radius:99px; }
+html body #tab-portfolio #pvphRow .pvph-lr em { font-style:normal; text-align:right; font-size:14px; font-weight:700; line-height:1.25; color:var(--pvph-slate); white-space:nowrap; font-variant-numeric:tabular-nums; }
+
+/* ═══ TABLETA — iPad vertical (1024) y web de 900–1099: recuadros bajo el valor, tarjetas en una
+   columna, leyenda en dos columnas al lado del anillo ═══════════════════════════════════════ */
+@media (min-width: 900px) and (max-width: 1099px) {
+  html body #tab-portfolio { --pvph-r:28px; --pvph-r-hero:36px; }
+  html body #tab-portfolio #pvphHero { display:block; padding-top:20px; padding-bottom:26px; }
+  html body #tab-portfolio #pvphHero .pvph-eb { font-size:13px; margin-bottom:6px; }
+  html body #tab-portfolio #pvphHero .pvph-vrow { gap:10px 14px; }
+  html body #tab-portfolio #pvphHero #perf-total { font-size:40px !important; }
+  html body #tab-portfolio #pvphHero #perf-period-val { font-size:13px !important; padding:5px 11px !important; }
+  html body #tab-portfolio #pvphHero .pvph-today { margin-top:10px; font-size:13.5px; }
+  html body #tab-portfolio #pvphHero .pvph-tiles { grid-auto-columns:minmax(0,1fr); gap:10px; margin-top:20px; }
+  html body #tab-portfolio #pvphHero .pvph-tile { padding:13px 16px 14px; }
+  html body #tab-portfolio #pvphHero .pvph-tl { font-size:12.5px; margin-bottom:4px; }
+  html body #tab-portfolio #pvphHero .pvph-tv { font-size:19px; }
+  html body #tab-portfolio #pvphHero .pvph-ts { font-size:12.5px; margin-top:2px; }
+  html body #tab-portfolio #pvphRow { grid-template-columns:minmax(0,1fr); gap:18px; }
+  html body #tab-portfolio #pvphRow .pvph-card { padding:22px 24px 18px !important; }
+  html body #tab-portfolio #pvphRow .pvph-ceb { font-size:12.5px; margin-bottom:3px; }
+  html body #tab-portfolio #pvphRow .pvph-ct { font-size:18px; }
+  html body #tab-portfolio #pvphRow #periodBtns { padding:3px !important; }
+  html body #tab-portfolio #pvphRow #periodBtns .period-btn { height:32px !important; min-width:42px !important; padding:0 11px !important; font-size:12.5px !important; }
+  html body #tab-portfolio #pvphRow .perf-chart-wrap { height:262px !important; margin-top:16px !important; }
+  html body #tab-portfolio #pvphRow .pvph-dist { padding:22px 24px 24px !important; }
+  html body #tab-portfolio #pvphRow .pvph-dbody { grid-template-columns:168px minmax(0,1fr); gap:36px; margin-top:14px; }
+  html body #tab-portfolio #pvphRow .pvph-donut { width:168px; height:168px; }
+  html body #tab-portfolio #pvphRow #donutVal { font-size:32px !important; }
+  html body #tab-portfolio #pvphRow .pvph-dl { font-size:12.5px; margin-top:4px; }
+  html body #tab-portfolio #pvphRow #legend { display:grid !important; grid-template-rows:repeat(5,auto); grid-auto-flow:column; grid-auto-columns:minmax(0,1fr); column-gap:32px !important; }
+  html body #tab-portfolio #pvphRow .pvph-lr { grid-template-columns:66px minmax(0,1fr) 52px; gap:10px; padding:6px 0; }
+  html body #tab-portfolio #pvphRow .pvph-lr b { font-size:14px; }
+  html body #tab-portfolio #pvphRow .pvph-lr em { font-size:13.5px; }
+}
+
+/* ═══ CELULAR (≤899, también la app de iOS): todo en una columna; recuadros de tres en fila con
+   las etiquetas cortas; el control segmentado se desliza de lado ════════════════════════════ */
+@media (max-width: 899px) {
+  html body #tab-portfolio { --pvph-r:24px; --pvph-r-hero:30px; }
+  /* El espacio entre bloques lo dan sus márgenes (la app apila en bloque hasta 760 y en rejilla
+     de 761 a 899: así mide igual en los dos). */
+  html body #tab-portfolio .stitch-layout:not(#pvph-x) { row-gap:0 !important; }
+  html body #tab-portfolio #pvphHero { display:block; padding-top:12px; padding-bottom:20px; margin-bottom:16px; }
+  /* Cifra sola en su renglón; debajo, la pastilla y «Hoy» en la misma fila. */
+  html body #tab-portfolio #pvphHero .pvph-main { display:flex; flex-wrap:wrap; align-items:center; gap:0 12px; }
+  html body #tab-portfolio #pvphHero .pvph-eb { flex:0 0 100%; font-size:12.5px; margin-bottom:4px; }
+  html body #tab-portfolio #pvphHero .pvph-vrow { display:contents; }
+  html body #tab-portfolio #pvphHero #perf-total { flex:0 0 100%; font-size:36px !important; }
+  html body #tab-portfolio #pvphHero #perf-period-val { margin-top:10px !important; font-size:12.5px !important; padding:5px 10px !important; }
+  html body #tab-portfolio #pvphHero .pvph-today { margin-top:10px; font-size:13px; }
+  html body #tab-portfolio #pvphHero .pvph-tiles { grid-auto-columns:minmax(0,1fr); gap:8px; margin-top:16px; }
+  html body #tab-portfolio #pvphHero .pvph-tile { padding:11px 12px 12px; border-radius:16px; }
+  html body #tab-portfolio #pvphHero .pvph-tl { font-size:12px; margin-bottom:4px; }
+  html body #tab-portfolio #pvphHero .pvph-tv { font-size:15.5px; }
+  html body #tab-portfolio #pvphHero .pvph-ts { font-size:12px; margin-top:2px; }
+  html body #tab-portfolio #pvphHero .pvph-long { display:none; }
+  html body #tab-portfolio #pvphHero .pvph-short { display:inline; }
+  html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit1 .pvph-tv { font-size:13.5px; }
+  html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit2 .pvph-tv { font-size:12px; }
+  html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit2 .pvph-tl,
+  html body #tab-portfolio #pvphHero .pvph-tiles.pvph-fit2 .pvph-ts { font-size:11px; }
+  html body #tab-portfolio #pvphRow { display:flex; flex-direction:column; gap:14px; margin-bottom:14px; }
+  html body #tab-portfolio #pvphRow .pvph-card { padding:18px 16px 14px !important; }
+  html body #tab-portfolio #pvphRow .pvph-ch { flex-direction:column; align-items:stretch; gap:12px; }
+  html body #tab-portfolio #pvphRow .pvph-ceb { font-size:12.5px; margin-bottom:2px; }
+  html body #tab-portfolio #pvphRow .pvph-ct { font-size:17px; }
+  /* La franja llega hasta el borde de la tarjeta y se desliza; el periodo activo se centra solo
+     (_pvphSegReveal). */
+  html body #tab-portfolio #pvphRow .pvph-segs {
+    margin:0 -16px; padding:0 16px; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none;
+  }
+  html body #tab-portfolio #pvphRow .pvph-segs::-webkit-scrollbar { display:none; }
+  html body #tab-portfolio #pvphRow #periodBtns { padding:3px !important; }
+  html body #tab-portfolio #pvphRow #periodBtns .period-btn { height:34px !important; min-width:42px !important; padding:0 11px !important; font-size:13px !important; }
+  html body #tab-portfolio #pvphRow .perf-chart-wrap { flex:none; height:186px !important; margin-top:14px !important; }
+  html body #tab-portfolio #pvphRow .pvph-dist { padding:18px 16px 16px !important; }
+  html body #tab-portfolio #pvphRow .pvph-dbody { grid-template-columns:minmax(0,1fr); justify-items:center; gap:18px; margin-top:14px; }
+  html body #tab-portfolio #pvphRow .pvph-donut { width:164px; height:164px; }
+  html body #tab-portfolio #pvphRow #donutVal { font-size:30px !important; }
+  html body #tab-portfolio #pvphRow .pvph-dl { font-size:12.5px; margin-top:4px; }
+  html body #tab-portfolio #pvphRow #legend { justify-self:stretch; }
+  html body #tab-portfolio #pvphRow .pvph-lr { grid-template-columns:70px minmax(0,1fr) 54px; }
+  html body #tab-portfolio #pvphRow .pvph-lr b { font-size:14px; }
+  html body #tab-portfolio #pvphRow .pvph-lr em { font-size:13.5px; }
+}
+/* Celular apaisado / ventana mediana (600–899): el anillo vuelve al lado de la leyenda. */
+@media (min-width: 600px) and (max-width: 899px) {
+  html body #tab-portfolio #pvphRow .pvph-dbody { grid-template-columns:164px minmax(0,1fr); justify-items:stretch; gap:32px; }
+}
+
+/* ═══ OSCURO (body.dark-theme): los tokens oscuros de la app ══════════════════════════════════ */
+html body.dark-theme #tab-portfolio {
+  --pvph-hero:#13233a;
+  --pvph-card:var(--surface,#0f1623); --pvph-line:rgba(255,255,255,.08); --pvph-line-hi:rgba(255,255,255,.16); --pvph-track:rgba(255,255,255,.07);
+  --pvph-ink:#e8edf7; --pvph-slate:#aab4c2; --pvph-muted:#8a96a3;
+  --pvph-thumb:#e8edf7; --pvph-thumb-ink:#0b1c30;
+}
+html body.dark-theme #tab-portfolio #pvphHero { border:1px solid rgba(255,255,255,.06); border-top:0; }
+/* Donde la pestaña conserva el fondo claro del diseño también en oscuro (web desde 900 px e iPad
+   apaisado desde 1100: lo fija el bloque v8), la cabecera sigue el navy de la barra superior. */
+@media (min-width: 900px) {
+  html:not(.pv-ipad) body.dark-theme #tab-portfolio { --pvph-hero:var(--pvr-navy-bar,#0b1c30); }
+  html:not(.pv-ipad) body.dark-theme #tab-portfolio #pvphHero { border:0; }
+}
+@media (min-width: 1100px) {
+  html.pv-ipad body.dark-theme #tab-portfolio { --pvph-hero:var(--pvr-navy-bar,#0b1c30); }
+  html.pv-ipad body.dark-theme #tab-portfolio #pvphHero { border:0; }
+}
+
+/* ═══ Movimiento reducido: sin transiciones ═══════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  html body #tab-portfolio #pvphRow .pvph-card,
+  html body #tab-portfolio #pvphRow #periodBtns .period-btn { transition:none !important; }
 }
 </style>
 </body>
