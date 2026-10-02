@@ -3141,6 +3141,27 @@ window._ensureChartJs = (function(){
   html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > .pv-lock-ov { display: none; }
   html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > :not(.pv-lock-ov) { filter: none; opacity: 1; }
   html.pv-free .pv-lock-stack .pv-lock-body .pv-lock > .rbl-card { max-height: none; overflow: visible; }
+  /* Candado de SECCIÓN (Noticias: outlook de la próxima semana y noticias por posición) y
+     de PESTAÑA (ficha de acción: todo lo que no es «Resumen»). El contenido puede ser corto
+     (sin eventos aún) o miles de px (Finanzas): un alto mínimo para que la tarjeta entera
+     quepa, y el mensaje anclado arriba para que no quede fuera de la pantalla. */
+  html.pv-free .pv-lock-sec, html.pv-free .pv-lock-pane { min-height: 480px; border-radius: 18px; }
+  html.pv-free .pv-lock-sec > .pv-lock-ov,
+  html.pv-free .pv-lock-pane > .pv-lock-ov { justify-content: flex-start; padding: 24px 12px; }
+  /* Un panel de Pro difuminado de 3.000 px era scroll por nada: se corta con un fundido. */
+  html.pv-free .pv-lock-pane > .pv-pane-body {
+    max-height: 760px; overflow: hidden;
+    -webkit-mask-image: linear-gradient(180deg, #000 70%, transparent);
+            mask-image: linear-gradient(180deg, #000 70%, transparent);
+  }
+  /* Pestañas de Pro de la ficha: el candado junto al nombre, del color del texto (blanco en
+     la elegida, tinta en las demás). Sólo en el plan gratuito. */
+  html.pv-free #r-tabs-host .px-tab:not([data-pane="ov"])::after {
+    content: ''; display: inline-block; width: 11px; height: 11px; margin-left: 6px; vertical-align: -1px;
+    background: currentColor; opacity: .75;
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5' stroke='%23000' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3Crect x='4.75' y='10.2' width='14.5' height='10.8' rx='3'/%3E%3C/svg%3E") center/contain no-repeat;
+            mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5' stroke='%23000' stroke-width='2.6' fill='none' stroke-linecap='round'/%3E%3Crect x='4.75' y='10.2' width='14.5' height='10.8' rx='3'/%3E%3C/svg%3E") center/contain no-repeat;
+  }
   .pv-lock-page { height: 100%; min-height: 0; display: flex; flex-direction: column; }
   .pv-lock-page > .ai-chat-page { flex: 1 1 auto; min-height: 0; }
   /* El LAYOUT del envoltorio del chat no puede colgar de .pv-lock-page: esa clase la
@@ -4708,7 +4729,28 @@ window._pvAwaitIAP = function(totalMs){
         </div>
         <div class="pvw-range"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg><span id="nextWeekLabel"></span></div>
       </div>
-      <div id="nextWeekNews" class="week-outlook-wrap"></div>
+      <!-- Portiv Pro: el outlook de la próxima semana va bajo candado en el plan gratuito.
+           Candado de CSS (html.pv-free difumina, html.pv-pro lo quita): al pagar se abre
+           sin repintar. La cabecera queda fuera para que se vea qué hay debajo. -->
+      <div class="pv-lock pv-lock-sec" id="nextWeekLock">
+        <div id="nextWeekNews" class="week-outlook-wrap"></div>
+        <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
+          <div class="pv-lock-card">
+            <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/><rect x="4.75" y="10.2" width="14.5" height="10.8" rx="3" fill="#fff"/><path d="M12 14.3v2.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></div>
+            <div class="pv-lock-head">Desbloquea Portiv Pro</div>
+            <div class="pv-lock-txt">El <b>outlook de la próxima semana</b>: los catalizadores que vienen y a qué posiciones tocan</div>
+            <div class="pv-lock-sub"></div>
+            <ul class="pv-lock-perks">
+              <li>Análisis completo de cada acción</li>
+              <li>Chat ilimitado con Portiv IA</li>
+              <li>Análisis profundo y rebalanceo</li>
+              <li>Noticias que mueven tu cartera</li>
+            </ul>
+            <button class="pv-lock-btn" type="button">Ver planes</button>
+            <div class="pv-lock-foot">14 días gratis · Cancela cuando quieras</div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── POR TICKER ── -->
@@ -4724,6 +4766,9 @@ window._pvAwaitIAP = function(totalMs){
         </div>
         <div class="pnx-moves" id="posNewsMoves"></div>
       </div>
+      <!-- Portiv Pro: igual que el outlook, la lista y el detalle van bajo candado en el plan
+           gratuito; la cabecera (título y pastillas de suben/bajan) queda a la vista. -->
+      <div class="pv-lock pv-lock-sec" id="posNewsLock">
       <div class="pnx-grid">
         <div class="pnx-side">
           <div class="pnx-lbl"><span class="pnx-lbl-lg" data-i18n="news.posSortLong">Ordenadas por el movimiento de hoy</span><span class="pnx-lbl-sm" data-i18n="news.posSortShort">Por movimiento de hoy</span></div>
@@ -4732,6 +4777,23 @@ window._pvAwaitIAP = function(totalMs){
         <div class="pnx-main" id="posNewsMain">
           <div id="newsContainer" class="pnx-panel"></div>
         </div>
+      </div>
+      <div class="pv-lock-ov" onclick="try{window._pvShowPaywall()}catch(e){}">
+        <div class="pv-lock-card">
+          <div class="pv-lock-ico"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/><rect x="4.75" y="10.2" width="14.5" height="10.8" rx="3" fill="#fff"/><path d="M12 14.3v2.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg></div>
+          <div class="pv-lock-head">Desbloquea Portiv Pro</div>
+          <div class="pv-lock-txt">Las <b>noticias de cada posición</b>, ordenadas por lo que más se mueve hoy</div>
+          <div class="pv-lock-sub"></div>
+          <ul class="pv-lock-perks">
+            <li>Análisis completo de cada acción</li>
+            <li>Chat ilimitado con Portiv IA</li>
+            <li>Análisis profundo y rebalanceo</li>
+            <li>Noticias que mueven tu cartera</li>
+          </ul>
+          <button class="pv-lock-btn" type="button">Ver planes</button>
+          <div class="pv-lock-foot">14 días gratis · Cancela cuando quieras</div>
+        </div>
+      </div>
       </div>
     </div>
 
@@ -10248,6 +10310,13 @@ window._pvRepaintUnlocked = function(){
   // Tarjeta de conexión del broker (Ajustes): su candado se pinta en el innerHTML, no
   // por CSS, así que sin repintar se quedaba bloqueada para un suscriptor.
   try { if (typeof window._pvSnapRerender === 'function') window._pvSnapRerender(); } catch(e){}
+  // Ficha de acción: en el plan gratuito las pestañas que no son «Resumen» se pintan con
+  // candado y sin sus datos. Se repinta conservando la pestaña abierta, que es lo que pide
+  // las noticias o el trimestre si el usuario estaba en una de ellas.
+  try {
+    const el = document.getElementById('r-analysis');
+    if (el && el._pvA && typeof _pvxRepaint === 'function') _pvxRepaint(el._pvA, el);
+  } catch(e){}
 };
 
 // pro → free (caducó, se reembolsó o se cerró sesión con la app abierta). El candado
@@ -29157,13 +29226,16 @@ window._pvxTab = function(btn, id){
       const rh = document.getElementById('r-rating-host');
       if (rh) rh.style.display = (id === 'ov') ? '' : 'none';
     }
-    if (id === 'nw'){
+    // Plan gratuito: estas pestañas van bajo candado (.pv-lock-pane), así que ni noticias ni
+    // lectura del trimestre: se piden al pasar a Pro, cuando _pvRepaintUnlocked repinta.
+    const _free = (typeof _pvLocked === 'function') && _pvLocked();
+    if (id === 'nw' && !_free){
       const nh = scope.querySelector('#pvx-news-host');
       if (nh && typeof _pvxFillNews === 'function') _pvxFillNews(nh, nh.dataset.tk);
     }
     // La lectura del trimestre se pide AQUÍ, no al abrir la acción: es la llamada de IA más
     // lenta y cara del análisis y sólo se ve en esta pestaña.
-    if (id === 'ea' && typeof _pvxFillEarnings === 'function') _pvxFillEarnings(scope);
+    if (id === 'ea' && !_free && typeof _pvxFillEarnings === 'function') _pvxFillEarnings(scope);
   } catch(e){}
 };
 
@@ -29801,7 +29873,21 @@ function _renderQualAnalysis(a, el){
       const _rh2 = document.getElementById('r-rating-host');
       if (_rh2) _rh2.style.display = '';
     } catch(e){}
-    h += PANES.map(([k,,c],i) => `<div class="px-pane${i?'':' on'}" data-pane="${k}">${c}</div>`).join('');
+    // Plan gratuito: sólo «Resumen» es libre. Las otras pestañas se pintan dentro de su
+    // propio candado (.pv-lock-pane) y no piden sus datos (técnico, noticias, trimestre).
+    // Va en el HTML y no sólo en CSS para no tocar el DOM de quien paga: al cambiar el
+    // veredicto lo repintan _pvRepaintUnlocked / _pvRepaintLocked. Con el cupo diario
+    // agotado manda el candado de la pila entera, que apaga estos (candados ANIDADOS).
+    const _freePanes = (typeof _pvLocked === 'function') && _pvLocked() && typeof _pvLockOverlay === 'function';
+    const _PANE_LOCK = {
+      ea: 'Los <b>resultados trimestrales</b> y lo que esperan los analistas',
+      fi: 'Las <b>finanzas</b> de la empresa: solidez, retornos y tu precio objetivo',
+      nw: 'Las <b>noticias</b> de la acción y por qué la mueven',
+      en: 'El <b>análisis técnico</b>: velas, zona de entrada e indicadores'
+    };
+    const _paneHtml = (k, c) => (!_freePanes || k === 'ov') ? c
+      : `<div class="pv-lock pv-lock-pane"><div class="pv-pane-body">${c}</div>${_pvLockOverlay(_PANE_LOCK[k] || 'Esta parte del análisis')}</div>`;
+    h += PANES.map(([k,,c],i) => `<div class="px-pane${i?'':' on'}" data-pane="${k}">${_paneHtml(k, c)}</div>`).join('');
   }
 
   // 14) Disclaimer. Se retiró en su día "a pedido", pero esta es la superficie de IA
@@ -29856,7 +29942,9 @@ function _renderQualAnalysis(a, el){
     const _th = el.querySelector('#pvx-tec-host');
     // La zona de entrada necesita el NEGOCIO, no solo el gráfico: sin el valor razonable
     // recomendaría comprar en un soporte que ya está por encima de lo que vale la empresa.
-    if (_th) _pvtFillInto(_th, a.ticker, { fv: a.fairValue || null, rating: (typeof a.rating === 'number' ? a.rating : null) });
+    // El técnico es Pro: en el plan gratuito su pestaña va bajo candado y no se bajan barras.
+    if (_th && !((typeof _pvLocked === 'function') && _pvLocked()))
+      _pvtFillInto(_th, a.ticker, { fv: a.fairValue || null, rating: (typeof a.rating === 'number' ? a.rating : null) });
   } catch(e){}
   }   // /if (!_lockedUI)
   // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
