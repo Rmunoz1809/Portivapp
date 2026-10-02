@@ -136,15 +136,24 @@ Deno.serve(async (req) => {
     // borra su estado local y pinta "Tu broker se desconectó") se confirma con la tienda.
     // Una fila apagada por un evento desordenado o un retraso de RevenueCat no debe
     // parecer una desconexión: si la tienda dice que paga, se repara la fila y se sigue.
+    //
+    // Ante la DUDA también se sirve (fail-open): si la tienda no concluye nada —caída, sin
+    // respuesta— el broker sigue enlazado (snaptrade-cleanup tampoco lo corta sin un NO
+    // explícito), así que decirle al cliente "sin suscripción" le borraba el estado local y
+    // le pintaba una desconexión que no existe. Sólo un NO de la tienda cierra la lectura.
     if (!entitled && profile?.snaptrade_user_id) {
       try {
         const v = await verifyEntitlementWithStore(admin, userId);
         if (v.active === true) {
           await healSubscriptionRow(admin, userId, v);
           entitled = true;
+        } else if (v.active === null) {
+          console.warn("[snaptrade-refresh] tienda sin veredicto → se sirve igual:", userId, v.source, v.detail);
+          entitled = true;
         }
       } catch (e) {
-        console.warn("[snaptrade-refresh] verificación con la tienda falló:", String(e));
+        console.warn("[snaptrade-refresh] verificación con la tienda falló → se sirve igual:", String(e));
+        entitled = true;
       }
     }
 
@@ -170,6 +179,10 @@ Deno.serve(async (req) => {
         connected: false,
         entitled: false,
         neverConnected: !everConnected,
+        // El broker SIGUE enlazado (snaptrade-cleanup lo conserva hasta la frontera de
+        // facturación). El cliente no debe pintar "cerramos tu conexión" ni borrar su
+        // estado: al reactivar la suscripción los datos vuelven solos, sin reconectar.
+        brokerLinked: !!profile?.snaptrade_user_id,
         disconnectedReason: reason || (everConnected ? "subscription_inactive" : null),
         holdings: null,
         accountId: null,

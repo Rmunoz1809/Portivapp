@@ -102,9 +102,12 @@ Deno.serve(async (req) => {
       const s = e?.response?.status ?? e?.status ?? 0;
       if (s !== 400 && s !== 401) return false;
       const d = _detail(e);
+      // OJO: un error de FIRMA ("Unable to verify signature") ya NO cuenta. La firma se
+      // calcula con NUESTRO consumer key y la hora del servidor, no con el secreto del
+      // usuario: borrar al usuario no la arregla, y un desfase de reloj puntual bastaba
+      // para llevarse por delante todas sus conexiones.
       const hit =
         /user\s?secret|usersecret/i.test(d) ||                                  // "userSecret is invalid"
-        /signature|unable to verify/i.test(d) ||                                 // firma HMAC del SDK
         /secret[^.]{0,30}(invalid|incorrect|mismatch|expired)/i.test(d) ||
         /(invalid|incorrect|bad)[^.]{0,30}secret/i.test(d) ||
         /user[^.]{0,30}(does not exist|not found|no longer)/i.test(d) ||
@@ -163,10 +166,47 @@ Deno.serve(async (req) => {
       throw lastErr ?? { status: 502, message: "No se pudo re-registrar en SnapTrade." };
     };
 
+    // ── ¿El secreto guardado está MUERTO de verdad? ──────────────────────────────
+    // healOrphan() borra al usuario en SnapTrade con TODAS sus conexiones de broker: el
+    // usuario tiene que rehacer el login de cada broker desde cero. Que el portal devuelva un
+    // error que "suena" a secreto no basta para eso. Antes de borrar se prueba el secreto con
+    // una lectura que no toca nada (listar sus conexiones), dos veces con una pausa: si
+    // responde, el secreto está vivo y el fallo era otra cosa — se devuelve el error y NO se
+    // borra nada. Sólo si la prueba también falla por el secreto se recrea el usuario.
+    const secretIsDead = async (): Promise<boolean> => {
+      for (let i = 0; i < 2; i++) {
+        try {
+          await st.connections.listBrokerageAuthorizations({ userId: snapUserId!, userSecret: userSecret! });
+          return false;                       // el secreto funciona
+        } catch (e) {
+          if (!_isAuthish(e)) return false;   // fallo de otro tipo: no se concluye nada
+          if (i === 0) await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+      console.warn("[snaptrade-connect] el secreto guardado no pasa la prueba: se recrea el usuario");
+      return true;
+    };
+
     // Ensure we hold a usable (userId, secret).
     if (!snapUserId || !userSecret) {
       try { await register(); }
-      catch (e) { if (_isAlreadyExists(e)) { await healOrphan(); } else throw e; }
+      catch (e) {
+        if (!_isAlreadyExists(e)) throw e;
+        // "Ya existe" no siempre es un huérfano: dos pulsaciones seguidas de "Conectar" (o el
+        // reintento del overlay) lanzan dos registros a la vez; el primero gana y guarda su
+        // secreto, y el segundo, al ver 1010, BORRABA al usuario recién creado —con el portal
+        // del primero quizá ya abierto—. Antes de curar nada se relee el perfil un par de
+        // veces por si la otra petición ya dejó el secreto.
+        for (let i = 0; i < 3 && !(snapUserId && userSecret); i++) {
+          await new Promise((r) => setTimeout(r, 1200));
+          const again = await loadProfile(admin, userId);
+          if (again?.snaptrade_user_id && again?.snaptrade_user_secret) {
+            snapUserId = again.snaptrade_user_id;
+            userSecret = again.snaptrade_user_secret;
+          }
+        }
+        if (!(snapUserId && userSecret)) await healOrphan();
+      }
     }
 
     // ── ¿Reconectar, añadir, o ya está conectado? ────────────────────────────────
@@ -317,7 +357,7 @@ Deno.serve(async (req) => {
     };
     try { redirectURI = await loginWithFallbacks(); }
     catch (e) {
-      if (_isAuthish(e)) {
+      if (_isAuthish(e) && await secretIsDead()) {
         await healOrphan();
         // healOrphan() BORRA el usuario en SnapTrade y crea uno nuevo: con el viejo se fueron
         // TODAS sus autorizaciones, así que `reconnectId` apunta a una conexión que ya no

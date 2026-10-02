@@ -12,7 +12,8 @@
 //
 // Always returns 200 quickly so SnapTrade does not retry.
 
-import { adminClient, isUuid } from "../_shared/snaptrade.ts";
+import { adminClient, isUuid, snaptrade } from "../_shared/snaptrade.ts";
+import { inspectAndAlert, clearBrokerAlert } from "../_shared/broker-alert.ts";
 
 // ── Verificación de firma: OBLIGATORIA ───────────────────────────────────────
 // Antes se comprobaba un secreto compartido de forma OPCIONAL (`if (WEBHOOK_SECRET)`)
@@ -198,7 +199,11 @@ Deno.serve(async (req) => {
       patch = { snaptrade_connection_broken: true, ...BUST };
       break;
     case "CONNECTION_DELETED":
-      patch = { snaptrade_connection_id: null, snaptrade_connection_broken: false };
+      // Sólo si la borrada es LA QUE TENEMOS APUNTADA (ver el filtro de abajo). Tras un
+      // "desconectar y volver a conectar" el userId de SnapTrade es el mismo, y el
+      // CONNECTION_DELETED de la conexión VIEJA podía llegar después del alta nueva y
+      // dejar al perfil sin connection_id, como si nunca hubiera conectado.
+      patch = { snaptrade_connection_id: null, snaptrade_connection_broken: false, ...BUST };
       break;
     default:
       // Cualquier otro evento de datos de cuenta también invalida la caché: es preferible
@@ -208,14 +213,39 @@ Deno.serve(async (req) => {
       return ok({ ok: true, ignored: type });
   }
 
-  const { error } = await admin
+  let q = admin
     .from("profiles")
     .update(patch)
     .eq("snaptrade_user_id", snapUserId);
+  if (type === "CONNECTION_DELETED") {
+    // Sin id no se sabe CUÁL se borró: sólo se invalida la caché y la lectura siguiente
+    // (listBrokerageAuthorizations) dice la verdad. Con id, sólo si es la apuntada.
+    if (!connectionId) {
+      q = admin.from("profiles").update({ ...BUST }).eq("snaptrade_user_id", snapUserId);
+    } else {
+      q = q.eq("snaptrade_connection_id", connectionId);
+    }
+  }
+  const { data: rows, error } = await q.select("id");
 
   if (error) {
     console.error("webhook update failed:", error.message);
     return ok({ ok: false, error: error.message }, 200); // still 200 to avoid retries storm
+  }
+
+  // Avisos de reconexión. La caída de un broker no la podemos evitar; que el usuario se
+  // entere al momento —y no dentro de una semana, al abrir la app con la cartera congelada—
+  // sí. El aviso respeta su propia cadencia (ver _shared/broker-alert.ts).
+  const ids = ((rows ?? []) as { id: string }[]).map((r) => r.id);
+  if (type === "CONNECTION_BROKEN") {
+    // Antes de avisar se COMPRUEBA con SnapTrade (lectura gratuita): una caída que el propio
+    // SnapTrade repara en segundos no merece un push, y de paso el aviso puede nombrar al
+    // broker. Si SnapTrade no responde, el aviso lo dará el cron snaptrade-health.
+    let st: ReturnType<typeof snaptrade> | null = null;
+    try { st = snaptrade(); } catch (e) { console.error("[snaptrade-webhook] SDK sin configurar:", String(e)); }
+    if (st) for (const id of ids) await inspectAndAlert(admin, st, id);
+  } else if (type === "CONNECTION_FIXED" || type === "CONNECTION_UPDATED" || type === "CONNECTION_ADDED") {
+    for (const id of ids) await clearBrokerAlert(admin, id);
   }
   return ok({ ok: true, type });
 });

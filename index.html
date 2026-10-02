@@ -45986,6 +45986,15 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
         // pv_broker_* y se pintaba el cartel de captación a alguien que ACABA de conectar, sin
         // reintento posible porque el poll solo se reagenda con `connected && syncing`.
         if(j && j.unavailable){ _render('unavailable'); return j; }
+        // Suscripción vencida, pero el broker SIGUE enlazado: el servidor conserva el enlace
+        // hasta la frontera de facturación (no cuesta más). Eso no es una desconexión, así
+        // que no se borra nada local ni se dice "cerramos tu conexión": al reactivar, los
+        // datos vuelven al instante sin pasar otra vez por el login del broker.
+        if(j && j.entitled===false && j.brokerLinked){
+          try{ localStorage.removeItem('pv_broker_lost'); window._BROKER_LIVE=false; }catch(e){}
+          _render('disconnected', { reason: j.disconnectedReason || 'subscription_inactive', brokerLinked: true });
+          return j;
+        }
         // Tenía el broker conectado y ahora el servidor dice que no → se marca para el aviso
         // emergente (_pvBrokerLostPrompt). Se sella ANTES de borrar pv_broker_connected, que es
         // lo único que dice que lo tuvo. Baja manual o por suscripción no cuentan: la primera
@@ -46231,8 +46240,17 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
   window.snapRefresh = snapRefresh;
 
   // ── FIX 16: Desconectar el broker SIN borrar la cuenta ──
+  // Desconectar BORRA el enlace en SnapTrade —todas las conexiones, no sólo la de la
+  // tarjeta— y para volver hay que rehacer el login del broker desde cero. Los logs
+  // enseñaban el patrón: "Desconectar" + "Conectar" usado como botón de refrescar cuando
+  // los datos no cuadraban. Para eso nunca hace falta (está "Sincronizar ahora", y una
+  // conexión caída se repara en modo reconexión sin borrar nada), así que la confirmación
+  // lo dice y exige escribir la palabra, igual que el borrado de cuenta.
   function snapDisconnect(){
-    if(!window.confirm('¿Desconectar tu broker?\n\nPortiv dejará de importar tus posiciones automáticamente. Tu cuenta y tu portafolio actual se conservan, y puedes volver a conectarlo cuando quieras.')) return;
+    if(!window.confirm('¿Eliminar la conexión con tu broker?\n\nNo hace falta para actualizar tus datos: para eso está «Sincronizar ahora». Y si la conexión falla, te avisamos y la reparas en un toque sin perder nada.\n\nSi la eliminas, Portiv deja de importar tus posiciones y, para volver, tendrás que iniciar sesión en tu broker otra vez desde cero.')) return;
+    var _typed = window.prompt('Para confirmar, escribe DESCONECTAR:');
+    if(_typed == null) return;
+    if(String(_typed).trim().toUpperCase() !== 'DESCONECTAR'){ toast('Texto incorrecto. Tu broker sigue conectado.'); return; }
     return stCall('snaptrade-disconnect', {}).then(function(){
       try{ localStorage.removeItem('pv_broker_connected'); localStorage.removeItem('pv_broker_series'); localStorage.removeItem('pv_broker_inception'); localStorage.removeItem('pv_broker_lost'); }catch(e){}
       try{ window._BROKER_HISTORY_PENDING=false; window._BROKER_LIVE=false; window._BROKER_INCEPTION=null; }catch(e){}
@@ -46417,7 +46435,9 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
       // el velo se recorta al área de contenido y no encaja con la tarjeta.
       card.classList.toggle('snap-card-locked', _cardLocked);
       card.innerHTML = _cardLocked
-        ? '<div class="pv-lock">' + _cardH + _pvLockOverlay('Conecta tu broker y sincroniza tu portafolio solo') + '</div>'
+        ? '<div class="pv-lock">' + _cardH + _pvLockOverlay(_lastMeta.brokerLinked
+            ? 'Reactiva Portiv Pro y tu broker vuelve al instante'
+            : 'Conecta tu broker y sincroniza tu portafolio solo') + '</div>'
         : _cardH;
     }
     // Portfolio banner
@@ -46985,6 +47005,14 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
     // el ÚNICO camino que funciona (reactivar), en vez del CTA genérico de conectar
     // que acabaría en un 403 del servidor.
     if(state==='disconnected' && _isSubReason(meta && meta.reason)){
+      // El enlace sigue vivo en el servidor (se conserva hasta el final del ciclo): decir
+      // "cerramos la conexión" era falso y empujaba a reconectar algo que no se ha roto.
+      if(meta && meta.brokerLinked){
+        return '<h3>Tu suscripción terminó</h3>'
+          +'<p class="snap-sub">Tu broker <b>sigue enlazado</b>: reactiva la suscripción y tus posiciones vuelven al instante, sin volver a conectarlo.</p>'
+          +'<button class="snap-btn" data-snap-resub>Reactivar suscripción</button>'
+          +'<div class="snap-note">🔒 Si no la reactivas, cerraremos el enlace al final del ciclo para no cobrarte su mantenimiento.</div>';
+      }
       return '<h3>Tu broker se desconectó</h3>'
         +'<p class="snap-sub">Cerramos la conexión con tu broker porque tu suscripción terminó. Tus datos siguen guardados: al reactivar, vuelves a enlazarlo en un toque.</p>'
         +'<button class="snap-btn" data-snap-resub>Reactivar suscripción</button>'
@@ -53128,6 +53156,19 @@ html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHe
         if (intentos > 0) setTimeout(function(){ buscar(intentos - 1); }, 500);
       };
       setTimeout(function(){ buscar(4); }, 400);
+      return;
+    }
+    // Aviso "Reconecta tu broker" (snaptrade-webhook / snaptrade-health). Lleva a la tarjeta
+    // del broker en Ajustes y relee el estado REAL: si entretanto la conexión volvió sola,
+    // la tarjeta dice "conectado" y no hay nada que hacer; si sigue caída, el botón
+    // "Reconectar <broker>" abre el portal directo en modo reconexión (misma conexión, mismo
+    // historial). No se abre el portal a ciegas desde aquí por eso mismo.
+    if (/^portiv:\/\/broker\/reconectar/i.test(url)) {
+      try { if (typeof showTab === 'function') showTab('settings'); } catch(e){}
+      setTimeout(function(){
+        try { var c = document.getElementById('snapConnectCard'); if (c && c.scrollIntoView) c.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(e){}
+        try { if (typeof window.snapRefresh === 'function') window.snapRefresh(); } catch(e){}
+      }, 450);
     }
   }
 

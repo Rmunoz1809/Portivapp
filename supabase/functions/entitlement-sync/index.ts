@@ -39,11 +39,6 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const RC_KEY = Deno.env.get("RC_SECRET_API_KEY") ?? "";
 
-// Mismo contrato interno que usa snaptrade-cleanup para desconectar.
-const INTERNAL_SECRET =
-  Deno.env.get("INTERNAL_DISCONNECT_SECRET") ??
-  Deno.env.get("SNAPTRADE_CRON_SECRET") ??
-  "";
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 const log = (...a: unknown[]) => console.log("[ent-sync]", ...a);
@@ -264,23 +259,13 @@ Deno.serve(async (req) => {
     .eq("id", uid)
     .then(() => {}, (e: any) => log("profiles mirror failed", uid, e?.message));
 
-  // 5 · Transición activo → inactivo detectada por sync (webhook perdido):
-  //     hay que cerrar el broker igual que lo haría el webhook.
+  // 5 · Transición activo → inactivo detectada por sync (webhook perdido): sólo se
+  //     anota. El broker NO se corta aquí: la baja la decide únicamente
+  //     snaptrade-cleanup, con la gracia hasta la frontera de facturación y la
+  //     confirmación explícita de la tienda. Cortarlo en el acto dejaba sin broker a
+  //     quien renovaba un rato después.
   if (prev?.entitlement_active === true && !active) {
-    const reason = `subscription_ended_appstore:sync_${status}`;
-    log("sync-detected revocation", uid, status);
-    if (INTERNAL_SECRET) {
-      try {
-        await fetch(`${SUPABASE_URL}/functions/v1/snaptrade-disconnect`, {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-internal-secret": INTERNAL_SECRET },
-          body: JSON.stringify({ app_user_id: uid, reason }),
-        });
-      } catch (e) {
-        // No propaga: snaptrade-cleanup reintenta cada hora.
-        log("disconnect on sync failed", uid, String(e));
-      }
-    }
+    log("sync-detected revocation", uid, status, "(broker: lo decide snaptrade-cleanup)");
   }
 
   // 6 · Reclamar huérfanos: la compra anónima ya tiene dueño. Se marcan los

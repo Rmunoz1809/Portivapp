@@ -65,15 +65,6 @@ const SECRET =
   "";
 const ACCEPT_SANDBOX = (Deno.env.get("RC_ACCEPT_SANDBOX") ?? "").toLowerCase() === "true";
 
-// snaptrade-disconnect ya expone un modo interno propio y probado:
-// header `x-internal-secret` + body { app_user_id, reason }. Se reutiliza tal
-// cual en vez de abrir un segundo camino de autenticación en esa función, que
-// es la que borra usuarios en SnapTrade y es la más delicada del sistema.
-const INTERNAL_SECRET =
-  Deno.env.get("INTERNAL_DISCONNECT_SECRET") ??
-  Deno.env.get("SNAPTRADE_CRON_SECRET") ??
-  "";
-
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false } });
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -106,35 +97,6 @@ function resolveUid(ev: Record<string, any>): string | null {
   ].filter((x): x is string => typeof x === "string" && x.length > 0);
   for (const c of candidates) if (UUID_RE.test(c)) return c;
   return null;
-}
-
-// ── Desconexión de SnapTrade ───────────────────────────────────────────────
-// No se duplica la lógica de SnapTrade: se llama a la Edge Function que ya
-// existe, en su modo interno. Esa función clasifica el fallo upstream y sólo
-// limpia el enlace local cuando SnapTrade confirma la baja, así que un 502 de
-// aquí NO deja al usuario marcado como desconectado mientras sigue facturando.
-async function disconnectBroker(uid: string, reason: string): Promise<void> {
-  if (!INTERNAL_SECRET) {
-    log("WARN: sin INTERNAL_DISCONNECT_SECRET/SNAPTRADE_CRON_SECRET; el broker lo cerrará snaptrade-cleanup");
-    return;
-  }
-  try {
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/snaptrade-disconnect`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-internal-secret": INTERNAL_SECRET,
-      },
-      body: JSON.stringify({ app_user_id: uid, reason }),
-    });
-    const txt = await r.text().catch(() => "");
-    if (!r.ok) log("snaptrade-disconnect no-ok", uid, r.status, txt.slice(0, 200));
-    else log("snaptrade-disconnect ok", uid, reason);
-  } catch (e) {
-    // Nunca propaga: si SnapTrade falla, la revocación del entitlement TIENE que
-    // persistir igual. snaptrade-cleanup (horario) reintenta la desconexión.
-    log("snaptrade-disconnect error", uid, String(e));
-  }
 }
 
 // ── Máquina de estados ─────────────────────────────────────────────────────
@@ -337,12 +299,12 @@ async function applyPlan(
     .eq("id", uid)
     .then(() => {}, (e: any) => log("profiles mirror failed", uid, e?.message));
 
-  // Muerte del acceso → cerrar también la conexión del broker. Va DESPUÉS del
-  // upsert a propósito: el entitlement es la verdad y no puede quedar sin
-  // escribir porque SnapTrade tarde o falle.
-  if (plan.revoke) {
-    await disconnectBroker(uid, plan.reason ?? "subscription_ended_appstore");
-  }
+  // Muerte del acceso → el broker NO se corta aquí. Antes se llamaba a
+  // snaptrade-disconnect en el acto, y eso saltaba la gracia: quien arreglaba la
+  // tarjeta o volvía a suscribirse una hora después ya no tenía broker y tenía que
+  // rehacer el login desde cero. La baja la decide SÓLO snaptrade-cleanup (cron
+  // horario): conserva el enlace hasta justo antes de la frontera de facturación
+  // —gratis, el mes ya está devengado— y exige que la tienda confirme el NO.
 
   return {};
 }

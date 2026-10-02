@@ -74,6 +74,20 @@ export function blocksRevocation(v: StoreVerdict): boolean {
   return v.active === true || (v.active === null && v.transient);
 }
 
+/**
+ * ¿Hay que BLOQUEAR el corte del BROKER? Más estricto que blocksRevocation, a propósito.
+ *
+ * Retirar el acceso a la app se deshace solo en cuanto la tienda vuelve a hablar (la fila
+ * se autocura). Cortar el broker, no: SnapTrade borra el usuario con todas sus conexiones y
+ * el usuario tiene que rehacer el login de su broker desde cero. Así que aquí sólo vale un
+ * NO explícito de la tienda; cualquier duda —tienda caída, clave sin configurar, usuario sin
+ * email que buscar en Paddle— deja el broker como está y el cron lo vuelve a mirar la hora
+ * siguiente. Pagar una hora más de enlace es barato; desconectar a quien paga, no.
+ */
+export function blocksBrokerCut(v: StoreVerdict): boolean {
+  return v.active !== false;
+}
+
 // ── RevenueCat (App Store) ────────────────────────────────────────────────────
 async function verifyRevenueCat(uid: string): Promise<StoreVerdict> {
   if (!RC_KEY) return verdict(null, "revenuecat", "RC_SECRET_API_KEY sin configurar");
@@ -173,6 +187,26 @@ async function verifyPaddle(admin: SupabaseClient, uid: string): Promise<StoreVe
 }
 
 /**
+ * Sin fila (ni pista) de tienda no sabemos dónde paga el usuario, y eso NO es lo mismo que
+ * "no paga". Antes se respondía `false` directamente ("sin fila ni tienda"): un pagador de
+ * App Store cuyo webhook de RevenueCat no llegó a escribir la fila quedaba como moroso y,
+ * pasada la gracia del huérfano, perdía el broker. Ahora se pregunta a LAS DOS tiendas:
+ *   · cualquiera dice que paga      → activo (y la fila se autocura con esa tienda)
+ *   · alguna no pudo responder      → null (no se concluye nada; no se corta)
+ *   · las dos dicen que no          → inactivo
+ */
+async function verifyBothStores(admin: SupabaseClient, uid: string): Promise<StoreVerdict> {
+  const [rc, pd] = await Promise.all([verifyRevenueCat(uid), verifyPaddle(admin, uid)]);
+  if (rc.active === true) return rc;
+  if (pd.active === true) return pd;
+  if (rc.active === false && pd.active === false) {
+    return verdict(false, "none", `sin fila; revenuecat=${rc.detail}; paddle=${pd.detail}`);
+  }
+  return verdict(null, "none", `sin fila; revenuecat=${rc.detail}; paddle=${pd.detail}`,
+    { transient: rc.transient || pd.transient });
+}
+
+/**
  * Veredicto de la tienda que gobierna la suscripción de `uid`.
  *
  *   · store app_store / mac_app_store → RevenueCat
@@ -211,7 +245,7 @@ export async function verifyEntitlementWithStore(
   let v: StoreVerdict;
   if (APPLE_STORES.has(store)) v = await verifyRevenueCat(uid);
   else if (PADDLE_STORES.has(store)) v = await verifyPaddle(admin, uid);
-  else if (!store) v = verdict(false, "none", "sin fila ni tienda");
+  else if (!store) v = await verifyBothStores(admin, uid);
   else v = verdict(row?.entitlement_active === true, "db", `store=${store}`, { expiresAt: row?.expires_at ?? null });
 
   log(uid, "→", v.source, v.active, v.detail);

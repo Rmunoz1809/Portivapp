@@ -32,11 +32,6 @@ const PADDLE_SECRET = Deno.env.get("PADDLE_WEBHOOK_SECRET") ?? "";
 // Paddle no documenta un campo de entorno en el cuerpo de la notificación; si el
 // header no viene, este secreto decide qué se escribe en `environment`.
 const PADDLE_ENV_FALLBACK = (Deno.env.get("PADDLE_ENV") ?? "production").toLowerCase();
-// Mismo par de secretos que usa snaptrade-cleanup para la llamada interna.
-const INTERNAL_SECRET =
-  Deno.env.get("INTERNAL_DISCONNECT_SECRET") ??
-  Deno.env.get("SNAPTRADE_CRON_SECRET") ??
-  "";
 
 // Ventana anti-replay: un atacante que capture un POST válido no puede reenviarlo
 // pasados 5 minutos (la firma incluye el ts, así que no puede moverlo sin el secreto).
@@ -236,34 +231,6 @@ async function resolveUserId(data: any): Promise<{ id: string; via: string } | n
     console.error("[paddle-webhook] admin users lookup failed:", (e as any)?.message ?? e);
   }
   return null;
-}
-
-/**
- * Baja del broker cuando el usuario se queda sin entitlement. Se reutiliza el único
- * mecanismo que ya existe (el que usa snaptrade-cleanup): POST interno a
- * snaptrade-disconnect con `x-internal-secret` + service role. Best-effort: si falla,
- * NO se devuelve error — el cron horario snaptrade-cleanup vuelve a intentarlo, y
- * devolver 5xx aquí haría que Paddle reintentara el evento y reescribiera la fila.
- *
- * (Nota: rc-webhook NO llama a disconnect; delega TODO en ese cron para no cortar a
- * un usuario en periodo de gracia. Aquí se corta ya porque el mapeo pedido sólo pone
- * entitlement_active=false en finales reales de acceso — pause / cancelación efectiva.)
- */
-async function triggerDisconnect(userId: string, reason: string): Promise<void> {
-  try {
-    const r = await fetch(`${SUPABASE_URL}/functions/v1/snaptrade-disconnect`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-internal-secret": INTERNAL_SECRET,
-        "Authorization": `Bearer ${SERVICE_ROLE}`,
-      },
-      body: JSON.stringify({ app_user_id: userId, reason }),
-    });
-    if (!r.ok) console.error("[paddle-webhook] disconnect http", r.status, "(cron reintentará)");
-  } catch (e) {
-    console.error("[paddle-webhook] disconnect failed (cron reintentará):", (e as any)?.message ?? e);
-  }
 }
 
 Deno.serve(async (req) => {
@@ -503,9 +470,11 @@ Deno.serve(async (req) => {
     .eq("id", userId)
     .then(() => {}, (e: any) => console.error("[paddle-webhook] espejo a profiles falló:", e?.message));
 
-  // 3) Sin entitlement → se suelta el enlace del broker (SnapTrade cobra ~1 USD por
-  //    usuario conectado al mes). Best-effort; el cron horario es la red de seguridad.
-  if (!active) await triggerDisconnect(userId, `subscription_ended_paddle:${eventType}`);
+  // 3) Sin entitlement → el broker NO se corta aquí. Cortarlo en el acto saltaba la
+  //    gracia: quien volvía a suscribirse poco después tenía que rehacer el login de su
+  //    broker desde cero. La baja la decide SÓLO snaptrade-cleanup (cron horario), que
+  //    conserva el enlace hasta justo antes de la frontera de facturación (el mes ya
+  //    está devengado, no cuesta más) y exige que la tienda confirme el NO.
 
   return json({ ok: true, type: eventType, status, active, via: resolved.via });
 });

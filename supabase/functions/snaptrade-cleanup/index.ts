@@ -26,6 +26,12 @@
 //     ENTERO por alguien que no iba a abrir la app. Ahora el plazo es el menor de
 //     (ancla + gracia) y (frontera − colchón). Ver el bloque FRONTERA DE FACTURACIÓN.
 //
+//   • v4 — EL BROKER SE CONSERVA HASTA LA FRONTERA. Cortar a mitad de ciclo no ahorra
+//     nada (el mes ya está devengado), así que el enlace aguanta hasta justo antes de la
+//     frontera: quien vuelve a pagar dentro del ciclo encuentra su broker intacto. Y el
+//     corte exige un NO explícito de la tienda (blocksBrokerCut): ante la duda, no se toca.
+//     Es además el ÚNICO camino automático de baja: los webhooks de pago ya no cortan.
+//
 //   • Lote acotado (SNAPTRADE_CLEANUP_BATCH, 50 por defecto) para no chocar
 //     con el límite de tiempo de la Edge Function; lo que sobra se recoge a la
 //     hora siguiente y se reporta como `pending`.
@@ -50,7 +56,7 @@
 // Deploy: supabase functions deploy snaptrade-cleanup --no-verify-jwt
 
 import { adminClient } from "../_shared/snaptrade.ts";
-import { verifyEntitlementWithStore, blocksRevocation, healSubscriptionRow } from "../_shared/entitlement.ts";
+import { verifyEntitlementWithStore, blocksBrokerCut, healSubscriptionRow } from "../_shared/entitlement.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -67,6 +73,9 @@ const GRACE_HOURS = Number(Deno.env.get("SNAPTRADE_GRACE_HOURS") ?? "36");
 // fila", que en Paddle/RevenueCat puede tardar minutos y, si falla el webhook,
 // horas. Sin esto, un pagador legítimo se quedaría sin broker.
 const ORPHAN_GRACE_HOURS = Number(Deno.env.get("SNAPTRADE_ORPHAN_GRACE_HOURS") ?? "48");
+// Techo de la conservación del broker tras el ancla (v4, ver "EL BROKER SE CONSERVA HASTA LA
+// FRONTERA"). Con fronteras mensuales casi nunca manda: la frontera llega antes.
+const MAX_GRACE_HOURS = Number(Deno.env.get("SNAPTRADE_MAX_GRACE_HOURS") ?? String(30 * 24));
 const BATCH_DEFAULT = Number(Deno.env.get("SNAPTRADE_CLEANUP_BATCH") ?? "50");
 
 const json = (obj: unknown, status = 200) =>
@@ -299,27 +308,38 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Plazo por gracia (lo de siempre) y plazo por frontera de facturación (ver arriba).
-      // Manda el que venza ANTES.
+      // ── v4 — EL BROKER SE CONSERVA HASTA LA FRONTERA ──────────────────────────────
+      // La v3 cortaba a las 36 h del vencimiento (o antes, si la frontera llegaba antes).
+      // Pero cortar a mitad de ciclo no ahorra nada: el mes en curso de SnapTrade ya está
+      // devengado. Lo único que cuesta dinero es seguir enlazado al CRUZAR la frontera. Así
+      // que ahora el enlace se conserva gratis hasta justo antes de la frontera (con un techo
+      // de MAX_GRACE_HOURS desde el ancla): quien renueva tarde, arregla la tarjeta o vuelve
+      // a suscribirse dentro del mismo ciclo encuentra su broker tal cual, sin rehacer el
+      // login. El coste no cambia: el corte sigue cayendo antes de la frontera.
+      //
+      // Huérfano (`connected_at`): además NUNCA antes de su gracia mínima. Es donde más fácil
+      // es equivocarse —enlace recién hecho cuyo webhook de la tienda aún no ha escrito la
+      // fila— y adelantarle el corte le costaría a un usuario que SÍ paga rehacer el portal
+      // de su broker entero.
       const anchorMs = new Date(anchor).getTime();
       const graceEndsAt = anchorMs + graceHours * HOUR_MS;
-      // El corte por facturación NO se aplica al ancla huérfana (`connected_at`): ahí es donde
-      // más fácil es equivocarse —enlace recién hecho cuyo webhook de la tienda aún no ha
-      // escrito la fila— y adelantarle el corte le costaría a un usuario que SÍ paga rehacer
-      // el portal de su broker entero. Además su frontera queda a un mes vista, así que las
-      // 48 h de gracia vencen mucho antes: excluirlo no deja pasar ningún cargo.
-      const cut = anchorKind === "connected_at"
-        ? null
-        : billingCutoff(new Date(), p.snaptrade_connected_at ?? null);
-      const dueAt = cut ? Math.min(graceEndsAt, cut.at) : graceEndsAt;
-      const byBilling = !!cut && cut.at < graceEndsAt;
+      const maxEndsAt = anchorMs + MAX_GRACE_HOURS * HOUR_MS;
+      const cut = billingCutoff(new Date(), p.snaptrade_connected_at ?? null);
+      const dueAt = anchorKind === "connected_at"
+        ? Math.max(graceEndsAt, Math.min(maxEndsAt, cut.at))
+        : Math.min(maxEndsAt, cut.at);
+      // Se anota qué decidió el plazo: la frontera (el corte que evita el mes siguiente), el
+      // techo, o la gracia mínima del huérfano. Sin distinguirlos, la bitácora no permite
+      // comprobar que el broker se está conservando lo máximo posible sin pagar de más.
+      const dueReason = dueAt === cut.at ? `billing_${cut.kind}`
+        : (dueAt === maxEndsAt ? "max_grace" : "grace");
 
       if (Date.now() < dueAt) {
         toStamp.push(uid);
         skipped++;
         results.push({
           id: uid, skipped: "within_grace", anchor_kind: anchorKind,
-          due_reason: byBilling ? `billing_${cut!.kind}` : "grace",
+          due_reason: dueReason,
           hours_left: Math.round((dueAt - Date.now()) / HOUR_MS * 10) / 10,
         });
         continue;
@@ -328,10 +348,7 @@ Deno.serve(async (req) => {
       const reason = sub
         ? `subscription_inactive_${sub.store ?? "unknown"}:${sub.status ?? "unknown"}`
         : "trial_expired_no_payment";
-      // Se anota si el corte lo adelantó la frontera: es la diferencia entre "venció la
-      // gracia" y "se cortó para no pagar el mes siguiente", y sin distinguirlas la bitácora
-      // no permite comprobar que el ahorro está ocurriendo de verdad.
-      const cutBy = byBilling && Date.now() < graceEndsAt ? `billing_${cut!.kind}` : "grace";
+      const cutBy = dueReason;
 
       if (dryRun) {
         results.push({ id: uid, would_disconnect: true, anchor_kind: anchorKind, cut_by: cutBy, reason });
@@ -344,14 +361,16 @@ Deno.serve(async (req) => {
       //     paga, se repara la fila y se pasa de largo. Si la tienda no responde, se
       //     espera al ciclo siguiente (snaptrade-disconnect vuelve a comprobarlo igual:
       //     doble candado, porque esta baja no tiene vuelta atrás para el usuario).
+      //     Sólo un NO explícito de la tienda deja pasar (blocksBrokerCut): una tienda que
+      //     no concluye nada —caída, sin clave, sin email que buscar— no es un "no paga".
       const sv = await verifyEntitlementWithStore(admin, uid, sub?.store ?? null);
-      if (blocksRevocation(sv)) {
+      if (blocksBrokerCut(sv)) {
         if (sv.active === true) await healSubscriptionRow(admin, uid, sv, sub?.store ?? null);
         skipped++;
         toStamp.push(uid);
         results.push({
           id: uid,
-          skipped: sv.active === true ? "store_says_active" : "store_unavailable",
+          skipped: sv.active === true ? "store_says_active" : "store_unconfirmed",
           source: sv.source, detail: sv.detail,
         });
         continue;
@@ -414,6 +433,7 @@ Deno.serve(async (req) => {
       dry_run: dryRun,
       grace_hours: GRACE_HOURS,
       orphan_grace_hours: ORPHAN_GRACE_HOURS,
+      max_grace_hours: MAX_GRACE_HOURS,
       billing_safety_hours: BILLING_SAFETY_HOURS,
       near_billing_boundary: nearBoundary,
       batch,

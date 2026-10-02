@@ -234,3 +234,36 @@ bloqueo duro con *Restaurar compras* y *Cerrar sesión*, red de seguridad con `P
 nunca acepta un evento sin verificar. Ver `SUBSCRIPTION_SETUP.md` → "Lo que TÚ debes hacer en el
 dashboard de Paddle". Hasta entonces una cancelación **en web** no llega a Supabase y la baja del
 broker sólo ocurre por la vía del huérfano (48 h desde el enlace).
+
+---
+
+# El broker no se desconecta — v4 (1 oct 2026)
+
+Regla del producto: **el broker sólo se desconecta si el usuario lo pide o si la tienda
+CONFIRMA que no paga** — y aun entonces, lo más tarde posible sin coste extra.
+
+Diagnóstico con los logs de producción del 1 oct: las dos bajas del día fueron "Desconectar"
+pulsado en la app seguido de "Conectar" (usado como botón de refrescar). Cada una borra el
+usuario de SnapTrade con todas sus conexiones. Ningún camino automático cortó a nadie.
+
+| Pieza | Cambio |
+|---|---|
+| `_shared/entitlement.ts` | `blocksBrokerCut(v)`: sólo un **NO explícito** de la tienda permite cortar el broker (antes, un veredicto no concluyente —clave sin configurar, Paddle sin email, 4xx— dejaba pasar). Sin fila de suscripción se pregunta a **RevenueCat y Paddle** antes de concluir nada. |
+| `snaptrade-disconnect` / `snaptrade-cleanup` | usan `blocksBrokerCut`. |
+| `snaptrade-cleanup` (v4) | el enlace de un usuario sin suscripción se **conserva hasta justo antes de la frontera de facturación** (el mes ya está devengado: no cuesta más). Techo `SNAPTRADE_MAX_GRACE_HOURS` (720). El huérfano nunca antes de sus 48 h. Es el **único** camino automático de baja. |
+| `rc-webhook`, `paddle-webhook`, `entitlement-sync` | **ya no cortan el broker** al revocar: lo decide sólo el cron (con gracia y confirmación de la tienda). |
+| `snaptrade-connect` | `healOrphan()` (borra al usuario en SnapTrade) sólo si el secreto guardado **falla una prueba de lectura** dos veces; un error de **firma** ya no cuenta (es nuestro consumer key/reloj); un 1010 por doble pulsación relee el perfil antes de curar nada. |
+| `snaptrade-refresh` | tienda sin veredicto → se sirve igual (no se pinta una desconexión que no existe). Sin suscripción pero con broker enlazado → `brokerLinked: true`: la app dice "tu broker sigue enlazado" y no borra nada local. |
+| `snaptrade-webhook` | `CONNECTION_BROKEN` → comprueba con SnapTrade y manda **push "Reconecta <broker>"** (deeplink `portiv://broker/reconectar`). `CONNECTION_DELETED` sólo limpia si es la conexión apuntada (el de la conexión vieja tras reconectar ya no borra la nueva). |
+| `snaptrade-health` (nuevo, cron `23 */3 * * *`) | revisa las conexiones de todos los enlazados (lectura gratuita), re-apunta `connection_id`, mantiene `snaptrade_connection_broken` y avisa por push si alguna está caída (recordatorio cada 72 h). **Nunca borra nada.** |
+| App | "Desconectar" pide confirmación explicando que no hace falta para refrescar y exige escribir DESCONECTAR. Ruta del push a la tarjeta del broker. |
+
+Una conexión que el **broker** invalida (caducó la sesión, cambio de contraseña, permiso
+revocado) no se puede evitar desde aquí: se arregla con el portal en modo `reconnect`
+(misma conexión, mismo historial). Lo que sí hacemos es avisar al momento y dejarlo a un toque.
+
+```bash
+# vigía a mano, un usuario (lee y avisa; nunca borra)
+curl -X POST "$SUPABASE_URL/functions/v1/snaptrade-health" \
+  -H "x-cron-secret: $SECRET" -H "Content-Type: application/json" -d '{"user_id":"<uuid>"}'
+```

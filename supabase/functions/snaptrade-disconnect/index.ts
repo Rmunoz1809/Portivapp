@@ -15,7 +15,7 @@
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
 import { snaptrade, adminClient, requireUser, isUuid } from "../_shared/snaptrade.ts";
-import { verifyEntitlementWithStore, blocksRevocation, healSubscriptionRow } from "../_shared/entitlement.ts";
+import { verifyEntitlementWithStore, blocksBrokerCut, healSubscriptionRow } from "../_shared/entitlement.ts";
 
 const INTERNAL_SECRET =
   Deno.env.get("INTERNAL_DISCONNECT_SECRET") ??
@@ -115,15 +115,20 @@ Deno.serve(async (req) => {
     // Paddle. Si la tienda dice que paga, no se toca y se repara la fila. Si la tienda no
     // responde, tampoco se toca: el cron vuelve a intentarlo la hora siguiente.
     // `force:true` (reservado a la baja de cuenta) salta la comprobación.
+    //
+    // Sólo corta un NO EXPLÍCITO de la tienda (blocksBrokerCut). Antes bastaba con que la
+    // tienda no dijera "sí" de forma concluyente —clave sin configurar, Paddle sin email que
+    // buscar, un 4xx— para seguir adelante con el borrado, y ese borrado no tiene vuelta
+    // atrás: el usuario rehace el login de su broker desde cero. Ante la duda, no se toca.
     if (isInternal && body?.force !== true) {
       const v = await verifyEntitlementWithStore(admin, userId);
-      if (blocksRevocation(v)) {
+      if (blocksBrokerCut(v)) {
         if (v.active === true) await healSubscriptionRow(admin, userId, v);
         console.warn("[snaptrade-disconnect] baja BLOQUEADA por la tienda:", userId, v.source, v.active, v.detail);
         return jsonResponse(req, {
           ok: true,
           disconnected: false,
-          skipped: v.active === true ? "still_entitled" : "store_unavailable",
+          skipped: v.active === true ? "still_entitled" : "store_unconfirmed",
           retry: v.active === null,
           source: v.source,
           detail: v.detail,
