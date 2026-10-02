@@ -4510,13 +4510,8 @@ window._pvAwaitIAP = function(totalMs){
        Stitch "Your Positions" y mostraba un Cash Holdings que ya no se usa) -->
   <div style="display:none"><span id="mmRow">0.00</span></div>
 
-  <!-- Transaction log -->
-  <div id="txLogSection" style="display:none">
-    <div class="card">
-      <div class="card-title">Historial de transacciones — sesión actual</div>
-      <div id="txLog"></div>
-    </div>
-  </div>
+  <!-- (Tarjeta "Historial de transacciones — sesión actual" eliminada a pedido de Rafael:
+       TX_LOG se sigue guardando con el estado, sólo deja de pintarse) -->
 
   <!-- Análisis profundo movido a la pestaña Analizar -->
   <!-- Chat movido a pestaña AI Analyst -->
@@ -17032,22 +17027,6 @@ function executeConfirmed() {
   if (res && res.ok === false) showToast(res.error || 'No se pudo ejecutar la operación.', 'var(--red)');
 }
 
-function renderTxLog() {
-  if (TX_LOG.length === 0) return;
-  $('txLogSection').style.display = 'block';
-  $('txLog').innerHTML = TX_LOG.map(tx => {
-    const gc = tx.realizedGL !== null ? (tx.realizedGL >= 0 ? 'pos' : 'neg') : '';
-    const glStr = tx.realizedGL !== null
-      ? `<span class="${gc} tx-gl"> · G/L: ${sign(tx.realizedGL)}${usd(Math.abs(tx.realizedGL))}</span>` : '';
-    return `<div class="tx-item">
-      <div class="tx-side ${tx.mode==='buy'?'tx-buy':'tx-sell'}">${tx.mode==='buy'?'BUY':'SELL'}</div>
-      <div class="tx-ticker">${tx.ticker}</div>
-      <div class="tx-detail">${tx.shares.toFixed(4)} sh · ${usd(tx.amt)} · ${_pvPx(tx.price)}/sh${glStr}</div>
-      <div class="tx-time">${tx.date ? tx.date.slice(5).replace('-','/') + ' ' : ''}${tx.time}</div>
-    </div>`;
-  }).join('');
-}
-
 // ═══════════════════════════════════════════════════
 //  PORTFOLIO TRADING API
 //  buyAsset / sellAsset / recalculatePortfolio / etc.
@@ -17058,12 +17037,11 @@ function renderTxLog() {
 /**
  * refreshPortfolioUI()
  * Re-renderiza todo el UI en cascada:
- * Total Value → Chart → Donut → Table → P&L → Cash → TxLog
+ * Total Value → Chart → Donut → Table → P&L → Cash
  */
 function refreshPortfolioUI() {
   updateCash();
   renderAll();
-  renderTxLog();
   updatePerfHeader();
   _chartYMin = null; _chartYRefit = true;  // cambio de posiciones → re-encaje real de la banda
   _refreshChartYBounds();
