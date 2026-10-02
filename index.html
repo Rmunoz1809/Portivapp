@@ -45853,19 +45853,13 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
   // automático lo trae, una vez. La raíz es .pvs-app y no la ventana: en el
   // portátil la pantalla acaba mucho antes que la ventana.
   let _fxIO = null;
-  function _fxReveal(stage, nodes, op){
-    const P = window.PVM, app = stage.querySelector('.pvs-app');
-    if (!P || P.reduced() || !app || typeof IntersectionObserver !== 'function') return;
-    const bottom = app.getBoundingClientRect().bottom;
-    const els = Array.prototype.filter.call(nodes || [], el => P.painted(el) && el.getBoundingClientRect().top >= bottom - 4);
-    if (!els.length) return;
-    if (!_fxIO) _fxIO = new IntersectionObserver(ents => {
-      const b = ents.filter(en => en.isIntersecting).map(en => en.target);
-      b.forEach(el => { _fxIO.unobserve(el); el.classList.remove('pvm-pre'); });
-      if (b.length) P.enter(b, Object.assign({ step: 60, max: 4 }, b[0]._fxOp));
-    }, { root: app, rootMargin: '0px 0px -4% 0px' });
-    els.forEach(el => { el._fxOp = op; el.classList.add('pvm-pre'); _fxIO.observe(el); });
-  }
+  // Antes escondía (.pvm-pre) lo que quedaba bajo el borde y lo hacía entrar cuando un
+  // IntersectionObserver avisaba de que el scroll lo traía. En la app real el onboarding se abre
+  // mientras se cargan los datos: el aviso llegaba tarde (hilo principal ocupado) mientras el
+  // scroll, que va por CSS, seguía bajando, y se veían pantallas EN BLANCO en el Mac. Ahora lo de
+  // abajo se pinta siempre; sólo entra con movimiento lo que se ve al abrir (lo hace cada FX).
+  function _fxReveal(stage, nodes, op){}
+
 
   // ══ Pantalla 1 · Portafolio ══
   // La pestaña Portafolio de hoy: cabecera navy (valor total, «Hoy» y los recuadros Posiciones ·
@@ -46152,15 +46146,9 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
     if (!app || typeof IntersectionObserver !== 'function') { show(els); return; }
     const bottom = app.getBoundingClientRect().bottom, now = [], later = [];
     els.forEach(el => { if (PVM.painted(el)) (el.getBoundingClientRect().top >= bottom - 4 ? later : now).push(el); });
+    // Lo que queda bajo el borde ya no se esconde a la espera del scroll (ver _fxReveal): se
+    // pinta en su estado final y sólo entra con movimiento lo que se ve al abrir.
     if (now.length) show(now);
-    if (!later.length) return;
-    const io = new IntersectionObserver(ents => {
-      const b = ents.filter(en => en.isIntersecting).map(en => en.target);
-      b.forEach(el => { io.unobserve(el); el.classList.remove('pvm-pre'); });
-      if (b.length) show(b, true);
-    }, { root: app, rootMargin: '0px 0px -4% 0px' });
-    _pfIO.push(io);
-    later.forEach(el => { el.classList.add('pvm-pre'); io.observe(el); });
   }
   // El trazo que se dibuja. Es PVM.draw con el largo del guion bien medido: el trazo no escala
   // (non-scaling-stroke) y el guion se cuenta en px de la propia gráfica, sin el escalado del
@@ -46864,32 +46852,13 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
   // nada se ve terminado y luego se recoge. Tope: a los 16 s se sueltan aunque no se haya visto.
   function _anSeen(app, el, D, fn){
     if (!el) return;
+    // Sólo se anima lo que se ve al abrir. Lo de abajo se pinta terminado: antes quedaba con la
+    // barra en cero y el anillo apagado hasta que un IntersectionObserver avisara, y con la app
+    // cargando datos ese aviso llegaba tarde (o a los 16 s del tope).
     const r = app.getBoundingClientRect(), e = el.getBoundingClientRect();
-    if ((e.top < r.bottom - r.height * .1 && e.bottom > r.top) || typeof IntersectionObserver !== 'function' || typeof el.getAnimations !== 'function') {
-      try { fn(D); } catch(err){}
-      return;
-    }
-    const HOLD = 1e9, had = new Set(el.getAnimations({ subtree: true })), later = [];
-    try { fn(HOLD, later); } catch(err){}
-    const held = el.getAnimations({ subtree: true }).filter(a => !had.has(a));
-    let done = false;
-    el._anGo = () => {
-      if (done) return;
-      done = true;
-      held.forEach(a => {
-        try { a.effect.updateTiming({ delay: (a.currentTime || 0) + Math.max(0, a.effect.getTiming().delay - HOLD) }); }
-        catch(err){ try { a.cancel(); } catch(_){} }
-      });
-      later.forEach(f => f());
-    };
-    if (!_anIO) _anIO = new IntersectionObserver(ents => ents.forEach(en => {
-      if (!en.isIntersecting) return;
-      _anIO.unobserve(en.target);
-      if (en.target._anGo) en.target._anGo();
-    }), { root: app, rootMargin: '0px 0px -10% 0px' });
-    _anIO.observe(el);
-    setTimeout(() => { if (!done) { done = true; held.forEach(a => { try { a.cancel(); } catch(_){} }); later.forEach(f => f()); } }, 16000);
+    if (e.top < r.bottom - r.height * .1 && e.bottom > r.top) { try { fn(D); } catch(err){} }
   }
+
   FX.analisis = function(stage, desk){
     const P = window.PVM, app = stage.querySelector('.pvs-an');
     if (!P || !app) return;
@@ -47138,18 +47107,15 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
   // fn una vez, cuando el nodo asoma en la pantalla de la maqueta (raíz .pvs-app, como
   // _fxReveal y con su mismo margen: la barra crece justo cuando su tarjeta entra).
   function _acWatch(app, el, fn){
-    if (!el || typeof IntersectionObserver !== 'function' || typeof WeakMap !== 'function') return;
-    if (!_acIO){
-      _acFns = new WeakMap();
-      _acIO = new IntersectionObserver(ents => ents.forEach(en => {
-        if (!en.isIntersecting) return;
-        const f = _acFns.get(en.target);
-        _acFns.delete(en.target); _acIO.unobserve(en.target);
-        if (f && en.target.isConnected) { try { f(); } catch(e){} }
-      }), { root: app, rootMargin: '0px 0px -4% 0px' });
-    }
-    _acFns.set(el, fn); _acIO.observe(el);
+    if (!el) return;
+    // Bajo el borde no se espera al observador (llegaba tarde con la app cargando): se queda en
+    // su estado final, sin animar. Lo que ya está a la vista crece ahora.
+    try {
+      const r = app.getBoundingClientRect(), e = el.getBoundingClientRect();
+      if (e.top < r.bottom - 4 && e.bottom > r.top) fn();
+    } catch(e){}
   }
+
   // Marca deslizante del control de periodos (la de pvMovAnalisisJs): la posición del elegido
   // va a variables CSS y el CSS transiciona el recorte. Al montarla, sin deslizar (.snap).
   function _acSeg(seg, slide){
@@ -47518,6 +47484,8 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
     // Movimiento de la pantalla, el de su pestaña en la app
     const fx = FX[s.fx];
     if (fx && window.PVM && !PVM.reduced()) { try { fx($('pvsStage'), _desk()); } catch(e){} }
+    // Red de seguridad: si algún efecto dejó algo esperando con .pvm-pre, a los 1,2 s se ve igual.
+    setTimeout(() => { try { $('pvsStage').querySelectorAll('.pvm-pre').forEach(el => el.classList.remove('pvm-pre')); } catch(e){} }, 1200);
     $('pvsBack').disabled = (_i === 0);
   }
 
