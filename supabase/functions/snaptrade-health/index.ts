@@ -29,6 +29,24 @@ const MAX_USERS = Number(Deno.env.get("SNAPTRADE_HEALTH_MAX") ?? "400");
 const json = (obj: unknown, status = 200) =>
   new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } });
 
+/** De los brokers presentes en `results`, qué tipos de conexión ofrece SnapTrade. Nunca lanza. */
+async function brokerCatalog(st: any, results: HealthResult[]) {
+  const slugs = new Set<string>();
+  for (const r of results) for (const c of r.connections ?? []) if (c.slug) slugs.add(c.slug);
+  try {
+    const list = ((await st.referenceData.listAllBrokerages()).data as any[]) ?? [];
+    return list
+      .filter((b) => slugs.has(b?.slug) || /SCHWAB|INTERACTIVE|FIDELITY|ROBINHOOD|WEBULL|ETRADE|VANGUARD/i.test(String(b?.slug ?? "")))
+      .map((b) => ({
+        slug: b?.slug ?? null,
+        allows_trading: b?.allows_trading ?? null,
+        authorization_types: (b?.authorization_types ?? []).map((a: any) => `${a?.type}/${a?.auth_type}`),
+      }));
+  } catch (e) {
+    return { error: String(e).slice(0, 200) };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
   // Fail-closed, igual que snaptrade-cleanup: sin secreto no corre nada.
@@ -43,6 +61,11 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = await req.json(); } catch { /* opcional */ }
   const onlyUser = isUuid(body?.user_id) ? body.user_id : null;
+  // Diagnóstico: `detail` devuelve el resumen de TODAS las conexiones (broker, tipo
+  // read/trade, estado), no sólo las incidencias. `catalog` añade, de los brokers
+  // presentes, qué tipos de conexión ofrece SnapTrade (authorization_types).
+  const detail = body?.detail === true;
+  const catalog = body?.catalog === true;
 
   const admin = adminClient();
   const startedAt = Date.now();
@@ -79,7 +102,10 @@ Deno.serve(async (req) => {
       changed: results.filter((r) => r.changed).length,
       took_ms: Date.now() - startedAt,
       // Sólo lo que merece mirarse; los sanos no aportan nada a la bitácora.
-      issues: results.filter((r) => !r.ok || r.disabled > 0 || r.changed),
+      issues: results.filter((r) => !r.ok || r.disabled > 0 || r.changed)
+        .map((r) => detail ? r : { ...r, connections: undefined }),
+      ...(detail ? { all: results } : {}),
+      ...(catalog ? { catalog: await brokerCatalog(st, results) } : {}),
     };
     console.log("[snaptrade-health]", JSON.stringify({ ...summary, issues: summary.issues.length }));
     return json(summary);

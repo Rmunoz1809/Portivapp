@@ -255,7 +255,7 @@ usuario de SnapTrade con todas sus conexiones. Ningún camino automático cortó
 | `snaptrade-connect` | `healOrphan()` (borra al usuario en SnapTrade) sólo si el secreto guardado **falla una prueba de lectura** dos veces; un error de **firma** ya no cuenta (es nuestro consumer key/reloj); un 1010 por doble pulsación relee el perfil antes de curar nada. |
 | `snaptrade-refresh` | tienda sin veredicto → se sirve igual (no se pinta una desconexión que no existe). Sin suscripción pero con broker enlazado → `brokerLinked: true`: la app dice "tu broker sigue enlazado" y no borra nada local. |
 | `snaptrade-webhook` | `CONNECTION_BROKEN` → comprueba con SnapTrade y manda **push "Reconecta <broker>"** (deeplink `portiv://broker/reconectar`). `CONNECTION_DELETED` sólo limpia si es la conexión apuntada (el de la conexión vieja tras reconectar ya no borra la nueva). |
-| `snaptrade-health` (nuevo, cron `23 */3 * * *`) | revisa las conexiones de todos los enlazados (lectura gratuita), re-apunta `connection_id`, mantiene `snaptrade_connection_broken` y avisa por push si alguna está caída (recordatorio cada 72 h). **Nunca borra nada.** |
+| `snaptrade-health` (nuevo, cron `23 */6 * * *`) | revisa las conexiones de todos los enlazados (lectura gratuita), re-apunta `connection_id`, mantiene `snaptrade_connection_broken` y avisa por push si alguna está caída (recordatorio cada 72 h). **Nunca borra nada.** |
 | App | "Desconectar" pide confirmación explicando que no hace falta para refrescar y exige escribir DESCONECTAR. Ruta del push a la tarjeta del broker. |
 
 Una conexión que el **broker** invalida (caducó la sesión, cambio de contraseña, permiso
@@ -267,3 +267,21 @@ revocado) no se puede evitar desde aquí: se arregla con el portal en modo `reco
 curl -X POST "$SUPABASE_URL/functions/v1/snaptrade-health" \
   -H "x-cron-secret: $SECRET" -H "Content-Type: application/json" -d '{"user_id":"<uuid>"}'
 ```
+
+Diagnóstico (sin secretos; `detail` = todas las conexiones con broker, tipo `read`/`trade` y
+estado; `catalog` = tipos de conexión que SnapTrade ofrece para esos brokers):
+
+```bash
+… -d '{"detail":true,"catalog":true}'
+```
+
+Comprobado el 2 oct 2026 con la documentación de SnapTrade y producción:
+- SnapTrade **no borra** usuarios ni conexiones por su cuenta (ni por inactividad ni por estar
+  deshabilitadas). Sólo desaparecen por un borrado explícito nuestro o del usuario.
+- `reconnect` renueva el token de la MISMA conexión y conserva el historial; el portal normal
+  crea otra conexión con cuentas nuevas. Por eso el arreglo de una caída va siempre en modo reconexión.
+- Un 401 `1076` ("unable to verify signature") es de NUESTRA firma, nunca del secreto del usuario.
+- Duración típica (tabla de SnapTrade): Schwab solo lectura = años; Schwab con trading = días.
+  Las conexiones vivas son `read` (Schwab e IBKR): `trade-if-available` da solo lectura donde
+  el broker no ofrece trading a este cliente, así que no hay nada que cambiar.
+

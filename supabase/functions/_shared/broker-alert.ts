@@ -89,6 +89,11 @@ export type HealthResult = {
   notified: number;          // dispositivos avisados en esta pasada
   changed: boolean;          // la bandera `broken` del perfil cambió
   error?: string;
+  /** Resumen por conexión (sin secretos). snaptrade-health sólo lo devuelve con `detail`. */
+  connections?: Array<{
+    id: string | null; slug: string | null; name: string | null; type: string | null;
+    disabled: boolean; disabledSince: string | null; created: string | null;
+  }>;
 };
 
 /**
@@ -134,6 +139,17 @@ export async function inspectAndAlert(
     }
     out.ok = true;
     out.total = conns.length;
+    // `type` (read | trade) importa para la DURACIÓN: según la tabla de SnapTrade, una
+    // conexión de Schwab de trading caduca en días y una de solo lectura dura años.
+    out.connections = conns.map((c) => ({
+      id: c?.id ?? null,
+      slug: c?.brokerage?.slug ?? null,
+      name: c?.brokerage?.display_name ?? c?.brokerage?.name ?? null,
+      type: c?.type ?? null,
+      disabled: c?.disabled === true,
+      disabledSince: c?.disabled_date ?? null,
+      created: c?.created_date ?? null,
+    }));
     const down = conns.filter((c) => c?.disabled === true);
     out.disabled = down.length;
     const allDown = conns.length > 0 && down.length === conns.length;
