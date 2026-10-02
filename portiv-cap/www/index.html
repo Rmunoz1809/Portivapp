@@ -14858,6 +14858,14 @@ function _pvxRebalEngine(m, T){
   // el pico, que es el peor momento para cargar. Se detecta por el sector canónico.
   const CYC_RE = /semiconduct|memoria|energ|material|autom|discrecional|bienes ra|financ|industrial/i;
   const isCyc  = s => CYC_RE.test(String(s || ''));
+  // La TRAMPA DEL PICO (ventas récord que no se repiten) es de los sectores cuyo INGRESO va
+  // con el ciclo: semis, energía, materiales, autos. Un banco o una fintech que crece +50%
+  // está creciendo, no en el pico de un ciclo de precios: llamarlo "pico" era un mal análisis.
+  const PEAK_RE = /semiconduct|memoria|energ|material|autom|discrecional|industrial/i;
+  const isPeakSec = s => PEAK_RE.test(String(s || ''));
+  // En un banco o aseguradora la "deuda" son los depósitos y reservas con que opera: un D/E
+  // de 4× es lo normal del negocio, no un riesgo. Ese aviso solo vale para no financieras.
+  const isFin = r => /financ|banc|segur/i.test(String(r.it.sector || '')) || /financial/i.test(String((r.inf && r.inf.sector) || ''));
   // En prosa el sector va sin el prefijo de familia: "Tech · Semiconductores" se lee mal
   // dentro de una frase; "semiconductores" sí.
   const secTxt = s => String(s || '').split('·').pop().trim().toLowerCase();
@@ -14905,14 +14913,28 @@ function _pvxRebalEngine(m, T){
   };
   // La frase del momento solo se escribe cuando el precio está en un extremo del rango:
   // "está a media tabla de su rango" no le dice nada a nadie y gasta palabras del tope.
-  const momRead = r => {
+  // Y se escribe EN EL SENTIDO de la acción: "hoy pagas el precio más alto del año" seguido
+  // de "subir" (o "cotiza en mínimos, el consenso lo ve 30% arriba" seguido de "recortar")
+  // era el motivo argumentando contra su propia conclusión. Cuando el precio juega en contra
+  // de la acción se dice cómo ejecutarla, no se usa como argumento.
+  const momRead = (r, action) => {
     const mo = r.mom; if (!mo) return '';
     // El núcleo indexado NO se cronometra: avisar de que "cotiza en máximos" a quien tiene
     // el S&P 500 como base es empujarle a esperar un mejor precio para estar diversificado,
     // que es justo lo contrario de para qué está ahí. En el núcleo, el precio no opina.
     if (r.core) return '';
     const off = Math.abs(mo.offHigh * 100);
-    const up  = (mo.upside != null && Math.abs(mo.upside) >= 0.12)
+    if (action === 'AUMENTAR' && (mo.label === 'maximos' || mo.label === 'alto'))
+      return mo.label === 'maximos'
+        ? `Cotiza en máximos de 52 semanas: mejor sumar por tramos que de golpe.`
+        : `Está a un ${off.toFixed(0)}% de su máximo del año: mejor sumar por tramos que de golpe.`;
+    if (r.noUp && action !== 'AUMENTAR' && (mo.label === 'minimos' || mo.label === 'bajo'))
+      return `El precio ya cayó un ${off.toFixed(0)}% desde su máximo, pero lo barato no compensa el aviso.`;
+    if (action === 'REDUCIR' && (mo.label === 'minimos' || mo.label === 'bajo'))
+      return `El precio ya va un ${off.toFixed(0)}% bajo su máximo: el recorte es por tamaño, no por el precio, y conviene hacerlo por tramos.`;
+    // El consenso solo se cita cuando apoya la acción (o la fila no se mueve).
+    const contra = mo.upside != null && ((action === 'AUMENTAR' && mo.upside < 0) || (action === 'REDUCIR' && mo.upside > 0));
+    const up  = (!contra && mo.upside != null && Math.abs(mo.upside) >= 0.12)
       ? ` El consenso de analistas lo sitúa un ${Math.abs(mo.upside*100).toFixed(0)}% ${mo.upside > 0 ? 'por encima' : 'por debajo'} del precio de hoy.`
       : '';
     if (mo.label === 'minimos')
@@ -15038,7 +15060,7 @@ function _pvxRebalEngine(m, T){
     let t = 0;
     if (risk === 'bajo'){
       if (pm  != null && pm < 0)      { t -= 1.5; r.fit = 'no gana dinero todavía'; }
-      if (de  != null && de > 1)      { t -= 0.8; r.fit = r.fit || `debe ${de.toFixed(1)}× su capital`; }
+      if (de  != null && de > 1 && !isFin(r)) { t -= 0.8; r.fit = r.fit || `debe ${de.toFixed(1)}× su capital`; }
       if (fcf != null && fcf < 0)     { t -= 0.8; r.fit = r.fit || 'quema caja'; }
       if (beta != null && beta > 1.3) { t -= Math.min(1.2, (beta-1.3)*1.5) * (mktStress ? 1.3 : 1); r.fit = r.fit || `se mueve ${beta.toFixed(1)}× lo que el mercado`; }
       if (pe  != null && pe > 45)     { t -= 0.6; r.fit = r.fit || `cotiza a ${pe.toFixed(0)}× ganancias`; }
@@ -15056,10 +15078,10 @@ function _pvxRebalEngine(m, T){
       if (gm != null && gm >= 0.60 && roic != null && roic >= 0.15) t += 0.6;
       if (pm != null && pm < 0 && (revG == null || revG < 0.25)){ t -= 1.2; r.fit = 'pierde dinero sin crecer lo bastante para justificarlo'; }
       if (fcf != null && fcf < 0) t -= 0.5;
-      if (de != null && de > 2)   { t -= 0.5; r.fit = r.fit || `debe ${de.toFixed(1)}× su capital`; }
+      if (de != null && de > 2 && !isFin(r)) { t -= 0.5; r.fit = r.fit || `debe ${de.toFixed(1)}× su capital`; }
     } else {
       if (pm != null && pm < 0)   { t -= 1.2; r.fit = 'todavía no gana dinero'; }
-      if (de != null && de > 1.5) { t -= 0.6; r.fit = r.fit || `debe ${de.toFixed(1)}× su capital`; }
+      if (de != null && de > 1.5 && !isFin(r)) { t -= 0.6; r.fit = r.fit || `debe ${de.toFixed(1)}× su capital`; }
       if (beta != null && beta > 1.6) t -= mktStress ? 0.6 : 0.4;
       if (r.cycPeak) t -= 0.4;
       else if (fcf != null && fcf > 0 && revG != null && revG > 0.10) t += 0.5;
@@ -15104,8 +15126,10 @@ function _pvxRebalEngine(m, T){
     // motivo tiene que reconocerlo ("aun con eso…") en vez de sonar a que no lo vio.
     let trait = null; r.warn = false;
     if (pm != null && pm < 0)
-      trait = `aún no gana dinero (${sgn(pm)}): su valor depende de una mejora que no ocurrió`;
-    else if (de != null && de > 1.5)
+      trait = (risk === 'alto' && revG != null && revG >= 0.25)
+        ? `aún no gana dinero (${sgn(pm)}), pero vende ${sgn(revG)} más que hace un año: la tesis es que la escala la lleve a ganar`
+        : `aún no gana dinero (${sgn(pm)}): su valor depende de una mejora que no ocurrió`;
+    else if (de != null && de > 1.5 && !isFin(r))
       trait = `debe ${de.toFixed(1)}× su capital: un año flojo le pega el doble`;
     else if (fcf != null && fcf < 0)
       trait = `quema caja: depende de que alguien le financie el crecimiento`;
@@ -15135,7 +15159,7 @@ function _pvxRebalEngine(m, T){
 
     // ② Aviso de ciclo: solo si el sector es cíclico Y viene de un año excepcional.
     let cycNote = null;
-    if (isCyc(r.it.sector) && revG != null && revG > 0.35)
+    if (isPeakSec(r.it.sector) && revG != null && revG > 0.35)
       cycNote = `viene de un pico (${sgn(revG)}) y en ${secTxt(r.it.sector)} eso se da vuelta con el ciclo`;
 
     // ③ Qué estás pagando por eso. El PEG manda cuando existe; si no, P/E contra crecimiento.
@@ -15154,7 +15178,7 @@ function _pvxRebalEngine(m, T){
     const parts = [trait, cycNote].filter(Boolean);
     if (!parts.length) return `Publica muy pocos números como para leer el negocio, así que su peso no se toca.`;
     let s = parts.join(', pero ');
-    if (val && !cycNote) s += `, ${val}`;
+    if (val && !cycNote){ s += `, ${val}`; if (/^aunque/.test(val)) r.warn = true; }
     return `${cap1(s)}.`;
   };
 
@@ -15236,7 +15260,7 @@ function _pvxRebalEngine(m, T){
     // puntos de nota: sigue pesando más que una empresa mala, pero deja de ganarle a un
     // negocio estable solo por estar en la parte alta de su ciclo.
     const rg = num(r.inf, 'revenueGrowth');
-    if (r.q != null && isCyc(r.it.sector) && rg != null && rg > 0.35){
+    if (r.q != null && isPeakSec(r.it.sector) && rg != null && rg > 0.35){
       r.cycPeak = true;
       q = Math.max(1, q - Math.min(CYCMAX, (rg - 0.35) * 3));
     }
@@ -15297,6 +15321,48 @@ function _pvxRebalEngine(m, T){
   }
   }   // fin del reparto (había pool evaluable)
 
+  // ── NO SE AGRANDA LO QUE EL PROPIO MOTIVO DESACONSEJA ──────────────────────────
+  // El reparto por calidad lleva cualquier posición chica hacia el peso medio, y así salía
+  // "debe 4.2× su capital… viene de un pico… subir 3.7 pp": el texto argumentaba en contra
+  // y la acción iba a favor. Un asesor no suma dinero a una posición cuyo rasgo dominante es
+  // un aviso: pierde dinero, está endeudada (no financiera), quema caja o está en el pico de
+  // su ciclo. Esas filas pueden quedarse o bajar, nunca subir; lo que les sobraba vuelve a
+  // las que sí lo sostienen (o reduce los recortes de otras, si ya no queda a quién dárselo).
+  const hardWarn = r => {
+    if (r.isEtf || !r.inf) return false;
+    const pm = num(r.inf,'profitMargins'), de = num(r.inf,'debtToEquity'),
+          fcf = num(r.inf,'freeCashflow'), rg = num(r.inf,'revenueGrowth');
+    // Al agresivo se le admite una empresa en pérdidas SI crece rápido: ahí hay tesis.
+    const lossOk = risk === 'alto' && rg != null && rg >= 0.25;
+    // Admitida, pero como apuesta: sin ganancias o sin caja no pasa de medio techo.
+    r.spec = lossOk && ((pm != null && pm < 0) || (fcf != null && fcf < 0));
+    return !!r.cycPeak || (pm != null && pm < 0 && !lossOk) ||
+           (de != null && de > 1.5 && !isFin(r)) || (fcf != null && fcf < 0 && !lossOk);
+  };
+  rows.forEach(r => { r.noUp = hardWarn(r); });
+  const upLim = r => r.noUp ? r.it.weight : r.spec ? Math.max(r.it.weight, 0.5 * MAXW) : Infinity;
+  {
+    let extra = 0;
+    rows.forEach(r => { const L = upLim(r); if (r.tgt > L){ extra += r.tgt - L; r.tgt = L; r.gated = true; } });
+    for (let pass = 0; pass < 3 && extra > 0.00001; pass++){
+      // 1º a las que ya suben (sin pasar su techo), 2º devolviendo peso a las que bajaban.
+      const up = scored.filter(r => !r.closed && r.tgt >= r.it.weight && r.tgt < Math.min(capFor(r), upLim(r)));
+      const upSum = up.reduce((a,r)=>a + (r.raw || 1), 0);
+      if (upSum > 0){
+        let given = 0;
+        up.forEach(r => { const add = Math.min(Math.min(capFor(r), upLim(r)) - r.tgt, extra * (r.raw || 1) / upSum); r.tgt += add; given += add; });
+        extra -= given; continue;
+      }
+      const dn = rows.filter(r => !r.fixed && r.tgt < r.it.weight);
+      const dnSum = dn.reduce((a,r)=>a + (r.it.weight - r.tgt), 0);
+      if (dnSum > 0){
+        let given = 0;
+        dn.forEach(r => { const add = Math.min(r.it.weight - r.tgt, extra * (r.it.weight - r.tgt) / dnSum); r.tgt += add; given += add; });
+        extra -= given;
+      } else break;
+    }
+  }
+
   // ── EL PLAN TIENE QUE ATERRIZAR EN LA BANDA DE VOLATILIDAD DEL PERFIL ──────────
   // El reparto por calidad no sabe nada de la volatilidad DEL CONJUNTO: podía dejar a un
   // cliente moderado con una beta de plan de 1.34 cuando su perfil tolera hasta 1.15, y
@@ -15336,12 +15402,13 @@ function _pvxRebalEngine(m, T){
       const donantes  = alta ? orden : orden.slice().reverse();
       const receptores = alta ? orden.slice().reverse() : orden;
       const don = donantes.find(r => r.tgt - PISO > 0.0001);
-      const rec = receptores.find(r => r.tgt < capFor(r) - 0.0001);
+      const upTo = r => Math.max(r.tgt, Math.min(capFor(r), upLim(r)));
+      const rec = receptores.find(r => r.tgt < upTo(r) - 0.0001);
       if (!don || !rec || don.tk === rec.tk) break;
       // Mover peso entre dos posiciones de volatilidad casi idéntica no cambia nada:
       // sin este corte el bucle giraría 240 veces moviendo dinero para nada.
       if (Math.abs(betaOf(don) - betaOf(rec)) < 0.05) break;
-      const salto = Math.min(PASO, don.tgt - PISO, capFor(rec) - rec.tgt);
+      const salto = Math.min(PASO, don.tgt - PISO, upTo(rec) - rec.tgt);
       if (!(salto > 0.0001)) break;
       don.tgt -= salto; rec.tgt += salto;
       don.betaCut = true; rec.betaAdd = true; betaMoved = true;
@@ -15403,11 +15470,11 @@ function _pvxRebalEngine(m, T){
     // tanto no tienen momento calculado. Se calcula aquí para que el motivo pueda hablar
     // del precio también en ellas.
     if (r.mom === undefined) r.mom = momOf(r.tk);
-    const mom  = momRead(r);
+    const mom  = momRead(r, action);
     // No se le vende el foso a alguien a quien le estás diciendo que cierre la posición, ni
     // se abre la nota alabando el negocio de una empresa que pierde dinero o quema caja: el
     // aviso va primero y la ventaja competitiva, si cabe, después.
-    const qual = (r.closed || r.warn) ? '' : (moatRead(r) || '');
+    const qual = (r.closed || r.warn || r.noUp || (action === 'REDUCIR' && tier(r) === 'low')) ? '' : (moatRead(r) || '');
     // Los pares del sector se nombran de mayor a menor peso: nombrar los tres más chicos
     // subestima la concentración que la frase intenta advertir.
     const peers = rows.filter(x => x.tk !== r.tk && x.it.sector === r.it.sector)
@@ -15426,14 +15493,14 @@ function _pvxRebalEngine(m, T){
       port = `${cap1(secTxt(r.it.sector))} ya pesa ${pctS(secW)} de tu cartera.`;
     else if (r.core)
       port = `Es tu núcleo indexado, nº${rank} de ${n} con ${pctS(cur)}: la parte que no depende de acertar con una empresa.`;
-    else if (cur < MINW)
-      port = `Con ${pctS(cur)} es de tus más chicas (nº${rank} de ${n}): ni acertar te cambia el año.`;
+    else if (cur < MINW && action === 'AUMENTAR')
+      port = `Con ${pctS(cur)} es de tus más chicas (nº${rank} de ${n}): a ese tamaño ni acertar te cambia el año.`;
     else
       port = `Pesa ${pctS(cur)}, nº${rank} de ${n}.`;
     // UNA sola coletilla, la que más informe: solapamiento de sector antes que volatilidad.
     // El aviso de sector se reserva a los DOS nombres que más pesan dentro de ese sector: si
     // se pone en todas las filas del sector, la misma frase se repite 8 veces y deja de leerse.
-    if (!r.secCapped && peers.length && totW > 0 && secW / totW >= 0.30 && secRank(r) <= 2)
+    if (action !== 'AUMENTAR' && !r.secCapped && peers.length && totW > 0 && secW / totW >= 0.30 && secRank(r) <= 2)
       port += ` Con ${listTxt(peers.slice(0,2))} suman ${pctS(secW)} del mismo sector: caen a la vez.`;
     else if ((r.it.beta || 0) >= 1.4 && (m.portBeta || 0) >= 1.3 && action === 'REDUCIR')
       port += ` Además es de las más volátiles que tienes (beta ${(r.it.beta).toFixed(2)}).`;
@@ -15471,7 +15538,7 @@ function _pvxRebalEngine(m, T){
       else if (r.cycPeak)
         move = `Estás pagando un año que difícilmente se repita: ${cut}.`;
       else if (tier(r) === 'low')
-        move = `Es de los negocios más flojos que tienes y pesa como los mejores: ${cut}.`;
+        move = `Frente al resto de tu cartera sus números quedan atrás y pesa más de lo que eso justifica: ${cut}.`;
       else
         move = dest
           ? `Pesa más de lo que sostiene frente a ${dest}: recortar ${dpp} pp${money} hacia ${ellas}.`
@@ -15486,14 +15553,15 @@ function _pvxRebalEngine(m, T){
       // en la zona baja de su rango con el índice en corrección. Y se dice CÓMO ejecutarlo.
       if (mktCorr && r.mom && r.mom.pos <= 0.30 && (r.qEff || 0) >= 7 && !r.warn)
         move = `Buen negocio con el precio castigado en un mercado en corrección: ${up}${with_} Mejor por tramos que de golpe.`;
-      else if (cur < MINW)
-        // Con el aviso de ciclo justo antes, "el negocio aguanta más peso" se lee como si
-        // el motor no hubiera leído su propia frase anterior. Se reconoce el descuento.
-        move = r.cycPeak
-          ? `Aun descontando el ciclo, a ${pctS(cur)} no mueve la aguja: ${up}${with_}`
-          : `El negocio aguanta un peso mayor: ${up}${with_}`;
+      // Aquí no llega ninguna fila con aviso duro (deuda, caja, pico de ciclo): el filtro de
+      // dirección las dejó en MANTENER. Lo que sí puede llegar es un aviso blando (precio
+      // exigente, margen que se estrecha), y ese se reconoce antes de pedir más dinero.
+      else if (r.warn && num(r.inf,'profitMargins') != null && num(r.inf,'profitMargins') < 0)
+        move = `Un perfil ${perfTxt} puede esperar a que gane, pero como apuesta acotada (no más de ${pctS(0.5 * MAXW)}): ${up}${with_}`;
       else if (r.warn)
         move = `Aun con eso, el resto de sus números sostiene más peso del que tiene hoy: ${up}${with_}`;
+      else if (cur < MINW)
+        move = `El negocio aguanta un peso mayor: ${up}${with_}`;
       else if (r.fit === 'ancla')
         move = `Es la base diversificada que pide un perfil ${perfTxt}: ${up}${with_}`;
       // Mismo hecho, distinta lectura según a quién se le dimensiona: para el agresivo el
@@ -15523,6 +15591,12 @@ function _pvxRebalEngine(m, T){
       // nuevo debería ir aquí o esperar.
       move = r.core
         ? `Por eso no se toca: vender índice para comprar acciones sueltas cambia diversificación por apuesta.`
+        : r.noUp
+          ? (r.cycPeak
+              ? `Con un año que difícilmente se repita no conviene sumarle, y a ${pctS(cur)} tampoco obliga a vender: déjala y no le metas dinero nuevo.`
+              : `Con eso no se justifica sumarle, y a ${pctS(cur)} tampoco obliga a vender: déjala y no le metas dinero nuevo.`)
+        : r.warn
+          ? `Lo que muestra no pide agrandarla y el tamaño no obliga a recortarla: déjala como está.`
         : (r.mom && (r.mom.label === 'minimos' || r.mom.label === 'bajo') && (r.qEff || 0) >= 7)
           ? `El peso ya es el correcto y lo que se movió fue el precio, no el negocio: déjala, y si entra dinero nuevo este es de los sitios donde ponerlo.`
         : (r.mom && r.mom.label === 'maximos' && isCyc(r.it.sector))
