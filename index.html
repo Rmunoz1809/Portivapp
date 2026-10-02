@@ -41543,6 +41543,261 @@ document.addEventListener('DOMContentLoaded', function(){
   </button>
 </nav>
 
+<style id="pqNewCss">
+/* ═══ CUESTIONARIO DE PERFIL (#pqOverlay) — rediseño con el lenguaje nuevo (1-oct) ═══════════════
+   Cubre las 7 preguntas (_renderStep: barra de progreso, antetítulo, pregunta, opciones A–E y
+   Atrás / Siguiente) y la tarjeta del resultado (_renderResult), que es la que queda a la vista
+   al cerrar el muro (#portivPaywall): perfil, Capacidad · Disposición, «Conectar mi portafolio»
+   e «Ingresar posiciones manualmente» (#pqManualEntry). El muro y sus .pw-* no se tocan.
+   Fondo #eef1f8, tarjeta blanca con filo #e2e7f0 y radio 30, tinta navy #0b1c30, Manrope.
+   Sin sombras, sin desenfoques, sin degradados y sin animaciones de entrada: al pasar o elegir
+   sólo cambian el filo y el fondo. Cada regla cuelga de #pqOverlay con «html body» y responde con
+   !important donde las reglas .pq-* de arriba (y sus @media de alto) fijan lo mismo: les gana
+   sin tocarlas. Ids, clases y handlers que usa el JS, intactos. Oscuro: body.dark-theme, por
+   tokens. Orden: tokens → tarjeta → preguntas → resultado → escritorio bajo → celular → celular
+   bajo → movimiento reducido. */
+
+/* ── Tokens (claro) ── */
+html body #pqOverlay {
+  --pq-bg:#eef1f8; --pq-card:#fff; --pq-line:#e2e7f0; --pq-line-hi:#cfd7e3;
+  --pq-ink:#0b1c30; --pq-slate:#33475f; --pq-muted:#7a879b;
+  --pq-tint:#f3f6fb; --pq-track:#e2e7f0; --pq-letter:#eef1f8; --pq-letter-ink:#33475f;
+  --pq-btn:#0b1c30; --pq-btn-ink:#fff; --pq-btn-off:#c9d2df; --pq-btn-off-ink:#fff;
+  --pq-warn:#c62828; --pq-warn-bg:#fff5f3; --pq-warn-line:#f4d5d0;
+  --pq-px:28px;   /* relleno lateral de la tarjeta: el pie de acciones lo usa para ir de filo a filo */
+  --pq-ease:cubic-bezier(.22,1,.36,1);
+  background:var(--pq-bg) !important; color:var(--pq-ink);
+  font-family:var(--font) !important; -webkit-font-smoothing:antialiased;
+  padding:calc(24px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom)) !important;
+}
+/* ── Tokens (oscuro) ── */
+html body.dark-theme #pqOverlay {
+  --pq-bg:var(--bg,#0b111c); --pq-card:var(--surface,#0f1623);
+  --pq-line:rgba(255,255,255,.08); --pq-line-hi:rgba(255,255,255,.18);
+  --pq-ink:#e8edf7; --pq-slate:#aab4c2; --pq-muted:#8b97ab;
+  --pq-tint:rgba(255,255,255,.05); --pq-track:rgba(255,255,255,.10);
+  --pq-letter:rgba(255,255,255,.07); --pq-letter-ink:#aab4c2;
+  --pq-btn:#e8edf7; --pq-btn-ink:#0b1c30; --pq-btn-off:rgba(255,255,255,.12); --pq-btn-off-ink:rgba(232,237,247,.5);
+  --pq-warn:#ffa79f; --pq-warn-bg:rgba(255,167,159,.07); --pq-warn-line:rgba(255,167,159,.22);
+}
+
+/* ═══ TARJETA ═══ */
+html body #pqOverlay .pq-card {
+  max-width:560px; padding:28px var(--pq-px) 24px !important; border-radius:30px !important;
+  background:var(--pq-card) !important; border:1px solid var(--pq-line) !important; box-shadow:none !important;
+  color:var(--pq-ink); font-family:var(--font) !important;
+}
+html body #pqOverlay .pq-card button { font-family:var(--font) !important; -webkit-tap-highlight-color:transparent; }
+html body #pqOverlay .pq-card button:focus-visible { outline:2px solid var(--pq-ink); outline-offset:2px; }
+/* Cabecera: logo y «Tu perfil de inversión» */
+html body #pqOverlay .pq-brand { gap:10px !important; margin:0 0 18px !important; }
+html body #pqOverlay .pq-brand > div:first-child { border-radius:8px !important; }
+html body.dark-theme #pqOverlay .pq-brand > div:first-child { outline:1px solid rgba(255,255,255,.14); }
+html body #pqOverlay .pq-brand-name {
+  font-size:15px !important; font-weight:800 !important; line-height:1.2; letter-spacing:-.01em; color:var(--pq-ink) !important;
+}
+
+/* ═══ PREGUNTAS ═══ */
+html body #pqOverlay .pq-progress-wrap { gap:0 !important; margin:0 0 18px !important; }
+html body #pqOverlay .pq-progress { height:6px !important; border-radius:999px !important; background:var(--pq-track) !important; }
+html body #pqOverlay .pq-progress-bar { border-radius:999px !important; background:var(--pq-ink) !important; }
+html body #pqOverlay .pq-eyebrow {
+  margin:0 0 6px !important; font-size:13px !important; font-weight:700 !important; line-height:1.35;
+  letter-spacing:0 !important; text-transform:none !important; color:var(--pq-muted) !important;
+}
+html body #pqOverlay .pq-question {
+  margin:0 0 18px !important; font-size:22px !important; font-weight:800 !important; line-height:1.3 !important;
+  letter-spacing:-.015em !important; color:var(--pq-ink) !important; text-wrap:pretty;
+}
+html body #pqOverlay .pq-options { gap:10px !important; }
+html body #pqOverlay .pq-option {
+  width:100%; min-height:56px !important; gap:14px !important; padding:12px 16px !important; border-radius:18px !important;
+  border:1px solid var(--pq-line) !important; background:var(--pq-card) !important; box-shadow:none !important;
+  color:var(--pq-ink); transition:border-color .15s var(--pq-ease), background-color .15s var(--pq-ease) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  html body #pqOverlay .pq-option:hover { border-color:var(--pq-line-hi) !important; background:var(--pq-card) !important; }
+}
+/* Elegida: filo navy, tinte navy muy suave y la letra en un círculo navy relleno */
+html body #pqOverlay .pq-option.selected { border-color:var(--pq-ink) !important; background:var(--pq-tint) !important; }
+html body #pqOverlay .pq-option-letter {
+  width:30px !important; height:30px !important; font-size:13px !important; font-weight:800 !important;
+  background:var(--pq-letter) !important; color:var(--pq-letter-ink) !important;
+  transition:background-color .15s var(--pq-ease), color .15s var(--pq-ease) !important;
+}
+html body #pqOverlay .pq-option.selected .pq-option-letter { background:var(--pq-ink) !important; color:var(--pq-card) !important; }
+html body #pqOverlay .pq-option-text { font-size:15px !important; font-weight:600 !important; line-height:1.4 !important; color:var(--pq-ink) !important; }
+/* Atrás (contorno, a la izquierda; en la pregunta 1 no existe) y Siguiente (navy, a la derecha) */
+html body #pqOverlay .pq-nav { justify-content:flex-end !important; gap:10px !important; margin-top:20px !important; }
+html body #pqOverlay .pq-back {
+  height:52px; margin-right:auto; padding:0 20px !important; border-radius:999px !important;
+  border:1px solid var(--pq-line) !important; background:transparent !important; color:var(--pq-slate) !important;
+  font-size:15px !important; font-weight:700 !important; justify-content:center;
+}
+html body #pqOverlay .pq-back:disabled { display:none !important; }
+html body #pqOverlay .pq-next {
+  height:52px; min-width:200px; padding:0 26px !important; justify-content:center; border:0 !important; border-radius:999px !important;
+  background:var(--pq-btn) !important; color:var(--pq-btn-ink) !important; opacity:1 !important;
+  font-size:15px !important; font-weight:800 !important; letter-spacing:-.005em;
+}
+/* Sin respuesta: gris claro y letra blanca, no el navy apagado */
+html body #pqOverlay .pq-next:disabled { background:var(--pq-btn-off) !important; color:var(--pq-btn-off-ink) !important; cursor:default; }
+@media (hover: hover) and (pointer: fine) {
+  html body #pqOverlay .pq-back:hover { border-color:var(--pq-line-hi) !important; color:var(--pq-ink) !important; }
+  html body #pqOverlay .pq-next:not(:disabled):hover,
+  html body #pqOverlay .pq-result-btn:hover { opacity:.9 !important; }
+}
+
+/* ═══ RESULTADO (también la tarjeta que queda al cerrar el muro) ═══ */
+html body #pqOverlay .pq-result-label {
+  margin:0 0 4px !important; text-align:left !important; font-size:13px !important; font-weight:700 !important;
+  letter-spacing:0 !important; text-transform:none !important; color:var(--pq-muted) !important;
+}
+html body #pqOverlay .pq-result-title {
+  margin:0 0 8px !important; text-align:left !important; font-size:30px !important; font-weight:800 !important;
+  line-height:1.15 !important; letter-spacing:-.02em !important; color:var(--pq-ink) !important; overflow-wrap:anywhere;
+}
+html body #pqOverlay .pq-result-desc {
+  margin:0 0 18px !important; text-align:left !important; font-size:14.5px !important; font-weight:600;
+  line-height:1.55 !important; color:var(--pq-slate) !important; text-wrap:pretty;
+}
+/* Panel: Capacidad, Disposición y los dos datos del perfil */
+html body #pqOverlay .pq-scores { display:grid; gap:14px; margin:0 0 12px; padding:16px 18px; border:1px solid var(--pq-line); border-radius:24px; }
+html body #pqOverlay .pq-score-top { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+html body #pqOverlay .pq-score-l { font-size:12.5px; font-weight:700; color:var(--pq-muted); }
+html body #pqOverlay .pq-score-n { font-size:12.5px; font-weight:700; color:var(--pq-muted); font-variant-numeric:tabular-nums; white-space:nowrap; }
+html body #pqOverlay .pq-score-v { margin:1px 0 8px; font-size:15px; font-weight:800; letter-spacing:-.01em; color:var(--pq-ink); }
+html body #pqOverlay .pq-score-track { height:6px; border-radius:999px; background:var(--pq-track); overflow:hidden; }
+html body #pqOverlay .pq-score-fill { height:100%; border-radius:999px; background:var(--pq-ink); }
+html body #pqOverlay .pq-facts { display:grid; gap:8px; padding-top:14px; border-top:1px solid var(--pq-line); }
+html body #pqOverlay .pq-fact { display:flex; align-items:baseline; justify-content:space-between; gap:12px; font-size:13px; line-height:1.35; }
+html body #pqOverlay .pq-fact span { font-weight:700; color:var(--pq-muted); white-space:nowrap; }
+html body #pqOverlay .pq-fact b { font-weight:800; color:var(--pq-ink); text-align:right; }
+/* Desajuste capacidad ↔ disposición: rojo si sobreexpone, neutro si deja retorno en la mesa */
+html body #pqOverlay .pq-mm {
+  display:flex; align-items:flex-start; gap:10px; margin:0 0 12px; padding:12px 14px; border-radius:18px;
+  border:1px solid var(--pq-line); background:var(--pq-tint); text-align:left;
+}
+html body #pqOverlay .pq-mm .material-symbols-outlined { flex-shrink:0; font-size:20px; line-height:1.1; color:var(--pq-ink); }
+html body #pqOverlay .pq-mm-t { margin-bottom:2px; font-size:13px; font-weight:800; color:var(--pq-ink); }
+html body #pqOverlay .pq-mm-d { font-size:12.5px; font-weight:600; line-height:1.5; color:var(--pq-slate); }
+html body #pqOverlay .pq-mm-over { border-color:var(--pq-warn-line); background:var(--pq-warn-bg); }
+html body #pqOverlay .pq-mm-over .material-symbols-outlined,
+html body #pqOverlay .pq-mm-over .pq-mm-t { color:var(--pq-warn); }
+html body #pqOverlay .pq-result-note { margin:0 0 16px; font-size:12px; font-weight:600; line-height:1.5; color:var(--pq-muted); }
+/* Los dos caminos. Si la tarjeta no cabe (celular, ventana baja de Mac) el bloque se queda
+   pegado abajo con su filo encima: al cerrar el muro los dos botones están a la vista sin
+   tener que buscarlos. Si cabe, es la última franja de la tarjeta y no se nota. */
+html body #pqOverlay .pq-result-actions {
+  position:sticky; bottom:0; z-index:1; margin:0 calc(-1 * var(--pq-px)); padding:14px var(--pq-px) 4px;
+  background:var(--pq-card); border-top:1px solid var(--pq-line);
+}
+html body #pqOverlay .pq-pro-row { margin:0 0 10px !important; }
+html body #pqOverlay .pq-pro-badge { font-family:var(--font); font-weight:800; }
+html body #pqOverlay .pq-result-btn {
+  display:flex; align-items:center; justify-content:center; width:100%; height:52px; padding:0 20px !important;
+  border:0 !important; border-radius:999px !important; background:var(--pq-btn) !important; color:var(--pq-btn-ink) !important;
+  font-size:15px !important; font-weight:800 !important; letter-spacing:-.005em; opacity:1;
+}
+html body #pqOverlay .pq-or { margin:10px 4px !important; font-size:12.5px !important; color:var(--pq-muted) !important; }
+html body #pqOverlay .pq-or::before,
+html body #pqOverlay .pq-or::after { background:var(--pq-line) !important; }
+html body #pqOverlay .pq-manual-box {
+  display:flex; align-items:center; justify-content:center; width:100%; height:52px; margin:0 !important; padding:0 20px !important;
+  border:1px solid var(--pq-line-hi) !important; border-radius:999px !important; background:var(--pq-card) !important;
+  color:var(--pq-ink) !important; font-size:15px !important; font-weight:800 !important;
+  transition:border-color .15s var(--pq-ease) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  html body #pqOverlay .pq-manual-box:hover { border-color:var(--pq-ink) !important; background:var(--pq-card) !important; }
+}
+html body #pqOverlay .pq-ibkr {
+  display:block; width:100%; margin:8px 0 0; padding:8px 0 0; border:0; background:none; cursor:pointer; text-align:center;
+  font-size:12.5px; font-weight:700; color:var(--pq-muted); text-decoration:underline; text-underline-offset:3px; text-wrap:balance;
+}
+html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
+
+/* ═══ ESCRITORIO / iPAD CON VENTANA BAJA (app de Mac ~650–820 px): cada pregunta cabe entera ═══ */
+@media (min-width: 601px) and (max-height: 820px) {
+  html body #pqOverlay { padding-top:calc(14px + env(safe-area-inset-top)) !important; padding-bottom:calc(14px + env(safe-area-inset-bottom)) !important; }
+  html body #pqOverlay .pq-card { padding-top:22px !important; padding-bottom:20px !important; }
+  html body #pqOverlay .pq-brand { margin-bottom:12px !important; }
+  html body #pqOverlay .pq-progress-wrap { margin-bottom:14px !important; }
+  html body #pqOverlay .pq-question { font-size:20px !important; margin-bottom:14px !important; }
+  html body #pqOverlay .pq-options { gap:8px !important; }
+  html body #pqOverlay .pq-option { min-height:50px !important; padding:10px 16px !important; }
+  html body #pqOverlay .pq-nav { margin-top:16px !important; }
+}
+
+/* ═══ CELULAR: margen de 16 px, tarjeta de filo a filo dentro de él y Siguiente a todo lo ancho ═══ */
+@media (max-width: 600px) {
+  html body #pqOverlay { --pq-px:18px; padding:calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom)) !important; }
+  html body #pqOverlay .pq-card { padding-top:20px !important; padding-bottom:18px !important; border-radius:28px !important; }
+  html body #pqOverlay .pq-brand { margin-bottom:14px !important; }
+  html body #pqOverlay .pq-brand-name { font-size:14.5px !important; }
+  html body #pqOverlay .pq-progress-wrap { margin-bottom:14px !important; }
+  html body #pqOverlay .pq-eyebrow { margin-bottom:5px !important; font-size:12.5px !important; }
+  html body #pqOverlay .pq-question { margin-bottom:14px !important; font-size:clamp(18px, 5vw, 20px) !important; line-height:1.28 !important; }
+  html body #pqOverlay .pq-options { gap:8px !important; }
+  html body #pqOverlay .pq-option { min-height:52px !important; gap:12px !important; padding:10px 14px !important; }
+  html body #pqOverlay .pq-option-letter { width:28px !important; height:28px !important; font-size:12.5px !important; }
+  html body #pqOverlay .pq-option-text { font-size:14.5px !important; line-height:1.35 !important; }
+  html body #pqOverlay .pq-nav { margin-top:16px !important; }
+  html body #pqOverlay .pq-back { padding:0 18px !important; }
+  html body #pqOverlay .pq-next { flex:1 1 auto; min-width:0; }
+  html body #pqOverlay .pq-result-title { font-size:clamp(24px, 7vw, 28px) !important; }
+  html body #pqOverlay .pq-result-desc { margin-bottom:14px !important; font-size:14px !important; line-height:1.5 !important; }
+  html body #pqOverlay .pq-scores { gap:12px; padding:14px 16px; border-radius:22px; }
+  html body #pqOverlay .pq-fact { font-size:12.5px; }
+}
+/* ── Celular bajo (iPhone SE / mini, Safari con barras): todo se compacta, nada se corta ── */
+@media (max-width: 600px) and (max-height: 740px) {
+  html body #pqOverlay { --pq-px:16px; padding-top:calc(8px + env(safe-area-inset-top)) !important; padding-bottom:calc(8px + env(safe-area-inset-bottom)) !important; }
+  html body #pqOverlay .pq-card { padding-top:16px !important; padding-bottom:14px !important; border-radius:24px !important; }
+  html body #pqOverlay .pq-brand { margin-bottom:10px !important; }
+  html body #pqOverlay .pq-brand-name { font-size:14px !important; }
+  html body #pqOverlay .pq-progress-wrap { margin-bottom:10px !important; }
+  html body #pqOverlay .pq-eyebrow { margin-bottom:4px !important; font-size:12px !important; }
+  html body #pqOverlay .pq-question { margin-bottom:10px !important; font-size:clamp(16.5px, 4.6vw, 18px) !important; }
+  html body #pqOverlay .pq-options { gap:6px !important; }
+  html body #pqOverlay .pq-option { min-height:44px !important; gap:10px !important; padding:8px 12px !important; border-radius:16px !important; }
+  html body #pqOverlay .pq-option-letter { width:24px !important; height:24px !important; font-size:11.5px !important; }
+  html body #pqOverlay .pq-option-text { font-size:13.5px !important; line-height:1.3 !important; }
+  html body #pqOverlay .pq-nav { margin-top:12px !important; }
+  html body #pqOverlay .pq-back,
+  html body #pqOverlay .pq-next,
+  html body #pqOverlay .pq-result-btn,
+  html body #pqOverlay .pq-manual-box { height:46px; }
+  html body #pqOverlay .pq-result-desc { font-size:13.5px !important; }
+  html body #pqOverlay .pq-result-actions { padding-top:12px; }
+  html body #pqOverlay .pq-pro-row { margin-bottom:8px !important; }
+  html body #pqOverlay .pq-or { margin:8px 4px !important; }
+}
+@media (max-width: 600px) and (max-height: 640px) {
+  html body #pqOverlay { --pq-px:12px; }
+  html body #pqOverlay .pq-card { padding-top:12px !important; padding-bottom:12px !important; }
+  html body #pqOverlay .pq-brand { margin-bottom:8px !important; }
+  html body #pqOverlay .pq-progress-wrap { margin-bottom:8px !important; }
+  html body #pqOverlay .pq-question { margin-bottom:8px !important; font-size:clamp(15px, 4.2vw, 16.5px) !important; line-height:1.24 !important; }
+  html body #pqOverlay .pq-options { gap:5px !important; }
+  html body #pqOverlay .pq-option { min-height:38px !important; padding:6px 10px !important; }
+  html body #pqOverlay .pq-option-letter { width:22px !important; height:22px !important; font-size:11px !important; }
+  html body #pqOverlay .pq-option-text { font-size:13px !important; line-height:1.25 !important; }
+  html body #pqOverlay .pq-nav { margin-top:9px !important; }
+  html body #pqOverlay .pq-back,
+  html body #pqOverlay .pq-next,
+  html body #pqOverlay .pq-result-btn,
+  html body #pqOverlay .pq-manual-box { height:42px; font-size:14px !important; }
+}
+
+/* ═══ Movimiento reducido: sin transiciones ═══ */
+@media (prefers-reduced-motion: reduce) {
+  html body #pqOverlay .pq-option,
+  html body #pqOverlay .pq-option-letter,
+  html body #pqOverlay .pq-progress-bar,
+  html body #pqOverlay .pq-manual-box { transition:none !important; }
+}
+</style>
 <!-- ═══════════════ INVESTMENT PROFILE QUIZ ═══════════════ -->
 <div class="pq-overlay" id="pqOverlay">
   <div class="pq-card" id="pqCard">
@@ -41550,7 +41805,7 @@ document.addEventListener('DOMContentLoaded', function(){
       <div style="width:28px;height:28px;border-radius:50%;overflow:hidden;flex-shrink:0;">
         <svg viewBox="0 0 48 48" width="28" height="28" style="display:block" role="img" aria-label="Portiv"><rect width="48" height="48" rx="12" fill="#0b1c30"/><g fill="#fff"><rect x="11" y="28" width="5" height="9" rx="1.5"/><rect x="19" y="23" width="5" height="14" rx="1.5"/><rect x="27" y="26" width="5" height="11" rx="1.5"/><rect x="35" y="19" width="5" height="18" rx="1.5"/></g><polyline points="12,22 20,17 27,20 37,12" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="37.5" cy="11.5" r="2.6" fill="#fff"/></svg>
       </div>
-      <span class="pq-brand-name">Investment Profile Strategy</span>
+      <span class="pq-brand-name">Tu perfil de inversión</span>
     </div>
     <div id="pqContent"></div>
   </div>
@@ -42963,16 +43218,18 @@ document.addEventListener('DOMContentLoaded', function(){
   // ── Renderizado del quiz ──
   function _renderStep(){
     const el = document.getElementById('pqContent');
+    // Rótulo de la cabecera de la tarjeta en el idioma activo (antes fijo en inglés).
+    try { const bn = document.querySelector('#pqCard .pq-brand-name'); if (bn) bn.textContent = _L('Tu perfil de inversión', 'Your investment profile'); } catch(e){}
     if (_step >= PQ.length) { _renderResult(); return; }
     const q = _activeQ(_step);
-    const pct = Math.round((_step)/PQ.length*100);
+    // La barra cuenta la pregunta en curso: en la 1 ya hay un tramo lleno y en la 7, toda.
+    const pct = Math.round((_step+1)/PQ.length*100);
     const blockLbl = q.block === 'A' ? 'Capacidad' : 'Disposición';
     el.innerHTML = `
       <div class="pq-progress-wrap">
         <div class="pq-progress"><div class="pq-progress-bar" style="width:${pct}%"></div></div>
-        <span class="pq-progress-txt">${_step+1} / ${PQ.length}</span>
       </div>
-      <div class="pq-eyebrow">${blockLbl} · Pregunta ${_step+1}</div>
+      <div class="pq-eyebrow">${blockLbl} · Pregunta ${_step+1} de ${PQ.length}</div>
       <div class="pq-question">${q.q}</div>
       <div class="pq-options">
         ${q.a.map((opt,i)=>`
@@ -43008,53 +43265,51 @@ document.addEventListener('DOMContentLoaded', function(){
     // el perfil nuevo). Antes se pagaba una carta aunque el usuario nunca abriera esa vista.
     const el = document.getElementById('pqContent');
 
-    // Barra de subscore (Capacidad / Disposición) con su nivel.
-    const bar = (lbl, score, levelLbl, color) => `
-      <div style="margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px">
-          <span style="font-size:12px;font-weight:700;color:var(--st-on-surf-var,#5b6b7d)">${lbl}</span>
-          <span style="font-size:12px;font-weight:700;color:${color}">${levelLbl} · ${score}/100</span>
-        </div>
-        <div style="height:8px;border-radius:999px;background:var(--st-surface-cont,#eef1f6);overflow:hidden">
-          <div style="width:${score}%;height:100%;background:${color};border-radius:999px;transition:width .5s cubic-bezier(.22,1,.36,1)"></div>
-        </div>
+    // Subscore (Capacidad / Disposición): rótulo y puntos arriba, el nivel debajo y la barra
+    // fina. Estilos en #pqNewCss (antes en línea, en verde y morado y sin versión oscura).
+    const bar = (lbl, score, levelLbl) => `
+      <div class="pq-score">
+        <div class="pq-score-top"><span class="pq-score-l">${lbl}</span><span class="pq-score-n">${score}/100</span></div>
+        <div class="pq-score-v">${levelLbl}</div>
+        <div class="pq-score-track"><div class="pq-score-fill" style="width:${score}%"></div></div>
       </div>`;
 
     // Banner de desajuste (sobreexposición / dejar retorno sobre la mesa).
     let mm = '';
     if (p.mismatch && p.mismatch.type){
       const over = p.mismatch.type === 'overexposure';
-      const c   = over ? '#BA1A1A' : '#0058bc';
-      const bg  = over ? 'rgba(186,26,26,0.08)' : 'rgba(0,88,188,0.08)';
       const ic  = over ? 'warning' : 'trending_up';
       const tt  = over ? 'Riesgo de sobreexposición' : 'Estás dejando retorno sobre la mesa';
-      mm = `<div style="display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:${bg};border:1px solid ${c}33;margin:4px 0 16px;text-align:left">
-        <span class="material-symbols-outlined" style="font-size:20px;color:${c};flex-shrink:0">${ic}</span>
-        <div><div style="font-size:13px;font-weight:800;color:${c};margin-bottom:3px">${tt}</div>
-        <div style="font-size:12.5px;color:var(--st-on-surf-var,#5b6b7d);line-height:1.55">${p.mismatch.text}</div></div>
+      mm = `<div class="pq-mm ${over ? 'pq-mm-over' : 'pq-mm-under'}">
+        <span class="material-symbols-outlined" aria-hidden="true">${ic}</span>
+        <div><div class="pq-mm-t">${tt}</div><div class="pq-mm-d">${p.mismatch.text}</div></div>
       </div>`;
     }
 
+    // Tarjeta del resultado (la que queda a la vista al cerrar el muro): perfil, panel con
+    // Capacidad · Disposición · perfil que gobierna · horizonte, y los dos caminos en
+    // .pq-result-actions, que se queda pegado abajo cuando la tarjeta no cabe en pantalla.
     el.innerHTML = `
-      <div class="pq-result-icon"><span class="material-symbols-outlined">verified</span></div>
-      <div class="pq-result-label">Tu perfil de inversionista</div>
+      <div class="pq-result-label">Según tus respuestas, tu perfil es</div>
       <div class="pq-result-title">${p.label}</div>
       <div class="pq-result-desc">${_resultDescription(p)}</div>
-      <div style="text-align:left;margin:18px 0 4px">
-        ${bar('Capacidad (objetiva)', p.capScore, p.capLabel, '#0A7A52')}
-        ${bar('Disposición (psicológica)', p.dispScore, p.dispLabel, '#5c3d9e')}
+      <div class="pq-scores">
+        ${bar('Capacidad (objetiva)', p.capScore, p.capLabel)}
+        ${bar('Disposición (psicológica)', p.dispScore, p.dispLabel)}
+        <div class="pq-facts">
+          <div class="pq-fact"><span>Perfil que gobierna</span><b>${p.label}</b></div>
+          <div class="pq-fact"><span>Horizonte</span><b>${p.horizonLabel}</b></div>
+        </div>
       </div>
       ${mm}
-      <div class="pq-result-chips">
-        <span class="pq-chip">Perfil que gobierna: ${p.label}</span>
-        <span class="pq-chip">${p.horizonLabel}</span>
-      </div>
-      <div style="font-size:11px;color:var(--st-on-surf-var,#8a96a3);margin:10px 0 4px;line-height:1.5">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
+      <div class="pq-result-note">Se recomienda re-evaluar tu perfil cada 2-3 años o tras un cambio importante (trabajo, metas, patrimonio).</div>
+      <div class="pq-result-actions">
       <div class="pq-pro-row"><span class="pq-pro-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10.5" width="16" height="11" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></svg>Portiv Pro</span></div>
       <button class="pq-result-btn" id="pqFinish">Conectar mi portafolio →</button>
       <div class="pq-or">o</div>
       <button type="button" class="pq-manual-box" id="pqManualEntry">Ingresar posiciones manualmente</button>
-      <button type="button" id="pqIbkrNote" style="display:block;width:100%;margin-top:12px;background:none;border:none;padding:6px 0;font-family:inherit;font-size:12.5px;font-weight:600;color:var(--st-on-surf-var,#5b6b7d);text-decoration:underline;cursor:pointer">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>`;
+      </div>
+      <button type="button" class="pq-ibkr" id="pqIbkrNote">¿Usas Interactive Brokers? Consulta el proceso de conexión</button>`;
     // Paywall PRIMERO → tras suscribirse, _pvConfirmTrial llama a snapConnect().
     // Las diapositivas de "cómo funciona" ya se vieron al iniciar sesión, antes
     // de las preguntas, así que aquí se va derecho al muro.
