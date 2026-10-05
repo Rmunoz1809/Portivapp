@@ -134,3 +134,18 @@ Mientras la clave sea de test, cada arranque deja un aviso en consola:
 - [ ] Firma (Team) configurada en Xcode.
 - [ ] Webhook desplegado y configurado en RevenueCat.
 - [ ] Páginas de Términos/Privacidad enlazadas (ya en vivo).
+
+## packageClassList — el paso que `cap sync` haría y aquí hay que hacer a mano
+
+Con Swift Package Manager, Capacitor SÓLO registra los plugins que estén listados en
+`ios/App/App/capacitor.config.json` → `packageClassList`. Compilarlos no basta: sin
+esa línea, `Capacitor.Plugins.X` es `undefined` en el JS y la llamada no falla, se
+queda esperando para siempre.
+
+`npx cap sync ios` regenera esa lista, pero en este proyecto está PROHIBIDO: arrasa
+con `ios/App/App/public/`, que es un bundle no estándar copiado a mano.
+
+Así que al agregar un plugin hay que añadir su clase a mano. La clase es la que lleva
+el `@objc(...)` en el Swift del plugin. Ejemplo real:
+
+    @capacitor/push-notifications  →  "PushNotificationsPlugin"

@@ -1,0 +1,114 @@
+diff --git a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/AppleProvider.swift b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/AppleProvider.swift
+index 87e76b9..b13d8af 100644
+--- a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/AppleProvider.swift
++++ b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/AppleProvider.swift
+@@ -598,7 +598,7 @@ class AppleProvider: NSObject, ASAuthorizationControllerDelegate, ASAuthorizatio
+     // MARK: - ASAuthorizationControllerPresentationContextProviding
+ 
+     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+-        return UIApplication.shared.windows.first!
++        return (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }).first!
+     }
+ 
+     private func persistName(userId: String, givenName: String?, familyName: String?) {
+@@ -646,7 +646,7 @@ class AppleProvider: NSObject, ASAuthorizationControllerDelegate, ASAuthorizatio
+     func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {}
+     func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {}
+     func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+-        return UIApplication.shared.windows.first!
++        return (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }).first!
+     }
+ }
+ #endif
+diff --git a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/GoogleProvider.swift b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/GoogleProvider.swift
+index 9169503..ee58108 100644
+--- a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/GoogleProvider.swift
++++ b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/GoogleProvider.swift
+@@ -38,7 +38,7 @@ class GoogleProvider {
+             }
+ 
+             func login() {
+-                guard let presentingVc = UIApplication.shared.windows.first?.rootViewController else {
++                guard let presentingVc = (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }).first?.rootViewController else {
+                     completion(.failure(NSError(domain: "GoogleProvider", code: 0, userInfo: [NSLocalizedDescriptionKey: "No presenting view controller found"])))
+                     return
+                 }
+@@ -67,7 +67,7 @@ class GoogleProvider {
+                         return
+                     }
+                     if self.mode == .OFFLINE {
+-                        guard let serverAuthCode = result.serverAuthCode else {
++                        guard result.serverAuthCode != nil else {
+                             completion(.failure(NSError(domain: "GoogleProvider", code: 0, userInfo: [NSLocalizedDescriptionKey: "Cannot find serverAuthCode, make sure to set iOSServerClientId in the configuration"])))
+                             return
+                         }
+@@ -80,7 +80,7 @@ class GoogleProvider {
+ 
+             if GIDSignIn.sharedInstance.hasPreviousSignIn() && !self.forceAuthCode && self.mode != .OFFLINE {
+                 GIDSignIn.sharedInstance.restorePreviousSignIn { user, error in
+-                    if let error = error {
++                    if error != nil {
+                         // completion(.failure(error))
+                         login()
+                         return
+diff --git a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/OAuth2Provider.swift b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/OAuth2Provider.swift
+index e6fcc32..a0642be 100644
+--- a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/OAuth2Provider.swift
++++ b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/OAuth2Provider.swift
+@@ -564,7 +564,7 @@ class OAuth2Provider: NSObject {
+         let effectiveRefreshToken = tokenResponse.refresh_token ?? fallbackRefreshToken
+ 
+         // Fetch resource data if configured
+-        if let resourceUrl = config.resourceUrl {
++        if config.resourceUrl != nil {
+             fetchResource(config: config, accessToken: tokenResponse.access_token) { [weak self] resourceResult in
+                 guard let self = self else { return }
+ 
+@@ -743,7 +743,7 @@ class OAuth2Provider: NSObject {
+ 
+ extension OAuth2Provider: ASWebAuthenticationPresentationContextProviding {
+     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+-        return UIApplication.shared.windows.first { $0.isKeyWindow } ?? ASPresentationAnchor()
++        return (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }).first { $0.isKeyWindow } ?? ASPresentationAnchor()
+     }
+ }
+ 
+diff --git a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/SocialLoginPlugin.swift b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/SocialLoginPlugin.swift
+index 4c69eab..68a49ea 100644
+--- a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/SocialLoginPlugin.swift
++++ b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/SocialLoginPlugin.swift
+@@ -813,9 +813,9 @@ public class SocialLoginPlugin: CAPPlugin, CAPBridgedPlugin {
+             if let user = response as? SocialLoginUser {
+                 call.resolve([
+                     "accessToken": user.accessToken,
+-                    "idToken": user.idToken,
+-                    "refreshToken": user.refreshToken,
+-                    "expiresIn": user.expiresIn
++                    "idToken": user.idToken as Any,
++                    "refreshToken": user.refreshToken as Any,
++                    "expiresIn": user.expiresIn as Any
+                 ])
+             } else if let twitterResponse = response as? TwitterProfileResponse {
+                 call.resolve([
+@@ -968,7 +968,7 @@ public class SocialLoginPlugin: CAPPlugin, CAPBridgedPlugin {
+                     "expires": oauth2Response.accessToken.expires ?? NSNull(),
+                     "refreshToken": oauth2Response.accessToken.refreshToken ?? NSNull()
+                 ]
+-                var oauth2Result: [String: Any] = [
++                let oauth2Result: [String: Any] = [
+                     "providerId": oauth2Response.providerId,
+                     "accessToken": accessToken,
+                     "idToken": oauth2Response.idToken ?? NSNull(),
+diff --git a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/TwitterProvider.swift b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/TwitterProvider.swift
+index 85ee485..e5f5fcf 100644
+--- a/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/TwitterProvider.swift
++++ b/node_modules/@capgo/capacitor-social-login/ios/Sources/SocialLoginPlugin/TwitterProvider.swift
+@@ -362,7 +362,7 @@ class TwitterProvider: NSObject {
+ 
+ extension TwitterProvider: ASWebAuthenticationPresentationContextProviding {
+     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+-        return UIApplication.shared.windows.first { $0.isKeyWindow } ?? ASPresentationAnchor()
++        return (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }).first { $0.isKeyWindow } ?? ASPresentationAnchor()
+     }
+ }
+ 

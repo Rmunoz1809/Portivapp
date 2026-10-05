@@ -237,8 +237,15 @@ async function presentPaywall() {
   // devuelve error:true y index.html abre su propio paywall de respaldo (Purchases +
   // StoreKit directo), así que la compra nunca depende de la hoja prehecha.
   let lastErr = null;
-  const intentos = state.offering ? [{ displayCloseButton: true, offering: state.offering }, { displayCloseButton: true }]
-                                  : [{ displayCloseButton: true }];
+  // Fuera del iPhone (iPad y app de Mac «Designed for iPad») la hoja por defecto es un
+  // pageSheet: una ventana centrada con un hueco navy enorme en medio, y en el Mac aparece
+  // de golpe, sin animación. A pantalla completa ocupa todo y entra deslizándose desde abajo.
+  // En iPhone se deja la hoja, que ya cubre casi toda la pantalla y se cierra deslizando.
+  const _esIPhone = /iPhone|iPod/.test((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  const base = _esIPhone ? { displayCloseButton: true }
+                         : { displayCloseButton: true, presentationConfiguration: { ios: 'FULL_SCREEN' } };
+  const intentos = state.offering ? [{ ...base, offering: state.offering }, { ...base }]
+                                  : [{ ...base }];
   for (const opts of intentos) {
     try {
       const { result } = await RevenueCatUI.presentPaywall(opts);
