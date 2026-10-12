@@ -42290,14 +42290,6 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     padding:76px 40px 26px; border-top:0;
   }
   html body #pvProWall .pvw-buy-h { display:block; margin:0 0 22px; }
-  /* El emblema de Portiv Pro de los candados de la app, encabezando la columna de compra. */
-  html body #pvProWall .pvw-buy-ic {
-    width:52px; height:52px; margin:0 0 18px; display:flex; align-items:center; justify-content:center;
-    border-radius:30%; color:var(--w-navy);
-    background:linear-gradient(150deg, #22406a 0%, #0b1c30 62%);
-    box-shadow:0 12px 24px -12px rgba(11,28,48,.6), inset 0 1px 0 rgba(255,255,255,.14);
-  }
-  html body #pvProWall .pvw-buy-ic svg { width:54%; height:54%; display:block; overflow:visible; }
   html body #pvProWall .pvw-buy-h h3 { margin:0; font-size:26px; font-weight:800; line-height:1.15; letter-spacing:-.03em; color:var(--w-ink); }
   html body #pvProWall .pvw-buy-h p { margin:7px 0 0; font-size:14.5px; font-weight:600; line-height:1.45; color:var(--w-muted); }
   html body #pvProWall .pvw-plans-buy { display:grid; margin-bottom:18px; }
@@ -42352,11 +42344,25 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     'reembolsos.html':'Política de Reembolsos', 'soporte.html':'Soporte', 'precios.html':'Planes y precios'
   };
   var _pvDocEl = null, _pvDocEsc = null;
+  // Movimiento del visor: sube como una hoja y baja al cerrarse (el del muro de Portiv Pro).
+  function _pvDocMotion(){ try { return !(window.PVM && window.PVM.reduced && window.PVM.reduced()); } catch(e){ return true; } }
   window._pvCloseDoc = function(){
     try { if (_pvDocEsc) { document.removeEventListener('keydown', _pvDocEsc, true); _pvDocEsc = null; } } catch(e){}
-    try { if (_pvDocEl && _pvDocEl.parentNode) _pvDocEl.parentNode.removeChild(_pvDocEl); } catch(e){}
+    var el = _pvDocEl;
     _pvDocEl = null;
     try { document.body.style.overflow = ''; } catch(e){}
+    if (!el) return false;
+    var gone = false;
+    function rm(){ if (gone) return; gone = true; try { if (el.parentNode) el.parentNode.removeChild(el); } catch(e){} }
+    try {
+      if (_pvDocMotion() && el.animate) {
+        el.style.pointerEvents = 'none';
+        el.animate([{ transform:'none' }, { transform:'translateY(100%)' }], { duration:380, easing:'cubic-bezier(.65,0,.35,1)', fill:'forwards' }).onfinish = rm;
+        setTimeout(rm, 600);
+        return false;
+      }
+    } catch(e){}
+    rm();
     return false;
   };
   window._pvOpenDoc = function(path, fallback){
@@ -42372,26 +42378,32 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     ov.setAttribute('aria-label', _pvDocTitles[file] || 'Documento');
     // z-index por encima de TODO (el overlay de cuenta usa 99000): si el documento se abre
     // desde el login o desde el paywall, tiene que quedar delante o no habría forma de leerlo.
-    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#fff;display:flex;flex-direction:column;';
+    // Diseño de la app: barra navy #0b1c30 que continúa en la cabecera del documento, botón con
+    // la placa translúcida de 40 de la barra superior, Manrope, y fondo #eef1f8 mientras carga.
+    ov.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:#eef1f8;display:flex;flex-direction:column;';
     var bar = document.createElement('div');
-    bar.style.cssText = 'flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:calc(10px + env(safe-area-inset-top,0px)) 14px 10px;'
-      + 'background:#0A1F3D;color:#fff;font:600 15px -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;';
+    bar.style.cssText = 'flex:0 0 auto;display:flex;align-items:center;gap:12px;padding:calc(8px + env(safe-area-inset-top,0px)) 16px 8px 14px;'
+      + 'background:#0b1c30;color:#fff;font-family:var(--font,system-ui,-apple-system,sans-serif);-webkit-font-smoothing:antialiased;';
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.setAttribute('aria-label','Cerrar');
-    // 44×44 mínimo: es el objetivo táctil que pide Apple, y este botón es la ÚNICA salida.
-    btn.style.cssText = 'flex:0 0 auto;min-width:44px;height:44px;padding:0 14px;border-radius:11px;border:1px solid rgba(255,255,255,.28);'
-      + 'background:rgba(255,255,255,.10);color:#fff;font:600 15px inherit;cursor:pointer;display:flex;align-items:center;gap:7px;';
-    btn.innerHTML = '<span style="font-size:19px;line-height:1">‹</span><span>Cerrar</span>';
+    // 44 de alto: es el objetivo táctil que pide Apple, y este botón es la ÚNICA salida.
+    btn.style.cssText = 'flex:0 0 auto;min-width:44px;height:44px;padding:0 15px 0 10px;border-radius:14px;border:0;'
+      + 'background:rgba(255,255,255,.14);color:#fff;font:700 15px var(--font,system-ui,-apple-system,sans-serif);cursor:pointer;'
+      + 'display:flex;align-items:center;gap:6px;-webkit-tap-highlight-color:transparent;transition:transform .16s cubic-bezier(.22,1,.36,1);';
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg><span>Cerrar</span>';
     btn.onclick = function(){ window._pvCloseDoc(); };
+    btn.onpointerdown = function(){ btn.style.transform = 'scale(.94)'; };
+    btn.onpointerup = btn.onpointerleave = function(){ btn.style.transform = ''; };
     var ttl = document.createElement('div');
     ttl.textContent = _pvDocTitles[file] || 'Documento';
-    ttl.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;padding-right:58px;';
+    ttl.style.cssText = 'flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;padding-right:58px;'
+      + 'font-size:16px;font-weight:800;letter-spacing:-.01em;';
     bar.appendChild(btn); bar.appendChild(ttl);
     var fr = document.createElement('iframe');
     fr.src = url;
     fr.title = _pvDocTitles[file] || 'Documento';
-    fr.style.cssText = 'flex:1 1 auto;width:100%;border:0;background:#fff;';
+    fr.style.cssText = 'flex:1 1 auto;width:100%;border:0;background:#eef1f8;';
     var loaded = false;
     // El título sigue a la navegación interna: desde Términos se puede tocar "Política de
     // Reembolsos" sin salir del visor, y la cabecera tiene que decir dónde está el usuario.
@@ -42405,6 +42417,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     ov.appendChild(bar); ov.appendChild(fr);
     document.body.appendChild(ov);
     _pvDocEl = ov;
+    try { if (_pvDocMotion() && ov.animate) ov.animate([{ transform:'translateY(100%)' }, { transform:'none' }], { duration:520, easing:'cubic-bezier(.22,1,.36,1)' }); } catch(e){}
     try { document.body.style.overflow = 'hidden'; } catch(e){}
     _pvDocEsc = function(e){ if (e.key === 'Escape' || e.keyCode === 27) { e.stopPropagation(); window._pvCloseDoc(); } };
     document.addEventListener('keydown', _pvDocEsc, true);
@@ -42486,8 +42499,6 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   // muro venía del cuestionario). Estilos: #pvProWallCss.
   // Logo de la barra superior de la app: la marca navy a 34 px dentro de la placa blanca de 40.
   var _PVW_LOGO = '<svg viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(40.96,40.96) scale(.84)"><g fill="#0b1c30"><rect x="91" y="316" width="57" height="100" rx="11"/><rect x="175" y="240" width="57" height="176" rx="11"/><rect x="259" y="268" width="57" height="148" rx="11"/><rect x="344" y="186" width="57" height="230" rx="11"/></g><polyline points="115,283 204,192 282,222 398,116" fill="none" stroke="#0b1c30" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/><circle cx="398" cy="116" r="23.5" fill="#0b1c30"/></g></svg>';
-  // Candado de Portiv Pro (el de los candados de la app), blanco sobre la loseta navy.
-  var _PVW_LOCK_W = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/><rect x="4.75" y="10.2" width="14.5" height="10.8" rx="3" fill="#fff"/><path d="M12 14.3v2.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>';
   function _pvwIc(p, sw){
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 1.9) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
   }
@@ -42557,7 +42568,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       +     '</section>'
       +   '</div>'
       +   '<div class="pvw-buy">'
-      +     '<div class="pvw-buy-h"><span class="pvw-buy-ic">' + _PVW_LOCK_W + '</span><h3>Elige tu plan</h3><p>Cambia de plan o cancela cuando quieras.</p></div>'
+      +     '<div class="pvw-buy-h"><h3>Elige tu plan</h3><p>Cambia de plan o cancela cuando quieras.</p></div>'
       +     '<div class="pvw-plans pvw-plans-buy" role="radiogroup" aria-label="Elige tu plan"></div>'
       +     '<p class="pvw-msg" role="status" hidden></p>'
       +     '<button type="button" class="pvw-cta" disabled>'
