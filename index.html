@@ -4166,7 +4166,8 @@ var _pvCheckoutCompleted = false;
   };
 })();
 </script>
-<!-- RevenueCat IAP (StoreKit) — expone window.PortivIAP.presentPaywall() y PortivAppleAuth.
+<!-- RevenueCat IAP (StoreKit) — expone window.PortivIAP (planes, compra, restaurar; lo usa el
+     muro de Portiv Pro, _pvProWall) y PortivAppleAuth.
      Solo existe dentro del bundle de Capacitor: en el build web daba 404, y ese 404 era
      el PRIMER error del arranque, así que la red de seguridad de los 10 s culpaba
      ("No cargó: portiv-iap.js") a un archivo que en web no hace ninguna falta.
@@ -4194,7 +4195,7 @@ window._pvAwaitIAP = function(totalMs){
   return new Promise(function(resolve){
     (function tick(){
       var iap = window.PortivIAP;
-      if (iap && typeof iap.presentPaywall === 'function') return resolve(iap);
+      if (iap && typeof iap.purchase === 'function') return resolve(iap);
       if (Date.now() >= deadline) return resolve(null);
       // A mitad de la ventana, un único reintento de carga (cache-bust para saltarse
       // una respuesta fallida que el webview pudiera tener guardada).
@@ -42050,6 +42051,294 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
     </div>
   </div>
 </div>
+<style id="pvProWallCss">
+/* ═══ MURO DE PORTIV PRO (#pvProWall) — iPhone, iPad y Mac ═══════════════════════════════════════
+   El muro de compra de la app nativa, con el lenguaje del resto de Portiv (lo pinta
+   window._pvProWall). Cabecera navy #0b1c30 con la curva abajo; los planes son los recuadros
+   translúcidos de la cabecera del Portafolio y el elegido va en blanco; lo que incluye va en una
+   tarjeta blanca con filo #e2e7f0 que pisa la curva, como en Noticias, con los iconos de la barra
+   de pestañas en la loseta del candado de Pro; el botón es la píldora navy de «Leer historia
+   completa». Manrope (var(--font)), sin sombras salvo la del diálogo sobre la app.
+   · Celular (<700 px): a pantalla completa. La barra con la marca y la X se queda arriba al
+     desplazar; el botón, la letra pequeña y los enlaces van fijos abajo.
+   · 700 px o más: diálogo centrado de una columna.
+   · 900 × 640 o más: diálogo de dos columnas — la propuesta en navy a la izquierda; los planes
+     (tarjetas blancas, la elegida en navy), el botón y la letra pequeña a la derecha.
+   Todo cuelga de «html body #pvProWall»: las reglas globales de la app no lo alcanzan. */
+html body #pvProWall {
+  --w-navy:#0b1c30; --w-bg:#eef1f8; --w-card:#fff; --w-line:#e2e7f0; --w-line-soft:#edf0f6; --w-line-hi:#cfd7e3;
+  --w-ink:#0b1c30; --w-slate:#33475f; --w-muted:#7a879b;
+  --w-on2:rgba(255,255,255,.62); --w-on3:rgba(255,255,255,.86);
+  --w-glass:rgba(255,255,255,.07); --w-glass-hi:rgba(255,255,255,.11); --w-glass-line:rgba(255,255,255,.12);
+  --w-mint:#7fe0b6; --w-green:#0f8a5f; --w-red:#c62828;
+  --w-ease:cubic-bezier(.22,1,.36,1);
+  --w-px:24px;   /* el margen lateral de las cabeceras de la app */
+  position:fixed; inset:0; z-index:13050; display:flex; align-items:stretch; justify-content:center;
+  background:rgba(8,18,34,.55);
+  font-family:var(--font); color:var(--w-ink); text-align:left;
+  -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%;
+}
+html body #pvProWall button {
+  margin:0; padding:0; border:0; background:none; color:inherit; font-family:var(--font); text-align:inherit;
+  cursor:pointer; -webkit-tap-highlight-color:transparent;
+}
+html body #pvProWall button:disabled { cursor:default; }
+html body #pvProWall button:focus-visible { outline:2px solid var(--w-mint); outline-offset:2px; }
+html body #pvProWall [hidden] { display:none !important; }
+
+/* ── Armazón (celular): a pantalla completa ── */
+html body #pvProWall .pvw-dialog {
+  position:relative; display:flex; flex-direction:column; width:100%; height:100%;
+  overflow:hidden; background:var(--w-bg); outline:0;
+}
+html body #pvProWall .pvw-main {
+  flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+  padding-bottom:22px;
+}
+/* Sin la barra de desplazamiento de 10 px que la app pone a todo (::-webkit-scrollbar): en el
+   iPhone, WebKit le guardaba el hueco a la barra pegada de arriba y dejaba una franja gris a
+   su derecha. */
+html body #pvProWall .pvw-main,
+html body #pvProWall .pvw-buy { scrollbar-width:none; }
+html body #pvProWall .pvw-main::-webkit-scrollbar,
+html body #pvProWall .pvw-buy::-webkit-scrollbar { display:none; width:0; height:0; }
+
+/* Barra de arriba: marca y X. Se queda pegada al desplazar, sobre la barra de estado. */
+html body #pvProWall .pvw-top {
+  position:sticky; top:0; z-index:3; display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:calc(env(safe-area-inset-top, 0px) + 10px) var(--w-px) 8px; background:var(--w-navy);
+}
+/* Rebote del iPhone al estirar hacia abajo: por encima sigue habiendo navy, no el gris del fondo. */
+html body #pvProWall .pvw-top::before { content:''; position:absolute; left:0; right:0; bottom:100%; height:100vh; background:var(--w-navy); }
+/* Marca y X con las medidas de la barra superior de la app: placa blanca de 40 con el logo,
+   «Portiv» a 23/600 y el botón de 44 de toque con su placa translúcida de 40. */
+html body #pvProWall .pvw-brand { display:flex; align-items:center; gap:11px; min-width:0; }
+html body #pvProWall .pvw-logo {
+  width:40px; height:40px; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  border-radius:14px; background:#fff; overflow:hidden;
+}
+html body #pvProWall .pvw-logo svg { display:block; width:34px; height:34px; }
+html body #pvProWall .pvw-brand-name { font-size:23px; font-weight:600; line-height:1; letter-spacing:-.2px; color:#fff; }
+html body #pvProWall .pvw-x {
+  position:relative; width:44px; height:44px; flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center;
+  margin-right:-2px; border-radius:14px; color:#fff;
+  transition:transform var(--pvm-fast,.16s) var(--w-ease), opacity .2s var(--w-ease);
+}
+html body #pvProWall .pvw-x::before {
+  content:''; position:absolute; left:2px; top:2px; width:40px; height:40px; border-radius:14px;
+  background:rgba(255,255,255,.14); transition:background-color var(--pvm-fast,.16s) var(--w-ease); pointer-events:none;
+}
+html body #pvProWall .pvw-x svg { position:relative; width:18px; height:18px; display:block; }
+html body #pvProWall .pvw-x:active { transform:scale(.92); }
+html body #pvProWall .pvw-x:disabled { opacity:.4; }
+
+/* ── Cabecera ── */
+html body #pvProWall .pvw-hero {
+  position:relative; padding:18px var(--w-px) 76px; color:#fff;
+  background:var(--w-navy); border-radius:0 0 30px 30px;
+}
+html body #pvProWall .pvw-chips { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:0 0 16px; }
+/* «Portiv Pro»: la loseta del candado en blanco (la de la app, invertida sobre el navy). */
+html body #pvProWall .pvw-pro {
+  display:inline-flex; align-items:center; gap:8px; height:32px; padding:0 13px 0 5px; border-radius:999px;
+  font-size:13px; font-weight:800; line-height:1; color:#fff;
+  background:var(--w-glass); border:1px solid var(--w-glass-line);
+}
+html body #pvProWall .pvw-pro-mark { width:22px; height:22px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; border-radius:7px; background:#fff; }
+html body #pvProWall .pvw-pro-mark svg { width:13px; height:13px; display:block; overflow:visible; }
+/* Prueba gratis: sólo si Apple confirma que este usuario la tiene. Entra al lado de «Portiv Pro»,
+   así que aparecer cuando llega la elegibilidad no empuja nada hacia abajo. */
+html body #pvProWall .pvw-trial {
+  display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 13px 0 11px; border-radius:999px;
+  font-size:13px; font-weight:800; line-height:1; color:var(--w-mint);
+  background:rgba(127,224,182,.12); border:1px solid rgba(127,224,182,.28);
+}
+html body #pvProWall .pvw-trial svg { width:14px; height:14px; display:block; }
+html body #pvProWall .pvw-title {
+  margin:0; font-size:33px; line-height:1.07; font-weight:800; letter-spacing:-.035em; color:#fff; text-wrap:balance;
+}
+html body #pvProWall .pvw-sub {
+  margin:12px 0 0; max-width:440px; font-size:15px; line-height:1.5; font-weight:600; color:var(--w-on2); text-wrap:pretty;
+}
+
+/* ── Planes ── Sobre el navy, los recuadros translúcidos del Portafolio con el elegido en blanco;
+   sobre blanco (diálogo ancho), tarjetas con filo y la elegida en navy. */
+html body #pvProWall .pvw-plans { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; }
+html body #pvProWall .pvw-plans.pvw-one { grid-template-columns:minmax(0,1fr); }
+html body #pvProWall .pvw-plans-hero { margin-top:26px; }
+html body #pvProWall .pvw-plans-buy { display:none; }
+html body #pvProWall .pvw-plan {
+  position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:3px; width:100%; min-width:0;
+  padding:14px 14px 15px; border-radius:18px;
+  background:var(--w-glass); border:1px solid var(--w-glass-line); color:#fff;
+  transition:background-color var(--pvm-base,.24s) var(--w-ease), border-color var(--pvm-base,.24s) var(--w-ease),
+             color var(--pvm-base,.24s) var(--w-ease), transform var(--pvm-fast,.16s) var(--w-ease);
+}
+html body #pvProWall .pvw-plan:active { transform:scale(.98); }
+html body #pvProWall .pvw-plan[aria-checked="true"] { background:#fff; border-color:#fff; color:var(--w-ink); }
+html body #pvProWall .pvw-plan-name { font-size:13.5px; font-weight:800; line-height:1.3; color:inherit; }
+html body #pvProWall .pvw-plan-price {
+  margin-top:3px; font-size:21px; font-weight:800; line-height:1.15; letter-spacing:-.02em; white-space:nowrap; color:inherit;
+}
+html body #pvProWall .pvw-plan-price small { margin-left:1px; font-size:13px; font-weight:700; letter-spacing:0; opacity:.6; }
+html body #pvProWall .pvw-plan-note { font-size:12.5px; font-weight:600; line-height:1.35; color:var(--w-on2); }
+html body #pvProWall .pvw-plan[aria-checked="true"] .pvw-plan-note { color:var(--w-muted); }
+html body #pvProWall .pvw-save {
+  position:absolute; top:-10px; right:12px; display:inline-flex; align-items:center; height:21px; padding:0 8px;
+  border-radius:999px; font-size:11px; font-weight:800; line-height:1; white-space:nowrap;
+  color:var(--w-navy); background:var(--w-mint);
+}
+/* Cargando: recuadros con brillo. Sin planes: aviso en su sitio y «Reintentar» en el botón. */
+html body #pvProWall .pvw-plan-skel {
+  height:93px; border-radius:18px; border:1px solid var(--w-glass-line);
+  background:linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.11) 37%, rgba(255,255,255,.05) 63%);
+  background-size:400% 100%; animation:pvmShine 1.4s ease infinite;
+}
+html body #pvProWall .pvw-plans-err {
+  padding:15px 16px; border-radius:18px; background:var(--w-glass); border:1px solid var(--w-glass-line);
+  font-size:13.5px; font-weight:600; line-height:1.5; color:var(--w-on3);
+}
+
+/* ── Lo que incluye ── */
+html body #pvProWall .pvw-feats {
+  position:relative; margin:-52px 16px 0; padding:20px 18px 8px;
+  background:var(--w-card); border:1px solid var(--w-line); border-radius:24px;
+}
+html body #pvProWall .pvw-feats-eb { font-size:13px; font-weight:700; line-height:1.3; color:var(--w-muted); }
+html body #pvProWall .pvw-feats-t { margin:3px 0 0; font-size:19px; font-weight:800; line-height:1.25; letter-spacing:-.02em; color:var(--w-ink); }
+html body #pvProWall .pvw-list { list-style:none; margin:10px 0 0; padding:0; }
+html body #pvProWall .pvw-li { display:flex; align-items:flex-start; gap:14px; padding:13px 0; border-top:1px solid var(--w-line-soft); }
+html body #pvProWall .pvw-li:first-child { border-top:0; }
+html body #pvProWall .pvw-ic {
+  width:40px; height:40px; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  border-radius:12px; color:#fff;
+  background:linear-gradient(150deg, #22406a 0%, #0b1c30 62%); box-shadow:inset 0 1px 0 rgba(255,255,255,.14);
+}
+html body #pvProWall .pvw-ic svg { width:20px; height:20px; display:block; }
+html body #pvProWall .pvw-li-x { min-width:0; padding-top:1px; }
+html body #pvProWall .pvw-li-t { display:block; font-size:15px; font-weight:800; line-height:1.3; letter-spacing:-.01em; color:var(--w-ink); }
+html body #pvProWall .pvw-li-d { display:block; margin-top:3px; font-size:13.5px; font-weight:600; line-height:1.45; color:var(--w-muted); }
+
+/* ── Compra: fija abajo ── */
+html body #pvProWall .pvw-buy {
+  position:relative; flex:0 0 auto; padding:14px 16px calc(env(safe-area-inset-bottom, 0px) + 4px);
+  background:var(--w-card); border-top:1px solid var(--w-line);
+}
+html body #pvProWall .pvw-buy-h { display:none; }
+html body #pvProWall .pvw-msg { margin:0 4px 10px; font-size:13px; font-weight:700; line-height:1.45; text-align:center; color:var(--w-slate); }
+html body #pvProWall .pvw-msg.err { color:var(--w-red); }
+html body #pvProWall .pvw-cta {
+  display:flex; align-items:center; justify-content:center; gap:10px; width:100%; height:54px; border-radius:999px;
+  background:var(--w-navy); color:#fff; font-size:16px; font-weight:800; line-height:1; letter-spacing:-.01em; text-align:center;
+  transition:background-color .3s var(--w-ease), opacity .2s var(--w-ease), transform var(--pvm-fast,.16s) var(--w-ease);
+}
+html body #pvProWall .pvw-cta:active { transform:scale(.985); }
+html body #pvProWall .pvw-cta:disabled { opacity:.5; }
+html body #pvProWall .pvw-cta.wait:disabled { opacity:.78; }
+html body #pvProWall.pvw-busy .pvw-cta:disabled { opacity:1; }
+html body #pvProWall .pvw-cta.ok { background:var(--w-green); }
+html body #pvProWall .pvw-cta-ok { width:20px; height:20px; display:block; flex:0 0 auto; }
+html body #pvProWall .pvw-spin {
+  width:18px; height:18px; flex:0 0 auto; border-radius:50%;
+  border:2.4px solid rgba(255,255,255,.28); border-top-color:#fff; animation:pvwSpin .8s linear infinite;
+}
+@keyframes pvwSpin { to { transform:rotate(360deg); } }
+html body #pvProWall .pvw-terms {
+  margin:10px 6px 0; font-size:11.5px; font-weight:600; line-height:1.5; text-align:center; color:var(--w-muted); text-wrap:pretty;
+}
+html body #pvProWall .pvw-terms b { font-weight:800; color:var(--w-slate); }
+html body #pvProWall .pvw-terms:empty { display:none; }
+html body #pvProWall .pvw-links { display:flex; align-items:center; justify-content:center; flex-wrap:wrap; margin-top:2px; }
+html body #pvProWall .pvw-link {
+  padding:10px 8px; font-size:12.5px; font-weight:700; line-height:1.2; color:var(--w-slate);
+  transition:color .2s var(--w-ease), opacity .2s var(--w-ease);
+}
+html body #pvProWall .pvw-link:disabled { opacity:.45; }
+html body #pvProWall .pvw-dot { font-size:12px; line-height:1; color:#c3cbd8; }
+html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
+
+@media (hover:hover) and (pointer:fine) {
+  html body #pvProWall .pvw-x:not(:disabled):hover::before { background:rgba(255,255,255,.2); }
+  html body #pvProWall .pvw-plan:not([aria-checked="true"]):hover { background:var(--w-glass-hi); border-color:rgba(255,255,255,.2); }
+  html body #pvProWall .pvw-cta:not(:disabled):hover { opacity:.92; }
+  html body #pvProWall .pvw-link:not(:disabled):hover { color:var(--w-ink); }
+}
+
+/* ── 700 px o más: diálogo centrado, una columna ── */
+@media (min-width:700px) {
+  html body #pvProWall { --w-px:28px; align-items:center; padding:24px; }
+  /* Filo claro de 1 px: separa el navy del diálogo del navy de la app que queda detrás del velo. */
+  html body #pvProWall .pvw-dialog {
+    width:min(540px, 100%); height:min(880px, 100%); border-radius:30px;
+    box-shadow:0 0 0 1px rgba(255,255,255,.08), 0 40px 90px -36px rgba(4,12,24,.6);
+  }
+  html body #pvProWall .pvw-top { padding-top:18px; }
+  html body #pvProWall .pvw-feats { margin-left:20px; margin-right:20px; }
+  html body #pvProWall .pvw-buy { padding:16px 24px 10px; }
+}
+
+/* ── 900 × 640 o más: dos columnas ── */
+@media (min-width:900px) and (min-height:640px) {
+  html body #pvProWall { padding:32px; }
+  html body #pvProWall .pvw-dialog {
+    display:grid; grid-template-columns:minmax(0,1.08fr) minmax(0,1fr);
+    width:min(980px, 100%); height:auto; max-height:min(780px, 100%); background:var(--w-card);
+  }
+  html body #pvProWall .pvw-main { background:var(--w-navy); padding:0 0 38px; }
+  html body #pvProWall .pvw-top { position:static; padding:36px 40px 0; }
+  html body #pvProWall .pvw-top::before { display:none; }
+  /* La X pasa a la esquina del diálogo, sobre la columna blanca. */
+  html body #pvProWall .pvw-x { position:absolute; top:18px; right:18px; z-index:4; margin:0; color:var(--w-ink); }
+  html body #pvProWall .pvw-x::before { background:var(--w-bg); }
+  html body #pvProWall .pvw-hero { padding:30px 40px 0; border-radius:0; }
+  html body #pvProWall .pvw-title { font-size:38px; }
+  html body #pvProWall .pvw-plans-hero { display:none; }
+  html body #pvProWall .pvw-feats { margin:26px 40px 0; padding:0; background:none; border:0; border-radius:0; }
+  html body #pvProWall .pvw-feats-eb,
+  html body #pvProWall .pvw-feats-t { display:none; }
+  html body #pvProWall .pvw-list { margin:0; border-top:1px solid rgba(255,255,255,.1); }
+  html body #pvProWall .pvw-li { padding:14px 0 0; border-top:0; }
+  html body #pvProWall .pvw-ic { width:38px; height:38px; background:var(--w-glass); border:1px solid var(--w-glass-line); box-shadow:none; }
+  html body #pvProWall .pvw-ic svg { width:19px; height:19px; }
+  html body #pvProWall .pvw-li-t { color:#fff; }
+  html body #pvProWall .pvw-li-d { color:var(--w-on2); }
+  html body #pvProWall .pvw-buy {
+    display:flex; flex-direction:column; justify-content:center; min-height:0; overflow-y:auto;
+    padding:76px 40px 26px; border-top:0;
+  }
+  html body #pvProWall .pvw-buy-h { display:block; margin:0 0 22px; }
+  /* El emblema de Portiv Pro de los candados de la app, encabezando la columna de compra. */
+  html body #pvProWall .pvw-buy-ic {
+    width:52px; height:52px; margin:0 0 18px; display:flex; align-items:center; justify-content:center;
+    border-radius:30%; color:var(--w-navy);
+    background:linear-gradient(150deg, #22406a 0%, #0b1c30 62%);
+    box-shadow:0 12px 24px -12px rgba(11,28,48,.6), inset 0 1px 0 rgba(255,255,255,.14);
+  }
+  html body #pvProWall .pvw-buy-ic svg { width:54%; height:54%; display:block; overflow:visible; }
+  html body #pvProWall .pvw-buy-h h3 { margin:0; font-size:26px; font-weight:800; line-height:1.15; letter-spacing:-.03em; color:var(--w-ink); }
+  html body #pvProWall .pvw-buy-h p { margin:7px 0 0; font-size:14.5px; font-weight:600; line-height:1.45; color:var(--w-muted); }
+  html body #pvProWall .pvw-plans-buy { display:grid; margin-bottom:18px; }
+  html body #pvProWall .pvw-plans-buy .pvw-plan { padding:16px 16px 17px; background:var(--w-card); border-color:var(--w-line); color:var(--w-ink); }
+  html body #pvProWall .pvw-plans-buy .pvw-plan .pvw-plan-note { color:var(--w-muted); }
+  html body #pvProWall .pvw-plans-buy .pvw-plan[aria-checked="true"] { background:var(--w-navy); border-color:var(--w-navy); color:#fff; }
+  html body #pvProWall .pvw-plans-buy .pvw-plan[aria-checked="true"] .pvw-plan-note { color:var(--w-on2); }
+  html body #pvProWall .pvw-plans-buy .pvw-plan-skel {
+    height:97px; border-color:var(--w-line);
+    background-image:linear-gradient(90deg, rgba(11,28,48,.04) 25%, rgba(11,28,48,.09) 37%, rgba(11,28,48,.04) 63%);
+  }
+  html body #pvProWall .pvw-plans-buy .pvw-plans-err { background:var(--w-bg); border-color:var(--w-line); color:var(--w-slate); }
+  html body #pvProWall .pvw-terms { margin-top:12px; }
+}
+@media (min-width:900px) and (min-height:640px) and (hover:hover) and (pointer:fine) {
+  html body #pvProWall .pvw-x:not(:disabled):hover::before { background:var(--w-line); }
+  html body #pvProWall .pvw-plans-buy .pvw-plan:not([aria-checked="true"]):hover { background:var(--w-card); border-color:var(--w-line-hi); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html body #pvProWall .pvw-plan-skel,
+  html body #pvProWall .pvw-spin { animation:none; }
+  html body #pvProWall * { transition:none !important; }
+}
+</style>
 <script>
   // ¿Corremos dentro del wrapper de Capacitor? Se calcula SIN mirar PortivIAP a propósito:
   // antes `_nat` exigía que el SDK existiera, así que si portiv-iap.js no cargaba caíamos al
@@ -42200,6 +42489,426 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
   }
   window._pvEnterFreeApp = _pvEnterFreeApp;
 
+  // ═══ MURO DE PORTIV PRO — app nativa (iPhone, iPad y Mac) ═══════════════════════════════════
+  // Sustituye a la hoja prehecha de RevenueCat (RevenueCatUI.presentPaywall), que se pintaba con
+  // la plantilla del dashboard y no con el diseño de la app, y a su respaldo. La compra sigue
+  // siendo StoreKit vía RevenueCat —PortivIAP: getPackagesInfo/loadOfferings (planes y precios ya
+  // localizados por la App Store), checkIntroEligibility, purchase y restore—: aquí sólo cambia
+  // quién pinta la pantalla. Guideline 3.1.1: IAP, nada de Paddle. Guideline 3.1.2: el precio
+  // facturado con su periodo, la renovación automática, Restaurar, Términos y Privacidad quedan
+  // siempre a la vista junto al botón. El "14 días gratis" sólo se enseña si Apple confirma que
+  // ESTE usuario tiene derecho a la prueba (quien ya la usó ve el precio normal).
+  // Salidas: compra o restauración → «Conectando…» y _pvConfirmTrial, como con la hoja de antes;
+  // X, Escape o el velo (diálogo) → la misma salida que su cancelación (_pvEnterFreeApp si el
+  // muro venía del cuestionario). Estilos: #pvProWallCss.
+  // Logo de la barra superior de la app: la marca navy a 34 px dentro de la placa blanca de 40.
+  var _PVW_LOGO = '<svg viewBox="0 0 512 512" aria-hidden="true"><g transform="translate(40.96,40.96) scale(.84)"><g fill="#0b1c30"><rect x="91" y="316" width="57" height="100" rx="11"/><rect x="175" y="240" width="57" height="176" rx="11"/><rect x="259" y="268" width="57" height="148" rx="11"/><rect x="344" y="186" width="57" height="230" rx="11"/></g><polyline points="115,283 204,192 282,222 398,116" fill="none" stroke="#0b1c30" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/><circle cx="398" cy="116" r="23.5" fill="#0b1c30"/></g></svg>';
+  // Candado de Portiv Pro (el de los candados de la app): blanco sobre la loseta navy y, para
+  // la loseta blanca del chip, en navy.
+  var _PVW_LOCK_W = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/><rect x="4.75" y="10.2" width="14.5" height="10.8" rx="3" fill="#fff"/><path d="M12 14.3v2.6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>';
+  var _PVW_LOCK = '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7.75 10.6V8.1a4.25 4.25 0 0 1 8.5 0v2.5" stroke="#0b1c30" stroke-width="2.3" stroke-linecap="round"/><rect x="4.75" y="10.2" width="14.5" height="10.8" rx="3" fill="#0b1c30"/><path d="M12 14.3v2.6" stroke="#fff" stroke-width="2.1" stroke-linecap="round"/></svg>';
+  function _pvwIc(p, sw){
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 1.9) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + p + '</svg>';
+  }
+  // Lo que incluye Pro. Los iconos son los de la barra de pestañas (Portiv IA, Análisis,
+  // Portafolio, Noticias): cada ventaja se reconoce por el sitio de la app donde vive.
+  var _PVW_FEATS = [
+    ['<path d="M4 12a8 8 0 0 1 14.9-4"/><path d="M18.9 3.4V8h-4.6"/><path d="M20 12a8 8 0 0 1-14.9 4"/><path d="M5.1 20.6V16h4.6"/>',
+      'Conecta tu broker', 'Tus posiciones y tu efectivo se actualizan solos, sin capturas ni hojas de cálculo.'],
+    ['<path d="M10.5 4.5Q11.4 10.6 17.5 11.5Q11.4 12.4 10.5 18.5Q9.6 12.4 3.5 11.5Q9.6 10.6 10.5 4.5Z"/><path d="M18.5 2.75v3.5M16.75 4.5h3.5"/>',
+      'Portiv IA sin límites', 'Pregúntale lo que quieras sobre tu cartera, cuando quieras.'],
+    ['<path d="M4 4.5V18a1.5 1.5 0 0 0 1.5 1.5H20"/><path d="M7.5 15l3.5-4 3 2.5 5-6"/><path d="M15.5 7.5H19v3.5"/>',
+      'Análisis completo de cada acción', 'Resultados, finanzas, noticias y análisis técnico de cada empresa.'],
+    ['<path d="M11.5 4A8.5 8.5 0 1 0 20 12.5H11.5Z"/><path d="M13.5 2.5A8.5 8.5 0 0 1 22 11h-8.5Z"/>',
+      'Análisis profundo y rebalanceo', 'Diagnóstico, retorno esperado y un plan para ajustar tu cartera a tu perfil.'],
+    ['<rect x="3.5" y="4.5" width="17" height="15" rx="3"/><rect x="7" y="8" width="4.5" height="4" rx="1"/><path d="M14.5 8.5H17M14.5 11.5H17M7 15.5h10"/>',
+      'Noticias que mueven tu cartera', 'Lo que pasa con cada una de tus posiciones y lo que viene la próxima semana.']
+  ];
+
+  // iap: window.PortivIAP, o null si el SDK aún no cargó (el muro se abre igual, con los planes
+  // cargando, y lo espera con _pvAwaitIAP: nunca se cae al overlay web, que cobra con Paddle).
+  window._pvProWall = function(iap){
+    var prev = document.getElementById('pvProWall');
+    if (prev && !prev._pvwClosing) return;        // ya abierto: otro toque no apila un segundo muro
+    if (prev) { try { prev.remove(); } catch(e){} }
+
+    var P = window.PVM;
+    var EASE = 'cubic-bezier(.22,1,.36,1)', EASE_IO = 'cubic-bezier(.65,0,.35,1)';
+    function reduced(){
+      try { return P && P.reduced ? P.reduced() : window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+      catch(e){ return false; }
+    }
+    function dialogMode(){ try { return window.matchMedia('(min-width: 700px)').matches; } catch(e){ return false; } }
+    function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){ return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]; }); }
+    function within(pr, ms){ return Promise.race([Promise.resolve(pr), new Promise(function(r){ setTimeout(function(){ r(null); }, ms); })]); }
+
+    // phase: 'loading' | 'ready' | 'error'. gen invalida cargas viejas tras un Reintentar;
+    // seen: ya se registró la impresión de este muro en RevenueCat.
+    var st = { iap: iap || null, sel: 'annual', info: null, elig: {}, phase: 'loading', err: '', busy: false, closing: false, gen: 0, seen: false };
+    var prevOverflow = document.body.style.overflow;
+    var prevFocus = document.activeElement;
+
+    var feats = _PVW_FEATS.map(function(f){
+      return '<li class="pvw-li"><span class="pvw-ic">' + _pvwIc(f[0]) + '</span>'
+        + '<span class="pvw-li-x"><b class="pvw-li-t">' + f[1] + '</b><span class="pvw-li-d">' + f[2] + '</span></span></li>';
+    }).join('');
+    var w = document.createElement('div');
+    w.id = 'pvProWall';
+    w.setAttribute('role', 'dialog');
+    w.setAttribute('aria-modal', 'true');
+    w.setAttribute('aria-labelledby', 'pvwTitle');
+    w.innerHTML =
+        '<div class="pvw-dialog" tabindex="-1">'
+      +   '<div class="pvw-main">'
+      +     '<div class="pvw-top">'
+      +       '<div class="pvw-brand"><span class="pvw-logo">' + _PVW_LOGO + '</span><span class="pvw-brand-name">Portiv</span></div>'
+      +       '<button type="button" class="pvw-x" aria-label="Cerrar">' + _pvwIc('<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>', 2.2) + '</button>'
+      +     '</div>'
+      +     '<header class="pvw-hero">'
+      +       '<div class="pvw-chips">'
+      +         '<span class="pvw-pro"><span class="pvw-pro-mark">' + _PVW_LOCK + '</span>Portiv Pro</span>'
+      +         '<span class="pvw-trial" hidden>' + _pvwIc('<path d="M20 6 9 17l-5-5"/>', 2.8) + '<span class="pvw-trial-t"></span></span>'
+      +       '</div>'
+      +       '<h2 class="pvw-title" id="pvwTitle">Invierte con un analista a tu lado</h2>'
+      +       '<p class="pvw-sub">Conecta tu broker y deja que Portiv analice cada posición, cada noticia y cada riesgo por ti.</p>'
+      +       '<div class="pvw-plans pvw-plans-hero" role="radiogroup" aria-label="Elige tu plan"></div>'
+      +     '</header>'
+      +     '<section class="pvw-feats" aria-label="Lo que incluye Portiv Pro">'
+      +       '<div class="pvw-feats-eb">Incluido en Portiv Pro</div>'
+      +       '<h3 class="pvw-feats-t">Todo lo que desbloqueas</h3>'
+      +       '<ul class="pvw-list">' + feats + '</ul>'
+      +     '</section>'
+      +   '</div>'
+      +   '<div class="pvw-buy">'
+      +     '<div class="pvw-buy-h"><span class="pvw-buy-ic">' + _PVW_LOCK_W + '</span><h3>Elige tu plan</h3><p>Cambia de plan o cancela cuando quieras.</p></div>'
+      +     '<div class="pvw-plans pvw-plans-buy" role="radiogroup" aria-label="Elige tu plan"></div>'
+      +     '<p class="pvw-msg" role="status" hidden></p>'
+      +     '<button type="button" class="pvw-cta" disabled>'
+      +       '<span class="pvw-spin" hidden></span>'
+      +       '<span class="pvw-cta-ok" hidden>' + _pvwIc('<path d="M20 6 9 17l-5-5"/>', 2.6) + '</span>'
+      +       '<span class="pvw-cta-t">Cargando planes…</span>'
+      +     '</button>'
+      +     '<p class="pvw-terms"></p>'
+      +     '<div class="pvw-links">'
+      +       '<button type="button" class="pvw-link" data-pvw="restore">Restaurar compras</button>'
+      +       '<span class="pvw-dot" aria-hidden="true">·</span>'
+      +       '<button type="button" class="pvw-link" data-pvw="terms">Términos</button>'
+      +       '<span class="pvw-dot" aria-hidden="true">·</span>'
+      +       '<button type="button" class="pvw-link" data-pvw="privacy">Privacidad</button>'
+      +     '</div>'
+      +   '</div>'
+      + '</div>';
+    document.body.appendChild(w);
+
+    var dlg = w.querySelector('.pvw-dialog');
+    var plansEls = w.querySelectorAll('.pvw-plans');
+    var cta = w.querySelector('.pvw-cta'), ctaT = w.querySelector('.pvw-cta-t');
+    var spin = w.querySelector('.pvw-spin'), ctaOk = w.querySelector('.pvw-cta-ok');
+    var terms = w.querySelector('.pvw-terms'), msgEl = w.querySelector('.pvw-msg');
+    var xBtn = w.querySelector('.pvw-x'), restoreBtn = w.querySelector('[data-pvw="restore"]');
+    var trialEl = w.querySelector('.pvw-trial'), trialT = w.querySelector('.pvw-trial-t');
+    try { document.body.style.overflow = 'hidden'; } catch(e){}
+
+    // ── Datos del plan ──
+    function unitOf(k){ return k === 'annual' ? 'año' : 'mes'; }
+    // Duración de la prueba tal como la da StoreKit: 14 días llegan como 2 semanas.
+    function trialLen(intro){
+      var n = (+intro.periodNumberOfUnits || 0) * (+intro.cycles || 1), u = String(intro.periodUnit || '').toUpperCase();
+      if (!(n > 0)) return '';
+      if (u === 'DAY')   return n + (n === 1 ? ' día' : ' días');
+      if (u === 'WEEK')  return (n * 7) + ' días';
+      if (u === 'MONTH') return n + (n === 1 ? ' mes' : ' meses');
+      if (u === 'YEAR')  return n + (n === 1 ? ' año' : ' años');
+      return '';
+    }
+    // Sólo una prueba GRATIS y sólo con elegibilidad confirmada ('unknown' = precio normal).
+    function trialOf(k){
+      var p = st.info && st.info[k];
+      if (!p || !p.intro || st.elig[k] !== 'eligible' || +p.intro.price !== 0) return '';
+      return trialLen(p.intro);
+    }
+    function perMonth(p){
+      if (p.pricePerMonthString) return p.pricePerMonthString;
+      try { return new Intl.NumberFormat(navigator.language || 'es-MX', { style:'currency', currency:p.currency }).format(Math.floor(p.price / 12 * 100) / 100); }
+      catch(e){ return ''; }
+    }
+    // Ahorro del anual frente a doce meses, redondeado hacia abajo (nunca se promete de más).
+    function savePct(){
+      var a = st.info && st.info.annual, m = st.info && st.info.monthly;
+      if (!a || !m || !(a.price > 0) || !(m.price > 0) || (a.currency && m.currency && a.currency !== m.currency)) return 0;
+      var s = Math.floor((1 - a.price / (m.price * 12)) * 100);
+      return s >= 5 ? s : 0;
+    }
+    function planHTML(k){
+      var p = st.info[k], on = st.sel === k, save = k === 'annual' ? savePct() : 0;
+      var note = k === 'annual' ? (perMonth(p) ? perMonth(p) + ' al mes' : 'Un solo pago al año') : 'Pago mes a mes';
+      return '<button type="button" class="pvw-plan" role="radio" data-plan="' + k + '" aria-checked="' + on + '" tabindex="' + (on ? 0 : -1) + '">'
+        + (save ? '<span class="pvw-save">Ahorra ' + save + ' %</span>' : '')
+        + '<span class="pvw-plan-name">' + (k === 'annual' ? 'Anual' : 'Mensual') + '</span>'
+        + '<span class="pvw-plan-price">' + esc(p.priceString) + '<small>/' + unitOf(k) + '</small></span>'
+        + '<span class="pvw-plan-note">' + esc(note) + '</span>'
+        + '</button>';
+    }
+
+    // ── Pintado ──
+    function setPlans(html, one){
+      for (var i = 0; i < plansEls.length; i++) { plansEls[i].innerHTML = html; plansEls[i].classList.toggle('pvw-one', !!one); }
+    }
+    function render(){
+      spin.hidden = true; ctaOk.hidden = true; cta.classList.remove('ok');
+      cta.classList.toggle('wait', st.phase === 'loading');
+      if (st.phase === 'loading') {
+        setPlans('<div class="pvw-plan-skel"></div><div class="pvw-plan-skel"></div>');
+        trialEl.hidden = true; terms.innerHTML = '';
+        cta.disabled = true; spin.hidden = false; ctaT.textContent = 'Cargando planes…';
+        return;
+      }
+      if (st.phase === 'error') {
+        setPlans('<div class="pvw-plans-err">' + esc(st.err || 'No pudimos cargar los planes desde la App Store. Revisa tu conexión y vuelve a intentarlo.') + '</div>', true);
+        trialEl.hidden = true; terms.innerHTML = '';
+        cta.disabled = false; ctaT.textContent = 'Reintentar';
+        return;
+      }
+      var keys = ['annual', 'monthly'].filter(function(k){ return st.info[k]; });
+      setPlans(keys.map(planHTML).join(''), keys.length === 1);
+      // La prueba va arriba sólo si vale para TODOS los planes que se ofrecen; si dependiera del
+      // plan, la dicen el botón y la letra pequeña del plan elegido.
+      var t0 = trialOf(keys[0]);
+      var all = !!t0 && keys.every(function(k){ return trialOf(k) === t0; });
+      trialEl.hidden = !all;
+      if (all) trialT.textContent = 'Prueba gratis de ' + t0;
+      paintCta();
+      if (st.busy) cta.disabled = true;   // los planes llegaron con «Restaurar» en curso
+    }
+    function paintSel(){
+      var b = w.querySelectorAll('.pvw-plan');
+      for (var i = 0; i < b.length; i++) {
+        var on = b[i].getAttribute('data-plan') === st.sel;
+        b[i].setAttribute('aria-checked', on ? 'true' : 'false');
+        b[i].setAttribute('tabindex', on ? '0' : '-1');
+      }
+    }
+    // Botón y letra pequeña del plan elegido: lo que se cobra, cada cuánto y cómo se cancela.
+    function paintCta(){
+      var k = st.sel, p = st.info && st.info[k];
+      if (!p) return;
+      var tr = trialOf(k), u = unitOf(k), price = esc(p.priceString);
+      cta.disabled = false; cta.classList.remove('ok'); spin.hidden = true; ctaOk.hidden = true;
+      ctaT.textContent = tr ? 'Probar ' + tr + ' gratis' : 'Suscribirme por ' + p.priceString + ' al ' + u;
+      terms.innerHTML = (tr ? '<b>' + tr + ' gratis</b>, luego <b>' + price + ' al ' + u + '</b>. ' : '<b>' + price + ' al ' + u + '.</b> ')
+        + 'Se renueva automáticamente; puedes cancelar desde tu cuenta de Apple hasta 24 horas antes de la renovación.';
+    }
+    function msg(t, err){ msgEl.textContent = t || ''; msgEl.hidden = !t; msgEl.classList.toggle('err', !!err); }
+    function setBusy(kind){
+      st.busy = !!kind;
+      w.classList.toggle('pvw-busy', st.busy);
+      xBtn.disabled = st.busy; restoreBtn.disabled = st.busy;
+      restoreBtn.textContent = kind === 'restore' ? 'Restaurando…' : 'Restaurar compras';
+      if (kind === 'buy') { cta.disabled = true; spin.hidden = false; ctaT.textContent = 'Procesando…'; }
+      else if (kind) cta.disabled = true;
+      else if (st.phase === 'ready') paintCta();
+      else render();
+    }
+
+    // ── Carga: SDK → usuario vinculado → planes → elegibilidad de la prueba ──
+    function getIap(){
+      if (st.iap) return Promise.resolve(st.iap);
+      if (typeof window._pvAwaitIAP !== 'function') return Promise.resolve(window.PortivIAP || null);
+      return window._pvAwaitIAP(8000).then(function(x){ if (x) st.iap = x; return x; });
+    }
+    function load(){
+      var g = ++st.gen;
+      st.phase = 'loading'; st.err = ''; render(); msg('');
+      getIap().then(function(x){
+        if (!x) { var e = new Error('sdk'); e.pvw = 'No pudimos conectar con la App Store. Revisa tu conexión y vuelve a intentarlo.'; throw e; }
+        // La compra se vincula al usuario de Supabase ANTES de poder comprar: es lo que el webhook
+        // usa para darle el acceso a esta cuenta. Idempotente, y con tope para no colgar el muro.
+        var uid = window.__pvUserId;
+        var linked = (uid && uid !== 'local' && typeof x.login === 'function') ? within(x.login(uid), 4000) : null;
+        var info = typeof x.getPackagesInfo === 'function' ? x.getPackagesInfo() : null;
+        var plans = (info && (info.monthly || info.annual)) ? info
+          : within(Promise.resolve(x.loadOfferings && x.loadOfferings()).then(function(){ return x.getPackagesInfo(); }), 12000);
+        return Promise.all([plans, linked]);
+      }).then(function(r){
+        var info = r[0];
+        if (!info || (!info.monthly && !info.annual)) throw new Error('sin-planes');
+        if (g !== st.gen || st.closing) return null;
+        st.info = info;
+        if (!info[st.sel]) st.sel = info.annual ? 'annual' : 'monthly';
+        return typeof st.iap.checkIntroEligibility === 'function' ? within(st.iap.checkIntroEligibility(), 3000) : null;
+      }).then(function(el){
+        if (g !== st.gen || st.closing) return;
+        st.elig = el || {}; st.phase = 'ready'; render();
+        // Una impresión por muro abierto (no por Reintentar): alimenta las métricas de RevenueCat.
+        if (!st.seen && typeof st.iap.trackPaywallImpression === 'function') {
+          st.seen = true;
+          try { st.iap.trackPaywallImpression(); } catch(e){}
+        }
+        if (P && P.enter) {
+          P.enter(w.querySelectorAll('.pvw-plan'), { from:'scale', step:60 });
+          if (!trialEl.hidden) P.enter(trialEl, { from:'scale', delay:120 });
+        }
+      }).catch(function(e){
+        if (g !== st.gen || st.closing) return;
+        st.phase = 'error'; st.err = (e && e.pvw) || ''; render();
+      });
+    }
+
+    // ── Compra y restauración ──
+    function pending(r){
+      var e = r && r.error;
+      return !!e && (String(e.code) === '20' || /pending/i.test(e.message || ''));
+    }
+    function buyErr(r){
+      var e = r && r.error, c = e && e.code != null ? String(e.code) : '';
+      if (r && r.reason === 'no-package') return 'Ese plan no está disponible ahora mismo. Vuelve a intentarlo en unos minutos.';
+      if (pending(r)) return 'Tu compra está pendiente de aprobación. En cuanto se apruebe, Portiv Pro se activará solo.';
+      if (c === '3') return 'Las compras dentro de apps están desactivadas en este dispositivo. Actívalas en Ajustes › Tiempo en pantalla.';
+      if (c === '6') return 'Esta cuenta de Apple ya tiene Portiv Pro. Toca «Restaurar compras».';
+      if (c === '7' || c === '13') return 'Esta suscripción de Apple ya está vinculada a otra cuenta de Portiv. Inicia sesión con esa cuenta o escríbenos a rm@portivapp.com.';
+      if (c === '10' || c === '35' || c === '32') return 'No hay conexión con la App Store. Revisa tu internet y vuelve a intentarlo.';
+      return 'No se pudo completar la compra. Vuelve a intentarlo en un momento.';
+    }
+    function buy(){
+      if (st.busy || st.phase !== 'ready' || !st.iap) return;
+      msg(''); setBusy('buy');
+      Promise.resolve().then(function(){ return st.iap.purchase(st.sel); }).then(function(r){
+        if (st.closing) return;
+        // Compra cerrada en StoreKit (aunque el entitlement aún no figure): se sigue como con
+        // `purchased` de la hoja de antes; _pvAwaitEntitlement confirma contra el servidor.
+        if (r && (r.success || r.customerInfo)) { done(false); return; }
+        setBusy(null);
+        if (r && r.reason === 'cancelled') return;
+        msg(buyErr(r), !pending(r));   // pendiente (Compra solicitada) no es un error: va en neutro
+      }, function(e){
+        if (st.closing) return;
+        setBusy(null); msg(buyErr({ error: e }), !pending({ error: e }));
+      });
+    }
+    function restore(){
+      if (st.busy) return;
+      msg(''); setBusy('restore');
+      getIap().then(function(x){ return x ? x.restore() : null; }).then(function(ok){
+        if (st.closing) return;
+        if (ok === true) { done(true); return; }
+        setBusy(null);
+        if (ok === null) msg('No pudimos conectar con la App Store. Revisa tu conexión y vuelve a intentarlo.', true);
+        else msg('No encontramos una suscripción activa en esta cuenta de Apple.', false);
+      }, function(){
+        if (st.closing) return;
+        setBusy(null); msg('No se pudo restaurar. Revisa tu conexión y vuelve a intentarlo.', true);
+      });
+    }
+    function done(restored){
+      st.busy = true; w.classList.add('pvw-busy');
+      xBtn.disabled = true; restoreBtn.disabled = true; msg('');
+      cta.disabled = true; cta.classList.add('ok'); spin.hidden = true; ctaOk.hidden = false;
+      ctaT.textContent = restored ? 'Portiv Pro restaurado' : 'Listo, ya tienes Portiv Pro';
+      setTimeout(function(){
+        close('done');
+        // Pantalla "Conectando…" llena (nunca vacía) y, con la hoja de StoreKit ya cerrada,
+        // _pvConfirmTrial: confirma el entitlement y conecta el broker.
+        try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
+        setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 400);
+      }, 900);
+    }
+    function select(k){
+      if (st.busy || st.phase !== 'ready' || !st.info || !st.info[k] || st.sel === k) return;
+      st.sel = k; paintSel(); paintCta();
+      try { if (!reduced() && ctaT.animate) ctaT.animate([{ opacity:.3 }, { opacity:1 }], { duration:240, easing:EASE }); } catch(e){}
+    }
+
+    // ── Cierre ──
+    function close(reason){
+      if (st.closing) return;
+      st.closing = true; w._pvwClosing = true;
+      document.removeEventListener('keydown', onKey, true);
+      var ended = false;
+      function fin(){
+        if (ended) return; ended = true;
+        try { w.remove(); } catch(e){}
+        try { if (document.body.style.overflow === 'hidden') document.body.style.overflow = prevOverflow; } catch(e){}
+        // El foco vuelve a quien abrió el muro (teclado del Mac), salvo a un campo de texto: en
+        // el iPhone eso volvería a sacar el teclado del chat.
+        try {
+          if (prevFocus && prevFocus.focus && document.contains(prevFocus)
+              && !/^(INPUT|TEXTAREA|SELECT)$/.test(prevFocus.tagName) && !prevFocus.isContentEditable) prevFocus.focus({ preventScroll:true });
+        } catch(e){}
+        // Sin compra: la misma salida que tenía la cancelación de la hoja de RevenueCat.
+        if (reason === 'dismiss' && window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} }
+      }
+      if (reduced() || !dlg.animate) { fin(); return; }
+      var dm = dialogMode(), d = dm ? 220 : 400;
+      try {
+        var a = dlg.animate(dm ? [{ opacity:1, transform:'none' }, { opacity:0, transform:'translateY(10px) scale(.985)' }]
+                               : [{ transform:'none' }, { transform:'translateY(100%)' }],
+                            { duration:d, easing:EASE_IO, fill:'forwards' });
+        w.animate([{ backgroundColor:'rgba(8,18,34,.55)' }, { backgroundColor:'rgba(8,18,34,0)' }], { duration:d, easing:'ease-out', fill:'forwards' });
+        a.onfinish = fin;
+      } catch(e){ fin(); return; }
+      setTimeout(fin, d + 250);
+    }
+
+    // ── Teclado (Mac / teclado del iPad) ──
+    function onKey(e){
+      if (document.getElementById('pvDocOverlay')) return;   // Términos o Privacidad abiertos encima
+      var k = e.key;
+      if (k === 'Escape' || e.keyCode === 27) { e.stopPropagation(); if (!st.busy) close('dismiss'); return; }
+      if (k === 'Tab') {
+        var f = Array.prototype.filter.call(w.querySelectorAll('button:not([disabled])'), function(b){
+          return b.getClientRects().length && b.getAttribute('tabindex') !== '-1';
+        });
+        if (!f.length) return;
+        var first = f[0], last = f[f.length - 1], cur = document.activeElement;
+        if (e.shiftKey && (cur === first || !w.contains(cur))) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (cur === last || !w.contains(cur))) { e.preventDefault(); first.focus(); }
+        return;
+      }
+      // Grupo de planes: las flechas cambian de plan, como en cualquier grupo de radios.
+      var t = e.target;
+      if (/^Arrow(Left|Right|Up|Down)$/.test(k) && t && t.classList && t.classList.contains('pvw-plan') && st.info) {
+        e.preventDefault();
+        var keys = ['annual', 'monthly'].filter(function(x){ return st.info[x]; });
+        var i = keys.indexOf(st.sel), back = k === 'ArrowLeft' || k === 'ArrowUp';
+        var nk = keys[(i + (back ? keys.length - 1 : 1)) % keys.length];
+        select(nk);
+        var nb = t.parentNode && t.parentNode.querySelector('[data-plan="' + nk + '"]');
+        if (nb) nb.focus();
+      }
+    }
+    document.addEventListener('keydown', onKey, true);
+
+    w.addEventListener('click', function(e){
+      if (e.target === w) { if (!st.busy && dialogMode()) close('dismiss'); return; }   // velo del diálogo
+      var b = e.target.closest ? e.target.closest('button') : null;
+      if (!b || !w.contains(b) || b.disabled) return;
+      if (b === xBtn) { if (!st.busy) close('dismiss'); return; }
+      if (b.classList.contains('pvw-plan')) { select(b.getAttribute('data-plan')); return; }
+      if (b === cta) { if (st.phase === 'error') load(); else buy(); return; }
+      var a = b.getAttribute('data-pvw');
+      if (a === 'restore') restore();
+      else if (a === 'terms') { try { window._pvOpenExternal('terminos.html'); } catch(err){} }
+      else if (a === 'privacy') { try { window._pvOpenExternal('privacidad.html'); } catch(err){} }
+    });
+
+    // ── Entrada: en el celular sube como una hoja; en tableta y Mac, el diálogo aparece ──
+    load();
+    try { dlg.focus({ preventScroll:true }); } catch(e){}
+    if (!reduced() && dlg.animate) {
+      try {
+        var dm = dialogMode();
+        w.animate([{ backgroundColor:'rgba(8,18,34,0)' }, { backgroundColor:'rgba(8,18,34,.55)' }], { duration: dm ? 260 : 420, easing:'ease-out' });
+        dlg.animate(dm ? [{ opacity:0, transform:'translateY(16px) scale(.98)' }, { opacity:1, transform:'none' }]
+                       : [{ transform:'translateY(100%)' }, { transform:'none' }],
+                    { duration: dm ? 420 : 560, easing:EASE });
+        if (P && P.enter) {
+          P.enter(w.querySelectorAll('.pvw-hero > *, .pvw-feats'), { delay: dm ? 90 : 220, step: 55, max: 5 });
+          P.enter(w.querySelectorAll('.pvw-buy-h, .pvw-plans-buy, .pvw-cta'), { delay: dm ? 160 : 300, step: 50 });
+        }
+      } catch(e){}
+    }
+  };
+
   window._pvShowPaywall = function(){
     // Quien YA tiene acceso no ve paywall. Sin esto, terminar el quiz o tocar
     // "Conectar mi broker" le abría la hoja de compra a un suscriptor activo, al
@@ -42218,133 +42927,18 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
       }
     } catch(e){}
     var _nat = window._pvIsNativeApp();
-    // iOS nativo → paywall PREHECHO de RevenueCat (IAP StoreKit), NO el overlay web.
-    // Ese paywall lo diseña el dashboard de RevenueCat y resuelve SOLO la elegibilidad del
-    // intro offer ("14 días gratis") por producto y por usuario, con el dato que Apple le da
-    // al SDK. Por eso aquí no se pinta ningún badge de trial a mano.
-    // Presentación del paywall nativo. Se extrae a su propia función porque ahora hay dos
-    // caminos hasta aquí: el SDK ya estaba listo, o lo estuvo tras esperarlo/reinyectarlo.
-    function _present(iap){
-      try {
-        // Vincula la compra al usuario Supabase (si hay sesión) → atribución del webhook.
-        try{ if(window.__pvUserId && window.__pvUserId!=='local' && iap.login) iap.login(window.__pvUserId); }catch(e){}
-        iap.presentPaywall().then(function(res){
-          if (res && (res.purchased || res.restored || res.isPro)){
-            // Pago OK → pantalla "Conectando con SnapTrade" (llena) para que NUNCA quede la pantalla
-            // vacía. Espera a que la hoja del paywall termine de cerrarse ANTES de abrir el navegador
-            // in-app (iOS no presenta un VC mientras otro se descarta), luego conecta.
-            try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
-            setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 700);
-          }
-          // Cancelado / no presentado. Esta es la MITAD iOS del mismo callejón: la hoja
-          // de RevenueCat no pasa por _pvClosePaywall, así que aquí no llegaba ninguna
-          // salida y el usuario se quedaba con el cuestionario abierto debajo y la
-          // entrada manual tapada. Si el muro venía del cuestionario, se entra al plan
-          // gratuito igual que por la X del overlay web.
-          // La hoja prehecha de RevenueCat no pudo abrirse ("Something went wrong").
-          // Antes esto se tragaba en silencio y el botón parecía roto. Ahora se abre
-          // el paywall de RESPALDO: StoreKit directo vía Purchases, sin RevenueCatUI.
-          else if (res && (res.error || res.notPresented)) { _pvFallbackPaywall(iap, res); }
-          else if (window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} }
-        }).catch(function(e){ _pvFallbackPaywall(iap, { errorMessage: e && e.message }); });
-      } catch(e){}
-    }
-
-    // Paywall de RESPALDO nativo. Sólo se abre si RevenueCatUI falla. Usa el mismo
-    // SDK de Purchases (getOfferings + purchasePackage + restorePurchases) con los
-    // productos aprobados en App Store, así que la compra es la misma; lo único que
-    // cambia es quién pinta la pantalla. Guideline 3.1.1: sigue siendo IAP, nada de
-    // Paddle aquí. Construido en JS para no tocar el markup y no pesar hasta usarse.
-    function _pvFallbackPaywall(iap, res){
-      try { console.warn('[Portiv] paywall RC falló → respaldo', res && res.errorMessage); } catch(e){}
-      var old = document.getElementById('pvPaywallFallback'); if (old) old.remove();
-      var dark = false; try { dark = document.body.classList.contains('dark-theme'); } catch(e){}
-      var cBg = dark ? 'rgba(4,10,20,.78)' : 'rgba(4,22,44,.55)';
-      var cCard = dark ? '#13233a' : '#FFFFFF', cTxt = dark ? '#E8EDF5' : '#04162c';
-      var cTxt2 = dark ? '#9AA8BD' : '#5B6B80', cLine = dark ? '#243650' : '#E3E8F2';
-      var wrap = document.createElement('div');
-      wrap.id = 'pvPaywallFallback';
-      wrap.setAttribute('role','dialog'); wrap.setAttribute('aria-modal','true');
-      wrap.style.cssText = 'position:fixed;inset:0;z-index:13000;background:'+cBg+';display:flex;align-items:flex-end;justify-content:center;padding:0;';
-      var pad = 'padding:22px 20px calc(22px + env(safe-area-inset-bottom));';
-      wrap.innerHTML =
-        '<div style="width:100%;max-width:520px;background:'+cCard+';border-radius:22px 22px 0 0;'+pad+'font-family:inherit;color:'+cTxt+'">'
-        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
-        +   '<div style="font:800 20px/1.25 inherit">Portiv Pro</div>'
-        +   '<button type="button" id="pvFbClose" aria-label="Cerrar" style="border:0;background:transparent;font:600 26px/1 inherit;color:'+cTxt2+';cursor:pointer;padding:4px 8px">&times;</button>'
-        + '</div>'
-        + '<div style="font:400 14px/1.5 inherit;color:'+cTxt2+';margin-bottom:16px">Conecta tu broker, análisis con IA y proyecciones. Cancela cuando quieras desde Ajustes de Apple.</div>'
-        + '<div id="pvFbBody" style="font:500 14px/1.5 inherit;color:'+cTxt2+';text-align:center;padding:14px 0">Cargando planes…</div>'
-        + '<button type="button" id="pvFbRestore" style="width:100%;height:44px;border:0;background:transparent;color:'+cTxt2+';font:600 14px inherit;cursor:pointer;margin-top:6px">Restaurar compras</button>'
-        + '</div>';
-      document.body.appendChild(wrap);
-      var body = wrap.querySelector('#pvFbBody');
-      function _close(){ try { wrap.remove(); } catch(e){} if (window._pvPaywallFromQuiz) { try { window._pvEnterFreeApp(); } catch(e){} } }
-      function _ok(){
-        try { wrap.remove(); } catch(e){}
-        try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
-        setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 400);
-      }
-      wrap.querySelector('#pvFbClose').addEventListener('click', _close);
-      wrap.querySelector('#pvFbRestore').addEventListener('click', function(){
-        body.textContent = 'Restaurando…';
-        Promise.resolve().then(function(){ return iap.restore(); }).then(function(ok){
-          if (ok) { _ok(); return; }
-          try { showToast('No se encontraron compras activas.', 'var(--text3)'); } catch(e){}
-          _render();
-        });
-      });
-      function _btn(id, label, sub){
-        return '<button type="button" data-fb-buy="'+id+'" style="width:100%;min-height:54px;border:1px solid '+cLine+';border-radius:14px;background:'+(id==='annual'?'#04162c':'transparent')+';color:'+(id==='annual'?'#fff':cTxt)+';font:700 15px inherit;cursor:pointer;margin-bottom:10px;padding:10px 16px;text-align:left;display:flex;justify-content:space-between;align-items:center"><span>'+label+'</span><span style="font-weight:600;opacity:.85">'+sub+'</span></button>';
-      }
-      function _render(){
-        var info = null; try { info = iap.getPackagesInfo(); } catch(e){}
-        var m = info && info.monthly, a = info && info.annual;
-        if (!m && !a) {
-          body.innerHTML = '<div style="margin-bottom:12px">No pudimos cargar los planes desde la App Store. Revisa tu conexión y que las compras dentro de la app estén permitidas en Ajustes.</div>'
-            + '<button type="button" id="pvFbRetry" style="height:44px;padding:0 18px;border:1px solid '+cLine+';border-radius:12px;background:transparent;color:'+cTxt+';font:600 14px inherit;cursor:pointer">Reintentar</button>';
-          wrap.querySelector('#pvFbRetry').addEventListener('click', _load);
-          return;
-        }
-        body.style.textAlign = 'left'; body.style.padding = '0';
-        body.innerHTML = (a ? _btn('annual', 'Anual', a.priceString + ' / año') : '') + (m ? _btn('monthly', 'Mensual', m.priceString + ' / mes') : '');
-        Array.prototype.forEach.call(body.querySelectorAll('[data-fb-buy]'), function(b){
-          b.addEventListener('click', function(){
-            var k = b.getAttribute('data-fb-buy');
-            Array.prototype.forEach.call(body.querySelectorAll('button'), function(x){ x.disabled = true; x.style.opacity = '.6'; });
-            Promise.resolve().then(function(){ return iap.purchase(k); }).then(function(r){
-              if (r && r.success) { _ok(); return; }
-              if (r && r.reason === 'cancelled') { _render(); return; }
-              var msg = 'No se pudo completar la compra.' + (r && r.error && r.error.message ? ' ' + r.error.message : '');
-              try { showToast(msg, 'var(--red)'); } catch(e){}
-              _render();
-            });
-          });
-        });
-      }
-      function _load(){
-        body.style.textAlign = 'center'; body.style.padding = '14px 0'; body.textContent = 'Cargando planes…';
-        Promise.resolve().then(function(){ return iap.loadOfferings(); }).then(_render, _render);
-      }
-      _load();
-    }
-
+    // iPhone, iPad y Mac → muro PROPIO con el diseño de la app (window._pvProWall, arriba). La
+    // compra es StoreKit vía RevenueCat: PortivIAP trae los planes con sus precios localizados y
+    // la elegibilidad de la prueba gratis, compra y restaura. Ya no se usa la hoja prehecha del
+    // dashboard de RevenueCat (RevenueCatUI.presentPaywall) ni el respaldo que la cubría.
     if (_nat) {
       var iap = null;
       try { iap = window.PortivIAP; } catch(e){}
-      if (iap && typeof iap.presentPaywall === 'function'){ _present(iap); return; }
-
-      // El SDK aún no está. NO se cae al overlay web (sería ofrecer Paddle dentro de la
-      // app, Guideline 3.1.1) ni se abandona al usuario: se espera y se reintenta.
-      try { if (typeof showToast === 'function') showToast('Preparando la suscripción…', 'var(--text3)'); } catch(e){}
-      window._pvAwaitIAP(8000).then(function(ready){
-        if (ready){ _present(ready); return; }
-        // Agotados los reintentos. El mensaje dice qué hacer y el botón sigue vivo:
-        // volver a tocarlo repite el ciclo completo, así que nunca es un callejón sin salida.
-        var _m = 'No pudimos abrir la suscripción. Revisa tu conexión y vuelve a tocar el botón.';
-        try { if (typeof showToast === 'function') { showToast(_m, 'var(--red)'); return; } } catch(e){}
-        try { alert(_m); } catch(e){}
-      });
+      // Si el SDK aún no cargó, el muro se abre igual —con los planes cargando— y lo espera él
+      // (_pvAwaitIAP, con reinyección del script). NO se cae al overlay web: sería ofrecer
+      // Paddle dentro de la app (Guideline 3.1.1). Sin SDK al final, el muro dice qué pasa y su
+      // botón pasa a «Reintentar»: nunca es un callejón sin salida.
+      window._pvProWall(iap && typeof iap.purchase === 'function' ? iap : null);
       return;   // en nativo NO se abre el overlay web
     }
     // Web → overlay custom como antes.

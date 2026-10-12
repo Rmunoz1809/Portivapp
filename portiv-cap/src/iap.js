@@ -4,7 +4,7 @@
 // (paywall propio en JS vanilla) puede llamar directamente.
 
 import { Capacitor } from '@capacitor/core';
-import { Purchases, LOG_LEVEL, PURCHASES_ERROR_CODE } from '@revenuecat/purchases-capacitor';
+import { Purchases, LOG_LEVEL, PURCHASES_ERROR_CODE, INTRO_ELIGIBILITY_STATUS } from '@revenuecat/purchases-capacitor';
 import { RevenueCatUI, PAYWALL_RESULT } from '@revenuecat/purchases-capacitor-ui';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
 
@@ -173,17 +173,72 @@ async function loadOfferings() {
   return state.packages;
 }
 
-// Info simple para pintar la pantalla Pro sin tocar el SDK.
+// Info simple para pintar la pantalla Pro sin tocar el SDK. Todo sale de la App Store ya
+// localizado (moneda y formato del país de la cuenta de Apple): el muro no escribe precios.
+// `intro` es la oferta introductoria del producto (la prueba gratis) tal como está en App
+// Store Connect; que el usuario TENGA derecho a ella lo dice checkIntroEligibility().
 function getPackagesInfo() {
   const fmt = (p) => (p && p.product) ? {
     id: p.identifier,
     type: p.packageType,
+    productId: p.product.identifier,
     priceString: p.product.priceString,
     price: p.product.price,
     currency: p.product.currencyCode,
     title: p.product.title,
+    period: p.product.subscriptionPeriod || null,
+    pricePerMonthString: p.product.pricePerMonthString || null,
+    intro: p.product.introPrice ? {
+      price: p.product.introPrice.price,
+      priceString: p.product.introPrice.priceString,
+      cycles: p.product.introPrice.cycles,
+      periodUnit: p.product.introPrice.periodUnit,
+      periodNumberOfUnits: p.product.introPrice.periodNumberOfUnits,
+    } : null,
   } : null;
   return { monthly: fmt(state.packages.monthly), annual: fmt(state.packages.annual) };
+}
+
+// ¿Puede ESTE usuario usar la prueba gratis de cada plan? Apple sólo la concede una vez por
+// grupo de suscripción, así que quien ya la usó no puede ver "14 días gratis" en el muro.
+// Devuelve { monthly, annual } con 'eligible' | 'ineligible' | 'none' (el producto no tiene
+// oferta) | 'unknown'. Con 'unknown' el muro enseña el precio normal: es lo que pide
+// RevenueCat para no prometer una prueba que luego StoreKit no aplique.
+async function checkIntroEligibility() {
+  const out = { monthly: 'unknown', annual: 'unknown' };
+  if (!isNative()) return out;
+  if (!state.packages.monthly && !state.packages.annual) await loadOfferings();
+  const ids = {};
+  for (const k of ['monthly', 'annual']) {
+    const p = state.packages[k];
+    if (p && p.product && p.product.identifier) ids[k] = p.product.identifier;
+  }
+  const list = Object.values(ids);
+  if (!list.length) return out;
+  try {
+    const res = await Purchases.checkTrialOrIntroductoryPriceEligibility({ productIdentifiers: list });
+    const S = INTRO_ELIGIBILITY_STATUS;
+    for (const k of Object.keys(ids)) {
+      const st = res && res[ids[k]] ? res[ids[k]].status : null;
+      out[k] = st === S.INTRO_ELIGIBILITY_STATUS_ELIGIBLE ? 'eligible'
+             : st === S.INTRO_ELIGIBILITY_STATUS_INELIGIBLE ? 'ineligible'
+             : st === S.INTRO_ELIGIBILITY_STATUS_NO_INTRO_OFFER_EXISTS ? 'none'
+             : 'unknown';
+    }
+  } catch (e) { console.warn('[PortivIAP] elegibilidad de la prueba falló', e); }
+  return out;
+}
+
+// El muro de Portiv Pro es propio (index.html, _pvProWall), así que RevenueCat no sabe cuándo
+// se enseña: sin esto sus métricas de paywall (impresiones → conversión) se quedaban en cero
+// al dejar la hoja del dashboard. Una llamada por cada vez que se abre. Nunca lanza: una
+// métrica no puede romper el muro.
+async function trackPaywallImpression() {
+  if (!isNative()) return;
+  try {
+    if (!state.configured) await configure();
+    await Purchases.trackCustomPaywallImpression({ paywallId: 'portiv-pro-wall', offering: state.offering || null });
+  } catch (e) { console.warn('[PortivIAP] impresión del muro no registrada', e); }
 }
 
 async function purchase(which) {
@@ -218,7 +273,9 @@ async function restore() {
 }
 
 // Presenta el PAYWALL PREHECHO de RevenueCat (diseñado en el dashboard, offering "default").
-// Reemplaza la pantalla de suscripción custom. Devuelve un resultado normalizado:
+// Desde el 12 oct index.html ya NO lo usa: el muro es propio (_pvProWall, con el diseño de la
+// app) y compra con purchase()/restore() de aquí abajo. Se conserva por si se quiere volver
+// a la hoja del dashboard. Devuelve un resultado normalizado:
 //   { result, purchased, restored, cancelled, error, notPresented, isPro }
 //   · purchased/restored → activar Pro y continuar.
 //   · cancelled → el usuario cerró la hoja.
@@ -365,7 +422,7 @@ window.PortivAppleAuth = { signIn: appleSignIn, isNative };
 
 window.PortivIAP = {
   configure, login, logout, refresh,
-  loadOfferings, getPackagesInfo,
+  loadOfferings, getPackagesInfo, checkIntroEligibility, trackPaywallImpression,
   purchase,
   purchaseMonthly: () => purchase('monthly'),
   purchaseAnnual:  () => purchase('annual'),
