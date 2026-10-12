@@ -20504,6 +20504,23 @@ function pvReportError(ctx, err, opts){
 }
 function reportQuiet(ctx, err){ return pvReportError(ctx, err, { toast: false }); }
 
+// ── Meta App Events (sólo app nativa) ────────────────────────────────────────────
+// Registro y primer broker, para que Meta Ads optimice las campañas de App Promotion.
+// El plugin nativo (ios/App/App/MetaEventsPlugin.swift) sólo acepta una lista blanca de
+// eventos y parámetros: nada de email, nombre, montos ni tickers. Las compras NO van por
+// aquí: las manda RevenueCat a Meta desde su servidor (ver portiv-cap/src/iap.js).
+// `once` = clave de localStorage para no repetir el evento en este dispositivo.
+function _pvMetaEvent(name, params, once){
+  try {
+    var C = window.Capacitor;
+    if (!C || !C.isNativePlatform || !C.isNativePlatform() || typeof C.registerPlugin !== 'function') return;
+    if (once) { try { if (localStorage.getItem(once) === '1') return; localStorage.setItem(once, '1'); } catch(_){} }
+    window.__pvMetaP = window.__pvMetaP || C.registerPlugin('MetaEvents');
+    Promise.resolve(window.__pvMetaP.logEvent({ name: name, params: params || {} }))
+      .catch(function(e){ try { _pvLogError('metaEvent', e); } catch(_){} });
+  } catch(e){}
+}
+
 // ── Reporte de errores al backend (best-effort, nunca lanza) ──────────────────────
 // Reusa reportQuiet para el log local (consola + buffer debug, sin toast) y además intenta
 // un INSERT best-effort a la tabla `client_errors` de Supabase, con throttle (máx 10/min) y
@@ -40708,6 +40725,20 @@ if (document.readyState === 'loading') {
         }
       }
     } catch(e){}
+    // Meta: cuenta nueva → fb_mobile_complete_registration. Este gate es el único punto por
+    // el que pasa cualquier signup (Apple, Google o correo); "nueva" = creada hace <10 min,
+    // así un login normal o un arranque con sesión persistida nunca cuenta como registro.
+    // Sólo viaja el método (apple/google/email); el uid no sale del dispositivo.
+    try {
+      var _u = s.user || {};
+      var _age = Date.now() - Date.parse(_u.created_at || '');
+      if (_age >= 0 && _age < 10 * 60 * 1000) {
+        var _prov = String((_u.app_metadata && _u.app_metadata.provider) || 'email');
+        _pvMetaEvent('fb_mobile_complete_registration',
+                     { fb_registration_method: _prov },
+                     'pv_meta_reg_' + (_u.id || ''));
+      }
+    } catch(e){}
     // Notificaciones push: el registro va AQUÍ, en el mismo punto por el que pasan las
     // tres transiciones "sin sesión → con sesión" (arranque con sesión persistida, login
     // y signup). No pide permiso: sólo re-registra si el usuario YA lo concedió, porque
@@ -49433,6 +49464,9 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
         // de Ajustes (o de donde estuvieras) cada pocos segundos durante hasta ~16 minutos.
         if(returned && j && j.connected && !_jumpedToPortfolio){
           _jumpedToPortfolio = true;
+          // Meta: primer broker conectado (sin parámetros: ni broker, ni montos). Una vez por
+          // dispositivo; si ya tenía un broker y añade otro, la marca ya está puesta.
+          try{ _pvMetaEvent('ConnectBroker', {}, 'pv_meta_broker'); }catch(e){}
           try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){}
         }
         if(returned && j && j.connected && j.syncing && !_syncToasted){

@@ -3,7 +3,7 @@
 // Expone window.PortivIAP: API pequeña y agnóstica de UI que la "pantalla Pro"
 // (paywall propio en JS vanilla) puede llamar directamente.
 
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import { Purchases, LOG_LEVEL, PURCHASES_ERROR_CODE } from '@revenuecat/purchases-capacitor';
 import { RevenueCatUI, PAYWALL_RESULT } from '@revenuecat/purchases-capacitor-ui';
 import { SignInWithApple } from '@capacitor-community/apple-sign-in';
@@ -101,11 +101,24 @@ async function configure() {
   try { await Purchases.setLogLevel({ level: RC_IS_TEST_KEY ? LOG_LEVEL.DEBUG : LOG_LEVEL.WARN }); } catch (e) {}
   await Purchases.configure({ apiKey: REVENUECAT_IOS_API_KEY });
   state.configured = true;
+  _linkMetaAnonId();
   // Actualizaciones en vivo (renovaciones, cambios desde App Store, restore, etc.)
   try {
     await Purchases.addCustomerInfoUpdateListener((info) => { _setPro(_entActive(info)); });
   } catch (e) {}
   await refresh();
+}
+
+// Meta Ads: StartTrial / Subscribe los manda RevenueCat a Meta desde su servidor (también
+// renovaciones y conversiones de prueba, que pasan con la app cerrada). Para que Meta pueda
+// atribuirlos, RevenueCat necesita el ID anónimo del SDK de Meta ($fbAnonId; no es el IDFA).
+// Por eso la app NO manda eventos de compra: se duplicarían. Plugin nativo propio del target
+// App (ios/App/App/MetaEventsPlugin.swift). Sin await: nunca puede frenar el arranque.
+const MetaEvents = registerPlugin('MetaEvents');
+function _linkMetaAnonId() {
+  MetaEvents.getAnonymousId()
+    .then(({ anonymousId }) => anonymousId && Purchases.setFBAnonymousID({ fbAnonymousID: anonymousId }))
+    .catch((e) => console.warn('[PortivIAP] fbAnonId no disponible', e));
 }
 
 // Identidad ya vinculada (o vinculándose) con RevenueCat. index.html llama a login()
