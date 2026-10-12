@@ -45,7 +45,7 @@ import * as esbuild from 'esbuild';
 import { minify as minifyHtml } from 'html-minifier-terser';
 
 const gzip = promisify(zlib.gzip);
-const ROOT = path.dirname(new URL(import.meta.url).pathname);
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const SRC  = path.join(ROOT, 'index.html');
 const OUT  = path.join(ROOT, 'dist', 'index.html');
 
