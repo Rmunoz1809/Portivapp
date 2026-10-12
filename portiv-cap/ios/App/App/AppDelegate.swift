@@ -2,6 +2,7 @@ import UIKit
 import WebKit
 import Capacitor
 import GoogleSignIn
+import FacebookCore
 
 /// Controlador de la app. Sólo añade una cosa sobre el de Capacitor: apagar el zoom.
 ///
@@ -22,6 +23,12 @@ class PortivViewController: CAPBridgeViewController {
         // recognizer, WebKit no tiene por dónde iniciar una ampliación.
         scrollView.pinchGestureRecognizer?.isEnabled = false
     }
+
+    // Plugins nativos propios del target App (no vienen de npm, así que `cap sync` no
+    // los mete en packageClassList): se registran a mano aquí.
+    override func capacitorDidLoad() {
+        bridge?.registerPluginInstance(MetaEventsPlugin())
+    }
 }
 
 @UIApplicationMain
@@ -30,7 +37,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // Meta App Events: lee FacebookAppID/ClientToken del Info.plist y, con
+        // FacebookAutoLogAppEventsEnabled, registra solo la instalación y cada apertura
+        // (fb_mobile_activate_app). Sin IDFA ni ATT: FacebookAdvertiserIDCollectionEnabled = NO.
+        ApplicationDelegate.shared.application(application, didFinishLaunchingWithOptions: launchOptions)
         return true
     }
 
@@ -80,6 +90,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // (com.googleusercontent.apps.…). Si no le damos la URL al SDK, el callback
         // se pierde y el login nativo nunca resuelve.
         if GIDSignIn.sharedInstance.handle(url) {
+            return true
+        }
+        // Meta sólo recibe sus propias URLs (fb2842022312837813://). Filtrar por scheme
+        // evita que se quede con un portiv:// o con el retorno de SnapTrade.
+        if url.scheme?.hasPrefix("fb") == true,
+           ApplicationDelegate.shared.application(app, open: url, options: options) {
             return true
         }
 
@@ -135,7 +151,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     @discardableResult
     private func handle(url: URL, options: UIScene.OpenURLOptions) -> Bool {
-        // Mismo orden que en el AppDelegate: Google Sign-In primero, Capacitor después.
+        // Mismo orden que en el AppDelegate: Google Sign-In, Meta (sólo fb…), Capacitor.
         if GIDSignIn.sharedInstance.handle(url) {
             return true
         }
@@ -145,6 +161,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         }
         if let annotation = options.annotation {
             appOptions[.annotation] = annotation
+        }
+        if url.scheme?.hasPrefix("fb") == true,
+           ApplicationDelegate.shared.application(UIApplication.shared, open: url, options: appOptions) {
+            return true
         }
         return ApplicationDelegateProxy.shared.application(UIApplication.shared,
                                                            open: url,
