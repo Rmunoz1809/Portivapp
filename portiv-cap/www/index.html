@@ -5818,6 +5818,34 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
       /* Análisis técnico — el canvas es lo único que necesita reglas propias: alto fijo,
          ancho fluido y bloqueo del gesto de scroll horizontal en el WebView de iOS. */
       .pvx .px-tec-canvas{display:block;width:100%;height:300px;touch-action:pan-y}
+      .pvx .pvt-capas{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+      .pvx .pvt-capa{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;
+        border:1px solid var(--px-line);background:transparent;color:var(--px-muted);font:600 12px/1 'Manrope',system-ui,sans-serif;cursor:pointer}
+      .pvx .pvt-capa.active{color:var(--px-ink);border-color:var(--px-ink-soft)}
+      .pvx .pvt-capa i{width:10px;height:10px;border-radius:3px;opacity:.35;background:var(--px-muted)}
+      .pvx .pvt-capa.active i{opacity:1}
+      .pvx .pvt-capa .sw-sr{background:linear-gradient(180deg,var(--px-red) 0 50%,var(--px-green-text) 50% 100%)}
+      .pvx .pvt-capa .sw-fvg{background:transparent;border:1.5px dotted var(--px-blue)}
+      .pvx .pvt-capa .sw-tend{height:2px;border-radius:0;background:var(--px-navy)}
+      .pvx .pvt-capa .sw-valor{background:var(--px-muted)}
+      .pvx .pvt-niv{display:flex;gap:12px;align-items:flex-start;padding:11px 0;border-top:1px solid var(--px-line)}
+      .pvx .pvt-niv:first-of-type{border-top:0}
+      .pvx .pvt-niv-id{flex:0 0 38px;text-align:center;padding:3px 0;border-radius:6px;font-size:11.5px;font-weight:800;letter-spacing:.2px}
+      .pvx .pvt-niv-id.s{background:var(--px-green-soft);color:var(--px-green-text)}
+      .pvx .pvt-niv-id.r{background:var(--px-red-soft);color:var(--px-red)}
+      .pvx .pvt-niv-id.fs,.pvx .pvt-niv-id.fr,.pvx .pvt-niv-id.t{background:var(--px-track);color:var(--px-ink-soft);font-size:10.5px}
+      .pvx .pvt-niv-id.fs{box-shadow:inset 0 0 0 1px var(--px-green-text)} .pvx .pvt-niv-id.fr{box-shadow:inset 0 0 0 1px var(--px-red)}
+      .pvx .pvt-niv-b{flex:1 1 auto;min-width:0}
+      .pvx .pvt-niv-h{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 10px}
+      .pvx .pvt-niv-h b{font-size:14.5px;font-weight:800;color:var(--px-ink);font-variant-numeric:tabular-nums}
+      .pvx .pvt-niv-h span{font-size:13px;font-weight:700;color:var(--px-ink-soft);font-variant-numeric:tabular-nums}
+      .pvx .pvt-niv-d{margin-top:3px;font-size:13px;line-height:1.5;color:var(--px-muted)}
+      .pvx .pvt-niv-px{margin:2px 0;padding:8px 10px;border-radius:8px;background:var(--px-track);font-size:12.5px;color:var(--px-ink-soft)}
+      .pvx .pvt-niv-px b{color:var(--px-ink)}
+      .pvx .pvt-niv-px + .pvt-niv{border-top:0}
+      .pvx .pvt-niv-sep{height:1px;margin:6px 0 0;background:var(--px-line)}
+      .pvx .pvt-niv-sep + .pvt-niv{border-top:0}
+      .pvx .pvt-niv-nota{margin:8px 0;font-size:13px;color:var(--px-muted)}
       .pvx .pvt-ohlc{font-size:11.5px;color:var(--px-muted);margin:0 0 10px;
         font-variant-numeric:tabular-nums;line-height:1.5}
       .pvx .pvt-ohlc b{color:var(--px-ink-soft);font-weight:700}
@@ -20633,6 +20661,7 @@ const _PVX_EB = {
   'Tu precio objetivo': 'Tu número, no el de Portiv',
   'Comportamiento del precio': 'Velas diarias · medias de 50 y 200 sesiones',
   'Rango de compra': 'Dónde ha encontrado compradores antes',
+  'Niveles clave': 'Soportes, resistencias y huecos del gráfico',
   'Indicadores': 'Precio y volumen de los últimos meses',
   'Frente a sus pares': 'Comparación',
   'Qué significa': 'En pocas palabras',
@@ -29873,6 +29902,7 @@ function _renderQualAnalysis(a, el){
   //     que la explican. Las tres partes salen de la misma descarga de barras.
   EN += `<div class="px-card">${stitle('Comportamiento del precio')}
       <div id="pvx-cv-host" data-tk="${esc(a.ticker)}"></div></div>
+    <div id="pvx-niv-host" data-tk="${esc(a.ticker)}"></div>
     <div id="pvx-ent-host" data-tk="${esc(a.ticker)}"></div>
     <div class="px-card">${stitle('Indicadores')}
     <div id="pvx-tec-host"></div></div>`;
@@ -30667,6 +30697,7 @@ function _pvtIndicadores(bars){
     macd:    _pvtMACD(closes),
     atr:     _pvtATR(bars, 14),
     volRel:  volRel,
+    sesionT: bars[bars.length - 1].t,   // sesión a la que se refieren (la última cerrada)
     series:  { sma50, sma200 },
   };
 }
@@ -30716,6 +30747,370 @@ function _pvtPrepararVista(bars, ind, periodo){
     sma200: velas.map(v => ind.series.sma200[v.i]),
   };
 }
+
+// ── TechLevels ────────────────────────────────────────────────────────────────────
+// Niveles técnicos deterministas, como los marcaría un analista: zonas de soporte y
+// resistencia, huecos de valor (FVG), líneas de tendencia y el estado de la tendencia.
+// Funciones PURAS: entran velas diarias CERRADAS ({t,o,h,l,c,v}) y salen números y textos.
+// Nada de DOM aquí; el pintado vive en _pvtDibujar y _pvtNivelesCard. Sin IA.
+const TechLevels = (() => {
+  const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto',
+                 'septiembre','octubre','noviembre','diciembre'];
+  // Fecha y minuto de Nueva York: la sesión se rige por esa hora, no por la del usuario.
+  const _fmtNY = (() => {
+    try { return new Intl.DateTimeFormat('en-US', { timeZone:'America/New_York', year:'numeric',
+            month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', hour12:false, weekday:'short' }); }
+    catch(e){ return null; }
+  })();
+  function ny(t){
+    const o = {};
+    if (_fmtNY) for (const p of _fmtNY.formatToParts(new Date(t))) o[p.type] = p.value;
+    else { const d = new Date(t - 4 * 3600000);   // sin Intl: aproximación EDT
+           o.year = d.getUTCFullYear(); o.month = String(d.getUTCMonth()+1).padStart(2,'0');
+           o.day = String(d.getUTCDate()).padStart(2,'0'); o.hour = d.getUTCHours(); o.minute = d.getUTCMinutes();
+           o.weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d.getUTCDay()]; }
+    return { fecha: `${o.year}-${o.month}-${o.day}`, anio: +o.year, mes: +o.month - 1, dia: +o.day,
+             min: ((+o.hour) % 24) * 60 + (+o.minute), finde: o.weekday === 'Sat' || o.weekday === 'Sun' };
+  }
+  // Lunes a viernes de 9:30 a 16:00 en Nueva York. Los festivos no se modelan: un festivo
+  // no trae vela de hoy, así que no hay sesión incompleta que esconder.
+  function mercadoAbierto(now = Date.now()){
+    const n = ny(now);
+    return !n.finde && n.min >= 570 && n.min < 960;
+  }
+  // Solo velas CERRADAS: fuera la de hoy si la sesión no ha terminado, y fuera las velas
+  // sintéticas «en curso» que abre _pvtConPrecioVivo.
+  function velasCerradas(bars, now = Date.now()){
+    if (!Array.isArray(bars)) return [];
+    const hoy = ny(now), cerro = hoy.min >= 960 || hoy.finde;
+    return bars.filter(b => !b.vivo && !(ny(b.t).fecha === hoy.fecha && !cerro));
+  }
+  // «12 oct», en hora de Nueva York.
+  function fechaCorta(t){ const n = ny(t); return `${n.dia} ${MESES[n.mes].slice(0, 3)}`; }
+  // Meses distintos, en orden, con el año solo donde cambia y si no es el actual:
+  // «octubre, noviembre y diciembre de 2025», «noviembre de 2025 y mayo».
+  function meses(ts, refAnio){
+    const u = [];
+    for (const t of ts){ const n = ny(t), k = n.anio * 12 + n.mes; if (!u.some(x => x.k === k)) u.push({ k, mes: n.mes, anio: n.anio }); }
+    return u.map((x, i) => MESES[x.mes]
+      + ((x.anio !== refAnio && (i === u.length - 1 || u[i + 1].anio !== x.anio)) ? ` de ${x.anio}` : ''));
+  }
+
+  // ATR de Wilder (14) en DÓLARES — para tolerancias de niveles hace falta en precio, no en %.
+  function atr(bars, n = 14){
+    if (!bars || bars.length < n + 1) return null;
+    let a = 0;
+    for (let i = 1; i <= n; i++){ const b = bars[i], pc = bars[i-1].c; a += Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc)); }
+    a /= n;
+    for (let i = n + 1; i < bars.length; i++){
+      const b = bars[i], pc = bars[i-1].c;
+      a = (a * (n - 1) + Math.max(b.h - b.l, Math.abs(b.h - pc), Math.abs(b.l - pc))) / n;
+    }
+    return a;
+  }
+
+  // Fractal: un máximo (mínimo) más alto (bajo) que las k velas a cada lado. Empates a la
+  // izquierda no cuentan, así un techo doble exacto da un pivote y no dos.
+  function pivotes(bars, k = 5){
+    const altos = [], bajos = [];
+    for (let i = k; i < bars.length - k; i++){
+      let esA = true, esB = true;
+      for (let j = i - k; j <= i + k && (esA || esB); j++){
+        if (j === i) continue;
+        if (j < i ? bars[j].h >= bars[i].h : bars[j].h > bars[i].h) esA = false;
+        if (j < i ? bars[j].l <= bars[i].l : bars[j].l < bars[i].l) esB = false;
+      }
+      if (esA) altos.push({ i, v: bars[i].h });
+      if (esB) bajos.push({ i, v: bars[i].l });
+    }
+    return { altos, bajos };
+  }
+
+  // Semanales resampleadas desde las diarias. Cada vela guarda en qué sesión diaria cayó su
+  // máximo y su mínimo, para que un pivote semanal se pueda fechar y dibujar en el diario.
+  function semanales(bars){
+    const out = []; let cur = null, k = null;
+    bars.forEach((b, i) => {
+      const n = ny(b.t), d = new Date(Date.UTC(n.anio, n.mes, n.dia));
+      d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+      const kb = d.getTime();
+      if (kb !== k){ if (cur) out.push(cur); k = kb;
+        cur = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v, iH:i, iL:i }; }
+      else {
+        if (b.h > cur.h){ cur.h = b.h; cur.iH = i; }
+        if (b.l < cur.l){ cur.l = b.l; cur.iL = i; }
+        cur.c = b.c; cur.v += b.v;
+      }
+    });
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  // ── Soportes y resistencias como ZONAS ──
+  // Pivotes diarios (k=5) y semanales (k=3) de los dos últimos años, agrupados con una
+  // tolerancia de medio ATR. Puntaje por zona: toques, recencia, volumen en el toque,
+  // cambio de rol y peso extra a lo que también se ve en semanal.
+  function zonasSR(bars, a, precio, max = 3){
+    const n = bars.length;
+    if (!a || n < 30) return { soportes: [], resistencias: [] };
+    const desde = Math.max(0, n - 504);
+    const toques = new Map();   // índice diario + tipo → toque (un pivote D y W del mismo día cuentan una vez)
+    const meter = (i, v, tipo, sem) => {
+      if (i < desde) return;
+      const key = i + tipo, prev = toques.get(key);
+      if (prev){ prev.sem = prev.sem || sem; return; }
+      toques.set(key, { i, v, tipo, sem });
+    };
+    const pd = pivotes(bars, 5);
+    pd.altos.forEach(p => meter(p.i, p.v, 'alto', false));
+    pd.bajos.forEach(p => meter(p.i, p.v, 'bajo', false));
+    const sem = semanales(bars), pw = pivotes(sem, 3);
+    pw.altos.forEach(p => meter(sem[p.i].iH, sem[p.i].h, 'alto', true));
+    pw.bajos.forEach(p => meter(sem[p.i].iL, sem[p.i].l, 'bajo', true));
+
+    // Volumen medio de 50 sesiones antes de cada toque: un giro con volumen pesa más.
+    const volRel = i => {
+      const s = bars.slice(Math.max(0, i - 50), i);
+      const m = s.length ? s.reduce((x, b) => x + b.v, 0) / s.length : 0;
+      return m > 0 ? Math.max(0.5, Math.min(2.5, bars[i].v / m)) : 1;
+    };
+
+    const T = [...toques.values()].sort((x, y) => x.v - y.v);
+    const G = [];
+    for (const t of T){
+      const g = G[G.length - 1];
+      if (g && Math.abs(t.v - g.centro) <= a * 0.5){
+        g.t.push(t); g.centro = g.t.reduce((s, x) => s + x.v, 0) / g.t.length;
+      } else G.push({ t: [t], centro: t.v });
+    }
+
+    const zonas = G.map(g => {
+      const ts = g.t.slice().sort((x, y) => x.i - y.i);
+      let lo = Math.min(...ts.map(x => x.v)), hi = Math.max(...ts.map(x => x.v));
+      if (hi - lo < a * 0.25){ const c = (lo + hi) / 2; lo = c - a * 0.125; hi = c + a * 0.125; }
+      let score = 0;
+      for (const t of ts){
+        const edad = n - 1 - t.i;
+        score += (0.5 + Math.exp(-edad / 180)) * (0.75 + 0.25 * volRel(t.i)) * (t.sem ? 1.5 : 1);
+      }
+      // Cambio de rol: hizo de techo y DESPUÉS de suelo (o al revés).
+      const primA = ts.findIndex(x => x.tipo === 'alto'), primB = ts.findIndex(x => x.tipo === 'bajo');
+      const ultA = ts.map(x => x.tipo).lastIndexOf('alto'), ultB = ts.map(x => x.tipo).lastIndexOf('bajo');
+      const rolASop = primA >= 0 && ultB > primA;    // fue resistencia y luego soporte
+      const rolARes = primB >= 0 && ultA > primB;    // fue soporte y luego resistencia
+      return { lo, hi, centro: (lo + hi) / 2, score, toques: ts, semanal: ts.some(x => x.sem),
+               rolASop, rolARes, ultimo: ts[ts.length - 1].i };
+    });
+
+    // Lado: lo que está entero por debajo del precio es soporte; lo de encima, resistencia.
+    // Una zona que contiene el precio se asigna por su centro. Más allá de un 30% ya es otra tesis.
+    const cerca = z => Math.abs(z.centro / precio - 1) <= 0.30;
+    const sop = zonas.filter(z => cerca(z) && (z.hi < precio || (z.lo <= precio && z.centro <= precio)));
+    const res = zonas.filter(z => cerca(z) && !sop.includes(z));
+    const mejores = (L, lado) => {
+      const top = L.slice().sort((x, y) => y.score - x.score).slice(0, max);
+      top.sort((x, y) => lado === 's' ? y.centro - x.centro : x.centro - y.centro);   // S1/R1 = la más cercana
+      return top;
+    };
+    const S = mejores(sop, 's'), R = mejores(res, 'r');
+    const maxScore = Math.max(1e-9, ...S.concat(R).map(z => z.score));
+    const anioRef = ny(bars[n - 1].t).anio;
+    const vestir = (z, k, lado) => ({
+      id: (lado === 's' ? 'S' : 'R') + (k + 1), lado, lo: z.lo, hi: z.hi, score: +z.score.toFixed(2),
+      fuerza: z.score / maxScore, semanal: z.semanal, rolCambiado: lado === 's' ? z.rolASop : z.rolARes,
+      nToques: z.toques.length, fechas: z.toques.map(x => fechaCorta(bars[x.i].t)),
+      distPct: (z.lo <= precio && precio <= z.hi) ? 0 : ((lado === 's' ? z.hi : z.lo) / precio - 1) * 100,
+      texto: textoZona(z, lado, bars, anioRef),
+    });
+    return { soportes: S.map((z, k) => vestir(z, k, 's')), resistencias: R.map((z, k) => vestir(z, k, 'r')) };
+  }
+  // «agosto», «agosto y septiembre», «julio, agosto y octubre».
+  function listaMeses(ms){
+    const u = [...new Set(ms)];
+    return u.length <= 1 ? (u[0] || '') : u.slice(0, -1).join(', ') + ' y ' + u[u.length - 1];
+  }
+  function textoZona(z, lado, bars, anioRef){
+    const delTipo = z.toques.filter(x => x.tipo === (lado === 's' ? 'bajo' : 'alto'));
+    const otros   = z.toques.filter(x => x.tipo !== (lado === 's' ? 'bajo' : 'alto'));
+    const mesesDe = (L, k) => meses(L.map(x => bars[x.i].t).slice(-k || 0), anioRef);
+    const verbo = lado === 's' ? 'Rebotó' : 'Frenó las subidas';
+    let txt;
+    if (!delTipo.length){
+      txt = lado === 's'
+        ? `Fue techo en ${listaMeses(mesesDe(otros, 3))}; el precio lo superó y no ha vuelto a probarlo desde arriba.`
+        : `Fue suelo en ${listaMeses(mesesDe(otros, 3))}; el precio lo perdió y no ha vuelto a probarlo desde abajo.`;
+    } else {
+      const ms = mesesDe(delTipo);
+      if (lado === 's'){
+        txt = delTipo.length === 1 ? `Rebotó aquí en ${ms[0]}.`
+            : ms.length === 1 ? `Rebotó ${delTipo.length} veces en ${ms[0]}.`
+            : ms.length === 2 ? `Rebotó ${delTipo.length} veces entre ${ms[0]} y ${ms[1]}.`
+            : `Rebotó ${delTipo.length} veces, la última en ${ms[ms.length - 1]}.`;
+      } else {
+        txt = `${verbo} de ${listaMeses(mesesDe(delTipo, 3))}.`;
+      }
+      if (otros.length && (lado === 's' ? z.rolASop : z.rolARes))
+        txt += lado === 's' ? ' Antes había sido resistencia: hoy funciona como soporte.'
+                            : ' Antes había sido soporte: hoy funciona como resistencia.';
+    }
+    if (z.toques.some(x => x.sem)) txt += ' También se ve en el gráfico semanal.';
+    return txt;
+  }
+
+  // ── FVG diarios ──
+  // Alcista: el mínimo de la vela i queda por encima del máximo de la i−2. Bajista: al revés.
+  // Estado según lo que hizo el precio después; de un FVG parcial se dibuja solo lo que queda.
+  function fvgs(bars, a, precio, max = 4, ventana = 126){
+    const n = bars.length, out = [];
+    if (!a || n < 5) return out;
+    for (let i = Math.max(2, n - ventana); i < n; i++){
+      const alc = bars[i].l > bars[i-2].h, baj = bars[i].h < bars[i-2].l;
+      if (!alc && !baj) continue;
+      const lo0 = alc ? bars[i-2].h : bars[i].h, hi0 = alc ? bars[i].l : bars[i-2].l;
+      if (hi0 - lo0 < a * 0.3) continue;
+      let lo = lo0, hi = hi0, estado = 'abierto';
+      for (let j = i + 1; j < n && estado !== 'lleno'; j++){
+        if (alc){
+          if (bars[j].l <= lo0) estado = 'lleno';
+          else if (bars[j].l < hi){ hi = bars[j].l; estado = 'parcial'; }
+        } else {
+          if (bars[j].h >= hi0) estado = 'lleno';
+          else if (bars[j].h > lo){ lo = bars[j].h; estado = 'parcial'; }
+        }
+      }
+      if (estado === 'lleno' || hi - lo < a * 0.15) continue;   // lo que queda de un parcial casi lleno ya no cuenta
+      // Dos huecos seguidos en la misma dirección que se solapan son UN movimiento: se unen.
+      const prev = out[out.length - 1];
+      if (prev && prev.dir === (alc ? 'alcista' : 'bajista') && i - 1 - prev.iForm <= 3 && lo <= prev.hi && hi >= prev.lo){
+        prev.lo = Math.min(prev.lo, lo); prev.hi = Math.max(prev.hi, hi);
+        if (estado === 'parcial') prev.estado = 'parcial';
+        continue;
+      }
+      const iForm = i - 1;
+      out.push({ id:'FVG', dir: alc ? 'alcista' : 'bajista', estado, lo, hi, lo0, hi0, iForm, t: bars[iForm].t,
+                 fecha: fechaCorta(bars[iForm].t) });
+    }
+    for (const f of out){
+      const borde = precio < f.lo ? f.lo : precio > f.hi ? f.hi : precio;
+      f.dist = Math.abs(borde - precio); f.distPct = (borde / precio - 1) * 100;
+    }
+    out.sort((x, y) => x.dist - y.dist);
+    return out.slice(0, max).map(f => Object.assign(f, {
+      texto: `Hueco del ${f.fecha} que el precio ${f.estado === 'abierto' ? 'no ha vuelto a llenar' : 'llenó solo en parte'}.`
+    }));
+  }
+
+  // ── Estado de la tendencia ──
+  // Tres comparaciones —precio contra MM50, precio contra MM200 y MM50 contra MM200— y un
+  // título con UN texto coherente para cada combinación. Dos de las ocho son imposibles en
+  // aritmética (p > 50 > 200 obliga a p > 200); solo aparecen con empates exactos, y también
+  // tienen texto.
+  function cruceReciente(s50, s200, n = 10){
+    const L = s50.length;
+    for (let k = L - 1; k > Math.max(0, L - 1 - n); k--){
+      const a1 = s50[k], b1 = s200[k], a0 = s50[k-1], b0 = s200[k-1];
+      if ([a1, b1, a0, b0].some(v => v == null)) return null;
+      if ((a1 > b1) !== (a0 > b0)) return { tipo: a1 > b1 ? 'alza' : 'baja', sesiones: L - 1 - k };
+    }
+    return null;
+  }
+  function estadoTendencia(px, s50, s200, cruce){
+    if (!(px > 0) || !(s50 > 0)) return null;
+    if (!(s200 > 0)){
+      return px >= s50
+        ? { clave:'corta', titulo:'Historia corta', clase:'',
+            texto:'Todavía no hay 200 sesiones para la media larga. Cotiza sobre su media de 50: a corto plazo el precio va a favor.' }
+        : { clave:'corta', titulo:'Historia corta', clase:'',
+            texto:'Todavía no hay 200 sesiones para la media larga. Cotiza bajo su media de 50: a corto plazo el precio va en contra.' };
+    }
+    const A = px > s50, B = px > s200, C = s50 > s200;
+    const E = {
+      'AB C': { clave:'alcista', titulo:'Tendencia alcista', clase:'pos',
+        texto:'Cotiza sobre sus medias de 50 y 200, y la de 50 va sobre la de 200. Es la estructura de una subida sana.' },
+      'AB c': { clave:'girando', titulo:'Intentando girar al alza', clase:'neu',
+        texto:'Recuperó sus dos medias, pero la de 50 sigue bajo la de 200: el rebote es real, la tendencia de fondo todavía no ha cambiado.' },
+      'aB C': { clave:'perdiendo', titulo:'Alcista, pero perdiendo fuerza', clase:'neu',
+        texto:'La estructura de fondo sigue alcista (la media de 50 está sobre la de 200), pero a corto plazo el precio perdió su media de 50.' },
+      'ab C': { clave:'riesgo', titulo:'Tendencia en riesgo', clase:'neg',
+        texto:'Cotiza bajo sus dos medias aunque la de 50 aún va sobre la de 200. La subida de fondo está en juego: si la media de 50 cruza a la baja, pasa a bajista.' },
+      'ab c': { clave:'bajista', titulo:'Tendencia bajista', clase:'neg',
+        texto:'Cotiza bajo sus medias de 50 y 200, y la de 50 va bajo la de 200. Es la estructura de una caída establecida.' },
+      'Ab c': { clave:'rebote', titulo:'Rebote dentro de bajista', clase:'neu',
+        texto:'Recuperó su media de 50, pero sigue bajo la de 200 y la de 50 va bajo la de 200: es un rebote de corto plazo dentro de una tendencia bajista.' },
+      // Solo con empates exactos (precio = media):
+      'Ab C': { clave:'alcista', titulo:'Tendencia alcista', clase:'pos',
+        texto:'Cotiza sobre su media de 50, que va sobre la de 200, y justo en la de 200. La estructura sigue siendo alcista.' },
+      'aB c': { clave:'bajista', titulo:'Tendencia bajista', clase:'neg',
+        texto:'Cotiza bajo su media de 50, que va bajo la de 200, y justo en la de 200. La estructura sigue siendo bajista.' },
+    }[(A ? 'A' : 'a') + (B ? 'B' : 'b') + ' ' + (C ? 'C' : 'c')];
+    const r = Object.assign({}, E);
+    if (cruce){
+      const hace = cruce.sesiones === 0 ? 'en la última sesión' : `hace ${cruce.sesiones + 1} sesiones`;
+      r.texto += cruce.tipo === 'alza'
+        ? ` La media de 50 acaba de cruzar por encima de la de 200 (${hace}).`
+        : ` La media de 50 acaba de cruzar por debajo de la de 200 (${hace}).`;
+    }
+    return r;
+  }
+
+  // ── Líneas de tendencia ──
+  // Alcista: une dos mínimos pivote ascendentes; bajista: dos máximos descendentes. Válida si
+  // ningún cierre la cruza por más de ¼ de ATR —ni entre los anclajes ni después, o sería una
+  // línea ya rota—. Un tercer toque sube el puntaje. Si ninguna vale, no hay línea.
+  function lineasTendencia(bars, a, dir, max = 2){
+    const n = bars.length;
+    if (!a || n < 40 || (dir !== 'alza' && dir !== 'baja')) return [];
+    const P = pivotes(bars, 5)[dir === 'alza' ? 'bajos' : 'altos'].filter(p => p.i >= n - 252);
+    const tol = a * 0.25, cand = [];
+    for (let j = P.length - 1; j >= Math.max(1, P.length - 3); j--){
+      for (let i = j - 1; i >= Math.max(0, j - 6); i--){
+        const p1 = P[i], p2 = P[j];
+        if (p2.i - p1.i < 10) continue;
+        // Que suba (o baje) de verdad: medio ATR como mínimo, o es un soporte plano, no una tendencia.
+        if (dir === 'alza' ? !(p2.v - p1.v >= a * 0.5) : !(p1.v - p2.v >= a * 0.5)) continue;
+        const m = (p2.v - p1.v) / (p2.i - p1.i), y = k => p1.v + m * (k - p1.i);
+        let ok = true;
+        for (let k = p1.i + 1; k < n && ok; k++){
+          const c = bars[k].c;
+          if (dir === 'alza' ? c < y(k) - tol : c > y(k) + tol) ok = false;
+        }
+        if (!ok) continue;
+        const terceros = P.filter(p => p.i !== p1.i && p.i !== p2.i && p.i > p1.i && Math.abs(p.v - y(p.i)) <= tol).length;
+        cand.push({ dir, i1: p1.i, v1: p1.v, i2: p2.i, v2: p2.v, pendiente: m, toques: 2 + terceros,
+                    score: 2 + terceros * 1.5 + p2.i / n, hoy: y(n - 1),
+                    fecha1: fechaCorta(bars[p1.i].t), fecha2: fechaCorta(bars[p2.i].t) });
+      }
+    }
+    cand.sort((x, y) => y.score - x.score);
+    const out = [];
+    for (const c of cand){
+      if (out.some(o => o.i1 === c.i1 || o.i2 === c.i2)) continue;
+      out.push(c);
+      if (out.length >= max) break;
+    }
+    return out;
+  }
+
+  // Todo junto, sobre velas cerradas. `ind` aporta las medias ya calculadas.
+  function calcular(bars, ind){
+    if (!bars || bars.length < 30) return null;
+    const a = atr(bars, 14), precio = bars[bars.length - 1].c;
+    const s50 = ind && ind.series ? ind.series.sma50 : [], s200 = ind && ind.series ? ind.series.sma200 : [];
+    const cruce = cruceReciente(s50, s200);
+    const est = estadoTendencia(precio, ind && ind.sma50, ind && ind.sma200, cruce);
+    const dir = !est ? null
+      : ['alcista', 'girando', 'perdiendo'].includes(est.clave) ? 'alza'
+      : ['bajista', 'rebote'].includes(est.clave) ? 'baja' : null;
+    const sr = zonasSR(bars, a, precio);
+    return { atr: a, precio, sesionT: bars[bars.length - 1].t, idxUltCerrada: bars.length - 1,
+             tendencia: est, soportes: sr.soportes, resistencias: sr.resistencias,
+             fvgs: fvgs(bars, a, precio), lineas: lineasTendencia(bars, a, dir) };
+  }
+
+  return { ny, mercadoAbierto, velasCerradas, fechaCorta, atr, pivotes, semanales, zonasSR, fvgs,
+           cruceReciente, estadoTendencia, lineasTendencia, calcular };
+})();
+window.TechLevels = TechLevels;
 
 // ── Capa determinista: niveles con historia, perfil de volumen y firma ────────────
 // Todo lo de aquí abajo se calcula en el cliente sobre las MISMAS barras que ya se trajeron
@@ -30961,7 +31356,7 @@ function _pvtFacts(ticker, bars, ind, vp){
     volumenEnNivel: _pvtVolEnNivel(perfil, dom.centro, dom.bordeInf, dom.bordeSup),
     distancia: {
       atr: atrD ? +(dist / atrD).toFixed(2) : null,
-      porcentaje: +((dist / px) * 100).toFixed(1),
+      porcentaje: +((dist / dom.centro) * 100).toFixed(1),   // distancia relativa AL NIVEL, no al precio
     },
     mm200: {
       valor: (ind.sma200 > 0) ? +ind.sma200.toFixed(2) : null,
@@ -31164,7 +31559,7 @@ function _pvtLineaOHLC(b){
   if (!b) return '';
   const dif = b.c - b.o, pct = b.o ? (dif / b.o) * 100 : 0;
   const cls = dif >= 0 ? 'pos' : 'neg', sig = dif >= 0 ? '+' : '−';
-  const fecha = new Date(b.t).toLocaleDateString('es-MX', { day:'numeric', month:'short', year:'numeric' }).replace('.', '');
+  const fecha = new Date(b.t).toLocaleDateString('es-MX', { day:'numeric', month:'short', year:'numeric', timeZone:'America/New_York' }).replace('.', '');
   // Rediseño: palabras completas (Apertura, Máximo, Mínimo, Cierre) en vez de A / M / m / C.
   return `<span class="od">${fecha}</span><span><small>Apertura</small><b>${_pvtFmt(b.o, 2)}</b></span><span><small>Máximo</small><b>${_pvtFmt(b.h, 2)}</b></span>`
        + `<span><small>Mínimo</small><b>${_pvtFmt(b.l, 2)}</b></span><span><small>Cierre</small><b>${_pvtFmt(b.c, 2)}</b></span>`
@@ -31205,6 +31600,7 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   const MUTED = tok('--px-muted',      '#7b8494');
   const NAVY  = tok('--px-navy',       '#0b1c30');
   const AZUL  = tok('--px-blue',       '#2f6bff');
+  const FONDO = tok('--px-card',       '#ffffff');
 
   const EJE = 54, ancho0 = W - EJE, x0 = 0;
   const pTop = 12, ALTO_P = 184, pBot = pTop + ALTO_P;
@@ -31215,17 +31611,35 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
 
   const _ex = extra || {};
   const ult = velas[velas.length - 1];
+  const nv = _ex.niveles || null;
+  const capas = _ex.capas || _PVT_CAPAS_DEF;
+  // En pantallas chicas se dibuja lo esencial: S1, R1, el FVG más cercano y una línea.
+  const chico = W < 520;
+  const zonas  = (!nv || !capas.sr)  ? [] : chico ? [nv.soportes[0], nv.resistencias[0]].filter(Boolean)
+                                                  : nv.soportes.concat(nv.resistencias);
+  const huecos = (!nv || !capas.fvg) ? [] : nv.fvgs.slice(0, chico ? 1 : 4);
+  const lineas = (!nv || !capas.tend) ? [] : nv.lineas.slice(0, chico ? 1 : 2);
+  const valor  = capas.valor ? (_ex.valor || null) : null;
+  // La última vela visible contiene la sesión en curso (en semanal, la semana que la incluye).
+  const enCurso = _ex.enCurso != null && ult.i === _ex.enCurso;
 
-  // Escala de precio: mechas, la media larga y —si existe— la franja del nivel, para que ni la
-  // línea ni la banda se salgan del cuadro.
+  // Escala de precio: mechas y medias, y los niveles solo si quedan a menos de un ATR de las
+  // velas. Un nivel lejano —la banda de valoración, sobre todo— no puede aplastar el gráfico.
   let min = Infinity, max = -Infinity;
   for (const v of velas){ if (v.l < min) min = v.l; if (v.h > max) max = v.h; }
-  for (const v of sma200){ if (v == null) continue; if (v < min) min = v; if (v > max) max = v; }
-  if (_ex.nivel){
-    if (_ex.nivel.bordeInf < min) min = _ex.nivel.bordeInf;
-    if (_ex.nivel.bordeSup > max) max = _ex.nivel.bordeSup;
-  }
   if (!isFinite(min) || !isFinite(max)) return false;
+  // Las medias pueden estirar el eje hasta un cuarto del rango de las velas; más lejos se
+  // recortan en el borde (su etiqueta queda pegada a él) en vez de aplastar las velas.
+  { const holgura = (max - min) * 0.25, tope = max + holgura, piso = min - holgura;
+    for (const s of [sma50, sma200]) for (const v of s){
+      if (v == null) continue;
+      const w = Math.max(piso, Math.min(tope, v));
+      if (w < min) min = w; if (w > max) max = w;
+    } }
+  const atrD = (nv && nv.atr > 0) ? nv.atr : (max - min) * 0.05;
+  const cabeEnEje = o => o.hi >= min - atrD && o.lo <= max + atrD;
+  const zonasV = zonas.filter(cabeEnEje), huecosV = huecos.filter(cabeEnEje);
+  for (const o of zonasV.concat(huecosV)){ if (o.lo < min) min = o.lo; if (o.hi > max) max = o.hi; }
   if (max === min){ max = min * 1.01 || 1; min = min * 0.99; }
   const aire = (max - min) * 0.07; min -= aire; max += aire;
   const yP = p => pBot - ((p - min) / (max - min)) * ALTO_P;
@@ -31236,6 +31650,13 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   const n = velas.length, paso = ancho / n;
   const cuerpo = Math.max(1, Math.min(7, Math.floor(paso * 0.66)));
   const cx = i => x0 + paso * i + paso / 2;
+  // Índice de la serie DIARIA → x. En semanal cae en la vela de la semana que lo contiene.
+  const xDeIdx = i => {
+    if (i <= velas[0].i) return cx(0);
+    let a = 0, b = n - 1;
+    while (a < b){ const m = (a + b) >> 1; if (velas[m].i >= i) b = m; else a = m + 1; }
+    return cx(a);
+  };
 
   ctx.font = '10px Manrope, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
@@ -31251,27 +31672,60 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
     ctx.fillText(_pvtFmt(p, pasoEje < 1 ? 2 : 0), x0 + ancho + 8, y);
   }
 
-  // Franja del nivel: azul, que es estructura y no dirección. El verde y el rojo se reservan al
-  // dato financiero — una franja de precio no dice si algo va bien.
-  if (_ex.nivel && isFinite(_ex.nivel.bordeInf) && isFinite(_ex.nivel.bordeSup)){
-    const ya = yP(_ex.nivel.bordeSup), yb = yP(_ex.nivel.bordeInf);
-    const top = Math.min(ya, yb), alto = Math.max(3, Math.abs(yb - ya));
-    ctx.save();
-    ctx.globalAlpha = 0.16; ctx.fillStyle = AZUL;
-    ctx.fillRect(x0, top, ancho, alto);
-    ctx.restore();
-    ctx.save();
-    ctx.globalAlpha = 0.55; ctx.strokeStyle = AZUL; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(x0, Math.round(top)+0.5); ctx.lineTo(x0+ancho, Math.round(top)+0.5);
-    ctx.moveTo(x0, Math.round(top+alto)+0.5); ctx.lineTo(x0+ancho, Math.round(top+alto)+0.5);
-    ctx.stroke(); ctx.setLineDash([]); ctx.restore();
-    if (alto >= 13){
-      ctx.fillStyle = AZUL; ctx.textAlign = 'left';
-      ctx.font = '600 10px Manrope, system-ui, sans-serif';
-      ctx.fillText(_pvtFmt(_ex.nivel.bordeInf, 0) + ' – ' + _pvtFmt(_ex.nivel.bordeSup, 0), x0 + 6, top + alto/2);
-      ctx.font = '10px Manrope, system-ui, sans-serif';
+  // Etiquetas: se juntan aquí y se colocan al final sin encimarse (izquierda: zonas y
+  // valoración; derecha: FVG, medias y la vela en curso).
+  const etqIzq = [], etqDer = [];
+  const rangoTxt = o => _pvtFmt(o.lo, o.lo >= 100 ? 0 : 2) + '–' + _pvtFmt(o.hi, o.hi >= 100 ? 0 : 2);
+
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, pTop - 6, ancho, ALTO_P + 12); ctx.clip();
+
+  // Valor por modelos: neutro, borde discontinuo. Fuera del eje se avisa en el borde.
+  if (valor && valor.hi > valor.lo){
+    if (valor.hi < min || valor.lo > max){
+      const abajo = valor.hi < min;
+      etqIzq.push({ y: abajo ? pBot - 8 : pTop + 8, pri: 11, col: MUTED,
+                    txt: `Valor por modelos ${abajo ? '↓' : '↑'} ${rangoTxt(valor)}` });
+    } else {
+      const ya = yP(Math.min(valor.hi, max)), yb = yP(Math.max(valor.lo, min));
+      ctx.save();
+      ctx.globalAlpha = 0.10; ctx.fillStyle = MUTED; ctx.fillRect(x0, ya, ancho, Math.max(2, yb - ya));
+      ctx.globalAlpha = 0.6; ctx.strokeStyle = MUTED; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
+      ctx.beginPath(); ctx.moveTo(x0, Math.round(ya)+0.5); ctx.lineTo(x0+ancho, Math.round(ya)+0.5);
+      ctx.moveTo(x0, Math.round(yb)+0.5); ctx.lineTo(x0+ancho, Math.round(yb)+0.5); ctx.stroke();
+      ctx.restore();
+      etqIzq.push({ y: (ya + yb) / 2, pri: 11, col: MUTED, txt: 'Valor por modelos ' + rangoTxt(valor) });
     }
   }
+
+  // Zonas de soporte (verde) y resistencia (rojo): translúcidas, más intensas cuanto más fuertes.
+  for (const z of zonasV){
+    const col = z.lado === 's' ? SUBE : BAJA;
+    const ya = yP(z.hi), yb = yP(z.lo), alto = Math.max(3, yb - ya);
+    ctx.save();
+    ctx.globalAlpha = 0.07 + 0.15 * Math.max(0, Math.min(1, z.fuerza));
+    ctx.fillStyle = col; ctx.fillRect(x0, ya, ancho, alto);
+    ctx.globalAlpha = 0.35; ctx.strokeStyle = col; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x0, Math.round(ya)+0.5); ctx.lineTo(x0+ancho, Math.round(ya)+0.5);
+    ctx.moveTo(x0, Math.round(ya+alto)+0.5); ctx.lineTo(x0+ancho, Math.round(ya+alto)+0.5); ctx.stroke();
+    ctx.restore();
+    const k = +z.id.slice(1);
+    etqIzq.push({ y: ya + alto / 2, pri: 12 - k * 2, col, txt: `${z.id} ${rangoTxt(z)}` });
+  }
+
+  // FVG: caja con borde punteado desde la vela que lo formó hasta el borde derecho.
+  huecosV.forEach((f, k) => {
+    const col = f.dir === 'alcista' ? SUBE : BAJA;
+    const xa = Math.max(x0, xDeIdx(f.iForm) - paso / 2), ya = yP(f.hi), yb = yP(f.lo);
+    const alto = Math.max(2, yb - ya);
+    ctx.save();
+    ctx.globalAlpha = 0.10; ctx.fillStyle = AZUL; ctx.fillRect(xa, ya, x0 + ancho - xa, alto);
+    ctx.globalAlpha = 0.8; ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+    ctx.strokeRect(Math.round(xa) + 0.5, Math.round(ya) + 0.5, Math.round(x0 + ancho - xa) - 1, Math.round(alto));
+    ctx.restore();
+    etqDer.push({ y: ya + alto / 2, pri: 6 - k, col, txt: 'FVG' });
+  });
+  ctx.restore();
 
   // Volumen: una barra por sesión, del color de SU vela. El gris neutro no distinguía una
   // sesión de compra de una de venta, que es justo lo que el volumen aporta.
@@ -31279,6 +31733,7 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   for (let i = 0; i < n; i++){
     const v = velas[i];
     ctx.fillStyle = (v.c >= v.o) ? SUBE : BAJA;
+    if (enCurso && i === n - 1) ctx.globalAlpha = 0.22;   // volumen a medias: se atenúa
     const y = yV(v.v), alto = Math.max(1, vBot - y);
     ctx.fillRect(cx(i) - cuerpo/2, vBot - alto, cuerpo, alto);
   }
@@ -31288,35 +31743,65 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
 
   // Velas. Cada una codifica cierre contra apertura → es dato financiero y lleva el verde/rojo
   // de la app. Mecha de máximo a mínimo, cuerpo de apertura a cierre con piso de 1,2 px para que
-  // un doji no desaparezca.
+  // un doji no desaparezca. La sesión EN CURSO va hueca: todavía no es una vela.
   for (let i = 0; i < n; i++){
     const v = velas[i], col = (v.c >= v.o) ? SUBE : BAJA;
-    const x = Math.round(cx(i)) + 0.5;
+    const x = Math.round(cx(i)) + 0.5, viva = enCurso && i === n - 1;
+    ctx.save();
+    if (viva) ctx.globalAlpha = 0.75;
     ctx.strokeStyle = col; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x, yP(v.h)); ctx.lineTo(x, yP(v.l)); ctx.stroke();
-    const yA = yP(v.o), yC = yP(v.c);
-    ctx.fillStyle = col;
-    ctx.fillRect(cx(i) - cuerpo/2, Math.min(yA, yC), cuerpo, Math.max(1.2, Math.abs(yC - yA)));
+    const yA = yP(v.o), yC = yP(v.c), top = Math.min(yA, yC), alto = Math.max(1.2, Math.abs(yC - yA));
+    if (viva){
+      ctx.fillStyle = FONDO; ctx.fillRect(cx(i) - cuerpo/2, top, cuerpo, alto);
+      ctx.strokeRect(Math.round(cx(i) - cuerpo/2) + 0.5, Math.round(top) + 0.5, Math.max(1, cuerpo - 1), Math.max(1, Math.round(alto)));
+    } else {
+      ctx.fillStyle = col; ctx.fillRect(cx(i) - cuerpo/2, top, cuerpo, alto);
+    }
+    ctx.restore();
+  }
+  if (enCurso) etqDer.push({ y: yP(ult.h) - 10, pri: 9, col: MUTED, txt: 'en curso' });
+
+  // Líneas de tendencia: finas, navy, prolongadas hasta hoy.
+  if (lineas.length){
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, pTop - 6, ancho, ALTO_P + 12); ctx.clip();
+    for (const l of lineas){
+      const val = k => l.v1 + l.pendiente * (k - l.i1);
+      const kA = Math.max(l.i1, velas[0].i), kB = ult.i;
+      if (kB <= kA) continue;
+      const xa = l.i1 >= velas[0].i ? xDeIdx(l.i1) : x0, xb = cx(n - 1);
+      ctx.strokeStyle = NAVY; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.2; ctx.setLineDash([6, 3]);
+      ctx.beginPath(); ctx.moveTo(xa, yP(val(kA))); ctx.lineTo(xb, yP(val(kB))); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.fillStyle = NAVY;
+      for (const [i, v] of [[l.i1, l.v1], [l.i2, l.v2]]){
+        if (i < velas[0].i) continue;
+        ctx.beginPath(); ctx.arc(xDeIdx(i), yP(v), 2.4, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
-  // MM200: una sola línea, sólida y oscura. Nunca verde ni roja — competiría con las velas.
-  ctx.strokeStyle = NAVY; ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  let abierto = false, xUlt = null, yUlt = null;
-  for (let i = 0; i < n; i++){
-    const val = sma200[i];
-    if (val == null){ abierto = false; continue; }
-    const x = cx(i), y = yP(val);
-    if (abierto) ctx.lineTo(x, y); else { ctx.moveTo(x, y); abierto = true; }
-    xUlt = x; yUlt = y;
-  }
-  ctx.stroke();
-  if (xUlt != null && yUlt > pTop + 16){
-    ctx.fillStyle = NAVY; ctx.textAlign = 'right'; ctx.textBaseline = 'bottom';
-    ctx.font = '600 10px Manrope, system-ui, sans-serif';
-    ctx.fillText('MM200', x0 + ancho - 4, yUlt - 7);
-    ctx.font = '10px Manrope, system-ui, sans-serif'; ctx.textBaseline = 'middle';
-  }
+  // Medias: MM50 en azul de marca y MM200 en navy. Nunca verde ni roja — competirían con las velas.
+  const media = (serie, col, ancho_, txt, pri) => {
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, pTop - 6, ancho, ALTO_P + 12); ctx.clip();
+    ctx.strokeStyle = col; ctx.lineWidth = ancho_;
+    ctx.beginPath();
+    let abierto = false, yUlt = null;
+    for (let i = 0; i < n; i++){
+      const val = serie[i];
+      if (val == null){ abierto = false; continue; }
+      const x = cx(i), y = yP(val);
+      if (abierto) ctx.lineTo(x, y); else { ctx.moveTo(x, y); abierto = true; }
+      yUlt = y;
+    }
+    ctx.stroke();
+    ctx.restore();
+    if (yUlt != null) etqDer.push({ y: yUlt - 9, pri, col, txt });
+  };
+  media(sma50,  AZUL, 1.4, 'MM50',  8);
+  media(sma200, NAVY, 1.5, 'MM200', 8);
 
   // Precio de hoy: línea punteada y etiqueta en el eje, del color del día. Es dato financiero,
   // así que aquí el verde y el rojo sí corresponden.
@@ -31326,6 +31811,32 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   ctx.globalAlpha = 0.6; ctx.strokeStyle = colHoy; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
   ctx.beginPath(); ctx.moveTo(x0, yHoy); ctx.lineTo(x0 + ancho, yHoy); ctx.stroke();
   ctx.setLineDash([]); ctx.restore();
+
+  // Etiquetas sin encimarse: primero las de más prioridad; si una choca, se corre una línea
+  // arriba o abajo, y si tampoco cabe se omite (mejor sin etiqueta que ilegible).
+  ctx.font = '600 10px Manrope, system-ui, sans-serif';
+  const colocar = (L, alinear) => {
+    const ok = [], SEP = 13, lo = pTop + 7, hi = pBot - 7;
+    L.sort((a, b) => b.pri - a.pri);
+    for (const e of L){
+      const y0 = Math.max(lo, Math.min(hi, e.y));
+      const y = [y0, y0 - SEP, y0 + SEP, y0 - 2*SEP, y0 + 2*SEP]
+        .find(yy => yy >= lo && yy <= hi && !ok.some(o => Math.abs(o.y - yy) < SEP));
+      if (y == null) continue;
+      ok.push({ y });
+      const w = ctx.measureText(e.txt).width + 8;
+      const x = alinear === 'left' ? x0 + 4 : x0 + ancho - 4 - w;
+      ctx.save(); ctx.globalAlpha = 0.85; ctx.fillStyle = FONDO;
+      if (ctx.roundRect){ ctx.beginPath(); ctx.roundRect(x, y - 7, w, 14, 3); ctx.fill(); } else ctx.fillRect(x, y - 7, w, 14);
+      ctx.restore();
+      ctx.fillStyle = e.col; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(e.txt, x + 4, y + 0.5);
+    }
+  };
+  colocar(etqIzq, 'left');
+  colocar(etqDer, 'right');
+  ctx.font = '10px Manrope, system-ui, sans-serif'; ctx.textBaseline = 'middle';
+
   const txtHoy = _pvtFmt(ult.c, 2), anchoTag = Math.min(EJE - 4, ctx.measureText(txtHoy).width + 14);
   const yTag = Math.max(pTop + 8, Math.min(pBot - 8, yP(ult.c)));
   ctx.fillStyle = colHoy;
@@ -31379,10 +31890,10 @@ function _pvtExplicar(k, ind){
            : ind.atr >= 2 ? 'Movimiento diario dentro de lo normal para una acción de bolsa.'
            : 'Se mueve poco de un día a otro comparado con el promedio del mercado.';
     case 'vol':
-      if (ind.volRel == null) return 'Compara el volumen de la última sesión con su promedio de 30 días.';
-      return ind.volRel >= 1.5 ? 'Bastante más negociación que de costumbre: hubo participación real detrás del movimiento.'
+      if (ind.volRel == null) return 'Compara el volumen de la última sesión cerrada con su promedio de 30 días.';
+      return `Sesión del ${TechLevels.fechaCorta(ind.sesionT)}. ` + (ind.volRel >= 1.5 ? 'Bastante más negociación que de costumbre: hubo participación real detrás del movimiento.'
            : ind.volRel >= 0.8 ? 'Volumen parecido al de un día normal para esta acción.'
-           : 'Menos negociación que de costumbre: pocos participantes detrás del movimiento.';
+           : 'Menos negociación que de costumbre: pocos participantes detrás del movimiento.');
   }
   return '';
 }
@@ -31442,10 +31953,12 @@ function _pvtPivotesBajos(bars, k = 5){
   return out;
 }
 function _pvtFechaCorta(t){
-  try { return new Date(t).toLocaleDateString('es-MX', { day:'numeric', month:'short' }).replace('.',''); }
+  // En hora de Nueva York: Alpaca fecha la vela diaria a medianoche de NY, y en América
+  // (UTC−5/−6) la hora local la pintaba como el día anterior.
+  try { return new Date(t).toLocaleDateString('es-MX', { day:'numeric', month:'short', timeZone:'America/New_York' }).replace('.',''); }
   catch(e){ return ''; }
 }
-function _pvtZonaEntrada(bars, ind, biz){
+function _pvtZonaEntrada(bars, ind, biz, pxVivo){
   try {
     if (!bars || bars.length < 120 || !ind || !(ind.precio > 0)) return null;
     const px  = ind.precio;
@@ -31539,12 +32052,18 @@ function _pvtZonaEntrada(bars, ind, biz){
     if (hi <= lo) hi = +(lo + paso).toFixed(2);
 
     // Invalidación: el nivel por debajo del cual la zona deja de tener sentido. Por defecto
+    // El rango sale de velas cerradas; dónde COTIZA hoy se dice con el precio vivo.
+    const pxH = (pxVivo > 0) ? pxVivo : px;
     return {
-      lo, hi, px, hi52, lo52, recorte, aviso, floja, sinSoportes, notaBaja,
+      lo, hi, px: pxH, hi52, lo52, recorte, aviso, floja, sinSoportes, notaBaja,
       nModelos: (fv && Array.isArray(fv.models)) ? fv.models.length : null,
       base,
-      estado:   (px >= lo && px <= hi) ? 'dentro' : (px > hi ? 'esperar' : 'rota'),
-      distPct:  ((px - hi)/px)*100,
+      estado:   (pxH >= lo && pxH <= hi) ? 'dentro' : (pxH > hi ? 'esperar' : 'rota'),
+      // Distancias relativas AL RANGO: (precio − techo) / techo. La caída necesaria es otra
+      // cosa —(precio − techo) / precio— y va en su propia frase.
+      sobrePct: ((pxH - hi)/hi)*100,
+      caidaPct: ((pxH - hi)/pxH)*100,
+      bajoPct:  ((lo - pxH)/lo)*100,
       niveles:  niv,
     };
   } catch(e){ return null; }
@@ -31557,15 +32076,13 @@ function _pvtVeredictoTec(ind){
   const px = ind.precio, s50 = ind.sma50, s200 = ind.sma200;
   const L = [];
   let tend = { l:'Sin tendencia clara', c:'' };
-  if (s50 > 0 && s200 > 0){
-    const arriba50 = px > s50, arriba200 = px > s200, cruceAlza = s50 > s200;
-    if (arriba50 && arriba200 && cruceAlza)      tend = { l:'Tendencia alcista', c:'pos' };
-    else if (!arriba50 && !arriba200 && !cruceAlza) tend = { l:'Tendencia bajista', c:'neg' };
-    else                                          tend = { l:'Tendencia en duda', c:'neu' };
-    L.push({ k:'Tendencia', v:tend.l, c:tend.c, d:
-      `Cotiza ${arriba200 ? 'por encima' : 'por debajo'} de su media de 200 días y ${arriba50 ? 'por encima' : 'por debajo'} de la de 50. `
-      + (cruceAlza ? 'La media corta va por encima de la larga, que es la configuración de una subida establecida.'
-                   : 'La media corta va por debajo de la larga: el mercado todavía no ha girado la tendencia de fondo.') });
+  // Matriz de estados (TechLevels.estadoTendencia): cada combinación de precio/MM50/MM200
+  // tiene UN título y UN texto que no se contradicen.
+  const est = TechLevels.estadoTendencia(px, s50, s200,
+    ind.series ? TechLevels.cruceReciente(ind.series.sma50, ind.series.sma200) : null);
+  if (est){
+    tend = { l:est.titulo, c:est.clase };
+    L.push({ k:'Tendencia', v:est.titulo, c:est.clase, d:est.texto });
   }
   const rsi = ind.rsi, mh = ind.macd ? ind.macd.hist : null;
   if (rsi != null){
@@ -31581,12 +32098,62 @@ function _pvtVeredictoTec(ind){
     const alto = ind.volRel >= 1.5, bajo = ind.volRel <= 0.6;
     L.push({ k:'Convicción', v: alto ? 'Volumen alto' : bajo ? 'Volumen flojo' : 'Volumen normal',
       c: alto ? 'pos' : bajo ? 'neu' : '', d:
-      `La última sesión movió ${ind.volRel.toFixed(1)}× el volumen medio del último mes. `
+      `La sesión del ${TechLevels.fechaCorta(ind.sesionT)} movió ${ind.volRel.toFixed(1)}× el volumen medio de 30 días. `
       + (alto ? 'Un movimiento con volumen por encima de lo normal lo respalda dinero de verdad, no ruido.'
         : bajo ? 'Con poco volumen, el movimiento del precio pesa menos: lo hacen pocas manos.'
                : 'Actividad dentro de lo habitual para esta acción.') });
   }
   return L.length ? { tend, filas:L } : null;
+}
+
+// ── Capas del gráfico (toggles) ───────────────────────────────────────────────────
+// Preferencia visual de quien mira, no dato: vive en localStorage y, si no se puede leer,
+// se usan los valores por defecto. La valoración va apagada: no es análisis técnico.
+const _PVT_CAPAS_LS  = 'portiv_tec_capas_v1';
+const _PVT_CAPAS_DEF = { sr: true, fvg: true, tend: true, valor: false };
+function _pvtCapasLeer(){
+  try { const g = JSON.parse(localStorage.getItem(_PVT_CAPAS_LS) || 'null');
+        if (g && typeof g === 'object') return Object.assign({}, _PVT_CAPAS_DEF, g); } catch(e){}
+  return Object.assign({}, _PVT_CAPAS_DEF);
+}
+function _pvtCapasGuardar(c){ try { localStorage.setItem(_PVT_CAPAS_LS, JSON.stringify(c)); } catch(e){} }
+function _pvtCapasHtml(capas, hayValor){
+  const L = [['sr', 'Soportes/Resistencias'], ['fvg', 'FVG'], ['tend', 'Tendencia']];
+  if (hayValor) L.push(['valor', 'Valor por modelos']);
+  return `<div class="pvt-capas" role="group" aria-label="Capas del gráfico">${L.map(([k, l]) =>
+    `<button type="button" class="pvt-capa${capas[k] ? ' active' : ''}" data-capa="${k}" aria-pressed="${capas[k] ? 'true' : 'false'}"><i class="sw-${k}"></i>${pvEsc(l)}</button>`).join('')}</div>`;
+}
+
+// Tarjeta «Niveles clave»: cada nivel con su rango, su distancia al último cierre y una
+// frase de por qué está ahí. Ordenados como una escalera de precios, de arriba abajo.
+function _pvtNivelesCard(nv){
+  if (!nv) return '';
+  const esc = pvEsc;
+  const $ = v => '$' + _pvtFmt(v, v >= 100 ? 0 : 2);
+  const rango = (lo, hi) => `${$(lo)}–${_pvtFmt(hi, hi >= 100 ? 0 : 2)}`;
+  const pct = v => Math.abs(v) < 0.05 ? 'en el precio' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+  const fila = (id, cls, r, d, txt) =>
+    `<div class="pvt-niv"><span class="pvt-niv-id ${cls}">${esc(id)}</span><div class="pvt-niv-b">`
+    + `<div class="pvt-niv-h"><b>${esc(r)}</b>${d != null ? `<span>${esc(d)}</span>` : ''}</div>`
+    + `<div class="pvt-niv-d">${esc(txt)}</div></div></div>`;
+  const R = nv.resistencias.slice().reverse(), S = nv.soportes;
+  let h = '';
+  h += R.map(z => fila(z.id, 'r', rango(z.lo, z.hi), pct(z.distPct), z.texto)).join('');
+  if (!R.length) h += `<p class="pvt-niv-nota">Sin resistencias previas cerca: el precio cotiza en zona de máximos.</p>`;
+  h += `<div class="pvt-niv-px">Último cierre · <b>${esc($(nv.precio))}</b> · ${esc(TechLevels.fechaCorta(nv.sesionT))}</div>`;
+  h += S.map(z => fila(z.id, 's', rango(z.lo, z.hi), pct(z.distPct), z.texto)).join('');
+  if (!S.length) h += `<p class="pvt-niv-nota">Sin soportes previos cerca por debajo del precio.</p>`;
+  const F = nv.fvgs.slice().sort((x, y) => y.hi - x.hi);
+  const T = nv.lineas;
+  if (F.length || T.length) h += `<div class="pvt-niv-sep"></div>`;
+  h += F.map(f => fila('FVG', f.dir === 'alcista' ? 'fs' : 'fr', `FVG ${f.dir} ${f.estado} · ${rango(f.lo, f.hi)}`,
+                       pct(f.distPct), f.texto)).join('');
+  h += T.map(l => fila('T', 't', `Tendencia ${l.dir === 'alza' ? 'alcista' : 'bajista'} · hoy en ${$(l.hoy)}`,
+                       pct((l.hoy / nv.precio - 1) * 100),
+                       `Une los ${l.dir === 'alza' ? 'mínimos' : 'máximos'} del ${l.fecha1} y el ${l.fecha2}`
+                       + (l.toques > 2 ? `, con ${l.toques} toques en total.` : '.'))).join('');
+  return `<div class="px-card">${_pvxStitle('Niveles clave')}${h}
+    <div class="px-hint">Zonas donde el precio frenó o rebotó antes, sacadas de velas diarias y semanales cerradas de los últimos dos años. Un FVG es un hueco que dejó una subida o caída rápida; el precio suele volver a visitarlo. Las distancias se miden contra el último cierre. No es una recomendación de compra ni de venta.</div></div>`;
 }
 
 // ── Tarjetas ──────────────────────────────────────────────────────────────────────
@@ -31603,11 +32170,12 @@ function _pvtZonaCard(tk, z, biz){
   const span = (z.hi52 - z.lo52) || 1;
   const pos  = v => Math.max(0, Math.min(100, ((v - z.lo52)/span)*100));
   const bL = pos(z.lo), bR = pos(z.hi);
+  const p1 = v => Math.abs(v).toFixed(1).replace(/\.0$/, '');
   const sub = z.estado === 'dentro'
-    ? `Hoy cotiza a ${$(z.px)}, dentro del rango.`
+    ? `A ${$(z.px)}, cotiza dentro del rango.`
     : z.estado === 'esperar'
-      ? `Hoy cotiza a ${$(z.px)}, un ${Math.abs(z.distPct).toFixed(1)}% por encima.`
-      : `Hoy cotiza a ${$(z.px)}, por debajo del rango.`;
+      ? `A ${$(z.px)}, cotiza un ${p1(z.sobrePct)}% por encima del rango. Tendría que caer un ${p1(z.caidaPct)}% para llegar al rango.`
+      : `A ${$(z.px)}, cotiza un ${p1(z.bajoPct)}% por debajo del rango.`;
   // Pastilla junto al título: dentro (verde), encima (neutra), debajo (ámbar).
   const _tag = V.l ? `<span class="px-lp ${V.c === 'pos' ? 'g' : V.c === 'neg' ? 'a' : 'n'}">${esc(V.l)}</span>` : '';
   return `<div class="px-card">${_pvxStitle('Rango de compra', undefined, _tag)}
@@ -31681,15 +32249,35 @@ async function _pvtFillInto(host, ticker, biz){
     return;
   }
 
-  const ind = _pvtIndicadores(bars);
+  // Todo cálculo sale de velas CERRADAS: con el mercado abierto la vela de hoy está a medias
+  // (el volumen sale bajo, el RSI se mueve cada minuto). Se filtran las crudas del feed, no
+  // `bars`, que ya trae el último cierre pisado por el precio vivo. Son un prefijo de `bars`:
+  // los índices coinciden, y las medias se dibujan sin punto en la vela en curso.
+  const cerradas = TechLevels.velasCerradas(crudas);
+  const base  = cerradas.length >= 30 ? cerradas : bars;
+  const ind = _pvtIndicadores(base);
   // Capa determinista. Cuesta cero: sale de las mismas barras que ya están en memoria y se
   // recalcula en cada apertura, así que ningún número de la pantalla puede quedarse viejo.
-  const vp    = _pvtVolProfile(bars);
-  const facts = _pvtFacts(tk, bars, ind, vp);
-  const zona  = _pvtZonaEntrada(bars, ind, biz);
+  const vp    = _pvtVolProfile(base);
+  const facts = _pvtFacts(tk, base, ind, vp);
+  const pxVivo = bars[bars.length - 1].c;
+  const zona  = _pvtZonaEntrada(base, ind, biz, pxVivo);
+  const niveles = TechLevels.calcular(base, ind);
+  try { if (niveles) console.info('[TechLevels]', tk, {
+    cierre: niveles.precio, sesion: TechLevels.fechaCorta(niveles.sesionT), atr: +(niveles.atr || 0).toFixed(2),
+    tendencia: niveles.tendencia && niveles.tendencia.titulo,
+    soportes: niveles.soportes.map(z => `${z.id} ${z.lo.toFixed(2)}–${z.hi.toFixed(2)} (${z.distPct.toFixed(1)}%, score ${z.score})`),
+    resistencias: niveles.resistencias.map(z => `${z.id} ${z.lo.toFixed(2)}–${z.hi.toFixed(2)} (+${z.distPct.toFixed(1)}%, score ${z.score})`),
+    fvgs: niveles.fvgs.map(f => `${f.dir} ${f.estado} ${f.lo.toFixed(2)}–${f.hi.toFixed(2)} (${f.fecha})`),
+    lineas: niveles.lineas.map(l => `${l.dir} ${l.fecha1} ${l.v1.toFixed(2)} → ${l.fecha2} ${l.v2.toFixed(2)} · hoy ${l.hoy.toFixed(2)} · ${l.toques} toques`),
+  }); } catch(e){}
+  // «Valor por modelos»: la banda de valoración, separada del técnico y apagada por defecto.
+  const fv = biz && biz.fv;
+  const valor = (zona && zona.base === 'valoracion') ? { lo: zona.lo, hi: zona.hi }
+              : (fv && fv.avg > 0 && fv.high > 0) ? { lo: Math.min(fv.avg, fv.high), hi: Math.max(fv.avg, fv.high) } : null;
   _pvtEstado[tk] = { bars, ind, periodo: '6M', host,
-                     extra: { nivel: zona ? { bordeInf: zona.lo, bordeSup: zona.hi,
-                                              centro: (zona.lo + zona.hi) / 2 } : null } };
+                     extra: { niveles, valor, capas: _pvtCapasLeer(),
+                              enCurso: bars.length > cerradas.length ? bars.length - 1 : null } };
 
   // La zona de entrada vive en su propia tarjeta, ENCIMA de la técnica, y se pinta con las
   // mismas barras: una sola llamada a Alpaca alimenta las dos.
@@ -31714,7 +32302,13 @@ async function _pvtFillInto(host, ticker, biz){
   cvHost.innerHTML = `
     <div class="pvt-top"><div class="pvt-ohlc" id="pvt-ohlc-${pvEsc(tk)}">${_pvtLineaOHLC(bars[bars.length - 1])}</div>
     <div class="period-btns" id="pvt-chips">${chips}</div></div>
+    ${_pvtCapasHtml(_pvtEstado[tk].extra.capas, !!valor)}
     <canvas class="px-tec-canvas" id="pvt-cv-${pvEsc(tk)}"></canvas>`;
+  // Debajo de la gráfica, los niveles explicados como lo haría un analista.
+  try {
+    const nh = document.getElementById('pvx-niv-host');
+    if (nh && nh.dataset.tk === tk) nh.innerHTML = _pvtNivelesCard(niveles);
+  } catch(e){}
   host.innerHTML = `${veredicto}
     ${lectura}
     <div>
@@ -31734,6 +32328,17 @@ async function _pvtFillInto(host, ticker, biz){
     cvHost.querySelectorAll('[data-pvt]').forEach(x => x.classList.toggle('active', x === b));
     const st = _pvtEstado[tk];
     if (st){ st.periodo = b.dataset.pvt; _pvtRedibujar(tk, cv); }
+  });
+  const capasEl = cvHost.querySelector('.pvt-capas');
+  if (capasEl) capasEl.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-capa]');
+    const st = _pvtEstado[tk];
+    if (!b || !st) return;
+    const k = b.dataset.capa, on = !st.extra.capas[k];
+    st.extra.capas[k] = on;
+    b.classList.toggle('active', on); b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    _pvtCapasGuardar(st.extra.capas);
+    _pvtRedibujar(tk, cv);
   });
   _pvtEngancharResize(tk, cv);
 
