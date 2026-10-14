@@ -41219,7 +41219,7 @@ if (document.readyState === 'loading') {
   //
   // Se invierte la lógica: se BORRA TODO salvo lo explícitamente conservado. Así una clave
   // nueva se purga por defecto en vez de filtrarse por defecto.
-  var _PV_KEEP_EXACT  = { portiv_lang:1, portiv_theme:1, fh_api_key:1 };
+  var _PV_KEEP_EXACT  = { portiv_lang:1, portiv_theme:1, fh_api_key:1, pv_intro_seen:1 };
   // Token de sesión de supabase-js. Si se borra a mitad de sesión, el usuario queda
   // deslogueado — por eso el purgado por cambio de cuenta lo conserva.
   var _PV_KEEP_AUTH_RE = /^(sb-|supabase\.auth)/;
@@ -44972,8 +44972,9 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         // Primero las diapositivas que explican qué hace la app y, al terminarlas
         // o saltarlas, las preguntas del perfil. Ambas capas son opacas y a
         // pantalla completa, así que el relevo no deja ver la app detrás.
+        // En la app nativa ya se vieron al abrirla por primera vez (pv_intro_seen): directo al quiz.
         try {
-          if (typeof window._pvShowSlides === 'function') { window._pvShowSlides(_openQuiz); return; }
+          if (typeof window._pvShowSlides === 'function' && !localStorage.getItem('pv_intro_seen')) { window._pvShowSlides(_openQuiz); return; }
         } catch(e){}
         _openQuiz();
       }
@@ -46994,6 +46995,72 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   html:not(.pv-ipad) .pvs-ia-foot{ display:block; margin-top:7px; font-size:8.5px; font-weight:600; line-height:normal; color:#7a879b; text-align:center; }
 }
 @media (prefers-reduced-motion:reduce){ .pvs-ia-dots i{ animation:none !important; } }
+
+/* ══ Primer arranque de la app (iPhone, iPad, Mac) ══════════════════════════════
+   En la app nativa las diapositivas salen NADA MÁS ABRIRLA por primera vez, antes
+   del login (en la web siguen saliendo tras iniciar sesión, sin cambios). Todo lo
+   de aquí cuelga de .pvs-first, así que la web no se entera.
+   El <body> está oculto por html.app-locked hasta pasar el login: esta capa queda
+   exenta y va por encima de #authOverlay (100000), que espera debajo. */
+html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
+#pvSlidesOv.pvs-first{ z-index:100010; background:#fff; }
+
+/* Splash de marca: la teja del logo entra, las barras crecen, la línea se dibuja. */
+.pvs-splash{
+  position:absolute; inset:0; z-index:20; background:#fff;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px;
+  padding-bottom:6vh;
+}
+.pvs-splash-tile{
+  width:84px; height:84px; border-radius:26px; background:#0B1E36;
+  box-shadow:0 18px 38px -14px rgba(11,30,54,.55);
+  display:flex; align-items:center; justify-content:center;
+  animation:pvsTileIn .7s cubic-bezier(.22,1,.36,1) both;
+}
+.pvs-splash-tile svg{ display:block; width:84px; height:84px; overflow:visible; }
+.pvs-splash-tile rect{ transform-box:fill-box; transform-origin:50% 100%; animation:pvsBar .6s cubic-bezier(.22,1,.36,1) both; }
+.pvs-splash-tile rect:nth-of-type(1){ animation-delay:.28s } .pvs-splash-tile rect:nth-of-type(2){ animation-delay:.36s }
+.pvs-splash-tile rect:nth-of-type(3){ animation-delay:.44s } .pvs-splash-tile rect:nth-of-type(4){ animation-delay:.52s }
+.pvs-splash-tile polyline{ stroke-dasharray:420; stroke-dashoffset:420; animation:pvsDraw .7s .62s cubic-bezier(.5,0,.2,1) forwards; }
+.pvs-splash-tile circle{ transform-box:fill-box; transform-origin:center; animation:pvsDot .45s 1.18s cubic-bezier(.34,1.56,.64,1) both; }
+.pvs-splash-name{ font-size:27px; font-weight:750; letter-spacing:-.045em; color:#0b1c30; animation:pvsUp .6s .5s cubic-bezier(.22,1,.36,1) both; }
+.pvs-splash-tag{ margin-top:-12px; font-size:13px; font-weight:500; letter-spacing:.01em; color:#8a96a3; animation:pvsUp .6s .62s cubic-bezier(.22,1,.36,1) both; }
+.pvs-splash.out{ animation:pvsSplashOut .55s cubic-bezier(.4,0,.2,1) forwards; pointer-events:none; }
+.pvs-splash.out .pvs-splash-tile{ animation:pvsTileOut .55s cubic-bezier(.4,0,.2,1) forwards; }
+@keyframes pvsTileIn{ from{ opacity:0; transform:scale(.6) translateY(10px) } to{ opacity:1; transform:none } }
+@keyframes pvsBar{ from{ transform:scaleY(0) } to{ transform:scaleY(1) } }
+@keyframes pvsDot{ from{ opacity:0; transform:scale(0) } to{ opacity:1; transform:scale(1) } }
+@keyframes pvsUp{ from{ opacity:0; transform:translateY(12px) } to{ opacity:1; transform:none } }
+@keyframes pvsSplashOut{ to{ opacity:0; transform:scale(1.03) } }
+@keyframes pvsTileOut{ to{ transform:scale(.86) translateY(-14px) } }
+
+/* Entrada de cada diapositiva: título, texto, puntos y lista entran escalonados desde
+   el lado hacia el que se avanza (derecha al seguir, izquierda al volver). */
+#pvSlidesOv.pvs-first .pvs-head > *, #pvSlidesOv.pvs-first .pvs-b{
+  animation:pvsInF .55s cubic-bezier(.22,1,.36,1) both;
+}
+#pvSlidesOv.pvs-first.pvs-bwd .pvs-head > *, #pvSlidesOv.pvs-first.pvs-bwd .pvs-b{ animation-name:pvsInB; }
+#pvSlidesOv.pvs-first .pvs-head > :nth-child(2){ animation-delay:.06s }
+#pvSlidesOv.pvs-first .pvs-head > :nth-child(3){ animation-delay:.12s }
+#pvSlidesOv.pvs-first .pvs-b:nth-child(1){ animation-delay:.1s }
+#pvSlidesOv.pvs-first .pvs-b:nth-child(2){ animation-delay:.16s }
+#pvSlidesOv.pvs-first .pvs-b:nth-child(3){ animation-delay:.22s }
+@keyframes pvsInF{ from{ opacity:0; transform:translateX(26px) } to{ opacity:1; transform:none } }
+@keyframes pvsInB{ from{ opacity:0; transform:translateX(-26px) } to{ opacity:1; transform:none } }
+/* Los botones y «Saltar» aparecen una sola vez, al salir del splash. */
+#pvSlidesOv.pvs-first.pvs-intro .pvs-ctrl, #pvSlidesOv.pvs-first.pvs-intro .pvs-skip{
+  animation:pvsUp .6s .35s cubic-bezier(.22,1,.36,1) both;
+}
+#pvSlidesOv.pvs-first .pvs-next{ transition:opacity .15s, transform .12s cubic-bezier(.22,1,.36,1); }
+#pvSlidesOv.pvs-first .pvs-next:active, #pvSlidesOv.pvs-first .pvs-back:active{ transform:scale(.96); }
+/* Salida: la capa se desvanece y sube un poco; el login aparece debajo. */
+#pvSlidesOv.pvs-first.pvs-leaving{ animation:pvsLeave .5s cubic-bezier(.4,0,.2,1) forwards; pointer-events:none; }
+@keyframes pvsLeave{ to{ opacity:0; transform:translateY(-18px) scale(.985) } }
+@media (prefers-reduced-motion:reduce){
+  .pvs-splash, .pvs-splash *, #pvSlidesOv.pvs-first .pvs-head > *, #pvSlidesOv.pvs-first .pvs-b,
+  #pvSlidesOv.pvs-first .pvs-ctrl, #pvSlidesOv.pvs-first .pvs-skip{ animation-duration:.01s !important; animation-delay:0s !important; }
+  #pvSlidesOv.pvs-first.pvs-leaving{ animation:none; opacity:0; }
+}
 </style>
 <div class="pvs-ov" id="pvSlidesOv" role="dialog" aria-modal="true">
   <button type="button" class="pvs-skip" id="pvsSkip">Saltar</button>
@@ -48633,7 +48700,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       screen: SCREEN_IA, tab: 'aianalyst', fx: 'ia', scroll: 100 },
   ];
 
-  let _i = 0, _done = null;
+  let _i = 0, _done = null, _first = false, _dir = 1;
   const $ = id => document.getElementById(id);
 
   // ── Escritorio: portátil con la app de escritorio dentro ──
@@ -48721,19 +48788,85 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     // Red de seguridad: si algún efecto dejó algo esperando con .pvm-pre, a los 1,2 s se ve igual.
     setTimeout(() => { try { $('pvsStage').querySelectorAll('.pvm-pre').forEach(el => el.classList.remove('pvm-pre')); } catch(e){} }, 1200);
     $('pvsBack').disabled = (_i === 0);
+    if (_first) {
+      $('pvSlidesOv').classList.toggle('pvs-bwd', _dir < 0);
+      $('pvsNext').textContent = (_i === SLIDES.length - 1) ? 'Empezar' : 'Siguiente';
+    }
   }
 
   function _close(){
+    if (_first) { _closeFirst(); return; }
     $('pvSlidesOv').classList.remove('open');
     const cb = _done; _done = null;
     if (typeof cb === 'function') { try { cb(); } catch(e){} }
   }
 
   window._pvShowSlides = function(onDone){
-    _i = 0; _done = onDone || null;
+    _i = 0; _done = onDone || null; _dir = 1;
     $('pvSlidesOv').classList.add('open');
     _render();
   };
+
+  // ── Primer arranque de la app nativa ──
+  // En iPhone, iPad y Mac las diapositivas salen al abrir la app por primera vez, antes
+  // del login, con un splash de marca delante. En la web no cambia nada: siguen saliendo
+  // tras iniciar sesión. «Primera vez» = nunca vistas en este dispositivo y sin rastro de
+  // ninguna sesión (token de supabase o pv_bound_uid): quien ya usaba la app no las vuelve
+  // a ver al actualizar. pv_intro_seen sobrevive al cierre de sesión (_PV_KEEP_EXACT) y,
+  // ya vistas, tras el login se pasa directo al cuestionario del perfil.
+  function _isFirstRun(){
+    try {
+      const C = window.Capacitor;
+      if (!(C && C.isNativePlatform && C.isNativePlatform())) return false;
+      if (localStorage.getItem('pv_intro_seen') || localStorage.getItem('pv_bound_uid')) return false;
+      return !Object.keys(localStorage).some(k => /^(sb-|supabase\.auth)/.test(k));
+    } catch(e){ return false; }
+  }
+  function _closeFirst(){
+    try { localStorage.setItem('pv_intro_seen', '1'); } catch(e){}
+    const ov = $('pvSlidesOv');
+    // El login ya está debajo: su tarjeta sube mientras esta capa se va.
+    try {
+      const card = document.getElementById('authCard');
+      if (card && card.animate && !(window.matchMedia && matchMedia('(prefers-reduced-motion:reduce)').matches))
+        card.animate([{ opacity: 0, transform: 'translateY(22px) scale(.97)' }, { opacity: 1, transform: 'none' }],
+                     { duration: 650, delay: 180, easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' });
+    } catch(e){}
+    ov.classList.add('pvs-leaving');
+    setTimeout(() => {
+      _first = false;
+      ov.classList.remove('open', 'pvs-first', 'pvs-leaving', 'pvs-intro', 'pvs-bwd');
+      $('pvsNext').textContent = 'Siguiente';
+    }, 480);
+  }
+  function _startFirst(){
+    _first = true; _i = 0; _done = null; _dir = 1;
+    const ov = $('pvSlidesOv');
+    const sp = document.createElement('div');
+    sp.className = 'pvs-splash';
+    sp.innerHTML =
+      `<div class="pvs-splash-tile"><svg viewBox="0 0 512 512" aria-hidden="true"><g fill="#fff">
+         <rect x="91" y="316" width="57" height="100" rx="11"/><rect x="175" y="240" width="57" height="176" rx="11"/>
+         <rect x="259" y="268" width="57" height="148" rx="11"/><rect x="344" y="186" width="57" height="230" rx="11"/>
+         <polyline points="115,283 204,192 282,222 398,116" fill="none" stroke="#fff" stroke-width="21" stroke-linecap="round" stroke-linejoin="round"/>
+         <circle cx="398" cy="116" r="23.5"/></g></svg></div>
+       <div class="pvs-splash-name">Portiv</div>
+       <div class="pvs-splash-tag">Wealth Tracker</div>`;
+    ov.appendChild(sp);
+    ov.classList.add('pvs-first', 'open');
+    const t0 = Date.now();
+    const go = () => {
+      // La primera diapositiva se pinta cuando ya existe todo el documento (PVM, medidas)
+      // y el logo terminó de dibujarse; el splash se desvanece encima de ella.
+      setTimeout(() => {
+        ov.classList.add('pvs-intro');
+        _render();
+        sp.classList.add('out');
+        setTimeout(() => { sp.remove(); ov.classList.remove('pvs-intro'); }, 1100);
+      }, Math.max(0, 1750 - (Date.now() - t0)));
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go, { once: true }); else go();
+  }
 
   // Al redimensionar la ventana (app de Mac, navegador) el portátil cambia de
   // tamaño con el CSS; aquí sólo se reajusta la escala del interior. Si se cruza
@@ -48746,9 +48879,11 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     _wasDesk = d;
   });
 
-  $('pvsNext').onclick = ()=>{ if (_i < SLIDES.length-1){ _i++; _render(); } else _close(); };
-  $('pvsBack').onclick = ()=>{ if (_i > 0){ _i--; _render(); } };
+  $('pvsNext').onclick = ()=>{ if (_i < SLIDES.length-1){ _i++; _dir = 1; _render(); } else _close(); };
+  $('pvsBack').onclick = ()=>{ if (_i > 0){ _i--; _dir = -1; _render(); } };
   $('pvsSkip').onclick = _close;
+
+  if (_isFirstRun()) { try { _startFirst(); } catch(e){ _first = false; } }
 })();
 </script>
 
