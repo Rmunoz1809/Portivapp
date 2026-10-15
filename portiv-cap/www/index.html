@@ -8533,15 +8533,27 @@ const _CAT = {
   deudaTotalCapital:{ campo:'totalDebt/totalEquityQuarterly', dir:-1, lbl:'Deuda total / capital' },
   liquidezCorriente:{ campo:'currentRatioQuarterly', dir:+1, lbl:'Razón corriente' },
   liquidezRapida:   { campo:'quickRatioQuarterly', dir:+1, lbl:'Razón rápida' },
-  // Finnhub devuelve cobertura negativa o casi cero cuando la empresa COBRA más
-  // intereses de los que paga: es acreedora neta, no está ahogada. Tal cual venía, el
-  // dato hundía la solidez de las que mejor balance tienen — Amazon (0,62), Berkshire
-  // (0,57), Lululemon (-47,8) y Palantir (-1,53), todas con caja neta o sin deuda.
-  // Si no hay deuda que cubrir, la cobertura no mide nada y se deja fuera: el
-  // apalancamiento ya lo mide deudaTotalCapital, que si es fiable.
+  // Cobertura de intereses = EBIT / gasto por intereses. Manda la del último 10-K
+  // (interestCoverage10K, que la app deja en __m: ver _pvCobertura10K). La de Finnhub
+  // es NETA —divide entre lo que paga MENOS lo que cobra de intereses— y queda de
+  // respaldo, con dos filtros:
+  //  · Finnhub devuelve cobertura negativa o casi cero cuando la empresa COBRA más
+  //    intereses de los que paga: es acreedora neta, no está ahogada. Tal cual venía, el
+  //    dato hundía la solidez de las que mejor balance tienen — Amazon (0,62), Berkshire
+  //    (0,57), Lululemon (-47,8) y Palantir (-1,53), todas con caja neta o sin deuda.
+  //    Si no hay deuda que cubrir, la cobertura no mide nada y se deja fuera: el
+  //    apalancamiento ya lo mide deudaTotalCapital, que si es fiable.
+  //  · Cuando cobra CASI tanto como paga, el divisor se acerca a cero y el cociente se
+  //    dispara: MSFT daba 891.8× en 12 meses y 15.9× en el anual, con 50.9× en su 10-K.
+  //    Si las dos lecturas de Finnhub no se parecen, ninguna es fiable.
   cobInteres:       { campo:'netInterestCoverageTTM', dir:+1, lbl:'Cobertura de intereses',
                       deriva: i => {
+                        const k  = _leer(i, 'interestCoverage10K');
+                        if (k != null) return k;
                         const c  = _leer(i, 'netInterestCoverageTTM');
+                        const an = _leer(i, 'netInterestCoverageAnnual');
+                        if (c != null && an != null && c > 0.05 && an > 0.05 &&
+                            Math.max(c, an) / Math.min(c, an) > 2) return null;
                         if (c != null && c > 0.05) return c;
                         const de = _leer(i, 'totalDebt/totalEquityQuarterly');
                         const om = _leer(i, 'operatingMarginTTM');
@@ -8883,6 +8895,10 @@ const _PROFILE_OVERRIDE = {
   ASML:'SEMI_EQUIP', AMAT:'SEMI_EQUIP', LRCX:'SEMI_EQUIP', KLAC:'SEMI_EQUIP', TER:'SEMI_EQUIP',
   MSFT:'SOFTWARE', ORCL:'SOFTWARE', CRM:'SOFTWARE', ADBE:'SOFTWARE', NOW:'SOFTWARE',
   INTU:'SOFTWARE', SAP:'SOFTWARE', PANW:'SOFTWARE', FTNT:'SOFTWARE', WDAY:'SOFTWARE',
+  // Nube de IA. Finnhub solo la etiqueta «Technology», que ninguna regla reconoce, y caía en
+  // «Mercado general». La SEC (SIC 7372) y la clasificación tipo Yahoo («Software —
+  // Infrastructure») la ponen con ORCL y MSFT, que compiten con ella en nube.
+  CRWV:'SOFTWARE',
   CRWD:'SAAS_GROWTH', ZS:'SAAS_GROWTH', SNOW:'SAAS_GROWTH', DDOG:'SAAS_GROWTH',
   MDB:'SAAS_GROWTH', NET:'SAAS_GROWTH', OKTA:'SAAS_GROWTH', GTLB:'SAAS_GROWTH',
   CFLT:'SAAS_GROWTH', S:'SAAS_GROWTH', TEAM:'SAAS_GROWTH', HUBS:'SAAS_GROWTH',
@@ -24716,6 +24732,35 @@ function _quoteCachePut(ticker, price, change, pct, src){
 }
 function _quoteCacheGet(ticker){ const t=(ticker||'').toUpperCase(); const q=_QUOTE_CACHE[t]; return (q && q.price>0) ? q : null; }
 
+// ── Rango de 52 semanas: UNA sola fuente para toda la ficha ───────────────────────────────
+// Finnhub da el máximo y el mínimo de 52 semanas (intradía, consolidados) con su fecha, pero
+// sin la sesión de hoy, y la `info` que los lleva puede servirse desde una caché de semanas:
+// el 15 oct ORCL enseñaba como máximo los $345.72 del 10 sep de 2025, ya fuera de la ventana.
+// Un extremo fechado hace más de 371 días (52 semanas y una de margen por el retraso del
+// proveedor) no se enseña: mejor sin rango que con uno falso.
+function _pv52Vencido(fecha){
+  const t = Date.parse(fecha || '');
+  return isFinite(t) && (Date.now() - t) > 371 * 86400000;
+}
+// Extremo vigente de /stock/metric ('High' | 'Low'), ampliado con el de la sesión de hoy
+// (/quote h/l): si hoy marcó un máximo o un mínimo nuevo, el rango tiene que contenerlo.
+function _pv52Extremo(m, lado, hoy){
+  const v = +(m && m['52Week' + lado]);
+  if (!(v > 0) || _pv52Vencido(m['52Week' + lado + 'Date'])) return null;
+  const h = +hoy;
+  if (!(h > 0)) return v;
+  return lado === 'High' ? Math.max(v, h) : Math.min(v, h);
+}
+// Para una `info` ya hecha (caché, snapshot): quita el extremo que se haya salido de la ventana.
+function _pv52Vigente(info){
+  try {
+    const m = info && info.__m;
+    if (m && _pv52Vencido(m['52WeekHighDate'])) info.fiftyTwoWeekHigh = null;
+    if (m && _pv52Vencido(m['52WeekLowDate']))  info.fiftyTwoWeekLow  = null;
+  } catch(e){}
+  return info;
+}
+
 // ── Coalescing de apiCall (sólo lecturas lentas) ──────────────────────────────
 // Tres caminos independientes piden el MISMO calendario de resultados durante el
 // arranque —_earnFetchWeek, _buildWeekCatalysts y PORTIV_NEWS.fetch.earnings— y
@@ -24885,11 +24930,17 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       returnOnCapital: (m.roiTTM ?? m.roiAnnual) != null ? (m.roiTTM ?? m.roiAnnual) / 100 : null,
       beta:            m.beta    ?? null,
       trailingEps:     m.epsTTM ?? m.epsBasicExclExtraItemsTTM ?? null,
-      priceToBook:     m.pbAnnual ?? m.pbQuarterly ?? m.pb ?? null,
+      // Balance: el ÚLTIMO trimestre primero, como el motor sectorial (pbQuarterly,
+      // totalDebt/totalEquityQuarterly, currentRatioQuarterly). Con el anual delante, la ficha
+      // de ORCL tras su 10-Q de agosto decía «debe $3.23 por cada $1» en Resumen y «Deuda total
+      // / capital 2.01» en Finanzas: el anual es el balance del 31 may, antes de que vendiera
+      // $19.9 mil M en acciones. El pbAnnual, además, va al precio del cierre del ejercicio.
+      priceToBook:     m.pbQuarterly ?? m.pb ?? m.pbAnnual ?? null,
       // Los 52s venían de la meta de Yahoo con respaldo Finnhub; retirado _yhChart, Finnhub es
       // la única fuente (la meta de Yahoo siempre era null desde que _yhChart pasó a stub).
-      fiftyTwoWeekHigh: m['52WeekHigh'] || null,
-      fiftyTwoWeekLow:  m['52WeekLow']  || null,
+      // Se descartan si su fecha ya salió de la ventana y se amplían con la sesión de hoy.
+      fiftyTwoWeekHigh: _pv52Extremo(m, 'High', _q2 && _q2.h),
+      fiftyTwoWeekLow:  _pv52Extremo(m, 'Low',  _q2 && _q2.l),
       dividendYield:   m.currentDividendYieldTTM != null ? m.currentDividendYieldTTM / 100 : null,
       revenueGrowth:   m.revenueGrowthTTMYoy != null ? m.revenueGrowthTTMYoy / 100 : null,
       earningsGrowth:  m.epsGrowthTTMYoy    != null ? m.epsGrowthTTMYoy / 100    : null,
@@ -24898,8 +24949,8 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       earningsGrowthQ: m.epsGrowthQuarterlyYoy     != null ? m.epsGrowthQuarterlyYoy     / 100 : null,
       profitMargins:   (m.netProfitMarginTTM ?? m.netProfitMarginAnnual) != null ? (m.netProfitMarginTTM ?? m.netProfitMarginAnnual) / 100 : null,
       grossMargins:    (m.grossMarginTTM ?? m.grossMarginAnnual) != null ? (m.grossMarginTTM ?? m.grossMarginAnnual) / 100 : null,
-      debtToEquity:    m['totalDebt/totalEquityAnnual'] ?? m['totalDebt/totalEquityQuarterly'] ?? null,
-      currentRatio:    m.currentRatioAnnual ?? m.currentRatioQuarterly ?? null,
+      debtToEquity:    m['totalDebt/totalEquityQuarterly'] ?? m['totalDebt/totalEquityAnnual'] ?? null,
+      currentRatio:    m.currentRatioQuarterly ?? m.currentRatioAnnual ?? null,
       enterpriseToEbitda: m.evEbitdaTTM ?? m.evEbitdaAnnual ?? null,
       freeCashflow:    (m.pfcfShareTTM ?? m.pfcfShareAnnual) != null && mc > 0 ? mc / (m.pfcfShareTTM ?? m.pfcfShareAnnual) : null,
       recommendationMean,
@@ -26229,7 +26280,7 @@ async function _analysisSharedGet(ticker, eKey){
   try {
     const sb = window.sbClient; if (!sb) return null;
     const { data, error } = await sb.from('shared_analysis')
-      .select('data,earnings_key').eq('ticker', (ticker||'').toUpperCase()).maybeSingle();
+      .select('data,earnings_key,updated_at').eq('ticker', (ticker||'').toUpperCase()).maybeSingle();
     if (error || !data || !data.data) return null;
     // Si la entrada compartida es de un earnings ANTERIOR → ignórala (se regenera).
     if (eKey && eKey !== 'na' && data.earnings_key && data.earnings_key !== eKey) return null;
@@ -26238,7 +26289,7 @@ async function _analysisSharedGet(ticker, eKey){
     // los usuarios hasta el próximo reporte, y ningún cambio de versión de caché la alcanza.
     // Se ignora; el siguiente _analysisSharedSet la reescribe ya completa.
     if (!_pvInfoCompleto(data.data && data.data.info)) return null;
-    return data.data;   // { info, overview }
+    return Object.assign({}, data.data, { updatedAt: data.updated_at || '' });   // { info, overview, updatedAt }
   } catch(e){ return null; }
 }
 // Publica los fundamentales para que TODOS los lean (fire-and-forget; nunca rompe el flujo).
@@ -26248,11 +26299,28 @@ async function _analysisSharedSet(ticker, info, overview, eKey){
     await _sharedWrite('set','analysis', (ticker||'').toUpperCase(), { info, overview: overview || null }, { earnings_key: eKey });
   } catch(e){}
 }
+// Une la `info` recién pedida a Finnhub con la cacheada por earnings. Manda la nueva: trae el
+// precio, el rango de 52 semanas, los múltiplos y los fundamentales del último 10-Q, que
+// Finnhub procesa días DESPUÉS del reporte (la caché de ORCL, escrita el día siguiente a sus
+// resultados, seguía con el balance de mayo). Devuelve null —y se queda la cacheada— si a
+// la nueva le falló una pieza que la cacheada sí tiene: el perfil (nombre, sector) o
+// /stock/metric (las métricas del motor sectorial). Si solo falló el consenso de analistas,
+// se conserva el de la cacheada.
+function _pvInfoFresca(vieja, nueva, ticker){
+  if (!nueva || !_pvInfoCompleto(nueva)) return null;
+  const tk = String(ticker || '').toUpperCase();
+  if (!nueva.longName || String(nueva.longName).toUpperCase() === tk) return null;
+  if (vieja && _pvInfoCompleto(vieja) && Object.keys(nueva.__m).length < Object.keys(vieja.__m).length * 0.8) return null;
+  const out = Object.assign({}, nueva);
+  if (vieja && out.recommendationMean == null && vieja.recommendationMean != null)
+    ['recommendationMean','numberOfAnalystOpinions','recoBreakdown','recoHistory'].forEach(k => { out[k] = vieja[k]; });
+  return out;
+}
 
 // ── Snapshot COMPLETO del análisis (info+overview+chart+news+eps) en localStorage ──
 // Objetivo: re-entrar a una acción YA cargada = instantáneo y CERO llamadas a la API.
 // Se refresca solo cuando expira el TTL (precio/noticias cambian a diario).
-const _RESEARCH_SNAP_LS = 'portiv_research_snapshot_v3';   // v3: los v2 guardan el `info` sin __m → el análisis sectorial se degradaba al genérico hasta que expiraran las 24 h. // v2: purga snapshots viejos con gráfica sintética envenenada
+const _RESEARCH_SNAP_LS = 'portiv_research_snapshot_v4';   // v4: los v3 guardaron la `info` de la caché por earnings tal cual, con precio, 52 semanas y múltiplos de hasta hace semanas (ORCL: máximo de $345.72 y precio de $152.94 del 10 sep). // v3: los v2 guardan el `info` sin __m → el análisis sectorial se degradaba al genérico hasta que expiraran las 24 h. // v2: purga snapshots viejos con gráfica sintética envenenada
 const _RESEARCH_SNAP_TTL_MS = 24 * 60 * 60 * 1000;   // 24 h — sube/baja a gusto
 let _researchSnapCache = {};
 (function(){ try { _researchSnapCache = JSON.parse(localStorage.getItem(_RESEARCH_SNAP_LS) || '{}') || {}; } catch(e){ _researchSnapCache = {}; } })();
@@ -26348,7 +26416,7 @@ async function _fetchResearch(ticker) {
     const _snap = _researchSnapGet(ticker);
     if (_snap) {
       if (_snap.eps && typeof EPS !== 'undefined') EPS._cache[(ticker||'').toUpperCase()] = _snap.eps;
-      _currentResearchInfo = _snap.info;
+      _currentResearchInfo = _pv52Vigente(_snap.info);
       researchChartCache = {};
       researchChartCache['1mo'] = _snap.chartData;
       _renderResearch(ticker, _snap.info, _snap.chartData, _snap.news || [], _snap.overview);
@@ -26404,10 +26472,10 @@ async function _fetchResearch(ticker) {
     // (info → luego history), sumando ambas latencias en vez de solaparlas.
     const _histPromise = apiCall({action:'history', ticker, period:'1mo'}, 8000).catch(() => ({timestamps:[], closes:[]}));
     // FIX perf: `info` TAMPOCO depende de _eKey ni de EPS → se lanza YA, junto al histórico,
-    // en vez de esperar al `await EPS.fetch`. Trade-off DELIBERADO: si luego aciertan las
-    // cachés (local o compartida), estos 5 fetches a Finnhub se desperdician. Es aceptable —
-    // el rate limit de Finnhub es por minuto, no por request, y el ahorro de latencia (dejar
-    // de encadenar EPS.fetch → info) lo justifica.
+    // en vez de esperar al `await EPS.fetch`. Se pide SIEMPRE, también cuando luego aciertan
+    // las cachés (local o compartida): de ahí salen el precio, el rango de 52 semanas y los
+    // múltiplos de hoy, que la caché por earnings tiene congelados (ver 2b, abajo). El rate
+    // limit de Finnhub es por minuto, no por request.
     // El .then(v=>({v}), e=>({e})) convierte el rechazo en valor: sin esto, un ticker inválido
     // provocaría un unhandled rejection cuando la promesa NO llega a consumirse (cache hit).
     // El error se re-lanza abajo, en el punto donde hoy se consumía.
@@ -26417,12 +26485,39 @@ async function _fetchResearch(ticker) {
     const _eKey = _analysisEarningsKey(ticker);
 
     // ── Fundamentales (info + overview): cache local → compartido → yfinance ──
-    let info = null, overview = null;
+    let info = null, overview = null, _shUpd = null;
     const _loc = _analysisLocalGet(ticker, _eKey);
     if (_loc) { info = _loc.info; overview = _loc.overview; }          // 1) local (instantáneo)
     if (!info) {                                                        // 2) compartido (otro usuario)
       const _sh = await _analysisSharedGet(ticker, _eKey);
-      if (_sh && _sh.info) { info = _sh.info; overview = _sh.overview || null; _analysisLocalSet(ticker, info, overview, _eKey); }
+      if (_sh && _sh.info) { info = _sh.info; overview = _sh.overview || null; _shUpd = _sh.updatedAt || ''; _analysisLocalSet(ticker, info, overview, _eKey); }
+    }
+    // 2b) Las dos cachés de arriba solo caducan cuando la empresa reporta, y `info` no son solo
+    //     fundamentales: lleva el precio, el rango de 52 semanas, la capitalización, los
+    //     múltiplos y el balance que Finnhub actualiza al procesar el 10-Q. Servida tal cual, el
+    //     15 oct la ficha de ORCL enseñaba la del 10 sep (máximo de $345.72, «hoy cotiza a
+    //     $152.94», P/E 27.6, deuda/capital 3.01) junto al precio vivo de $133.41. La `info`
+    //     fresca ya está en vuelo: se le dan unos segundos y, si llega completa, manda ella.
+    if (info) {
+      const _vieja = info;
+      const _fresca = r => (r && r.v) ? _pvInfoFresca(_vieja, r.v, ticker) : null;
+      const _r = await Promise.race([_infoPromise, _sleep(5000).then(() => null)]);
+      const _nueva = _fresca(_r);
+      if (_nueva) {
+        info = _nueva;
+        _analysisLocalSet(ticker, info, overview, _eKey);
+        // La fila compartida es el respaldo de quien no consiga la fresca: se renueva si tiene
+        // más de 12 h (una escritura cada 12 h por acción, no una por apertura).
+        if (_shUpd !== null && !(Date.now() - Date.parse(_shUpd) < 12 * 3600 * 1000))
+          _analysisSharedSet(ticker, info, overview, _eKey);
+      } else if (!_r) {
+        // Llegó tarde: esta apertura se queda con la cacheada, pero la siguiente ya no.
+        _infoPromise.then(r => {
+          const n = _fresca(r); if (!n) return;
+          _analysisLocalSet(ticker, n, overview, _eKey);
+          _researchSnapDelete(ticker);
+        }).catch(() => {});
+      }
     }
     if (!info) {                                                        // 3) yfinance → poblar caches
       // FIX perf: info (ya en vuelo desde arriba) y overview en PARALELO — antes eran dos
@@ -26441,6 +26536,7 @@ async function _fetchResearch(ticker) {
       _analysisSharedSet(ticker, info, overview, _eKey);               // compartir para todos
     }
     if (!info || !info.longName) throw new Error(`Ticker "${ticker}" no encontrado. Verifica el símbolo.`);
+    _pv52Vigente(info);   // si se quedó la cacheada (Finnhub no respondió), sin extremos fuera de la ventana
 
     const newsObj = { news: [] };   // Noticias eliminadas del análisis (sección quitada)
     _currentResearchInfo = info;
@@ -26702,6 +26798,10 @@ const _PV_FIN_TAGS = {
   // No es el saldo al cierre; la prueba 7 compara el mismo concepto en ambos años.
   shares:             ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic'],
   ebit:               ['OperatingIncomeLoss'],               // no se reconstruye desde utilidad + intereses + impuestos
+  // Cobertura de intereses = EBIT / gasto por intereses BRUTO. El neto (gasto − ingreso por
+  // intereses) solo cuando el estado de resultados no trae otro, y solo si es gasto.
+  interestExpense:    ['InterestExpense', 'InterestExpenseNonoperating', 'InterestExpenseDebt', 'InterestAndDebtExpense'],
+  interestNet:        ['InterestIncomeExpenseNonoperatingNet', 'InterestIncomeExpenseNet'],
   equity:             ['StockholdersEquity'],
   equityTotal:        ['StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'],
   liabilitiesAndEquity: ['LiabilitiesAndStockholdersEquity'],
@@ -26740,6 +26840,8 @@ function _pvFinFields(rep) {
     longTermDebt:       busca('longTermDebt'),
     shares:             busca('shares'),
     ebit:               busca('ebit'),
+    interestExpense:    busca('interestExpense'),
+    interestNet:        busca('interestNet'),
     equity:             busca('equity'),
   };
   // Identidad contable 1: Pasivo total = Activo − Patrimonio (incluyendo interés
@@ -26852,13 +26954,29 @@ function computeAltmanZ(t, marketCapUSD) {
   const z = componentes.reduce((s, c) => s + c.peso * c.valor, 0);
   return { z, zona: _pvAltmanZona(z), motivo: null, componentes, mve };
 }
+
+// Cobertura de intereses del 10-K: resultado operativo (EBIT) / gasto por intereses. La de
+// Finnhub (netInterestCoverage) divide entre intereses NETOS de lo que la empresa cobra, y
+// cuando cobra casi tanto como paga se dispara: MSFT salía a 891.8× con un 10-K de EBIT $155,237
+// M y gasto por intereses $3,051 M (50.9×). Si el estado de resultados no separa el gasto por
+// intereses —MSFT lo deja en las notas—, null: no se reconstruye ni se estima.
+function computeCoberturaIntereses(t) {
+  const T = t || {};
+  if (typeof T.ebit !== 'number' || !isFinite(T.ebit)) return null;
+  let gasto = (typeof T.interestExpense === 'number' && T.interestExpense > 0) ? T.interestExpense : null;
+  let neto = false;
+  if (gasto == null && typeof T.interestNet === 'number' && T.interestNet < 0) { gasto = -T.interestNet; neto = true; }
+  if (gasto == null) return null;
+  return { v: T.ebit / gasto, ebit: T.ebit, gasto, neto, year: T.year ?? null, endDate: T.endDate || '' };
+}
 // ── F-Score / Z-Score: fin
 
 // ── Descarga + caché de los campos extraídos de los 2 últimos 10-K ─────────
 // Se guardan SÓLO los campos (≈1 KB por ticker), nunca el payload (~200 KB).
 // TTL 7 días: un 10-K se publica una vez al año. Promesa en vuelo compartida
 // por ticker para no duplicar llamadas si la ficha se repinta.
-const _PV_FIN_LS  = 'pv_fin_reported_v1';
+const _PV_FIN_LS  = 'pv_fin_reported_v2';   // v2: guarda también el gasto por intereses (cobertura de intereses del 10-K)
+try { localStorage.removeItem('pv_fin_reported_v1'); } catch(e){}
 const _PV_FIN_TTL = 7 * 24 * 60 * 60 * 1000;
 const _PV_FIN_MEM = {};       // { TICKER: {ts, t, t1} }
 const _PV_FIN_INFLIGHT = {};  // { TICKER: Promise }
@@ -26876,14 +26994,20 @@ function _pvFinPickAnnual(payload){
   const t1 = t ? (ks.find(d => d.year != null ? d.year !== t.year : String(d.endDate || '').slice(0, 4) !== String(t.endDate || '').slice(0, 4)) || null) : null;
   return { t, t1 };
 }
+// Lo que ya hay en memoria o en localStorage, sin red. null si no hay o caducó.
+function _pvFinCache(tk){
+  const now = Date.now();
+  const mem = _PV_FIN_MEM[tk];
+  if (mem && (now - mem.ts) < _PV_FIN_TTL) return { t: mem.t, t1: mem.t1 };
+  const ls = _pvFinLsRead()[tk];
+  if (ls && ls.t && (now - (ls.ts || 0)) < _PV_FIN_TTL) { _PV_FIN_MEM[tk] = ls; return { t: ls.t, t1: ls.t1 }; }
+  return null;
+}
 function _pvFinancialsReported(ticker){
   const tk = String(ticker || '').toUpperCase().trim();
   if (!tk) return Promise.resolve(null);
-  const now = Date.now();
-  const mem = _PV_FIN_MEM[tk];
-  if (mem && (now - mem.ts) < _PV_FIN_TTL) return Promise.resolve({ t: mem.t, t1: mem.t1 });
-  const ls = _pvFinLsRead()[tk];
-  if (ls && ls.t && (now - (ls.ts || 0)) < _PV_FIN_TTL) { _PV_FIN_MEM[tk] = ls; return Promise.resolve({ t: ls.t, t1: ls.t1 }); }
+  const hit = _pvFinCache(tk);
+  if (hit) return Promise.resolve(hit);
   if (_PV_FIN_INFLIGHT[tk]) return _PV_FIN_INFLIGHT[tk];
   const p = fhFetch(`/stock/financials-reported?symbol=${encodeURIComponent(tk)}&freq=annual`, 20000)
     .then(payload => {
@@ -26897,6 +27021,22 @@ function _pvFinancialsReported(ticker){
     .finally(() => { delete _PV_FIN_INFLIGHT[tk]; });
   _PV_FIN_INFLIGHT[tk] = p;
   return p;
+}
+// Deja en info.__m la cobertura de intereses del último 10-K (interestCoverage10K), que el
+// motor sectorial prefiere a la neta de Finnhub (ver cobInteres). Los estados anuales ya van
+// en camino para el F-Score (_pvPaintFScore, misma promesa en vuelo): se esperan `esperaMs`
+// como mucho. Con Finanzas bajo candado (plan gratuito) no se piden; solo se usa lo ya guardado.
+async function _pvCobertura10K(ticker, info, esperaMs){
+  if (!info || !info.__m || typeof info.__m !== 'object') return;
+  const tk = String(ticker || '').toUpperCase().trim();
+  if (!tk || (typeof _isEtfTicker === 'function' && _isEtfTicker(tk, info))) return;
+  let res = _pvFinCache(tk);
+  if (!res && !(typeof _pvLocked === 'function' && _pvLocked()))
+    res = await Promise.race([_pvFinancialsReported(tk), new Promise(r => setTimeout(() => r(null), esperaMs || 0))]);
+  if (!res || !res.t) return;                       // sin estados todavía: no se toca nada
+  const c = computeCoberturaIntereses(res.t);
+  if (c && isFinite(c.v)) { info.__m.interestCoverage10K = Math.round(c.v * 100) / 100; info.__m.interestCoverage10KFecha = c.endDate; }
+  else { delete info.__m.interestCoverage10K; delete info.__m.interestCoverage10KFecha; }   // el 10-K no separa el gasto
 }
 
 // ── Pintado de la tarjeta #r-fscore en la ficha ────────────────────────────
@@ -27057,7 +27197,8 @@ const PV_RETURNS = (function(){
     return { ret: lastClose / ref - 1, refTs: series.timestamps[i], refClose: ref };
   }
   // Máximo de 52 semanas propio: max(closes) de los últimos 365 días de la diaria. Sólo si
-  // la diaria tiene ≥ 240 sesiones en esa ventana; si no, null (el llamador puede caer a Finnhub).
+  // la diaria tiene ≥ 240 sesiones en esa ventana; si no, null. Es el respaldo: manda el de
+  // Finnhub (ver _pvrComputeFromSeries).
   function _pvrHigh52(daily, nowMs){
     if (!daily || !Array.isArray(daily.timestamps)) return null;
     const fromSec = Math.floor((nowMs - 365 * DAY) / 1000);
@@ -27068,8 +27209,11 @@ const PV_RETURNS = (function(){
     }
     return (n >= 240 && mx > 0) ? mx : null;
   }
-  // Todo junto para un ticker. `extHigh52` = máximo de 52 s externo (Finnhub) por si la
-  // diaria es corta. fromHigh52 nunca es > 0.
+  // Todo junto para un ticker. `extHigh52` = máximo de 52 s de Finnhub (intradía, consolidado,
+  // con la sesión de hoy y ya descartado si salió de la ventana): es el MISMO que enseñan la
+  // cabecera y la salud financiera, así que manda. Antes mandaba el cierre más alto de la
+  // diaria de IEX y la ficha de ORCL enseñaba dos máximos de 52 semanas: $322.54 arriba y
+  // $313.08 aquí. Sin el de Finnhub, el de la diaria. fromHigh52 nunca es > 0.
   function _pvrComputeFromSeries(daily, weekly, nowMs, extHigh52){
     const out = { ret: {}, refs: {}, fromHigh52: null, high52: null, high52Src: null, last: null, asOf: null, kind: 'precio' };
     const dOk = daily && Array.isArray(daily.closes) && daily.closes.length >= 2;
@@ -27084,9 +27228,9 @@ const PV_RETURNS = (function(){
       out.ret[h] = r ? r.ret : null;
       out.refs[h] = r ? r.refTs : null;
     });
-    let hi = dOk ? _pvrHigh52(daily, nowMs) : null;
-    if (hi) out.high52Src = 'alpaca';
-    else if (extHigh52 > 0) { hi = extHigh52; out.high52Src = 'finnhub'; }
+    let hi = null;
+    if (extHigh52 > 0) { hi = extHigh52; out.high52Src = 'finnhub'; }
+    else if (dOk) { hi = _pvrHigh52(daily, nowMs); if (hi) out.high52Src = 'alpaca'; }
     if (hi > 0 && last > 0) { out.high52 = hi; out.fromHigh52 = Math.min(0, last / hi - 1); }
     return out;
   }
@@ -27171,11 +27315,14 @@ const PV_RETURNS = (function(){
     });
   }
 
-  // Máximo de 52 s de Finnhub, sólo como respaldo cuando la diaria es corta.
+  // Máximo de 52 s de Finnhub: el de la cabecera. Si su fecha ya salió de la ventana (una
+  // `info` de caché vieja), no vale y se cae al de la diaria.
   function high52Ext(info){
     if (!info) return null;
+    const m = info.__m;
+    if (m && typeof _pv52Vencido === 'function' && _pv52Vencido(m['52WeekHighDate'])) return null;
     let v = +info.fiftyTwoWeekHigh;
-    if (!(v > 0) && info.__m) v = +info.__m['52WeekHigh'];
+    if (!(v > 0) && m) v = +m['52WeekHigh'];
     return v > 0 ? v : null;
   }
   // compute(ticker, info?) → resultado o null si no hay serie en caché (no dispara red).
@@ -27235,7 +27382,7 @@ const PV_RETURNS = (function(){
       let hiLine;
       if (typeof r.fromHigh52 === 'number') {
         hiLine = `Desde el máximo de 52 semanas: <span class="${clsPct(r.fromHigh52)}">${fmtPct(r.fromHigh52)}</span> ` +
-                 `<span class="pvr-hi">(${fmtPx(r.high52)}${r.high52Src === 'finnhub' ? ', máximo según Finnhub' : ''})</span>`;
+                 `<span class="pvr-hi">(${fmtPx(r.high52)} ${r.high52Src === 'finnhub' ? 'intradía' : 'al cierre'})</span>`;
       } else hiLine = '';
       if (!chips && !hiLine) { el.innerHTML = ''; return; }
       el.innerHTML = head + (chips ? `<div class="pvr-grid">${chips}</div>` : '') + (hiLine ? `<div class="pvr-line">${hiLine}</div>` : '') +
@@ -28339,7 +28486,12 @@ const _PEERS_ROWS_LS = 'portiv_peers_rows_v2';   // v2: purga peers viejos deriv
 const _PEERS_ROWS_TTL = 7 * 24 * 60 * 60 * 1000;
 try { localStorage.removeItem('portiv_peers_rows_v1'); } catch(e){}   // borra el caché viejo de competidores de TODAS las empresas
 function _peersRowsLoad(){ try { return JSON.parse(localStorage.getItem(_PEERS_ROWS_LS)||'{}')||{}; } catch(e){ return {}; } }
-function _peersRowsGet(tk){ const c=_peersRowsLoad()[(tk||'').toUpperCase()]; if(!c||!Array.isArray(c.rows)) return null; if(Date.now()-(c.at||0)>_PEERS_ROWS_TTL) return null; return c.rows; }
+function _peersRowsGet(tk){ const c=_peersRowsLoad()[(tk||'').toUpperCase()]; if(!c||!Array.isArray(c.rows)) return null; if(Date.now()-(c.at||0)>_PEERS_ROWS_TTL) return null;
+  // Filas derivadas antes de que existiera (o cambiara) su _PEER_OVERRIDE: se re-derivan ya,
+  // sin esperar los 7 días ni purgar los competidores de todas las demás empresas.
+  let o = null; try { o = _PEER_OVERRIDE[(tk||'').toUpperCase()] || null; } catch(e){}
+  if (o && c.rows.filter(r => r && !r.self).map(r => r.ticker).join() !== o.slice(0, 4).join()) return null;
+  return c.rows; }
 function _peersRowsSet(tk, rows){ try { const c=_peersRowsLoad(); c[(tk||'').toUpperCase()]={rows, at:Date.now()}; localStorage.setItem(_PEERS_ROWS_LS, JSON.stringify(c)); } catch(e){} }
 
 // Universo de peers por NICHO (mismos tickers que usa el clasificador wlNiche). Se usa para
@@ -28384,6 +28536,9 @@ const _PEER_OVERRIDE = {
   // Bancos grandes vs brokers de inversión
   'JPM': ['BAC','WFC','C','USB'],  'BAC': ['JPM','WFC','C','USB'],  'WFC': ['JPM','BAC','C','USB'],
   'GS':  ['MS','JPM','C','BAC'],   'MS':  ['GS','JPM','SCHW','C'],
+  // Nube de IA: otra «neocloud» (Nebius) y las nubes de Oracle, Microsoft y Amazon. Sin esto
+  // caía en «Tech · Otros» y se comparaba con Apple, Google, Meta y Microsoft.
+  'CRWV':['NBIS','ORCL','MSFT','AMZN'],
 };
 // Deriva hasta 4 competidores reales. 1º override exacto por ticker; si no, universo por nicho (wlNiche).
 function _derivePeers(ticker, info){
@@ -30013,8 +30168,11 @@ function _renderQualAnalysis(a, el){
     // La zona de entrada necesita el NEGOCIO, no solo el gráfico: sin el valor razonable
     // recomendaría comprar en un soporte que ya está por encima de lo que vale la empresa.
     // El técnico es Pro: en el plan gratuito su pestaña va bajo candado y no se bajan barras.
-    if (_th && !((typeof _pvLocked === 'function') && _pvLocked()))
-      _pvtFillInto(_th, a.ticker, { fv: a.fairValue || null, rating: (typeof a.rating === 'number' ? a.rating : null) });
+    if (_th && !((typeof _pvLocked === 'function') && _pvLocked())) {
+      const _i52 = (typeof _INFO_CACHE !== 'undefined' && _INFO_CACHE[a.ticker]) || null;
+      _pvtFillInto(_th, a.ticker, { fv: a.fairValue || null, rating: (typeof a.rating === 'number' ? a.rating : null),
+                                    w52: _i52 ? { hi: +_i52.fiftyTwoWeekHigh || 0, lo: +_i52.fiftyTwoWeekLow || 0 } : null });
+    }
   } catch(e){}
   }   // /if (!_lockedUI)
   // La tarjeta oscura de rating de arriba dice lo MISMO que la nota del análisis: es el mismo
@@ -31966,8 +32124,12 @@ function _pvtZonaEntrada(bars, ind, biz, pxVivo){
     const atr = (ind.atr != null && isFinite(ind.atr) && ind.atr > 0) ? (ind.atr/100)*px : px*0.02;
     const win  = bars.slice(-130);                                   // ~6 meses de sesiones
     const año  = bars.slice(-252);
-    const hi52 = Math.max.apply(null, año.map(b => b.h));
-    const lo52 = Math.min.apply(null, año.map(b => b.l));
+    // El rango de 52 semanas es el de la cabecera cuando lo hay (biz.w52: intradía consolidado
+    // de Finnhub, con la sesión de hoy). Las velas de Alpaca son solo de IEX y sus extremos se
+    // quedan unos centavos dentro: la ficha de CRWV daba $59.51 de mínimo arriba y $59.56 aquí.
+    const w52  = (biz && biz.w52 && biz.w52.hi > biz.w52.lo && biz.w52.lo > 0) ? biz.w52 : null;
+    const hi52 = w52 ? w52.hi : Math.max.apply(null, año.map(b => b.h));
+    const lo52 = w52 ? w52.lo : Math.min.apply(null, año.map(b => b.l));
     if (!(hi52 > lo52)) return null;
 
     // Solo soportes POR DEBAJO del precio y a menos de un 28%: más abajo ya es otra tesis.
@@ -32475,7 +32637,7 @@ function _pvtEngancharResize(tk, canvas){
 // guardamos el objeto `a` ya ensamblado y lo re-pintamos de una; el refresco de red va en
 // segundo plano. Clave de invalidación = earningsKey: cuando la empresa REPORTA, este caché
 // caduca y se regenera con el rating y los números NUEVOS (sean buenos o malos).
-const _QUAL_LS  = 'portiv_qual_analysis_v12';  // v12: las etiquetas dicen P/E en vez de PE; los v11 las llevan guardadas con PE. // v11: cada tabla de pilar lleva ahora TODAS las cifras publicadas de su apartado (las que no puntúan, tras un separador); los v10 se guardaron con solo las 3-4 que puntúan. // v10: el motor de rating cambió de criterio — mide el negocio (mitad datos de hoy, mitad medias de cinco años, más si el margen mejora o se deteriora), lo compara contra sus pares Y contra el mercado entero, y deja el precio como ajuste acotado a un punto en vez de pesar el 24% de la nota. Los v9 llevan la nota vieja, que dejaba a Amazon en 4,6. // v9: el analisis ensamblado lleva ahora los puntos clave, el valor razonable y las dimensiones de salud que alimentan las pestanas nuevas (Resumen y Analisis tecnico); los v8 se guardaron sin esos campos y se servirian con esas secciones vacias hasta 24 h. // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
+const _QUAL_LS  = 'portiv_qual_analysis_v13';  // v13: los v12 se ensamblaron con la `info` congelada de la caché por earnings (precio, 52 semanas, múltiplos y balance de hasta hace semanas), con la cobertura de intereses NETA de Finnhub (MSFT 891.8×) y con CRWV en «Mercado general». // v12: las etiquetas dicen P/E en vez de PE; los v11 las llevan guardadas con PE. // v11: cada tabla de pilar lleva ahora TODAS las cifras publicadas de su apartado (las que no puntúan, tras un separador); los v10 se guardaron con solo las 3-4 que puntúan. // v10: el motor de rating cambió de criterio — mide el negocio (mitad datos de hoy, mitad medias de cinco años, más si el margen mejora o se deteriora), lo compara contra sus pares Y contra el mercado entero, y deja el precio como ajuste acotado a un punto en vez de pesar el 24% de la nota. Los v9 llevan la nota vieja, que dejaba a Amazon en 4,6. // v9: el analisis ensamblado lleva ahora los puntos clave, el valor razonable y las dimensiones de salud que alimentan las pestanas nuevas (Resumen y Analisis tecnico); los v8 se guardaron sin esos campos y se servirian con esas secciones vacias hasta 24 h. // v8: el análisis ensamblado lleva ahora los pilares de rentabilidad, crecimiento y mercado (que se calificaban y no se veían) y el bloque de otros datos publicados; los v7 se guardaron sin esos campos y se servirían sin las secciones nuevas. // v5: el rating pasó a medir cada empresa con las métricas de SU sector (banca por valor tangible, REIT por cobertura del dividendo...). Los análisis de v4 llevan la nota y los cinco apartados calculados con la vara genérica anterior, y se sirven tal cual hasta 24 h: JPMorgan seguía mostrando el análisis viejo por esto. // v4: los análisis cacheados se ensamblaron cuando "Escenarios a 1 año" salía siempre vacío (targetMeanPrice null por el 403 de /stock/price-target) y cuando "Earnings análisis" abortaba por eKey='na'.
 const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación por earnings)
 // ── Purga del análisis viejo de TODAS las acciones ─────────────────────────
 // Antes se listaban a mano las versiones a borrar y la lista se quedó atrás: portiv_stock_narrative_v2,
@@ -32485,8 +32647,8 @@ const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación po
 // mismo prefijo — las de hoy y las que vengan. La caché compartida de la nube (qbio:) no vive aquí.
 // OJO: la narrativa viva es la v4 (_NARR_LS). Con 'v3' aquí, esta purga borraba la caché local
 // de narrativas en CADA arranque → viaje a la nube en cada apertura de acción.
-const _ANALISIS_VIVOS = ['portiv_qual_analysis_v12','portiv_stock_narrative_v4','portiv_tec_narr_v1','portiv_stock_analysis_v2',
-                         'portiv_research_snapshot_v3','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
+const _ANALISIS_VIVOS = ['portiv_qual_analysis_v13','portiv_stock_narrative_v4','portiv_tec_narr_v1','portiv_stock_analysis_v2',
+                         'portiv_research_snapshot_v4','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
                          'portiv_info_cache_v2','portiv_peer_metric_v1'];
 (function _pvPurgaAnalisisViejo(){
   try {
@@ -32597,6 +32759,10 @@ function _pvxBioFallback(ticker, info){
 // en memoria. Se pinta de inmediato; la narrativa se injerta encima cuando llega.
 async function _assembleBase(ticker, info){
   ticker = (ticker||'').toUpperCase();
+  // Cobertura de intereses del 10-K ANTES de puntuar: la nota, los pilares y la fila de
+  // Finanzas salen de aquí y tienen que decir la misma cifra. Corre en paralelo con la
+  // narrativa de IA (_upgradeAnalysisToAI), así que la espera casi nunca se nota.
+  try { await _pvCobertura10K(ticker, info, 4000); } catch(e){}
   let base = null;
   try { base = _buildQualAnalysis(ticker, info); } catch(e){ base = null; }
   if (!base) return null;

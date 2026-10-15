@@ -431,6 +431,10 @@ const _PROFILE_OVERRIDE = {
   ASML:'SEMI_EQUIP', AMAT:'SEMI_EQUIP', LRCX:'SEMI_EQUIP', KLAC:'SEMI_EQUIP', TER:'SEMI_EQUIP',
   MSFT:'SOFTWARE', ORCL:'SOFTWARE', CRM:'SOFTWARE', ADBE:'SOFTWARE', NOW:'SOFTWARE',
   INTU:'SOFTWARE', SAP:'SOFTWARE', PANW:'SOFTWARE', FTNT:'SOFTWARE', WDAY:'SOFTWARE',
+  // Nube de IA. Finnhub solo la etiqueta «Technology», que ninguna regla reconoce, y caía en
+  // «Mercado general». La SEC (SIC 7372) y la clasificación tipo Yahoo («Software —
+  // Infrastructure») la ponen con ORCL y MSFT, que compiten con ella en nube.
+  CRWV:'SOFTWARE',
   CRWD:'SAAS_GROWTH', ZS:'SAAS_GROWTH', SNOW:'SAAS_GROWTH', DDOG:'SAAS_GROWTH',
   MDB:'SAAS_GROWTH', NET:'SAAS_GROWTH', OKTA:'SAAS_GROWTH', GTLB:'SAAS_GROWTH',
   CFLT:'SAAS_GROWTH', S:'SAAS_GROWTH', TEAM:'SAAS_GROWTH', HUBS:'SAAS_GROWTH',
