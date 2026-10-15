@@ -27022,21 +27022,91 @@ function _pvFinancialsReported(ticker){
   _PV_FIN_INFLIGHT[tk] = p;
   return p;
 }
+// ── Gasto por intereses de las NOTAS del 10-K (SEC, vía sec-proxy) ─────────
+// /stock/financials-reported solo trae los estados, y muchas empresas no separan el gasto por
+// intereses en el de resultados: MSFT lo deja en las notas ($3,051 M en FY2026). La Edge
+// Function sec-proxy lo lee de la API XBRL de la SEC (data.sec.gov no admite CORS) y devuelve
+// una cifra por ejercicio anual. Aquí se guarda solo eso, [{ end, val, tag }], 7 días por ticker
+// como los estados; el «no hay dato» también. Si la función no responde (sin desplegar, caída),
+// se deja de pedir 30 min y la cobertura queda como antes: neta del 10-K o sin fila.
+const SEC_PROXY = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/sec-proxy';
+const _PV_SEC_LS = 'pv_sec_interes_v1';
+const _PV_SEC_MEM = {};       // { TICKER: {ts, g} }
+const _PV_SEC_INFLIGHT = {};  // { TICKER: Promise }
+let _pvSecDeadUntil = 0;
+function _pvSecLsRead(){ try { return JSON.parse(localStorage.getItem(_PV_SEC_LS) || '{}') || {}; } catch(e){ return {}; } }
+function _pvSecCache(tk){
+  const now = Date.now();
+  const mem = _PV_SEC_MEM[tk];
+  if (mem && (now - mem.ts) < _PV_FIN_TTL) return mem.g;
+  const ls = _pvSecLsRead()[tk];
+  if (ls && Array.isArray(ls.g) && (now - (ls.ts || 0)) < _PV_FIN_TTL) { _PV_SEC_MEM[tk] = ls; return ls.g; }
+  return null;
+}
+function _pvSecInteres(tk){
+  if (_PV_SEC_INFLIGHT[tk]) return _PV_SEC_INFLIGHT[tk];
+  if (Date.now() < _pvSecDeadUntil || !FH_PROXY_ANON) return Promise.resolve(null);
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 12000);
+  const pausa = () => { _pvSecDeadUntil = Date.now() + 30 * 60e3; return null; };
+  const p = fetch(`${SEC_PROXY}?symbol=${encodeURIComponent(tk)}`, { signal: ctrl.signal,
+      headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + FH_PROXY_ANON } })
+    .then(r => (r.status === 404 || r.status === 500) ? pausa() : (r.ok ? r.json() : null))
+    .then(j => {
+      if (!j || !Array.isArray(j.interestExpense)) return null;   // error o respuesta inesperada: no se guarda
+      const g = j.interestExpense
+        .filter(x => x && typeof x.val === 'number' && x.val > 0 && typeof x.end === 'string')
+        .map(x => ({ end: x.end.slice(0, 10), val: x.val, tag: String(x.tag || '') }));
+      const ent = { ts: Date.now(), g };
+      _PV_SEC_MEM[tk] = ent;
+      try { const all = _pvSecLsRead(); all[tk] = ent; localStorage.setItem(_PV_SEC_LS, JSON.stringify(all)); } catch(e){}
+      return g;
+    })
+    // TypeError = la petición ni salió: sin red, o una función sin desplegar (su preflight da 404).
+    .catch(e => (e && e.name === 'TypeError') ? pausa() : null)
+    .finally(() => { clearTimeout(tid); delete _PV_SEC_INFLIGHT[tk]; });
+  _PV_SEC_INFLIGHT[tk] = p;
+  return p;
+}
+// Gasto de las notas del MISMO ejercicio que el EBIT: cierre a ±7 días del 10-K de Finnhub.
+// Si el estado de resultados trae intereses netos de gasto, el bruto no puede ser menor: CRWV
+// reporta $1,229 M netos y en notas solo etiqueta los de su deuda ($1,148 M), que no son todo
+// el gasto. Entonces se queda el neto.
+function _pvSecGastoDel(g, t){
+  const fin = Date.parse(String((t && t.endDate) || '').slice(0, 10));
+  if (!Array.isArray(g) || !isFinite(fin)) return null;
+  const f = g.find(x => Math.abs(Date.parse(x.end) - fin) <= 7 * 864e5);
+  if (!f) return null;
+  if (typeof t.interestNet === 'number' && t.interestNet < 0 && f.val < -t.interestNet) return null;
+  return f;
+}
 // Deja en info.__m la cobertura de intereses del último 10-K (interestCoverage10K), que el
 // motor sectorial prefiere a la neta de Finnhub (ver cobInteres). Los estados anuales ya van
 // en camino para el F-Score (_pvPaintFScore, misma promesa en vuelo): se esperan `esperaMs`
-// como mucho. Con Finanzas bajo candado (plan gratuito) no se piden; solo se usa lo ya guardado.
+// como mucho. Si su estado de resultados no separa el gasto por intereses bruto, se busca en
+// las notas del mismo 10-K (_pvSecInteres) con lo que quede de esa espera, 1,5 s como mínimo.
+// Con Finanzas bajo candado (plan gratuito) no se pide nada; solo se usa lo ya guardado.
 async function _pvCobertura10K(ticker, info, esperaMs){
   if (!info || !info.__m || typeof info.__m !== 'object') return;
   const tk = String(ticker || '').toUpperCase().trim();
   if (!tk || (typeof _isEtfTicker === 'function' && _isEtfTicker(tk, info))) return;
+  const t0 = Date.now();
+  const red = !(typeof _pvLocked === 'function' && _pvLocked());
+  const espera = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), Math.max(0, ms)))]);
   let res = _pvFinCache(tk);
-  if (!res && !(typeof _pvLocked === 'function' && _pvLocked()))
-    res = await Promise.race([_pvFinancialsReported(tk), new Promise(r => setTimeout(() => r(null), esperaMs || 0))]);
+  if (!res && red) res = await espera(_pvFinancialsReported(tk), esperaMs || 0);
   if (!res || !res.t) return;                       // sin estados todavía: no se toca nada
-  const c = computeCoberturaIntereses(res.t);
+  const t = res.ult || res.t;                       // el último 10-K, aunque llegue sin balance
+  let c = null;
+  if (typeof t.ebit === 'number' && isFinite(t.ebit) && !(typeof t.interestExpense === 'number' && t.interestExpense > 0)) {
+    let g = _pvSecCache(tk);
+    if (!g && red) g = await espera(_pvSecInteres(tk), Math.max(1500, (esperaMs || 0) - (Date.now() - t0)));
+    const f = _pvSecGastoDel(g, t);
+    if (f) c = computeCoberturaIntereses(Object.assign({}, t, { interestExpense: f.val }));
+  }
+  if (!c) c = computeCoberturaIntereses(t);
   if (c && isFinite(c.v)) { info.__m.interestCoverage10K = Math.round(c.v * 100) / 100; info.__m.interestCoverage10KFecha = c.endDate; }
-  else { delete info.__m.interestCoverage10K; delete info.__m.interestCoverage10KFecha; }   // el 10-K no separa el gasto
+  else { delete info.__m.interestCoverage10K; delete info.__m.interestCoverage10KFecha; }   // ni el 10-K ni sus notas separan el gasto
 }
 
 // ── Pintado de la tarjeta #r-fscore en la ficha ────────────────────────────
