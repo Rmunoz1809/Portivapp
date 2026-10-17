@@ -43469,8 +43469,80 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       'Noticias que mueven tu cartera', 'Lo que pasa con cada una de tus posiciones y lo que viene la próxima semana.']
   ];
 
+  // ── Adaptador WEB del muro ──
+  // La web enseña el MISMO muro que la app (_pvProWall), pero cobra con el Web SDK de
+  // RevenueCat (Paddle) en vez de StoreKit. Este objeto imita la interfaz de PortivIAP que usa
+  // el muro (login, loadOfferings, getPackagesInfo, checkIntroEligibility, purchase, restore)
+  // sobre window.PortivWebRC. Nunca se usa en nativo.
+  window._pvWebIap = function(){
+    var rc = window.PortivWebRC;
+    var pkgs = null, info = null, uid = null, email = null;
+    async function who(){
+      if (uid) return uid;
+      try { var u = await window._pvWebSessionUser(); uid = u.uid; email = u.email; } catch(e){}
+      return uid;
+    }
+    // Producto de RevenueCat → la forma de getPackagesInfo() de iap.js.
+    function shape(p){
+      if (!p || !p.product) return null;
+      var pr = p.product, ft = pr.freeTrialPhase && pr.freeTrialPhase.period;
+      return {
+        priceString: pr.price.formattedPrice,
+        price: pr.price.amountMicros / 1e6,
+        currency: pr.price.currency,
+        // getOfferings() sólo devuelve las ofertas a las que ESTE cliente tiene derecho:
+        // si trae prueba gratis, el usuario es elegible.
+        intro: ft ? { price: 0, periodNumberOfUnits: ft.number, periodUnit: String(ft.unit || '').toUpperCase(), cycles: 1 } : null
+      };
+    }
+    return {
+      web: true,
+      login: async function(){ var u = await who(); if (u) await rc.configure(u); return true; },
+      getPackagesInfo: function(){ return info; },
+      loadOfferings: async function(){
+        if (!rc || !rc.ready()) { var e0 = new Error('web_off'); e0.pvw = 'El pago web no está disponible en este momento. Escríbenos a rm@portivapp.com.'; throw e0; }
+        var u = await who();
+        // Sin sesión no hay compra: el uid de Supabase es lo que asigna la suscripción.
+        if (!u) { var e1 = new Error('no_session'); e1.pvw = 'Inicia sesión en Portiv para suscribirte.'; throw e1; }
+        await rc.configure(u);
+        var off = await rc.getCurrentOffering();
+        pkgs = { annual: off && off.annual, monthly: off && off.monthly };
+        info = { annual: shape(pkgs.annual), monthly: shape(pkgs.monthly) };
+        return info;
+      },
+      checkIntroEligibility: async function(){
+        return {
+          annual: info && info.annual && info.annual.intro ? 'eligible' : 'ineligible',
+          monthly: info && info.monthly && info.monthly.intro ? 'eligible' : 'ineligible'
+        };
+      },
+      // Mismo contrato que iap.js: { success, customerInfo } | { reason:'cancelled' } | { error }.
+      purchase: async function(sel){
+        var pkg = pkgs && pkgs[sel];
+        if (!pkg) return { reason: 'no-package' };
+        try {
+          var r = await rc.purchase(pkg, email);
+          return { success: true, customerInfo: r && r.customerInfo };
+        } catch(e){
+          if (rc.isCancel(e)) return { reason: 'cancelled' };
+          if (rc.isAlreadyOwned(e)) return { success: true };
+          try { _pvLogError('RC web purchase', e); } catch(_){}
+          return { error: { code: 'web', network: rc.isNetwork(e), message: String(e && e.message || '') } };
+        }
+      },
+      // Web: no hay "restaurar" de tienda. Se pide al servidor que reconcilie con RevenueCat.
+      restore: async function(){
+        try { if (window._pvEntitlementSync) await window._pvEntitlementSync(true); } catch(e){ return null; }
+        var s = null;
+        try { s = await window._pvSubStatus(); } catch(e){ return null; }
+        return !!(s && s.active);
+      }
+    };
+  };
+
   // iap: window.PortivIAP, o null si el SDK aún no cargó (el muro se abre igual, con los planes
   // cargando, y lo espera con _pvAwaitIAP: nunca se cae al overlay web, que cobra con Paddle).
+  // En web llega window._pvWebIap() (iap.web === true): mismo muro, cobro con RevenueCat Web.
   window._pvProWall = function(iap){
     var prev = document.getElementById('pvProWall');
     if (prev && !prev._pvwClosing) return;        // ya abierto: otro toque no apila un segundo muro
@@ -43489,6 +43561,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     // phase: 'loading' | 'ready' | 'error'. gen invalida cargas viejas tras un Reintentar;
     // seen: ya se registró la impresión de este muro en RevenueCat.
     var st = { iap: iap || null, sel: 'annual', info: null, elig: {}, phase: 'loading', err: '', busy: false, closing: false, gen: 0, seen: false };
+    // Web (portivapp.com): mismo muro, pero los textos no hablan de Apple ni de la App Store.
+    var WEB = !!(iap && iap.web);
     var prevOverflow = document.body.style.overflow;
     var prevFocus = document.activeElement;
 
@@ -43535,6 +43609,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       +       '<button type="button" class="pvw-link" data-pvw="terms">Términos</button>'
       +       '<span class="pvw-dot" aria-hidden="true">·</span>'
       +       '<button type="button" class="pvw-link" data-pvw="privacy">Privacidad</button>'
+      +       (WEB ? '<span class="pvw-dot" aria-hidden="true">·</span><button type="button" class="pvw-link" data-pvw="refunds">Reembolsos</button>' : '')
       +     '</div>'
       +   '</div>'
       + '</div>';
@@ -43603,7 +43678,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         return;
       }
       if (st.phase === 'error') {
-        setPlans('<div class="pvw-plans-err">' + esc(st.err || 'No pudimos cargar los planes desde la App Store. Revisa tu conexión y vuelve a intentarlo.') + '</div>', true);
+        setPlans('<div class="pvw-plans-err">' + esc(st.err || (WEB ? 'No pudimos cargar los planes. Revisa tu conexión y vuelve a intentarlo.' : 'No pudimos cargar los planes desde la App Store. Revisa tu conexión y vuelve a intentarlo.')) + '</div>', true);
         terms.innerHTML = '';
         cta.disabled = false; ctaT.textContent = 'Reintentar';
         return;
@@ -43629,7 +43704,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       cta.disabled = false; cta.classList.remove('ok'); spin.hidden = true; ctaOk.hidden = true;
       ctaT.textContent = tr ? 'Probar ' + tr + ' gratis' : 'Suscribirme por ' + p.priceString + ' al ' + u;
       terms.innerHTML = (tr ? '<b>' + tr + ' gratis</b>, luego <b>' + price + ' al ' + u + '</b>. ' : '<b>' + price + ' al ' + u + '.</b> ')
-        + 'Se renueva automáticamente; puedes cancelar desde tu cuenta de Apple hasta 24 horas antes de la renovación.';
+        + (WEB ? 'Se renueva automáticamente; puedes cancelar cuando quieras desde «Administrar suscripción» en tu cuenta. Pago seguro procesado por Paddle.'
+               : 'Se renueva automáticamente; puedes cancelar desde tu cuenta de Apple hasta 24 horas antes de la renovación.');
     }
     function msg(t, err){ msgEl.textContent = t || ''; msgEl.hidden = !t; msgEl.classList.toggle('err', !!err); }
     function setBusy(kind){
@@ -43694,6 +43770,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     function buyErr(r){
       var e = r && r.error, c = e && e.code != null ? String(e.code) : '';
       if (r && r.reason === 'no-package') return 'Ese plan no está disponible ahora mismo. Vuelve a intentarlo en unos minutos.';
+      if (WEB) return (e && e.network) ? 'Sin conexión. Revisa tu internet y vuelve a intentarlo.'
+                                     : 'No se pudo completar el pago. Vuelve a intentarlo o escríbenos a rm@portivapp.com.';
       if (pending(r)) return 'Tu compra está pendiente de aprobación. En cuanto se apruebe, Portiv Pro se activará solo.';
       if (c === '3') return 'Las compras dentro de apps están desactivadas en este dispositivo. Actívalas en Ajustes › Tiempo en pantalla.';
       if (c === '6') return 'Esta cuenta de Apple ya tiene Portiv Pro. Toca «Restaurar compras».';
@@ -43724,8 +43802,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         if (st.closing) return;
         if (ok === true) { done(true); return; }
         setBusy(null);
-        if (ok === null) msg('No pudimos conectar con la App Store. Revisa tu conexión y vuelve a intentarlo.', true);
-        else msg('No encontramos una suscripción activa en esta cuenta de Apple.', false);
+        if (ok === null) msg(WEB ? 'No pudimos comprobar tu suscripción. Revisa tu conexión y vuelve a intentarlo.' : 'No pudimos conectar con la App Store. Revisa tu conexión y vuelve a intentarlo.', true);
+        else msg(WEB ? 'No encontramos una suscripción activa en esta cuenta.' : 'No encontramos una suscripción activa en esta cuenta de Apple.', false);
       }, function(){
         if (st.closing) return;
         setBusy(null); msg('No se pudo restaurar. Revisa tu conexión y vuelve a intentarlo.', true);
@@ -43821,6 +43899,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       if (a === 'restore') restore();
       else if (a === 'terms') { try { window._pvOpenExternal('terminos.html'); } catch(err){} }
       else if (a === 'privacy') { try { window._pvOpenExternal('privacidad.html'); } catch(err){} }
+      else if (a === 'refunds') { try { window._pvOpenExternal('reembolsos.html'); } catch(err){} }
     });
 
     // ── Entrada: en el celular sube como una hoja; en tableta y Mac, el diálogo aparece ──
@@ -43873,13 +43952,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       window._pvProWall(iap && typeof iap.purchase === 'function' ? iap : null);
       return;   // en nativo NO se abre el overlay web
     }
-    // Web → overlay custom como antes.
-    var o = document.getElementById('portivPaywall');
-    if(!o) return;
-    o.scrollTop = 0; o.classList.add('open');
-    document.body.style.overflow = 'hidden';
-    // Precios reales desde RevenueCat (getOfferings). No bloquea la apertura del muro.
-    try { window._pvWebLoadPlans(); } catch(e){}
+    // Web → el MISMO muro que la app (diseño idéntico), cobrando con RevenueCat Web (Paddle).
+    window._pvProWall(window._pvWebIap());
   };
   window._pvClosePaywall = function(){
     var o = document.getElementById('portivPaywall');
@@ -44061,6 +44135,12 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
     // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
     if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
+    // Web: la compra ahora vive en el muro de Portiv Pro (_pvProWall con el adaptador web);
+    // quien llegue aquí (Reintentar pago, «Conectar mi broker»…) ve ese muro.
+    if (document.getElementById('portivPaywall') && !document.getElementById('portivPaywall').classList.contains('open')) {
+      try { window._pvShowPaywall(); } catch(e){}
+      return;
+    }
     // Clave web de RevenueCat sin configurar → se avisa en vez de fingir que funciona.
     var rc = window.PortivWebRC;
     if (!rc || !rc.ready()) {
