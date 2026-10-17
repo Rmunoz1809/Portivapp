@@ -40885,6 +40885,24 @@ if (document.readyState === 'loading') {
       <span id="authToggle" class="av-toggle" onclick="_authToggle()">¿No tienes cuenta? <b>Crear una</b></span>
     </div>
 
+    <!-- SOLO WEB (la enseña _pvAuthWebOnly): en portivapp.com no se crean cuentas; se crean en
+         la app de iPhone, iPad o Mac y luego se entra aquí con la misma cuenta. En la app nativa
+         esta tarjeta sigue oculta (Guideline 3.1.1 no aplica, pero la app no la necesita). -->
+    <div id="authGetApp" style="display:none;margin-top:18px;padding:18px 16px 16px;border:1px solid var(--pvr-line,#E6EAF0);border-radius:20px;background:#F6F8FB;text-align:center;transition:box-shadow .3s ease,border-color .3s ease;">
+      <div style="font-size:15px;font-weight:800;color:var(--pvr-navy,#0B1E36);letter-spacing:-0.2px;">¿Nuevo en Portiv? Descarga la app</div>
+      <div style="font-size:13px;line-height:1.45;color:var(--pvr-muted,#68788C);margin:6px 0 14px;">Las cuentas nuevas se crean en la app. Descárgala gratis, regístrate allí y después entra aquí con la misma cuenta.</div>
+      <div style="display:flex;gap:8px;">
+        <a href="https://apps.apple.com/app/id6789933095" target="_blank" rel="noopener" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 8px;border-radius:14px;background:var(--pvr-navy,#0B1E36);color:#fff;text-decoration:none;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.365 1.43c0 1.14-.417 2.2-1.11 2.98-.75.85-1.98 1.51-3.02 1.42-.13-1.1.41-2.27 1.06-3 .74-.83 2.02-1.45 3.07-1.4zM20.5 17.09c-.56 1.29-.83 1.86-1.55 3-1 1.71-2.41 3.84-4.16 3.85-1.55.02-1.95-1.01-4.05-1-2.1.01-2.54 1.02-4.09 1-1.75-.01-3.09-1.93-4.09-3.64-2.8-4.79-3.1-10.41-1.37-13.4 1.23-2.13 3.17-3.38 4.99-3.38 1.86 0 3.03 1.02 4.57 1.02 1.49 0 2.4-1.02 4.55-1.02 1.63 0 3.35.89 4.58 2.42-4.02 2.2-3.37 7.94.61 9.55z"/></svg>
+          <span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.1;"><small style="font-size:10px;opacity:.8;">iPhone y iPad</small><b style="font-size:14px;">App Store</b></span>
+        </a>
+        <a href="https://apps.apple.com/app/id6789933095?platform=mac" target="_blank" rel="noopener" style="flex:1;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 8px;border-radius:14px;background:var(--pvr-navy,#0B1E36);color:#fff;text-decoration:none;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></svg>
+          <span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.1;"><small style="font-size:10px;opacity:.8;">Mac</small><b style="font-size:14px;">Mac App Store</b></span>
+        </a>
+      </div>
+    </div>
+
     <div class="av-secure">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg>
       Tus datos se guardan de forma segura
@@ -41034,7 +41052,64 @@ if (document.readyState === 'loading') {
 
   function replay(el){ el.classList.remove('pv-form'); void el.offsetWidth; el.classList.add('pv-form'); }
 
+  // ── Web sin registro ──────────────────────────────────────────────────────────────────
+  // En portivapp.com no se crean cuentas: se crean en la app (iPhone, iPad o Mac) y luego se
+  // entra aquí con la misma. Sólo corre en el navegador; en la app nativa no cambia nada.
+  var _WEB_NO_SIGNUP = !(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  // Resalta la tarjeta «Descarga la app» (al pedir crear cuenta o al rechazar una nueva).
+  function _pvAuthPointToApp(){
+    var c = document.getElementById('authGetApp');
+    if (!c) return;
+    c.style.borderColor = 'var(--pvr-navy,#0B1E36)';
+    c.style.boxShadow = '0 0 0 3px rgba(11,30,54,.12)';
+    try { c.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch(e){}
+    setTimeout(function(){ c.style.borderColor = ''; c.style.boxShadow = ''; }, 2600);
+  }
+  // Ajusta la tarjeta de acceso para la web: fuera «Crea una», dentro la descarga de la app.
+  function _pvAuthWebOnly(){
+    if (!_WEB_NO_SIGNUP) return;
+    var c = document.getElementById('authGetApp'); if (c) c.style.display = 'block';
+    var sw = document.getElementById('siToSignup'); if (sw && sw.parentNode) sw.parentNode.style.display = 'none';
+    var tg = document.getElementById('authToggle'); if (tg && tg.parentNode) tg.parentNode.style.display = 'none';
+    var lbl = document.getElementById('authEmailLbl'); if (lbl) lbl.textContent = 'Entrar con correo';
+  }
+  // ¿Esta sesión web es una cuenta RECIÉN creada aquí (Apple/Google la crean al vuelo)?
+  //  · recién nacida: creada hace <10 min y con su primer acceso pegado a la creación, o
+  //  · ya rechazada antes en la web (marca pv_web_signup_blocked)…
+  //  …y además sin portafolio en la nube: quien ya usó la app nunca se bloquea.
+  // Ante cualquier duda (red, RLS) devuelve false: nunca se deja fuera a una cuenta real.
+  async function _pvWebIsNewAccount(s){
+    if (!_WEB_NO_SIGNUP) return false;
+    try {
+      var u = s && s.user; if (!u) return false;
+      var em = (u.email || '').toLowerCase();
+      if (['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com', 'review@portivapp01.com'].indexOf(em) >= 0) return false;
+      var md = u.user_metadata || {};
+      var created = Date.parse(u.created_at || ''), last = Date.parse(u.last_sign_in_at || u.created_at || '');
+      var fresh = Number.isFinite(created) && (Date.now() - created) < 10 * 60000 && Math.abs(last - created) < 120000;
+      if (!fresh && md.pv_web_signup_blocked !== true) return false;
+      var r = await sb.from('profiles').select('portfolio').eq('id', u.id).maybeSingle();
+      if (!r || r.error) return false;
+      var pf = r.data && r.data.portfolio;
+      var used = !!pf && (Array.isArray(pf) ? pf.length > 0 : (typeof pf === 'object' ? Object.keys(pf).length > 0 : String(pf).length > 2));
+      return !used;
+    } catch(e){ return false; }
+  }
+  // Rechazo: se marca la cuenta (para que un segundo intento tampoco entre), se cierra la
+  // sesión y se vuelve al login señalando la descarga de la app. La cuenta NO se borra: es la
+  // misma que usará al entrar en la app con Apple/Google.
+  async function _pvWebRejectNewAccount(){
+    try { await sb.auth.updateUser({ data: { pv_web_signup_blocked: true } }); } catch(e){}
+    try { await window._pvIapLogout(); } catch(e){}
+    try { await sb.auth.signOut(); } catch(e){}
+    try { showLogin('keep'); } catch(e){}
+    setMsg('Esa cuenta aún no existe en Portiv. Créala en la app y luego entra aquí.', true);
+    _pvAuthPointToApp();
+  }
+
   function setMode(m){
+    // Web: no hay registro; pedirlo lleva a la tarjeta de descarga de la app.
+    if (m === 'signup' && _WEB_NO_SIGNUP) { m = 'signin'; setTimeout(_pvAuthPointToApp, 0); }
     mode = (m === 'signup') ? 'signup' : 'signin';
     var signup = (mode === 'signup');
     var si = document.getElementById('authSignin'), su = document.getElementById('authSignup');
@@ -41049,7 +41124,7 @@ if (document.readyState === 'loading') {
     // La cabecera del acordeón describe lo que hay DENTRO ahora mismo: en modo registro,
     // "Entrar o crear cuenta" sobra y confunde al plegarlo.
     var lbl = document.getElementById('authEmailLbl');
-    if (lbl) lbl.textContent = signup ? 'Crear cuenta con correo' : 'Entrar o crear cuenta';
+    if (lbl) lbl.textContent = signup ? 'Crear cuenta con correo' : (_WEB_NO_SIGNUP ? 'Entrar con correo' : 'Entrar o crear cuenta');
     var tg = document.getElementById('authToggle');
     if (tg) tg.innerHTML = signup ? '¿Ya tienes cuenta? <b>Inicia sesión</b>' : '¿No tienes cuenta? <b>Crear una</b>';
     replay(signup ? su : si);
@@ -41061,6 +41136,7 @@ if (document.readyState === 'loading') {
     setMode(mode === 'signin' ? 'signup' : 'signin');
     _authSetEmailPanel(true);
   };
+  _pvAuthWebOnly();   // web: tarjeta «Descarga la app» y sin enlaces a crear cuenta
 
   // Acordeón de correo + contraseña. El alto se anima con grid-template-rows (0fr→1fr)
   // en vez de max-height: no hay que adivinar un alto máximo y la transición no se
@@ -41585,6 +41661,8 @@ if (document.readyState === 'loading') {
   }
   async function _cloudLoadAndGateInner(s){
     if (window._pvKilled) return;   // cuenta eliminada → no cargar nada (se reinicia limpio)
+    // Web: una cuenta recién creada aquí con Apple/Google no entra; se crea en la app.
+    if (_WEB_NO_SIGNUP && await _pvWebIsNewAccount(s)) { await _pvWebRejectNewAccount(); return; }
     session = s;
     try { window.__pvUserId = (s.user && s.user.id) || 'local'; } catch(e){}
     // Email de la sesión en global: _pvIsDemoAccount() se consulta desde onclick
@@ -42384,6 +42462,8 @@ if (document.readyState === 'loading') {
   });
 
   window._authSignup = async function(){
+    // Web: el registro vive en la app (el formulario ni siquiera se muestra; esto es la red).
+    if (_WEB_NO_SIGNUP) { setMsg('Las cuentas nuevas se crean en la app de Portiv.', true); _pvAuthPointToApp(); return; }
     var username = val('suUser');
     var email = val('suEmail').toLowerCase(), p1 = val('suPass'), p2 = val('suPass2');
     var uErr = _usernameError(username);
@@ -43477,6 +43557,12 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   window._pvWebIap = function(){
     var rc = window.PortivWebRC;
     var pkgs = null, info = null, uid = null, email = null;
+    // SOLO APP: la web todavía no cobra (Paddle rechazó la cuenta). El muro enseña los planes
+    // con sus precios de RevenueCat, pero el botón manda a la app de Portiv en la App Store.
+    // Quien se suscribe en el iPhone queda Pro también en la web (misma cuenta, misma fila).
+    // Para volver a cobrar en la web: APP_ONLY = false (y un proveedor que funcione).
+    var APP_ONLY = true;
+    var STORE_URL = 'https://apps.apple.com/app/id6789933095';
     async function who(){
       if (uid) return uid;
       try { var u = await window._pvWebSessionUser(); uid = u.uid; email = u.email; } catch(e){}
@@ -43492,11 +43578,13 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         currency: pr.price.currency,
         // getOfferings() sólo devuelve las ofertas a las que ESTE cliente tiene derecho:
         // si trae prueba gratis, el usuario es elegible.
-        intro: ft ? { price: 0, periodNumberOfUnits: ft.number, periodUnit: String(ft.unit || '').toUpperCase(), cycles: 1 } : null
+        // En modo SOLO APP no se promete la prueba de Paddle: la prueba real es la de la App Store.
+        intro: (ft && !APP_ONLY) ? { price: 0, periodNumberOfUnits: ft.number, periodUnit: String(ft.unit || '').toUpperCase(), cycles: 1 } : null
       };
     }
     return {
       web: true,
+      appOnly: APP_ONLY,
       login: async function(){ var u = await who(); if (u) await rc.configure(u); return true; },
       getPackagesInfo: function(){ return info; },
       loadOfferings: async function(){
@@ -43518,6 +43606,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       },
       // Mismo contrato que iap.js: { success, customerInfo } | { reason:'cancelled' } | { error }.
       purchase: async function(sel){
+        // SOLO APP: abre la ficha de Portiv en la App Store; el muro sigue abierto sin mensaje.
+        if (APP_ONLY) { try { window.open(STORE_URL, '_blank', 'noopener'); } catch(e){} return { reason: 'cancelled' }; }
         var pkg = pkgs && pkgs[sel];
         if (!pkg) return { reason: 'no-package' };
         try {
@@ -43563,6 +43653,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     var st = { iap: iap || null, sel: 'annual', info: null, elig: {}, phase: 'loading', err: '', busy: false, closing: false, gen: 0, seen: false };
     // Web (portivapp.com): mismo muro, pero los textos no hablan de Apple ni de la App Store.
     var WEB = !!(iap && iap.web);
+    var APP_ONLY = WEB && !!iap.appOnly;   // web sin cobro: el botón lleva a la app de iOS
     var prevOverflow = document.body.style.overflow;
     var prevFocus = document.activeElement;
 
@@ -43702,7 +43793,13 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       if (!p) return;
       var tr = trialOf(k), u = unitOf(k), price = esc(p.priceString);
       cta.disabled = false; cta.classList.remove('ok'); spin.hidden = true; ctaOk.hidden = true;
-      ctaT.textContent = tr ? 'Probar ' + tr + ' gratis' : 'Suscribirme por ' + p.priceString + ' al ' + u;
+      ctaT.textContent = APP_ONLY ? 'Suscribirme en la app de iPhone'
+        : tr ? 'Probar ' + tr + ' gratis' : 'Suscribirme por ' + p.priceString + ' al ' + u;
+      if (APP_ONLY) {
+        terms.innerHTML = '<b>' + price + ' al ' + u + '.</b> La suscripción se compra en la app de Portiv para iPhone, iPad o Mac, '
+          + 'con 14 días gratis si es tu primera vez. Inicia sesión allí con esta misma cuenta y Portiv Pro se activa también aquí en la web.';
+        return;
+      }
       terms.innerHTML = (tr ? '<b>' + tr + ' gratis</b>, luego <b>' + price + ' al ' + u + '</b>. ' : '<b>' + price + ' al ' + u + '.</b> ')
         + (WEB ? 'Se renueva automáticamente; puedes cancelar cuando quieras desde «Administrar suscripción» en tu cuenta. Pago seguro procesado por Paddle.'
                : 'Se renueva automáticamente; puedes cancelar desde tu cuenta de Apple hasta 24 horas antes de la renovación.');
