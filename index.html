@@ -41129,7 +41129,7 @@ if (document.readyState === 'loading') {
         _pvHandoffToast(j.error === 'expired_code' ? 'El enlace caducó. Vuelve a pulsarlo en portivapp.com.' : 'No pudimos abrir tu cuenta. Inicia sesión con tu cuenta de Portiv.');
         return false;
       }
-      try { sessionStorage.setItem(_HANDOFF_KEY, '1'); } catch(e){}
+      try { sessionStorage.setItem(_HANDOFF_KEY, '1'); sessionStorage.setItem(_HANDOFF_KEY + '_ctx', JSON.stringify(j.ctx || null)); } catch(e){}
       // Primer arranque: las diapositivas sobran, el usuario ya sabe a qué viene.
       try {
         localStorage.setItem('pv_intro_seen', '1');
@@ -41168,14 +41168,25 @@ if (document.readyState === 'loading') {
     try { seen = !!intent && localStorage.getItem(seenKey) === intent; } catch(e){}
     var fresh = !!intent && (Date.now() - Date.parse(intent)) < 24 * 3600000;
     if (!viaLink && !(fresh && !seen)) return;
+    // Dónde estaba en la web: lo trae el enlace o, si entró a mano, su app_metadata.
+    var ctx = null;
+    try { ctx = viaLink ? JSON.parse(sessionStorage.getItem(_HANDOFF_KEY + '_ctx') || 'null') : (u.app_metadata.pv_handoff_ctx || null); } catch(e){}
     setTimeout(async function(){
       if (!session || !session.user || session.user.id !== u.id) return;
-      try { sessionStorage.removeItem(_HANDOFF_KEY); } catch(e){}
+      try { sessionStorage.removeItem(_HANDOFF_KEY); sessionStorage.removeItem(_HANDOFF_KEY + '_ctx'); } catch(e){}
       try { if (intent) localStorage.setItem(seenKey, intent); } catch(e){}
-      var q = document.getElementById('pqOverlay');
-      if (q && q.classList.contains('open')) return;
       var sst = null; try { sst = await window._pvSubStatus(); } catch(e){}
       if (sst && sst.active) return;
+      // 1) Venía del cuestionario → se restaura con sus respuestas. Con todas respondidas se
+      //    pinta su resultado y se abre el muro solo (y al pagar, la conexión del broker),
+      //    igual que en la web; a medias, sigue en la misma pregunta.
+      var cq = ctx && ctx.quiz;
+      if (cq && Array.isArray(cq.answers) && typeof window._pvQuizRestore === 'function' && window._pvQuizRestore(cq.answers, cq.step)) return;
+      // 2) Si no, la misma pestaña y el muro encima.
+      var q = document.getElementById('pqOverlay');
+      if (q && q.classList.contains('open')) return;
+      var TABS = ['portfolio', 'noticias', 'watchlist', 'analizar', 'aianalyst', 'settings'];
+      if (ctx && TABS.indexOf(ctx.tab) >= 0) { try { window.showTab(ctx.tab); } catch(e){} }
       try { window._pvShowPaywall(); } catch(e){}
     }, 1200);
   }
@@ -43729,8 +43740,15 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   window._pvAppHandoffSheet = function(storeUrl){
     var prev = document.getElementById('pvHandoff'); if (prev) prev.remove();
     var st = { code: null, at: 0, p: null };
+    // Dónde está ahora (pestaña y cuestionario): la app se abre en ese mismo punto.
+    function ctxNow(){
+      var tab = null, q = null;
+      try { var a = document.querySelector('.nav-link.is-active[data-nav]'); tab = (a && a.dataset.nav) || null; } catch(e){}
+      try { q = window._pvQuizSnapshot ? window._pvQuizSnapshot() : null; } catch(e){}
+      return { v: 1, tab: tab, quiz: (q && q.open) ? { answers: q.answers, step: q.step } : null };
+    }
     function fetchCode(){
-      st.p = Promise.resolve(window.stCall ? window.stCall('app-handoff', { action: 'create' }) : null)
+      st.p = Promise.resolve(window.stCall ? window.stCall('app-handoff', { action: 'create', ctx: ctxNow() }) : null)
         .then(function(j){ st.code = j && j.code || null; st.at = Date.now(); return st.code; })
         .catch(function(){ st.code = null; return null; });
       return st.p;
@@ -45657,6 +45675,31 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     try { if (typeof window._pvResumeSubGate === 'function') window._pvResumeSubGate(); } catch(e){}
   }
   window.openProfileQuiz = _openQuiz;
+  // Traspaso web → app: foto del cuestionario (abierto, respuestas y paso) y su restauración
+  // en la app, para seguir EXACTAMENTE donde estaba. Con todas las respuestas, restaurar pinta
+  // el resultado del perfil y, como al terminarlo en vivo, abre el muro (y tras pagar, la
+  // conexión del broker).
+  window._pvQuizSnapshot = function(){
+    try {
+      const ov = document.getElementById('pqOverlay');
+      return { open: !!(ov && ov.classList.contains('open')), answers: _ans.slice(0, PQ.length), step: _step };
+    } catch(e){ return null; }
+  };
+  window._pvQuizRestore = function(answers, step){
+    try {
+      if (!Array.isArray(answers) || answers.length !== PQ.length) return false;
+      const a = answers.map(function(x){ const n = parseInt(x, 10); return (isFinite(n) && n >= -1 && n < 10) ? n : -1; });
+      let s = parseInt(step, 10); if (!isFinite(s) || s < 0) s = 0;
+      // Paso imposible (una pregunta anterior sin responder) → vuelve a la primera sin responder.
+      const firstGap = a.indexOf(-1);
+      if (firstGap >= 0 && s > firstGap) s = firstGap;
+      if (s > PQ.length) s = PQ.length;
+      _ans = a; _step = s;
+      document.getElementById('pqOverlay').classList.add('open');
+      _renderStep();
+      return true;
+    } catch(e){ return false; }
+  };
 
   // Perfil neutro para las cuentas de demo/review: se responde el cuestionario
   // por dentro con la opción intermedia de cada pregunta, de modo que la app

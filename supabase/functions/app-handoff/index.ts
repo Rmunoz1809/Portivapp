@@ -5,12 +5,14 @@
 // y abre portiv://handoff?code=…; la app lo canjea aquí y recibe un token de magic link con
 // el que crea su propia sesión (sb.auth.verifyOtp). Después abre el muro de Portiv Pro.
 //
-//   POST { action: 'create' }            Authorization: Bearer <JWT del usuario en la web>
+//   POST { action: 'create', ctx? }      Authorization: Bearer <JWT del usuario en la web>
 //        → { code }                       (válido 10 min, un solo uso)
+//        ctx = dónde estaba en la web ({ tab, quiz:{ answers, step } }, ≤1,5 KB): la app lo
+//        usa para abrirse en el mismo punto (p. ej. el resultado del perfil con el muro).
 //        También marca app_metadata.pv_paywall_intent_at: si el usuario instala la app y
 //        entra a mano, la app sabe que venía a suscribirse y le enseña el muro una vez.
 //   POST { action: 'redeem', code }      (sin JWT: la app aún no tiene sesión)
-//        → { token_hash, email }          para verifyOtp({ token_hash, type: 'magiclink' })
+//        → { token_hash, email, ctx }     para verifyOtp({ token_hash, type: 'magiclink' })
 //
 // Seguridad: el código es <uid>.<32 bytes aleatorios>; en el servidor sólo se guarda su
 // SHA-256 en app_metadata (el cliente no puede escribir app_metadata). Se invalida ANTES de
@@ -69,6 +71,11 @@ Deno.serve(async (req) => {
     const am = { ...(user.app_metadata ?? {}) };
     am.pv_handoff = { h: await sha256(code), exp: now + TTL_MS };
     am.pv_paywall_intent_at = new Date(now).toISOString();
+    // Contexto de la web: sólo un objeto pequeño; cualquier otra cosa se descarta.
+    let ctx: unknown = body?.ctx ?? null;
+    try { if (!ctx || typeof ctx !== "object" || Array.isArray(ctx) || JSON.stringify(ctx).length > 1500) ctx = null; }
+    catch { ctx = null; }
+    am.pv_handoff_ctx = ctx;
     const { error: uErr } = await admin.auth.admin.updateUserById(user.id, { app_metadata: am });
     if (uErr) { log("create update failed", user.id, uErr.message); return jsonResponse(req, { error: "server_error" }, 500); }
     return jsonResponse(req, { code, expires_in: TTL_MS / 1000 });
@@ -100,7 +107,7 @@ Deno.serve(async (req) => {
     const tokenHash = (link as any)?.properties?.hashed_token;
     if (lErr || !tokenHash) { log("generateLink failed", uid, lErr?.message); return jsonResponse(req, { error: "server_error" }, 500); }
     log("redeemed", uid);
-    return jsonResponse(req, { token_hash: tokenHash, email: user.email });
+    return jsonResponse(req, { token_hash: tokenHash, email: user.email, ctx: am.pv_handoff_ctx ?? null });
   }
 
   return jsonResponse(req, { error: "unknown_action" }, 400);
