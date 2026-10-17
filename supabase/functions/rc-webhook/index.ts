@@ -54,7 +54,10 @@ const BILLING_GRACE_DAYS = 18;
 
 // Tiendas que gobierna ESTA función. Un evento de otra tienda no puede tocar
 // una fila que no es suya (ver guardia cross-store más abajo).
-const OWNED_STORES = new Set(["APP_STORE", "MAC_APP_STORE", "PROMOTIONAL"]);
+// PADDLE = la web (portivapp.com) cobrando con el Web SDK de RevenueCat sobre Paddle
+// Billing. Su fila queda con store='paddle' Y rc_app_user_id relleno; eso la distingue
+// de las filas del checkout directo de Paddle (paddle-webhook), que lo dejan en NULL.
+const OWNED_STORES = new Set(["APP_STORE", "MAC_APP_STORE", "PROMOTIONAL", "PADDLE"]);
 
 // ── Infra ──────────────────────────────────────────────────────────────────
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;

@@ -57,6 +57,8 @@ export type StoreVerdict = {
   transient: boolean;
   /** Fin de acceso que declara la tienda, si lo declara. */
   expiresAt: string | null;
+  /** Tienda real de la compra según RevenueCat ('app_store', 'paddle'…), si la declara. */
+  store?: string | null;
 };
 
 const verdict = (
@@ -115,22 +117,25 @@ async function verifyRevenueCat(uid: string): Promise<StoreVerdict> {
   const productId: string | null = ent?.product_identifier ?? null;
   const row = productId ? sub?.subscriptions?.[productId] ?? null : null;
   const now = Date.now();
+  // RevenueCat agrega App Store y la web (Paddle vía su Web SDK) bajo el mismo entitlement;
+  // se devuelve la tienda real para que la autocuración no etiquete una compra web como iOS.
+  const store = row?.store ? String(row.store).toLowerCase() : null;
 
   if (row?.refunded_at) return verdict(false, "revenuecat", "refunded", { expiresAt: expiresIso });
   // Sin fecha de fin = compra no renovable / vitalicia.
-  if (!expiresIso || !Number.isFinite(expiresMs)) return verdict(true, "revenuecat", "lifetime");
-  if (expiresMs > now) return verdict(true, "revenuecat", "vigente", { expiresAt: expiresIso });
+  if (!expiresIso || !Number.isFinite(expiresMs)) return verdict(true, "revenuecat", "lifetime", { store });
+  if (expiresMs > now) return verdict(true, "revenuecat", "vigente", { expiresAt: expiresIso, store });
 
   // Vencida según RevenueCat. Tres motivos para NO darla por muerta todavía:
   const ageMs = now - expiresMs;
   // 1) fallo de cobro: Apple reintenta durante días y el usuario conserva el acceso.
   if (row?.billing_issues_detected_at && ageMs < BILLING_GRACE_DAYS * DAY_MS) {
-    return verdict(true, "revenuecat", "billing_grace", { expiresAt: expiresIso });
+    return verdict(true, "revenuecat", "billing_grace", { expiresAt: expiresIso, store });
   }
   // 2) el usuario NO canceló y venció hace poco: casi seguro es la renovación de Apple
   //    que RevenueCat aún no ha registrado. Se le da el mismo colchón que en SQL.
   if (!row?.unsubscribe_detected_at && ageMs < RENEWAL_LAG_HOURS * HOUR_MS) {
-    return verdict(true, "revenuecat", "renewal_lag", { expiresAt: expiresIso });
+    return verdict(true, "revenuecat", "renewal_lag", { expiresAt: expiresIso, store });
   }
   // 3) nada de lo anterior → vencida de verdad.
   return verdict(false, "revenuecat", row?.unsubscribe_detected_at ? "expired_unsubscribed" : "expired",
@@ -210,7 +215,9 @@ async function verifyBothStores(admin: SupabaseClient, uid: string): Promise<Sto
  * Veredicto de la tienda que gobierna la suscripción de `uid`.
  *
  *   · store app_store / mac_app_store → RevenueCat
- *   · store paddle                    → Paddle
+ *   · store paddle + rc_app_user_id   → RevenueCat (web cobrada con el Web SDK de RC)
+ *   · store paddle sin rc_app_user_id → Paddle (checkout directo, paddle-webhook)
+ *   · store paddle sin fila (hint)    → las dos tiendas: no se sabe cuál de las dos vías es
  *   · promotional / demo / manual / sin fila → has_active_entitlement() (la fila ES la
  *     verdad: no hay tienda a la que preguntar). Incluye el bypass del dueño.
  *
@@ -226,7 +233,7 @@ export async function verifyEntitlementWithStore(
   try {
     const { data } = await admin
       .from("subscriptions")
-      .select("store, entitlement_active, expires_at, grace_until, status, environment")
+      .select("store, entitlement_active, expires_at, grace_until, status, environment, rc_app_user_id")
       .eq("user_id", uid)
       .maybeSingle();
     row = data ?? null;
@@ -244,8 +251,10 @@ export async function verifyEntitlementWithStore(
 
   let v: StoreVerdict;
   if (APPLE_STORES.has(store)) v = await verifyRevenueCat(uid);
-  else if (PADDLE_STORES.has(store)) v = await verifyPaddle(admin, uid);
-  else if (!store) v = await verifyBothStores(admin, uid);
+  // Paddle vía RevenueCat (rc-webhook rellena rc_app_user_id) → manda RevenueCat.
+  else if (PADDLE_STORES.has(store) && row?.rc_app_user_id) v = await verifyRevenueCat(uid);
+  else if (PADDLE_STORES.has(store) && row) v = await verifyPaddle(admin, uid);
+  else if (!store || PADDLE_STORES.has(store)) v = await verifyBothStores(admin, uid);
   else v = verdict(row?.entitlement_active === true, "db", `store=${store}`, { expiresAt: row?.expires_at ?? null });
 
   log(uid, "→", v.source, v.active, v.detail);
@@ -270,7 +279,9 @@ export async function healSubscriptionRow(
     user_id: uid,
     entitlement_active: true,
     status,
-    store: v.source === "revenuecat" ? (storeHint ?? "app_store").toLowerCase() : "paddle",
+    store: v.source === "revenuecat" ? (v.store ?? storeHint ?? "app_store").toLowerCase() : "paddle",
+    // Fila curada por RevenueCat → queda marcada como suya (también si es una compra web).
+    ...(v.source === "revenuecat" ? { rc_app_user_id: uid } : {}),
     ...(v.expiresAt ? { expires_at: v.expiresAt } : {}),
     grace_until: status === "past_due" ? new Date(Date.now() + BILLING_GRACE_DAYS * DAY_MS).toISOString() : null,
     revoked_at: null,

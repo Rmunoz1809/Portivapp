@@ -34,6 +34,10 @@ const RENEWAL_LAG_HOURS = 48;
 // Tiendas de Apple. Si el entitlement viene de otra (Paddle web), esta función
 // no escribe nada: manda el webhook de esa tienda.
 const APPLE_STORES = new Set(["app_store", "mac_app_store", "promotional"]);
+// Tiendas que RevenueCat gobierna = Apple + la web cobrada con el Web SDK de RevenueCat
+// sobre Paddle Billing (RevenueCat la reporta como store 'paddle'). Una fila 'paddle' sólo
+// es de RevenueCat si tiene rc_app_user_id; sin él es del checkout directo (paddle-webhook).
+const RC_STORES = new Set([...APPLE_STORES, "paddle"]);
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -84,7 +88,7 @@ Deno.serve(async (req) => {
   // activo → inactivo (webhook perdido).
   const { data: prev } = await admin
     .from("subscriptions")
-    .select("entitlement_active,status,expires_at,will_renew,store,original_transaction_id")
+    .select("entitlement_active,status,expires_at,will_renew,store,original_transaction_id,rc_app_user_id")
     .eq("user_id", uid)
     .maybeSingle();
 
@@ -170,8 +174,8 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Sólo se gobiernan las tiendas de Apple desde aquí.
-  if (subRow && !APPLE_STORES.has(store)) {
+  // Sólo se gobiernan las tiendas de RevenueCat desde aquí (Apple y la web vía Paddle).
+  if (subRow && !RC_STORES.has(store)) {
     log("non-apple store, skipping write", uid, store);
     return jsonResponse(req, {
       ok: true,
@@ -193,9 +197,12 @@ Deno.serve(async (req) => {
   // entitlement que sí pagó por web. paddle-webhook escribe store:'paddle',
   // así que hoy el caso normal ya estaría cubierto; esto cubre el resto.
   const prevStore = prev?.store ? String(prev.store).toLowerCase() : null;
+  // Una fila 'paddle' previa sólo cuenta como de RevenueCat si la escribió RevenueCat
+  // (rc_app_user_id relleno); la del checkout directo de Paddle no se revoca desde aquí.
   const appleGoverned =
-    (!!subRow && APPLE_STORES.has(store)) ||
-    (!!prevStore && APPLE_STORES.has(prevStore));
+    (!!subRow && RC_STORES.has(store)) ||
+    (!!prevStore && APPLE_STORES.has(prevStore)) ||
+    (prevStore === "paddle" && !!prev?.rc_app_user_id);
 
   if (!active && !appleGoverned) {
     log("non-apple / unproven store, skipping revocation", uid, prevStore ?? "null");

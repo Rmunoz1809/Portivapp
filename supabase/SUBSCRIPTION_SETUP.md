@@ -26,12 +26,14 @@ Secrets ya seteados: `RC_WEBHOOK_SECRET`, `REVENUECAT_WEBHOOK_SECRET` (mismo val
    `ENTITLEMENT_ID='pro'` debe coincidir con el tuyo (edítala si usas otro).
 2. **Webhook → apúntalo a `rc-webhook` (NO al viejo `revenuecat-webhook`)**:
    - URL: `https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/rc-webhook`
-   - Header `Authorization` = **este valor exacto**:
+   - Header `Authorization` = el valor del secreto `RC_WEBHOOK_SECRET` de Supabase.
+     **Nunca lo escribas en este repo: es PÚBLICO.** (Una versión anterior de este archivo lo
+     publicó; ese valor está comprometido y hay que rotarlo.) Para rotarlo:
+     ```bash
+     NEW=$(openssl rand -base64 36 | tr -d '/+=' | cut -c1-48)
+     npx supabase secrets set RC_WEBHOOK_SECRET="$NEW" REVENUECAT_WEBHOOK_SECRET="$NEW" --project-ref zblhifszlhdgkhnymwjh
+     echo "$NEW"   # pégalo en RevenueCat → Integrations → Webhooks → Authorization header
      ```
-     ZMGiE_eND_GxS1w6z9I2UnOAmeCpNWtUXfgsZmUf1yRyIo9q
-     ```
-   (Es el `RC_WEBHOOK_SECRET` que ya quedó guardado en Supabase. Si prefieres otro, regéneralo con
-   `supabase secrets set RC_WEBHOOK_SECRET=...` y pega el mismo aquí.)
 3. **App User ID**: ya se setea solo — `portiv-iap.js` llama `PortivIAP.login(session.user.id)` en cada
    login (ver `www/index.html`), así el `app_user_id` de RevenueCat == `user_id` de Supabase y el
    webhook escribe en la fila correcta. No toques nada.
@@ -55,7 +57,26 @@ supabase secrets set RC_ACCEPT_SANDBOX=false
 | BILLING_ISSUE (gracia; Apple reintenta) | true | grace | no (salvo que ya expiró) |
 | EXPIRATION · SUBSCRIPTION_PAUSED | false | expired | **sí** → `snaptrade-disconnect` |
 
-## Paddle (web) — `paddle-webhook`
+## Web (portivapp.com) — RevenueCat Web SDK + Paddle Billing (desde oct-2026)
+
+La web cobra con `@revenuecat/purchases-js` (versión fijada en `index.html`, `PortivWebRC`) y
+Paddle Billing como motor de cobro conectado **dentro de RevenueCat**. RevenueCat es la única
+fuente de verdad en iOS y en web; el checkout directo de Paddle (Paddle.js + `paddle-webhook`)
+queda retirado.
+
+- `appUserId` = `user.id` de Supabase, igual que en iOS → una compra web desbloquea Pro en iOS
+  y viceversa. Sin sesión no se puede comprar (no hay compras anónimas).
+- Clave pública: `window.RC_WEB_API_KEY` en `index.html` (placeholder hasta pegar la real).
+- `rc-webhook` acepta `store: PADDLE` y escribe `store='paddle'` **con** `rc_app_user_id`.
+  Las filas `paddle` con `rc_app_user_id` se verifican contra RevenueCat (`_shared/entitlement.ts`,
+  `entitlement-sync`); las de `paddle` sin él (checkout directo antiguo) siguen yendo a la API de Paddle.
+- **No** dejes activo a la vez el destino de notificaciones de Paddle → `paddle-webhook`: las dos
+  vías escribirían la misma fila. Desactívalo en Paddle (Developer tools → Notifications).
+- Tras cambiar `_shared/entitlement.ts` hay que redesplegar todas las funciones que lo importan:
+  `rc-webhook`, `entitlement-sync`, `entitlement-sweeper`, `snaptrade-refresh`, `snaptrade-cleanup`,
+  `snaptrade-disconnect`, `paddle-webhook`.
+
+## Paddle directo (LEGADO, retirado) — `paddle-webhook`
 
 En **iOS la suscripción va por RevenueCat/StoreKit**; en **web va por Paddle Billing** (no Paddle
 Classic). Ambos escriben la MISMA tabla `public.subscriptions`; las filas de Paddle se distinguen por

@@ -4088,81 +4088,109 @@ html.pv-ipad #portivReviewPanel { bottom: calc(var(--pv-ipad-nav-total) + 12px) 
      y no ejecuta código remoto (Guideline 2.5.2). Sigue siendo SÍNCRONO a propósito: el IIFE
      de auth de abajo asume que `window.supabase` ya existe. NO añadir defer ni async. -->
 <link rel="preload" as="script" href="vendor/supabase.js">
-<!-- Paddle.js (billing / suscripción Portiv Pro) — SOLO build web. iOS usa IAP nativo (RevenueCat).
-     YA NO se carga en el <head>: es un script de tercero que solo hace falta cuando el usuario
-     abre el checkout, y en el arranque competía por red con Supabase y el propio HTML.
-     Se carga perezosamente con _ensurePaddle() desde _pvStartCheckout. -->
+<!-- RevenueCat Web SDK (@revenuecat/purchases-js) sobre Paddle Billing — SOLO build web.
+     iPhone/iPad/Mac cobran con StoreKit vía PortivIAP (portiv-iap.js); allí no se carga nada de
+     esto (Guideline 3.1.1). El SDK es un ES module de ~1 MB: se importa perezosamente (tras el
+     login, en un momento ocioso, o en el acto si se abre el muro antes). Paddle.js lo carga el
+     propio SDK al abrir el checkout. Sustituye al checkout directo de Paddle (Paddle.js +
+     paddle-webhook): ahora RevenueCat es la única fuente de verdad en iOS y en web. -->
 <script>
-/* PADDLE BILLING (LIVE). Entorno de producción, token client-side LIVE y priceIds LIVE. */
-/* ÚNICO lugar donde vive el token client-side LIVE de Paddle.
-   Se obtiene en vendors.paddle.com → Developer Tools → Authentication → Client-side tokens.
-   Empieza por "live_". Mientras siga con el valor placeholder, el checkout web
-   queda deshabilitado con un mensaje honesto en vez de abrirse roto. */
-window.PADDLE_CLIENT_TOKEN = 'PADDLE_LIVE_CLIENT_TOKEN';
-window._pvPaddleReady = function(){
-  var t = window.PADDLE_CLIENT_TOKEN || '';
-  return /^live_/.test(t) || /^test_/.test(t);
-};
-window.PADDLE_PRICES = {
-  monthly: 'pri_01kxps87qstgex009vr5w6z1sn', // USD 4.99/mes · prueba 30 días
-  annual:  'pri_01kxpseeyhn7d9yw29fxc6rvse'  // USD 49.99/año
-};
-// Paddle emite 'checkout.closed' TAMBIÉN después de un pago correcto (al descartar el
-// overlay). Sin este flag, el usuario que sí pagó veía el toast "Pago no completado"
-// justo encima de la pantalla de conexión del broker. Vive en el ámbito global del
-// script para que _pvStartCheckout (otro bloque <script>) pueda resetearlo.
-var _pvCheckoutCompleted = false;
+/* Clave PÚBLICA de la app Web (Paddle) en RevenueCat → Project settings → API keys.
+   No es un secreto: está pensada para viajar al navegador, igual que la appl_ de iOS. La
+   secret key (sk_…) vive SOLO en Supabase (RC_SECRET_API_KEY). Mientras siga el placeholder,
+   el muro web avisa con un mensaje honesto en vez de abrir un checkout roto. */
+window.RC_WEB_API_KEY = 'RC_WEB_API_KEY_PLACEHOLDER';
 (function(){
-  // En Capacitor nativo NO se inicializa Paddle (la suscripción va por IAP/RevenueCat).
-  try { if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) return; } catch(e){}
-  // Este reintento no tenía tope: si el CDN de Paddle no carga (datos móviles, portal
-  // cautivo, bloqueador), programaba un timer cada 60 ms PARA SIEMPRE — ~16 por segundo,
-  // toda la sesión. Tope de 100 intentos ≈ 6 s. Con la carga perezosa initPaddle() solo se
-  // llama desde el onload del script, así que window.Paddle ya existe y el reintento casi
-  // nunca entra; se conserva por si Paddle publica su global un tick después del load.
-  var _pdTries = 0;
-  function initPaddle(){
-    if (!window.Paddle || !window.Paddle.Environment) { if (_pdTries++ < 100) setTimeout(initPaddle, 60); return; }
-    if (!window._pvPaddleReady()) { console.error('[Paddle] token client-side no configurado — checkout web deshabilitado'); return; }
-    Paddle.Environment.set('production');
-    Paddle.Initialize({
-      token: window.PADDLE_CLIENT_TOKEN,
-      eventCallback: function(ev){
-        if (!ev) return;
-        if (ev.name === 'checkout.completed') {
-          // Pago OK → cierra el paywall y arranca la conexión del broker (una sola vez).
-          _pvCheckoutCompleted = true;
-          try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){}
-          return;
-        }
-        // El usuario cerró el checkout sin pagar (o Paddle lo rechazó). Antes no se
-        // escuchaba: el overlay de Paddle desaparecía y debajo quedaban el paywall y el
-        // quiz de perfil abiertos, así que la app se veía congelada en la tarjeta del
-        // perfil sin ninguna explicación. Se limpia la pila y se dice qué pasó.
-        if (ev.name === 'checkout.closed' || ev.name === 'checkout.error') {
-          // Cierre POSTERIOR a un pago correcto → no es un abandono. Se consume el flag.
-          if (_pvCheckoutCompleted) { _pvCheckoutCompleted = false; return; }
-          try { if (typeof window._pvAbortCheckout === 'function') window._pvAbortCheckout(ev.name === 'checkout.error'); } catch(e){}
-        }
-      }
-    });
+  // Versión EXACTA fijada (nada de @latest): un cambio del SDK no puede llegar sin revisarlo.
+  var SDK_URL = 'https://cdn.jsdelivr.net/npm/@revenuecat/purchases-js@1.67.1/dist/Purchases.es.js';
+  var ENTITLEMENT_ID = 'Portiv Pro';   // mismo id que iap.js, rc-webhook y entitlement-sync
+  var _native = false;
+  try { _native = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()); } catch(e){}
+  var _mod = null, _loading = null, _inst = null, _uid = null;
+
+  // ¿Se puede cobrar en web? Nunca en nativo, y nunca con la clave sin configurar.
+  function ready(){
+    var k = window.RC_WEB_API_KEY || '';
+    return !_native && !!k && k.indexOf('PLACEHOLDER') < 0;
   }
-  // CARGA PEREZOSA. Antes el <script src> de Paddle estaba en el <head> y esto llamaba a
-  // initPaddle() en el acto. Ahora el script se descarga la PRIMERA vez que se abre el
-  // checkout: el arranque se ahorra una conexión a un tercero, y el checkout paga ~300 ms
-  // extra una sola vez. Idempotente: llamadas concurrentes comparten la misma promesa.
-  var _paddleLoading = null;
-  window._ensurePaddle = function(){
-    if (window.Paddle) return Promise.resolve();
-    if (_paddleLoading) return _paddleLoading;
-    _paddleLoading = new Promise(function(res, rej){
-      var s = document.createElement('script');
-      s.src = 'https://cdn.paddle.com/paddle/v2/paddle.js';
-      s.onload  = function(){ try { initPaddle(); } catch(e){} res(); };
-      s.onerror = function(){ _paddleLoading = null; rej(new Error('paddle')); };
-      document.head.appendChild(s);
-    });
-    return _paddleLoading;
+  // import() dinámico: el bundle sólo se descarga cuando hace falta. Si falla (CDN caído,
+  // bloqueador) se olvida la promesa para que el siguiente intento vuelva a probar.
+  function load(){
+    if (_mod) return Promise.resolve(_mod);
+    if (!_loading) _loading = import(SDK_URL).then(
+      function(m){ _mod = m; return m; },
+      function(e){ _loading = null; throw e; });
+    return _loading;
+  }
+  // Configura el SDK con el uid de Supabase como appUserId. Sin uid no hay compra: es lo
+  // que une el pago web con la fila de `subscriptions` y con la app de iOS (mismo usuario).
+  async function configure(uid){
+    if (!ready() || !uid) return null;
+    var m = await load();
+    if (_inst && _uid === uid) return _inst;
+    if (_inst) { try { _inst.close(); } catch(e){} _inst = null; }
+    _inst = m.Purchases.configure({ apiKey: window.RC_WEB_API_KEY, appUserId: uid });
+    _uid = uid;
+    return _inst;
+  }
+  // Logout: se suelta la instancia para que el siguiente usuario no herede la anterior.
+  function logout(){
+    if (_inst) { try { _inst.close(); } catch(e){} }
+    _inst = null; _uid = null;
+  }
+  function isProInfo(ci){
+    return !!(ci && ci.entitlements && ci.entitlements.active && (ENTITLEMENT_ID in ci.entitlements.active));
+  }
+  async function customerInfo(){ return _inst ? _inst.getCustomerInfo() : null; }
+  async function isPro(){ try { return isProInfo(await customerInfo()); } catch(e){ return false; } }
+  async function getCurrentOffering(){
+    if (!_inst) return null;
+    var o = await _inst.getOfferings();
+    return (o && o.current) || null;
+  }
+  // Abre el checkout de Paddle (lo monta el SDK) en español, con el email ya rellenado.
+  async function purchase(pkg, email){
+    if (!_inst) throw new Error('rc_not_configured');
+    var p = { rcPackage: pkg, selectedLocale: 'es', defaultLocale: 'es' };
+    if (email) p.customerEmail = email;
+    return _inst.purchase(p);
+  }
+  // Errores conocidos del SDK. La cancelación NO es un error para el usuario.
+  function errCode(e){ return e && typeof e.errorCode === 'number' ? e.errorCode : null; }
+  function isCancel(e){ return !!(_mod && errCode(e) === _mod.ErrorCode.UserCancelledError); }
+  function isNetwork(e){ return !!(_mod && errCode(e) === _mod.ErrorCode.NetworkError); }
+  function isAlreadyOwned(e){ return !!(_mod && errCode(e) === _mod.ErrorCode.ProductAlreadyPurchasedError); }
+  // Portal donde el cliente gestiona/cancela (para Paddle lo genera RevenueCat). null si no hay.
+  async function managementURL(){
+    try { var ci = await customerInfo(); return (ci && ci.managementURL) || null; } catch(e){ return null; }
+  }
+  // Tras el login: configurar en un momento ocioso (no competir con el arranque) y, si
+  // RevenueCat ya ve 'Portiv Pro' pero la fila del servidor aún no, pedir al servidor que
+  // reconcilie. La UI la sigue decidiendo SIEMPRE la fila (_pvSubGate), nunca este check.
+  function afterLogin(uid){
+    if (!ready() || !uid) return;
+    var run = function(){
+      configure(uid).then(function(inst){
+        if (!inst || _uid !== uid) return null;
+        return isPro();
+      }).then(function(pro){
+        if (!pro || _uid !== uid) return;
+        if (window._pvSubActive && window._pvSubActive()) return;
+        Promise.resolve(window._pvEntitlementSync && window._pvEntitlementSync(true))
+          .then(function(){ if (window._pvSubGate) return window._pvSubGate(); })
+          .catch(function(){});
+      }).catch(function(e){ try { console.warn('[RC web] configure', e); } catch(_){} });
+    };
+    try { if ('requestIdleCallback' in window) { window.requestIdleCallback(run, { timeout: 6000 }); return; } } catch(e){}
+    setTimeout(run, 2500);
+  }
+
+  window.PortivWebRC = {
+    ready: ready, load: load, configure: configure, logout: logout, afterLogin: afterLogin,
+    isPro: isPro, isProInfo: isProInfo, getCurrentOffering: getCurrentOffering, purchase: purchase,
+    isCancel: isCancel, isNetwork: isNetwork, isAlreadyOwned: isAlreadyOwned,
+    managementURL: managementURL, currentUid: function(){ return _uid; },
+    ENTITLEMENT_ID: ENTITLEMENT_ID
   };
 })();
 </script>
@@ -41586,6 +41614,9 @@ if (document.readyState === 'loading') {
           Promise.resolve(window.PortivIAP.login(_iapUid))
             .catch(function(e){ try { _pvLogError('PortivIAP.login', e); } catch(_){} });
         }
+        // Web: mismo uid como appUserId del Web SDK de RevenueCat (cobro con Paddle).
+        // En nativo PortivWebRC.ready() es false → no-op.
+        if (window.PortivWebRC) window.PortivWebRC.afterLogin(_iapUid);
       }
     } catch(e){}
     // Meta: cuenta nueva → fb_mobile_complete_registration. Este gate es el único punto por
@@ -42152,6 +42183,8 @@ if (document.readyState === 'loading') {
   // salida del muro del candado. Nunca lanza: cerrar sesión no puede fallar por el SDK.
   window._pvIapLogout = function(){
     try { delete window.__pvPendingIapUid; } catch(e){ window.__pvPendingIapUid = null; }
+    // Web: suelta la instancia del Web SDK de RevenueCat (el siguiente login la recrea).
+    try { if (window.PortivWebRC) window.PortivWebRC.logout(); } catch(e){}
     try {
       var iap = window.PortivIAP;
       if (iap && typeof iap.logout === 'function') return Promise.resolve(iap.logout()).catch(function(){});
@@ -42168,9 +42201,10 @@ if (document.readyState === 'loading') {
   window._pvRestorePurchases = async function(){
     try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
 
-    // Web: Paddle no tiene "restaurar". El entitlement vive en Supabase, así que lo único
-    // honesto es releer el estado del servidor y refrescar el gate.
+    // Web: no hay "restaurar" de tienda. El entitlement vive en Supabase: se pide al servidor
+    // que reconcilie con RevenueCat (que ya conoce las compras web) y se refresca el gate.
     if (!window._pvIsNativeApp()) {
+      try { if (typeof window._pvEntitlementSync === 'function') await window._pvEntitlementSync(true); } catch(e){}
       try { if (typeof window._pvSubGate === 'function') await window._pvSubGate(); } catch(e){}
       try { showToast('Suscripción sincronizada.', 'var(--text2)'); } catch(e){}
       return;
@@ -42203,9 +42237,13 @@ if (document.readyState === 'loading') {
   };
 
   // Guideline 3.1.2: la app debe ofrecer una salida a la gestión/cancelación de la
-  // suscripción. En iOS eso es la pantalla nativa de Apple; en web, la política de
-  // reembolsos (Paddle gestiona la baja desde el email de compra).
-  window._pvManageSubscription = function(){
+  // suscripción. En iOS eso es la pantalla nativa de Apple; en web, el managementURL que
+  // devuelve RevenueCat (portal de cliente de Paddle; si la compra fue en iOS, la página de
+  // suscripciones de Apple).
+  // FALLBACK (sin managementURL: SDK sin clave/sin cargar, red caída o sin compra visible
+  // para RevenueCat): se abre la Política de Reembolsos, que explica cómo cancelar por cada
+  // canal (portal de Paddle enlazado en el recibo, Ajustes de Apple) y da rm@portivapp.com.
+  window._pvManageSubscription = async function(){
     try { var _m = document.getElementById('acctMenu'); if (_m) _m.style.display = 'none'; } catch(e){}
     if (window._pvIsNativeApp()){
       // Deep link oficial de Apple. Se prefiere App.openUrl: un location.href a un esquema
@@ -42220,6 +42258,22 @@ if (document.readyState === 'loading') {
       try { window.location.href = 'itms-apps://apps.apple.com/account/subscriptions'; } catch(e){}
       return;
     }
+    // Web: la pestaña se abre ANTES del await para que el bloqueador de popups no la
+    // trate como ventana no solicitada; luego se le pone la URL (o se cierra).
+    var url = null, win = null;
+    var rc = window.PortivWebRC;
+    if (rc && rc.ready()) {
+      try { win = window.open('', '_blank'); } catch(e){}
+      try {
+        var u = await window._pvWebSessionUser();
+        if (u.uid) { await rc.configure(u.uid); url = await rc.managementURL(); }
+      } catch(e){}
+    }
+    if (url && /^https:\/\//i.test(url)) {
+      if (win) { try { win.opener = null; win.location.href = url; return; } catch(e){} }
+      try { window.open(url, '_blank', 'noopener'); return; } catch(e){}
+    }
+    if (win) { try { win.close(); } catch(e){} }
     window._pvOpenExternal('reembolsos.html');
   };
 
@@ -42923,18 +42977,20 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#04162c" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
           <span>Sin pago ahora</span>
         </div>
+        <!-- Precios y prueba gratis los rellena _pvWebLoadPlans() con lo que devuelve RevenueCat
+             (getOfferings): nada de importes escritos a mano. El anual va primero y elegido. -->
         <div id="pwPlans" style="display:flex;gap:9px;margin-bottom:14px" role="group" aria-label="Plan">
-          <button type="button" data-plan="monthly" aria-pressed="true" onclick="_pvSelectPlan('monthly')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid #04162c;background:#f8f9ff;">
-            <div class="pw-feat-t">Mensual</div>
-            <div class="pw-feat-d">USD 4.99/mes · 14 días gratis</div>
+          <button type="button" data-plan="annual" aria-pressed="true" onclick="_pvSelectPlan('annual')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid #04162c;background:#f8f9ff;">
+            <div class="pw-feat-t">Anual <span id="pwAnnualBadge" style="display:none;margin-left:4px;padding:2px 7px;border-radius:999px;background:#04162c;color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.02em;vertical-align:1px"></span></div>
+            <div class="pw-feat-d" data-plan-price="annual">Cargando precio…</div>
           </button>
-          <button type="button" data-plan="annual" aria-pressed="false" onclick="_pvSelectPlan('annual')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid var(--st-surface-cont, #e5eeff);background:transparent;">
-            <div class="pw-feat-t">Anual</div>
-            <div class="pw-feat-d">USD 49.99/año · 14 días gratis</div>
+          <button type="button" data-plan="monthly" aria-pressed="false" onclick="_pvSelectPlan('monthly')" style="flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;border-radius:14px;transition:border-color .15s,background .15s;border:2px solid var(--st-surface-cont, #e5eeff);background:transparent;">
+            <div class="pw-feat-t">Mensual</div>
+            <div class="pw-feat-d" data-plan-price="monthly">Cargando precio…</div>
           </button>
         </div>
-        <button class="pw-btn" onclick="_pvStartCheckout()">Comenzar ahora</button>
-        <div class="pw-price" id="pwPriceNote"><b>14 días gratis</b>, luego USD 4.99 <b>al mes</b></div>
+        <button class="pw-btn" id="pwBuyBtn" onclick="_pvStartCheckout()">Comenzar ahora</button>
+        <div class="pw-price" id="pwPriceNote">&nbsp;</div>
         <div class="pw-fine">Cancela cuando quieras · Sin compromisos</div>
         <div class="pw-legal">
           <a href="https://portivapp.com/terminos.html" onclick="return _pvOpenExternal('terminos.html')" target="_blank" rel="noopener">Términos</a>
@@ -43822,6 +43878,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     if(!o) return;
     o.scrollTop = 0; o.classList.add('open');
     document.body.style.overflow = 'hidden';
+    // Precios reales desde RevenueCat (getOfferings). No bloquea la apertura del muro.
+    try { window._pvWebLoadPlans(); } catch(e){}
   };
   window._pvClosePaywall = function(){
     var o = document.getElementById('portivPaywall');
@@ -43868,8 +43926,107 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   // las fotos (antes de esto no se ha llamado a la IA con ninguna imagen). Cierra el
   // overlay sin cambiar de tab — _analyzeOnboarding() hace showTab('portfolio') solo
   // cuando el análisis realmente termina.
-  // Plan elegido en el toggle del paywall. 'monthly' | 'annual'.
-  var _pvSelectedPlan = 'monthly';
+  // Plan elegido en el toggle del paywall. 'monthly' | 'annual'. El anual va destacado
+  // y elegido por defecto.
+  var _pvSelectedPlan = 'annual';
+  // Paquetes del offering actual de RevenueCat ({ annual, monthly }) y el uid con el que se
+  // pidieron: un Package pertenece a la instancia del SDK de ESE usuario.
+  var _pvWebPkgs = null, _pvWebPkgsUid = null, _pvWebPlansLoading = null;
+  function _pvWebEsc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+    });
+  }
+  // "14 días", "1 mes"… a partir de la prueba gratis que declara el producto en RevenueCat.
+  function _pvTrialText(product){
+    var p = product && product.freeTrialPhase && product.freeTrialPhase.period;
+    if (!p || !p.number) return '';
+    var n = p.number;
+    if (p.unit === 'day')   return n + (n === 1 ? ' día' : ' días');
+    if (p.unit === 'week')  return (n * 7) + ' días';
+    if (p.unit === 'month') return n + (n === 1 ? ' mes' : ' meses');
+    if (p.unit === 'year')  return n + (n === 1 ? ' año' : ' años');
+    return '';
+  }
+  // Pinta precios, prueba y la etiqueta del anual con lo que devolvió RevenueCat.
+  // msg (opcional) sustituye los precios cuando no se pudieron cargar.
+  function _pvWebPaintPlans(msg){
+    var pk = _pvWebPkgs || {};
+    var per = { annual: '/año', monthly: '/mes' };
+    ['annual', 'monthly'].forEach(function(k){
+      var el = document.querySelector('#pwPlans [data-plan-price="' + k + '"]');
+      if (!el) return;
+      var pr = pk[k] && pk[k].product;
+      if (!pr) { el.textContent = msg || (_pvWebPkgs ? 'No disponible' : 'Cargando precio…'); return; }
+      var t = _pvTrialText(pr);
+      el.textContent = pr.price.formattedPrice + per[k] + (t ? ' · ' + t + ' gratis' : '');
+    });
+    // Anual destacado: "Ahorra N%" frente a 12 meses del mensual (misma moneda), o
+    // "Recomendado" si no se puede comparar.
+    var badge = document.getElementById('pwAnnualBadge');
+    var a = pk.annual && pk.annual.product, m = pk.monthly && pk.monthly.product;
+    if (badge) {
+      var txt = '';
+      if (a) {
+        txt = 'Recomendado';
+        if (m && a.price.currency === m.price.currency && m.price.amountMicros > 0) {
+          var save = Math.round((1 - a.price.amountMicros / (m.price.amountMicros * 12)) * 100);
+          if (save > 0) txt = 'Ahorra ' + save + '%';
+        }
+      }
+      badge.textContent = txt;
+      badge.style.display = txt ? '' : 'none';
+    }
+    // Nota bajo el botón + "Sin pago ahora" sólo si el plan elegido trae prueba gratis.
+    var note = document.getElementById('pwPriceNote');
+    var nopay = document.querySelector('#portivPaywall .pw-nopay');
+    var sel = pk[_pvSelectedPlan] && pk[_pvSelectedPlan].product;
+    if (!sel) { if (note) note.innerHTML = '&nbsp;'; return; }
+    var trial = _pvTrialText(sel);
+    if (nopay) nopay.style.display = trial ? '' : 'none';
+    if (note) note.innerHTML = (trial ? '<b>' + _pvWebEsc(trial) + ' gratis</b>, luego ' : '')
+      + _pvWebEsc(sel.price.formattedPrice) + ' <b>' + (_pvSelectedPlan === 'annual' ? 'al año' : 'al mes') + '</b>';
+  }
+  // Usuario de la sesión. Sin uid no se cobra: no hay compras anónimas en web.
+  async function _pvWebSessionUser(){
+    var email = null, uid = null;
+    try {
+      var sb = window.sbClient;
+      if (sb && sb.auth) { var r = await sb.auth.getUser(); if (r && r.data && r.data.user) { email = r.data.user.email; uid = r.data.user.id; } }
+    } catch(e){}
+    if ((!email || !uid) && typeof session !== 'undefined' && session && session.user) {
+      email = email || session.user.email; uid = uid || session.user.id;
+    }
+    return { uid: uid, email: email };
+  }
+  window._pvWebSessionUser = _pvWebSessionUser;   // lo usa _pvManageSubscription (otro bloque)
+  // Trae el offering actual (getOfferings) y pinta los planes. Idempotente por usuario.
+  window._pvWebLoadPlans = function(){
+    if (window._pvIsNativeApp()) return Promise.resolve(null);
+    var rc = window.PortivWebRC;
+    if (!rc || !rc.ready()) { _pvWebPaintPlans('Pago web no disponible'); return Promise.resolve(null); }
+    if (_pvWebPkgs && _pvWebPkgsUid && _pvWebPkgsUid === rc.currentUid()) { _pvWebPaintPlans(); return Promise.resolve(_pvWebPkgs); }
+    if (_pvWebPlansLoading) return _pvWebPlansLoading;
+    _pvWebPkgs = null; _pvWebPaintPlans();
+    _pvWebPlansLoading = (async function(){
+      var u = await _pvWebSessionUser();
+      if (!u.uid) { _pvWebPaintPlans('Inicia sesión para ver el precio'); return null; }
+      await rc.configure(u.uid);
+      var off = await rc.getCurrentOffering();
+      if (!off) throw new Error('sin_offering');
+      _pvWebPkgs = { annual: off.annual || null, monthly: off.monthly || null };
+      _pvWebPkgsUid = u.uid;
+      if (!_pvWebPkgs[_pvSelectedPlan]) _pvSelectedPlan = _pvWebPkgs.annual ? 'annual' : 'monthly';
+      window._pvSelectPlan(_pvSelectedPlan);   // repinta selección, precios y nota
+      return _pvWebPkgs;
+    })().catch(function(e){
+      try { console.warn('[RC web] offerings', e); } catch(_){}
+      _pvWebPkgs = null;
+      _pvWebPaintPlans('Precio no disponible');
+      return null;
+    }).then(function(r){ _pvWebPlansLoading = null; return r; });
+    return _pvWebPlansLoading;
+  };
   // Estilos del toggle: solo tokens ya usados por el paywall (#04162c, #74777e, #e5eeff).
   function _pvPlanStyle(sel){
     return 'flex:1;cursor:pointer;font-family:inherit;text-align:left;padding:11px 13px;'
@@ -43887,68 +44044,62 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         btns[i].setAttribute('style', _pvPlanStyle(on));
         btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
       }
-      var p = document.getElementById('pwPriceNote');
-      if (p) p.innerHTML = (_pvSelectedPlan === 'annual')
-        ? '<b>14 días gratis</b>, luego USD 49.99 <b>al año</b> · ahorra ~17%'
-        : '<b>14 días gratis</b>, luego USD 4.99 <b>al mes</b>';
+      // Precios y nota salen de RevenueCat, no de importes escritos aquí.
+      _pvWebPaintPlans();
     } catch(e){}
   };
-  // "Comenzar ahora": abre Paddle Checkout (LIVE). El paywall NO se cierra
-  // ni se llama snapConnect() aquí — eso ocurre SOLO tras checkout.completed
-  // (ver eventCallback en la init de Paddle en <head>), que además cierra el
-  // paywall y conecta el broker vía _pvConfirmTrial().
+  function _pvWebToast(msg, color){
+    try { if (typeof showToast === 'function') { showToast(msg, color || 'var(--red)'); return; } } catch(e){}
+    try { alert(msg); } catch(e){}
+  }
+  // "Comenzar ahora": compra web con el Web SDK de RevenueCat (checkout de Paddle). El
+  // paywall NO se cierra ni se llama snapConnect() aquí — eso ocurre SOLO cuando purchase()
+  // resuelve, vía _pvConfirmTrial(), que espera a que el SERVIDOR confirme el entitlement.
+  var _pvWebBuying = false;
   window._pvStartCheckout = async function(){
     // En iOS el cobro SIEMPRE pasa por StoreKit. Paddle es un método de pago externo y
     // Apple lo rechaza (Guideline 3.1.1) → en nativo este botón redirige al paywall nativo.
     // Defensa en profundidad: el overlay que lo contiene ya no se abre en nativo.
     if (window._pvIsNativeApp()) { try { window._pvShowPaywall(); } catch(e){} return; }
-    // Token client-side de Paddle sin configurar → Paddle.Initialize nunca corrió y
-    // Checkout.open() abriría un overlay vacío. Se avisa en vez de fingir que funciona.
-    if (!window._pvPaddleReady()) {
-      var _mt = 'El pago web no está disponible en este momento. Escríbenos a rm@portivapp.com y lo resolvemos.';
-      try { if (typeof showToast === 'function') { showToast(_mt, 'var(--red)'); return; } } catch(e){}
-      try { alert(_mt); } catch(e){}
+    // Clave web de RevenueCat sin configurar → se avisa en vez de fingir que funciona.
+    var rc = window.PortivWebRC;
+    if (!rc || !rc.ready()) {
+      _pvWebToast('El pago web no está disponible en este momento. Escríbenos a rm@portivapp.com y lo resolvemos.');
       return;
     }
-    // Nuevo intento → el flag de "ya pagué" del intento anterior no debe sobrevivir.
-    try { _pvCheckoutCompleted = false; } catch(e){}
-    // Paddle.js ya no viene en el <head>: se descarga aquí la primera vez (~300 ms). Si el
-    // CDN falla, se muestra EXACTAMENTE el mismo aviso que cuando Paddle no estaba listo.
-    try { if (typeof window._ensurePaddle === 'function') await window._ensurePaddle(); } catch(e){}
-    if (!window.Paddle || !window.Paddle.Checkout) {
-      var _mp = 'El sistema de pago aún se está cargando. Inténtalo de nuevo en un momento.';
-      try { if (typeof showToast === 'function') { showToast(_mp, 'var(--red)'); return; } } catch(e){}
-      try { alert(_mp); } catch(e){}
-      return;
-    }
-    var email = null, uid = null;
+    // Sin sesión no se cobra: el appUserId (uid de Supabase) es lo que asigna la compra a
+    // esta cuenta en web y en iOS. Nada de compras anónimas.
+    var u = await _pvWebSessionUser();
+    if (!u.uid) { _pvWebToast('Necesitas iniciar sesión antes de suscribirte.'); return; }
+    if (_pvWebBuying) return;
+    _pvWebBuying = true;
+    var btn = document.getElementById('pwBuyBtn');
+    var btnTxt = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Abriendo pago…'; }
     try {
-      var sb = window.sbClient;
-      if (sb && sb.auth) { var r = await sb.auth.getUser(); if (r && r.data && r.data.user) { email = r.data.user.email; uid = r.data.user.id; } }
-    } catch(e){}
-    if ((!email || !uid) && typeof session !== 'undefined' && session && session.user) {
-      email = email || session.user.email; uid = uid || session.user.id;
-    }
-    // Sin uid no hay custom_data.supabase_user_id → el webhook de Paddle no sabe a quién
-    // otorgar el entitlement y el usuario pagaría sin recibir nada. Se aborta ANTES de cobrar.
-    if (!uid) {
-      var m1 = 'Necesitas iniciar sesión antes de suscribirte.';
-      try { if (typeof showToast === 'function') showToast(m1, 'var(--red)'); else alert(m1); } catch(e){ try{ alert(m1); }catch(_){} }
-      return;
-    }
-    var priceId = window.PADDLE_PRICES && window.PADDLE_PRICES[_pvSelectedPlan];
-    // Sin priceId conocido, Paddle abriría un checkout vacío o con el precio equivocado.
-    if (!priceId) {
-      var m2 = 'No se pudo cargar el plan. Recarga la página e inténtalo de nuevo.';
-      try { if (typeof showToast === 'function') showToast(m2, 'var(--red)'); else alert(m2); } catch(e){ try{ alert(m2); }catch(_){} }
-      return;
-    }
-    var opts = { items: [{ priceId: priceId, quantity: 1 }], customData: { supabase_user_id: uid } };
-    if (email) opts.customer = { email: email };
-    try { Paddle.Checkout.open(opts); } catch(e){
-      var _mc = 'No se pudo abrir el checkout. Intenta de nuevo.';
-      try { if (typeof showToast === 'function') { showToast(_mc, 'var(--red)'); return; } } catch(_){}
-      try { alert(_mc); } catch(_){}
+      await rc.configure(u.uid);
+      var pk = await window._pvWebLoadPlans();
+      var pkg = pk && pk[_pvSelectedPlan];
+      if (!pkg) { _pvWebToast('No se pudo cargar el plan. Recarga la página e inténtalo de nuevo.'); return; }
+      await rc.purchase(pkg, u.email);
+      // Pago OK. La UI NO se desbloquea con la respuesta del navegador: _pvConfirmTrial →
+      // _pvAwaitEntitlement pide al servidor que reconcilie con RevenueCat y espera la fila.
+      window._pvConfirmTrial();
+    } catch(e){
+      // El usuario cerró el checkout: no es un error, el muro sigue abierto sin mensaje.
+      if (rc.isCancel(e)) return;
+      if (rc.isAlreadyOwned(e)) {
+        _pvWebToast('Ya tienes Portiv Pro activo con esta cuenta.', 'var(--text2)');
+        window._pvConfirmTrial();
+        return;
+      }
+      try { _pvLogError('RC web purchase', e); } catch(_){}
+      _pvWebToast(rc.isNetwork(e)
+        ? 'Sin conexión. Revisa tu internet e inténtalo de nuevo.'
+        : 'No se pudo completar el pago. Inténtalo de nuevo o escríbenos a rm@portivapp.com.');
+    } finally {
+      _pvWebBuying = false;
+      if (btn) { btn.disabled = false; btn.textContent = btnTxt || 'Comenzar ahora'; }
     }
   };
   window._pvConfirmTrial = function(){
@@ -43965,7 +44116,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     // parece que no pasó nada.
     try { var q = document.getElementById('pqOverlay'); if(q) q.classList.remove('open'); } catch(e){}
     document.body.style.overflow = '';
-    // NO se llama snapConnect() directo: el webhook de Paddle tarda ~1-3 s en escribir el
+    // NO se llama snapConnect() directo: el webhook (RevenueCat) tarda ~1-3 s en escribir el
     // entitlement, y si conectamos antes la Edge Function responde 403 subscription_required
     // justo después de que el usuario pagó — el peor momento posible para un error. Se espera
     // a que el entitlement aparezca (con techo) y recién entonces se conecta.
@@ -44444,7 +44595,14 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       return;
     }
 
-    // ── Web (Paddle) — sin cambios ────────────────────────────────────────
+    // ── Web (RevenueCat + Paddle) ─────────────────────────────────────────
+    // Pago pendiente, pausada o cancelada con periodo vigente → se arregla en el portal de
+    // la suscripción (managementURL), no comprando otra vez. El resto → checkout.
+    var _wst = (_last && _last.status) || '';
+    if ((_wst === 'paused' || _wst === 'past_due' || _wst === 'canceled') &&
+        typeof window._pvManageSubscription === 'function') {
+      try { window._pvManageSubscription(); return; } catch(e){}
+    }
     try {
       if (typeof window._pvStartCheckout === 'function') { window._pvStartCheckout(); return; }
       if (typeof window._pvOpenPaywall === 'function') { window._pvOpenPaywall(); return; }
@@ -44466,7 +44624,11 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     if (el) el.textContent = active
       ? (_nat ? 'Portiv Pro · renovación gestionada por Apple' : 'Portiv Pro')
       : 'Plan gratuito';
-    if (mg) mg.style.display = active ? '' : 'none';
+    if (mg) {
+      mg.style.display = active ? '' : 'none';
+      // Web: abre el portal de la suscripción (managementURL de RevenueCat). iOS conserva su texto.
+      if (!_nat) mg.textContent = 'Administrar suscripción';
+    }
   };
 
   // ── Qué pintar cuando NO se puede comprobar la suscripción ──────────────
@@ -44602,10 +44764,10 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     // sondeo nunca resolvería — el webhook que se perdió del todo. El bucle de
     // abajo queda como respaldo para el resto.
     //
-    // SÓLO en nativo. En el build web quien paga es Paddle y RevenueCat no sabe
-    // nada de ese usuario: preguntarle devolvería "nunca compró" sobre alguien
-    // que acaba de pagar. El flujo de Paddle se queda exactamente como estaba.
-    if (window._pvIsNativeApp && window._pvIsNativeApp()) {
+    // En nativo y también en web: la web ya cobra con el Web SDK de RevenueCat (Paddle
+    // como motor), así que RevenueCat conoce la compra y entitlement-sync la escribe.
+    if ((window._pvIsNativeApp && window._pvIsNativeApp()) ||
+        (window.PortivWebRC && window.PortivWebRC.ready())) {
       try { await window._pvEntitlementSync(true); } catch(e){}
     }
 
