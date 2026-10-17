@@ -41107,6 +41107,95 @@ if (document.readyState === 'loading') {
     _pvAuthPointToApp();
   }
 
+  // ── Traspaso WEB → APP (sólo nativo) ─────────────────────────────────────────────────
+  // La web abre portiv://handoff?code=… (ver _pvAppHandoffSheet). Aquí se canjea el código en
+  // app-handoff, se entra con ESA cuenta (verifyOtp con el token de magic link) y, con la app
+  // ya cargada, se abre el muro de Portiv Pro. La marca va en sessionStorage porque el gate
+  // puede recargar la página al ligar el dispositivo a la cuenta.
+  var _HANDOFF_KEY = 'pv_handoff_paywall';
+  function _pvHandoffToast(t){ try { if (typeof showToast === 'function') showToast(t, 'var(--red)'); } catch(e){} }
+  async function _pvRedeemHandoff(url){
+    var m = /^portiv:\/\/handoff\?(?:[^#]*&)?code=([^&#]+)/.exec(String(url || ''));
+    if (!m || _WEB_NO_SIGNUP) return false;
+    var code = decodeURIComponent(m[1]);
+    try {
+      var r = await fetch(SUPABASE_URL + '/functions/v1/app-handoff', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', apikey: SUPABASE_ANON, Authorization: 'Bearer ' + SUPABASE_ANON },
+        body: JSON.stringify({ action: 'redeem', code: code })
+      });
+      var j = await r.json().catch(function(){ return {}; });
+      if (!r.ok || !j.token_hash) {
+        _pvHandoffToast(j.error === 'expired_code' ? 'El enlace caducó. Vuelve a pulsarlo en portivapp.com.' : 'No pudimos abrir tu cuenta. Inicia sesión con tu cuenta de Portiv.');
+        return false;
+      }
+      try { sessionStorage.setItem(_HANDOFF_KEY, '1'); } catch(e){}
+      // Primer arranque: las diapositivas sobran, el usuario ya sabe a qué viene.
+      try {
+        localStorage.setItem('pv_intro_seen', '1');
+        var ov = document.getElementById('pvSlidesOv');
+        if (ov) ov.classList.remove('open', 'pvs-first', 'pvs-leaving', 'pvs-intro', 'pvs-bwd');
+      } catch(e){}
+      var cur = null;
+      try { cur = (await sb.auth.getSession()).data.session; } catch(e){}
+      var curEmail = cur && cur.user && (cur.user.email || '').toLowerCase();
+      // Ya está dentro con esa misma cuenta → sólo falta el muro.
+      if (cur && curEmail && curEmail === String(j.email || '').toLowerCase()) { _pvMaybeHandoffPaywall(); return true; }
+      // Otra cuenta abierta en la app → manda la del enlace.
+      if (cur) { try { await window._pvIapLogout(); } catch(e){} try { await sb.auth.signOut(); } catch(e){} }
+      var v = await sb.auth.verifyOtp({ token_hash: j.token_hash, type: 'magiclink' });
+      if (v && v.error) {
+        try { sessionStorage.removeItem(_HANDOFF_KEY); } catch(e){}
+        _pvHandoffToast('No pudimos abrir tu cuenta. Inicia sesión con tu cuenta de Portiv.');
+        return false;
+      }
+      return true;   // SIGNED_IN → cloudLoadAndGate → _pvMaybeHandoffPaywall
+    } catch(e){
+      _pvHandoffToast('Sin conexión. Revisa tu internet e inténtalo de nuevo.');
+      return false;
+    }
+  }
+  // Con la app ya cargada: muro si llegó por el enlace, o si en la web pidió suscribirse hace
+  // menos de 24 h (app_metadata.pv_paywall_intent_at, lo marca app-handoff) y aún no se le
+  // enseñó en este dispositivo. Nunca a quien ya es Pro, ni encima del cuestionario de perfil
+  // (ese flujo ya termina en el muro).
+  function _pvMaybeHandoffPaywall(){
+    if (_WEB_NO_SIGNUP) return;
+    var u = session && session.user; if (!u) return;
+    var viaLink = false; try { viaLink = sessionStorage.getItem(_HANDOFF_KEY) === '1'; } catch(e){}
+    var intent = u.app_metadata && u.app_metadata.pv_paywall_intent_at;
+    var seenKey = 'pv_intent_seen_' + u.id, seen = false;
+    try { seen = !!intent && localStorage.getItem(seenKey) === intent; } catch(e){}
+    var fresh = !!intent && (Date.now() - Date.parse(intent)) < 24 * 3600000;
+    if (!viaLink && !(fresh && !seen)) return;
+    setTimeout(async function(){
+      if (!session || !session.user || session.user.id !== u.id) return;
+      try { sessionStorage.removeItem(_HANDOFF_KEY); } catch(e){}
+      try { if (intent) localStorage.setItem(seenKey, intent); } catch(e){}
+      var q = document.getElementById('pqOverlay');
+      if (q && q.classList.contains('open')) return;
+      var sst = null; try { sst = await window._pvSubStatus(); } catch(e){}
+      if (sst && sst.active) return;
+      try { window._pvShowPaywall(); } catch(e){}
+    }, 1200);
+  }
+  if (!_WEB_NO_SIGNUP) {
+    try {
+      var _A = window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.App;
+      if (_A && _A.addListener) {
+        _A.addListener('appUrlOpen', function(ev){
+          if (ev && /^portiv:\/\/handoff\?/.test(String(ev.url || ''))) _pvRedeemHandoff(ev.url);
+        });
+      }
+      // Arranque en frío lanzado por el enlace.
+      if (_A && typeof _A.getLaunchUrl === 'function') {
+        Promise.resolve(_A.getLaunchUrl()).then(function(r){
+          if (r && r.url && /^portiv:\/\/handoff\?/.test(String(r.url))) _pvRedeemHandoff(r.url);
+        }).catch(function(){});
+      }
+    } catch(e){}
+  }
+
   function setMode(m){
     // Web: no hay registro; pedirlo lleva a la tarjeta de descarga de la app.
     if (m === 'signup' && _WEB_NO_SIGNUP) { m = 'signin'; setTimeout(_pvAuthPointToApp, 0); }
@@ -41729,6 +41818,7 @@ if (document.readyState === 'loading') {
     // Sin esto, la generación corría como anónimo, la escritura la bloqueaba RLS y nunca
     // persistía → cada dispositivo regeneraba (bug de "se genera dos veces" + costo N×).
     window._pvAuthReady = true;
+    try { _pvMaybeHandoffPaywall(); } catch(e){}   // app: venía de «Suscribirme» en la web → muro
     try { if (window._sharedFlushPending) window._sharedFlushPending(); } catch(e){}   // sube a la nube lo generado antes del login
     // ── AISLAMIENTO POR CUENTA ──────────────────────────────────────────────────────────
     // Si este navegador estaba ligado a OTRA cuenta (o a una versión de binding anterior),
@@ -43606,8 +43696,9 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       },
       // Mismo contrato que iap.js: { success, customerInfo } | { reason:'cancelled' } | { error }.
       purchase: async function(sel){
-        // SOLO APP: abre la ficha de Portiv en la App Store; el muro sigue abierto sin mensaje.
-        if (APP_ONLY) { try { window.open(STORE_URL, '_blank', 'noopener'); } catch(e){} return { reason: 'cancelled' }; }
+        // SOLO APP: hoja «Continúa en la app» (abre Portiv con la sesión ya iniciada, o la
+        // descarga); el muro sigue abierto debajo, sin mensaje.
+        if (APP_ONLY) { try { window._pvAppHandoffSheet(STORE_URL); } catch(e){ try { window.open(STORE_URL, '_blank', 'noopener'); } catch(_){} } return { reason: 'cancelled' }; }
         var pkg = pkgs && pkgs[sel];
         if (!pkg) return { reason: 'no-package' };
         try {
@@ -43628,6 +43719,59 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         return !!(s && s.active);
       }
     };
+  };
+
+  // ── Hoja WEB «Continúa en la app» ──
+  // Pide a app-handoff un código de un solo uso (10 min) y ofrece abrir portiv://handoff?code=…
+  // (la app canjea el código, entra con ESTA cuenta y abre el muro) o descargar la app. Pedir el
+  // código también marca en el servidor que el usuario quiere suscribirse: si instala la app y
+  // entra a mano, la app le enseña el muro una vez. Sólo web.
+  window._pvAppHandoffSheet = function(storeUrl){
+    var prev = document.getElementById('pvHandoff'); if (prev) prev.remove();
+    var st = { code: null, at: 0, p: null };
+    function fetchCode(){
+      st.p = Promise.resolve(window.stCall ? window.stCall('app-handoff', { action: 'create' }) : null)
+        .then(function(j){ st.code = j && j.code || null; st.at = Date.now(); return st.code; })
+        .catch(function(){ st.code = null; return null; });
+      return st.p;
+    }
+    fetchCode();
+    var o = document.createElement('div');
+    o.id = 'pvHandoff';
+    o.setAttribute('role', 'dialog'); o.setAttribute('aria-modal', 'true');
+    o.style.cssText = 'position:fixed;inset:0;z-index:13100;background:rgba(8,18,34,.55);display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--font,system-ui,-apple-system,sans-serif);';
+    var btn = 'display:flex;align-items:center;justify-content:center;gap:8px;width:100%;box-sizing:border-box;padding:14px 16px;border-radius:999px;font:inherit;font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;';
+    o.innerHTML =
+      '<div style="width:100%;max-width:400px;background:#fff;border-radius:28px;padding:26px 22px 20px;box-shadow:0 24px 60px -20px rgba(11,28,48,.45);position:relative;text-align:center;">'
+      + '<button type="button" data-h="x" aria-label="Cerrar" style="position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:50%;border:0;background:#eef1f8;color:#0b1c30;font-size:18px;cursor:pointer;">×</button>'
+      + '<div style="font-size:20px;font-weight:800;color:#0b1c30;letter-spacing:-.3px;margin:6px 0 8px;">Continúa en la app de Portiv</div>'
+      + '<div style="font-size:14px;line-height:1.5;color:#33475f;margin-bottom:18px;">Abriremos Portiv con tu cuenta ya iniciada y verás Portiv Pro para suscribirte, con 14 días gratis si es tu primera vez.</div>'
+      + '<button type="button" data-h="open" style="' + btn + 'border:0;background:#0b1c30;color:#fff;">Ya tengo la app: abrir Portiv</button>'
+      + '<a data-h="store" href="' + storeUrl + '" target="_blank" rel="noopener" style="' + btn + 'margin-top:10px;border:1.5px solid #cfd7e3;background:#fff;color:#0b1c30;">Descargar en la App Store</a>'
+      + '<div style="font-size:12.5px;line-height:1.5;color:#7a879b;margin-top:14px;">¿Acabas de instalarla? Vuelve aquí y pulsa «abrir Portiv», o ábrela y entra con esta misma cuenta: verás Portiv Pro al momento.</div>'
+      + '<p data-h="msg" style="display:none;font-size:13px;color:#c0392b;margin:12px 0 0;"></p>'
+      + '</div>';
+    document.body.appendChild(o);
+    var msg = o.querySelector('[data-h="msg"]');
+    function close(){ try { o.remove(); } catch(e){} document.removeEventListener('keydown', onKey, true); }
+    function onKey(e){ if (e.key === 'Escape') { e.stopPropagation(); close(); } }
+    document.addEventListener('keydown', onKey, true);
+    o.addEventListener('click', function(e){
+      if (e.target === o) { close(); return; }
+      var b = e.target.closest ? e.target.closest('[data-h]') : null; if (!b) return;
+      var h = b.getAttribute('data-h');
+      if (h === 'x') { close(); return; }
+      if (h === 'open') {
+        // Código caducado o aún sin llegar → se pide de nuevo antes de abrir la app.
+        var fresh = st.code && (Date.now() - st.at) < 9 * 60000;
+        Promise.resolve(fresh ? st.code : (st.p && !st.code ? st.p : fetchCode())).then(function(c){
+          if (!c) { msg.textContent = 'No pudimos preparar el acceso. Revisa tu conexión o abre la app y entra con tu cuenta.'; msg.style.display = 'block'; return; }
+          window.location.href = 'portiv://handoff?code=' + encodeURIComponent(c);
+          st.code = null;   // un solo uso: el siguiente toque pide otro
+          fetchCode();
+        });
+      }
+    });
   };
 
   // iap: window.PortivIAP, o null si el SDK aún no cargó (el muro se abre igual, con los planes
