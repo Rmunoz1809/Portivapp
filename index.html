@@ -13196,6 +13196,25 @@ const EPS = {
     }catch(e){ return this._cache[ticker]={ hasData:false, error:true, quarters:[], _fetchedDate:new Date().toISOString().slice(0,10) }; }
   },
 
+  // Día en que se PUBLICÓ un trimestre ya reportado ('YYYY-MM-DD'), o null si no hay fuente fiable.
+  // El `date` de los trimestres reportados es el `period` de /stock/earnings: el cierre del
+  // trimestre llevado al trimestre natural, no el día del reporte (ORCL Q1 FY27 cerró el 31 ago,
+  // sale «2026-09-30» y reportó el 9 sep). El día real solo está en la fila del calendario del
+  // MISMO trimestre fiscal, y Finnhub la conserva hasta un mes después del reporte. Se exige que
+  // ya traiga el EPS real y que sea el de /stock/earnings: TSM trajo dos filas de su Q3, la del
+  // 14 oct sin dato y la del 15 con él. Si no, null: mejor sin fecha que con una inventada.
+  reportedOn(ticker, period){
+    const c=this._cache[(ticker||'').toUpperCase()];
+    if(!c || !period || !Array.isArray(c.quarters) || !Array.isArray(c.cal)) return null;
+    const x=c.quarters.find(q=> q && !q.future && q.date===period && typeof q.actual==='number');
+    if(!x) return null;
+    const hoy=new Date().toISOString().slice(0,10);
+    const ds=new Set(c.cal.filter(r=> r && +r.y===+x.y && +r.q===+x.q && /^\d{4}-\d{2}-\d{2}$/.test(r.d||'') && r.d<=hoy
+        && typeof r.a==='number' && Math.abs(r.a-x.actual) <= Math.max(0.01, Math.abs(x.actual)*0.005))
+      .map(r=>r.d));
+    return ds.size===1 ? [...ds][0] : null;
+  },
+
   // SVG: estimate = círculo hueco gris · actual = sólido (verde Beat / rojo Miss) · futuro = solo estimate.
   _svg(qs, sel, opts){
     // Sin líneas de cuadrícula ni números del eje Y — solo los círculos
@@ -26282,8 +26301,11 @@ const _STOCK_ANALYSIS_LS = 'portiv_stock_analysis_v2';   // v2: los v1 no caduca
 let _stockAnalysisCache = {};
 (function(){ try { _stockAnalysisCache = JSON.parse(localStorage.getItem(_STOCK_ANALYSIS_LS) || '{}') || {}; } catch(e){ _stockAnalysisCache = {}; } })();
 
-// Clave de invalidación = fecha del ÚLTIMO earnings REPORTADO (de EPS). Cambia cuando la
+// Clave de invalidación = `period` del ÚLTIMO trimestre REPORTADO (de EPS). Cambia cuando la
 // empresa reporta → fuerza refrescar fundamentales + rating. 'na' si no hay datos EPS.
+// Es el cierre del trimestre según Finnhub, NO el día en que se publicó (ese lo da
+// EPS.reportedOn, y solo durante el mes en que el calendario lo conserva). Sirve de clave
+// porque es estable; pasarla al día real la haría cambiar sola al mes y caducaría todo.
 function _analysisEarningsKey(ticker){
   try {
     const d = (typeof EPS !== 'undefined') ? EPS._cache[(ticker||'').toUpperCase()] : null;
@@ -26836,7 +26858,8 @@ const _PV_FIN_TAGS = {
 };
 
 // Extrae de un informe {year, endDate, report:{bs,ic,cf}} los campos que usan
-// ambos modelos. Ausente → null. `_tags` dice qué tag (o qué identidad) se usó.
+// ambos modelos. Ausente → null. `_tags` dice qué tag (o qué identidad) se usó y
+// `vacios` qué estados trae vacíos el informe (p. ej. ['bs'] = llegó sin balance).
 function _pvFinFields(rep) {
   const r = (rep && rep.report) || {};
   const filas = [].concat(r.bs || [], r.ic || [], r.cf || []);
@@ -26856,6 +26879,7 @@ function _pvFinFields(rep) {
   const out = {
     year: rep ? (rep.year ?? null) : null,
     endDate: rep ? String(rep.endDate || '').slice(0, 10) : '',
+    vacios: ['bs', 'ic', 'cf'].filter(k => !(Array.isArray(r[k]) && r[k].length)),
     totalAssets:        busca('totalAssets'),
     totalLiabilities:   busca('totalLiabilities'),
     currentAssets:      busca('currentAssets'),
@@ -26999,36 +27023,47 @@ function computeCoberturaIntereses(t) {
 }
 // ── F-Score / Z-Score: fin
 
-// ── Descarga + caché de los campos extraídos de los 2 últimos 10-K ─────────
+// ── Descarga + caché de los campos extraídos de los 10-K (t, t−1 y el último) ─
 // Se guardan SÓLO los campos (≈1 KB por ticker), nunca el payload (~200 KB).
 // TTL 7 días: un 10-K se publica una vez al año. Promesa en vuelo compartida
 // por ticker para no duplicar llamadas si la ficha se repinta.
-const _PV_FIN_LS  = 'pv_fin_reported_v2';   // v2: guarda también el gasto por intereses (cobertura de intereses del 10-K)
-try { localStorage.removeItem('pv_fin_reported_v1'); } catch(e){}
+const _PV_FIN_LS  = 'pv_fin_reported_v3';   // v3: t = último 10-K completo, t1 = su ejercicio anterior, ult = último 10-K (cobertura)
+try { localStorage.removeItem('pv_fin_reported_v1'); localStorage.removeItem('pv_fin_reported_v2'); } catch(e){}
 const _PV_FIN_TTL = 7 * 24 * 60 * 60 * 1000;
-const _PV_FIN_MEM = {};       // { TICKER: {ts, t, t1} }
+const _PV_FIN_MEM = {};       // { TICKER: {ts, t, t1, ult} }
 const _PV_FIN_INFLIGHT = {};  // { TICKER: Promise }
 function _pvFinLsRead(){ try { return JSON.parse(localStorage.getItem(_PV_FIN_LS) || '{}') || {}; } catch(e){ return {}; } }
 function _pvFinLsWrite(tk, ent){
   try { const all = _pvFinLsRead(); all[tk] = ent; localStorage.setItem(_PV_FIN_LS, JSON.stringify(all)); } catch(e){}
 }
-// Del payload de Finnhub toma los 10-K (formulario '10-K', también '10-K/A'),
-// ordenados por fecha de cierre descendente, y extrae t y t−1 de años distintos.
+// Del payload de Finnhub toma los 10-K (formulario '10-K', también '10-K/A'), ordenados por
+// fecha de cierre descendente; a igual cierre, primero el que trae balance y resultados y
+// luego el presentado después. Devuelve:
+//  · ult: el último 10-K. De él sale la cobertura de intereses (último ejercicio).
+//  · t:   el último 10-K COMPLETO (balance y estado de resultados), si es de ese ejercicio o
+//         del anterior. Finnhub entrega algunos con el balance vacío (ORCL y MSFT FY2026,
+//         bs: []) y con ellos F-Score y Z salían «sin datos». Si no hay ninguno, t = ult.
+//  · t1:  el 10-K del ejercicio inmediatamente anterior a t (cierre 330–400 días antes) o
+//         null: a ORCL le faltan FY2023 y FY2024, y FY2025 no se compara con FY2022.
 function _pvFinPickAnnual(payload){
   const data = Array.isArray(payload && payload.data) ? payload.data : [];
-  const ks = data.filter(d => d && /^10-K/i.test(String(d.form || '')) && d.report)
-                 .sort((a, b) => String(b.endDate || '').localeCompare(String(a.endDate || '')));
-  const t = ks[0] || null;
-  const t1 = t ? (ks.find(d => d.year != null ? d.year !== t.year : String(d.endDate || '').slice(0, 4) !== String(t.endDate || '').slice(0, 4)) || null) : null;
-  return { t, t1 };
+  const fin = d => Date.parse(String(d.endDate || '').slice(0, 10));
+  const completo = d => +['bs', 'ic'].every(k => Array.isArray(d.report[k]) && d.report[k].length > 0);
+  const ks = data.filter(d => d && /^10-K/i.test(String(d.form || '')) && d.report && isFinite(fin(d)))
+                 .sort((a, b) => fin(b) - fin(a) || completo(b) - completo(a) || String(b.filedDate || '').localeCompare(String(a.filedDate || '')));
+  const dias = (a, b) => (fin(a) - fin(b)) / 864e5;
+  const ult = ks[0] || null;
+  const t = ult ? (ks.find(d => completo(d) && dias(ult, d) <= 400) || ult) : null;
+  const t1 = t ? (ks.find(d => { const x = dias(t, d); return x >= 330 && x <= 400; }) || null) : null;
+  return { t, t1, ult };
 }
 // Lo que ya hay en memoria o en localStorage, sin red. null si no hay o caducó.
 function _pvFinCache(tk){
   const now = Date.now();
   const mem = _PV_FIN_MEM[tk];
-  if (mem && (now - mem.ts) < _PV_FIN_TTL) return { t: mem.t, t1: mem.t1 };
+  if (mem && (now - mem.ts) < _PV_FIN_TTL) return { t: mem.t, t1: mem.t1, ult: mem.ult };
   const ls = _pvFinLsRead()[tk];
-  if (ls && ls.t && (now - (ls.ts || 0)) < _PV_FIN_TTL) { _PV_FIN_MEM[tk] = ls; return { t: ls.t, t1: ls.t1 }; }
+  if (ls && ls.t && (now - (ls.ts || 0)) < _PV_FIN_TTL) { _PV_FIN_MEM[tk] = ls; return { t: ls.t, t1: ls.t1, ult: ls.ult }; }
   return null;
 }
 function _pvFinancialsReported(ticker){
@@ -27039,11 +27074,11 @@ function _pvFinancialsReported(ticker){
   if (_PV_FIN_INFLIGHT[tk]) return _PV_FIN_INFLIGHT[tk];
   const p = fhFetch(`/stock/financials-reported?symbol=${encodeURIComponent(tk)}&freq=annual`, 20000)
     .then(payload => {
-      const { t, t1 } = _pvFinPickAnnual(payload);
+      const { t, t1, ult } = _pvFinPickAnnual(payload);
       if (!t) return null;
-      const ent = { ts: Date.now(), t: _pvFinFields(t), t1: t1 ? _pvFinFields(t1) : null };
+      const ent = { ts: Date.now(), t: _pvFinFields(t), t1: t1 ? _pvFinFields(t1) : null, ult: _pvFinFields(ult) };
       _PV_FIN_MEM[tk] = ent; _pvFinLsWrite(tk, ent);
-      return { t: ent.t, t1: ent.t1 };
+      return { t: ent.t, t1: ent.t1, ult: ent.ult };
     })
     .catch(() => null)
     .finally(() => { delete _PV_FIN_INFLIGHT[tk]; });
@@ -27168,7 +27203,7 @@ function _pvPaintFScore(ticker, info){
   _pvFinancialsReported(tk).then(res => {
     if (el.dataset.ticker !== tk) return;   // la ficha ya es de otro ticker
     if (!res || !res.t) { el.innerHTML = ''; return; }
-    const { t, t1 } = res;
+    const { t, t1 } = res, ult = res.ult || t;
     const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
     let h = head;
     const n2 = v => (typeof v === 'number' && isFinite(v)) ? v.toFixed(2) : null;
@@ -27183,11 +27218,14 @@ function _pvPaintFScore(ticker, info){
     // sin datos en gris) y la lista de pruebas.
     const f = computePiotroski(t, t1 || {});
     const fallidas = f.validas - f.total, sinDatos = 9 - f.validas;
-    const fNiv = f.total >= 7 ? ['g', 'Alta'] : f.total >= 4 ? ['a', 'Media'] : ['r', 'Baja'];
+    // La pastilla solo sale si las pruebas sin datos no pueden cambiarla: «sin datos» no es
+    // «fallida» (ORCL FY2025, 3 de 3 cumplidas y 6 sin datos, puede ser Baja, Media o Alta).
+    const nivel = n => n >= 7 ? ['g', 'Alta'] : n >= 4 ? ['a', 'Media'] : ['r', 'Baja'];
+    const fNiv = nivel(f.total), fNivFija = f.validas > 0 && fNiv[1] === nivel(f.total + sinDatos)[1];
     const pio = '<div class="pvsc-panel">' +
       '<div class="pvsc-k">Piotroski F-Score</div>' +
       '<div class="pvsc-top"><div class="pvsc-big">' + f.total + '<small>/9</small></div>' +
-        (f.validas ? '<em class="pvsc-pill ' + fNiv[0] + '">' + fNiv[1] + '</em>' : '') + '</div>' +
+        (fNivFija ? '<em class="pvsc-pill ' + fNiv[0] + '">' + fNiv[1] + '</em>' : '') + '</div>' +
       '<div class="pvsc-seg" aria-hidden="true">' + '<i class="ok"></i>'.repeat(f.total) + '<i class="ko"></i>'.repeat(fallidas) + '<i></i>'.repeat(sinDatos) + '</div>' +
       '<p class="pvsc-sub">' + (f.validas ? f.total + ' de ' + f.validas + ' pruebas cumplidas' + (sinDatos ? ' · ' + sinDatos + ' sin datos' : '') : 'Sin datos suficientes') + '</p>' +
       '<ul class="pvsc-list">' + f.tests.map(x => '<li><span class="pvsc-ic ' + est(x.ok) + '">' + ICO[est(x.ok)] + '</span><span>' +
@@ -27196,7 +27234,8 @@ function _pvPaintFScore(ticker, info){
 
     // Altman: valor con pastilla, escala de zonas con el punto de la empresa y los cinco cocientes.
     let alt = '<div class="pvsc-panel"><div class="pvsc-k">Altman Z-Score</div>';
-    if (perfilId && ALTMAN_PERFILES_EXCLUIDOS.indexOf(perfilId) >= 0) {
+    const zExcluida = !!perfilId && ALTMAN_PERFILES_EXCLUIDOS.indexOf(perfilId) >= 0;
+    if (zExcluida) {
       alt += '<div class="pvsc-na">No aplica en este sector</div>' +
              '<p class="pvsc-sub">La fórmula se calibró con empresas industriales; los balances de bancos, aseguradoras y REIT no encajan en ella.</p>';
     } else {
@@ -27218,9 +27257,23 @@ function _pvPaintFScore(ticker, info){
     alt += '</div>';
     h += '<div class="pvsc-grid">' + pio + alt + '</div>';
 
-    const yT = t.year || (t.endDate || '').slice(0, 4), yP = t1 ? (t1.year || (t1.endDate || '').slice(0, 4)) : null;
-    h += '<p class="pvsc-foot">Calculado con los estados anuales reportados a la SEC (formulario 10-K) de los ejercicios ' +
-         (yP ? esc(yP) + ' y ' : '') + esc(yT) + '. Sin ajustes ni estimaciones.</p>';
+    // Pie: de qué ejercicios sale todo, por qué no es el último 10-K si no lo es y qué estados
+    // llegaron vacíos a nuestra fuente de datos (Finnhub). Nunca se mezclan años sin decirlo.
+    const anio = x => String(x.year || (x.endDate || '').slice(0, 4));
+    const ESTADO = { bs: 'balance', ic: 'estado de resultados', cf: 'flujo de caja' };
+    const vacios = (x, ks) => (x.vacios || []).filter(k => ks.indexOf(k) >= 0).map(k => ESTADO[k]).join(' ni ');
+    const yT = anio(t), yP = t1 ? anio(t1) : null;
+    let pie = 'Calculado con los estados anuales reportados a la SEC (formulario 10-K) ' +
+              (yP ? 'de los ejercicios ' + yP + ' y ' + yT : 'del ejercicio ' + yT);
+    if (ult.endDate !== t.endDate) pie += ': el 10-K de ' + anio(ult) + ' llegó sin ' + (vacios(ult, ['bs', 'ic']) || 'datos') + ' a nuestra fuente de datos';
+    pie += '.';
+    const vacioEn = {};   // 'balance' → ['2025', '2026']
+    [[t1, ['bs', 'ic']], [t, ['bs', 'ic', 'cf']]].forEach(([x, ks]) => { const v = x && vacios(x, ks); if (v) (vacioEn[v] = vacioEn[v] || []).push(anio(x)); });
+    Object.keys(vacioEn).forEach(v => { const ys = vacioEn[v];
+      pie += (ys.length > 1 ? ' Los 10-K de ' + ys.join(' y ') + ' llegaron' : ' El 10-K de ' + ys[0] + ' llegó') + ' sin ' + v + ' a nuestra fuente de datos.'; });
+    if (!t1) pie += ' Falta el 10-K ' + (/^\d{4}$/.test(yT) ? 'de ' + (+yT - 1) : 'del año anterior') + ', así que las pruebas que comparan con el año anterior quedan sin datos.';
+    if (!zExcluida && mcap != null) pie += ' El valor de mercado del patrimonio es el de hoy.';
+    h += '<p class="pvsc-foot">' + esc(pie + ' Sin ajustes ni estimaciones.') + '</p>';
     el.innerHTML = h;
   }).catch(() => { if (el.dataset.ticker === tk) el.innerHTML = ''; });
 }
@@ -29675,7 +29728,12 @@ function _pvxEqrCard(a){
   //     Si no hay objeto → nada: la sección desaparece entera, sin placeholders.
   const eqr = a.earningsReaction;
   if (eqr && (eqr.resumen || (eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length))) {
-    const _fd = (() => { try { const d = new Date(String(eqr.reportDate) + 'T12:00:00');
+    // Día del reporte: solo uno confirmado (EPS.reportedOn). Las lecturas sin `reportDateReal`
+    // traen en `reportDate` el cierre del trimestre (ORCL: «30 de septiembre» por el 9 sep): a
+    // esas se les busca el día real en el calendario y, si ya no está, van sin fecha.
+    const _rd = eqr.reportDateReal ? eqr.reportDate
+              : (typeof EPS !== 'undefined' && typeof EPS.reportedOn === 'function') ? EPS.reportedOn(a.ticker, eqr.earningsKey || eqr.reportDate) : null;
+    const _fd = (() => { try { if (!_rd) return ''; const d = new Date(String(_rd) + 'T12:00:00');
       return isNaN(d) ? '' : d.toLocaleDateString('es-MX', { day:'numeric', month:'long', year:'numeric' }); } catch(e){ return ''; } })();
     const _num = v => (typeof v === 'number') ? '$' + v.toFixed(2) : null;
     // Antetítulo: periodo y fecha del reporte. Pastilla junto al título: superó, falló o en línea.
@@ -30495,7 +30553,10 @@ function _eqrFactsFor(ticker){
     const surp = (typeof last.estimate === 'number' && last.estimate !== 0)
       ? ((last.actual - last.estimate) / Math.abs(last.estimate)) * 100 : null;
     return {
+      // `date` es el `period` de Finnhub: identifica el trimestre (y es la clave de earnings),
+      // pero no es el día del reporte. Ese va en `reportedOn` solo si el calendario lo confirma.
       date: last.date,
+      reportedOn: (typeof EPS.reportedOn === 'function') ? EPS.reportedOn(ticker, last.date) : null,
       label: (last.q ? 'Q' + last.q : '') + (last.y ? ' ' + last.y : ''),
       actual: last.actual,
       estimate: (typeof last.estimate === 'number') ? last.estimate : null,
@@ -30525,7 +30586,7 @@ Usa las cifras que ya te doy; no las contradigas. Si un dato no lo encuentras, o
   const _n = v => (typeof v === 'number') ? v.toFixed(2) : '—';
   const prompt = `Hoy es ${_pvHoyTexto()}.
 Empresa: ${name} (${ticker})
-Último reporte (datos ya confirmados, NO los busques): ${epsFacts.label || epsFacts.date} — EPS real $${_n(epsFacts.actual)} vs. estimado $${_n(epsFacts.estimate)}${epsFacts.surprisePct != null ? ` (${epsFacts.surprisePct >= 0 ? '+' : ''}${epsFacts.surprisePct.toFixed(1)}% de sorpresa)` : ''}. Publicado el ${epsFacts.date}.
+Último reporte (datos ya confirmados, NO los busques): ${epsFacts.label || epsFacts.date} — EPS real $${_n(epsFacts.actual)} vs. estimado $${_n(epsFacts.estimate)}${epsFacts.surprisePct != null ? ` (${epsFacts.surprisePct >= 0 ? '+' : ''}${epsFacts.surprisePct.toFixed(1)}% de sorpresa)` : ''}.${epsFacts.reportedOn ? ` Publicado el ${epsFacts.reportedOn}.` : ''}
 Trimestres previos: ${(epsFacts.history||[]).map(q => `${q.label} real $${_n(q.actual)} vs. est. $${_n(q.estimate)}`).join(' · ') || '(sin histórico)'}
 Contexto financiero: ${(typeof _stockFactsForPrompt === 'function' ? (_stockFactsForPrompt(ticker, info) || '') : '') || '(limitado)'}
 
@@ -30609,7 +30670,10 @@ async function _getEarningsReaction(ticker, info, opts){
     const obj = await _fetchEarningsReactionAI(ticker, info, facts);
     if (!obj) return null;
     obj.earningsKey = eKey;
-    obj.reportDate  = facts.date;
+    // Hasta oct 2026 `reportDate` guardaba el `period` (cierre del trimestre) y la tarjeta lo
+    // daba como día del reporte. Ahora solo va si el calendario confirma el día real, marcado
+    // con `reportDateReal` para distinguirlo de esas lecturas viejas, que siguen en la nube.
+    if (facts.reportedOn) { obj.reportDate = facts.reportedOn; obj.reportDateReal = true; }
     obj.epsActual   = facts.actual;
     obj.epsEstimate = facts.estimate;
     obj.beat        = facts.beat;
