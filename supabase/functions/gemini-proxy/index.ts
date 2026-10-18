@@ -8,7 +8,7 @@
 // _aiFetchVision, _visionCall y _tokAdd no necesiten ningún cambio de parsing.
 //
 // El split es a propósito: el análisis por acción (AI_MODELS.narrative,
-// claude-sonnet-5) SIGUE yendo a `anthropic-proxy`. Esta función nunca lo ve.
+// claude-sonnet-5-5) SIGUE yendo a `anthropic-proxy`. Esta función nunca lo ve.
 //
 // Client contract: POST /functions/v1/gemini-proxy
 //   body = { model, max_tokens, temperature?, system?, messages, tools? }   (visión → respuesta con FORMA Anthropic)

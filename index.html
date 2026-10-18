@@ -10567,6 +10567,7 @@ const _ANTHROPIC_MODEL_MAP = {
   'claude-haiku-4-5':  'claude-haiku-4-5-20251001',
   'claude-sonnet-4-6': 'claude-sonnet-4-6',
   'claude-sonnet-5':   'claude-sonnet-5',
+  'claude-sonnet-5-5': 'claude-sonnet-5-5',
   'claude-opus-4-8':   'claude-opus-4-8',
 };
 
@@ -10594,16 +10595,16 @@ const AI_MODELS = {
   // como bueno. Fallback automático a gemini-3.1-flash-lite en _visionCall.
   vision:     'gemini-3.7-flash',
   // Narrativa del análisis por acción (intro "qué es / cómo gana", pros, riesgos, valoración).
-  // Sonnet 5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
+  // Sonnet 5.5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
   // (qbio:v3:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
-  narrative:  'claude-sonnet-5',
+  narrative:  'claude-sonnet-5-5',
   // Chat (AI Analyst) = el modelo chico, por costo: es la única vía de pago on-demand y el
   // modelo grande salía ~3× más caro por mensaje. La tendencia del modelo chico a pedir
   // aclaración en vez de comprometerse con una lectura se contiene por prompt (REGLA #1 +
   // frases prohibidas + few-shot) y por contexto (_chatMarketCtx le da fecha, movimiento
   // del día y titulares, que era el motivo real por el que preguntaba). Único punto de
   // cambio: si el chat vuelve a "entrevistar", subir esta clave a 'gemini-3.7-flash' (o a
-  // 'claude-sonnet-5' para devolverlo a Anthropic) y nada más — el ruteo lo sigue solo.
+  // 'claude-sonnet-5-5' para devolverlo a Anthropic) y nada más — el ruteo lo sigue solo.
   chat:       'gemini-3.1-flash-lite',
   // Chat en modo OPINIÓN = modelo grande. Una pregunta de hecho ("cuánto facturó NVDA")
   // la resuelve el chico igual de bien y a un tercio del costo; una RECOMENDACIÓN es
@@ -10613,9 +10614,9 @@ const AI_MODELS = {
   // _chatWantsOpinion ya separa los dos modos de forma determinista, se paga el modelo
   // caro SOLO en los mensajes donde la calidad cambia la decisión del cliente.
   // Coste aproximado por mensaje (prompt ~2.5K tok + ~350 tok de salida):
-  //   gemini-3.1-flash-lite ~$0.0013 · gemini-3.7-flash ~$0.0037 · claude-sonnet-5 ~$0.015
+  //   gemini-3.1-flash-lite ~$0.0013 · gemini-3.7-flash ~$0.0037 · claude-sonnet-5-5 ~$0.015
   // Con _WEEKLY_LIMIT = $0.15 y ~30% de mensajes en modo opinión, la mezcla sale a
-  // ~$0.0020/mensaje: unos 75 mensajes por semana. Sonnet 5 aquí lo bajaría a ~27.
+  // ~$0.0020/mensaje: unos 75 mensajes por semana. Sonnet 5.5 aquí lo bajaría a ~27.
   chatOpinion: 'gemini-3.7-flash',
 };
 
@@ -28488,7 +28489,7 @@ function _buildQualAnalysis(ticker, info){
 //  ---------------------------------------------------------------------------------
 //  CONECTADO A DATOS REALES POR TICKER (dinámico, nada hardcodeado de Netflix):
 //    • Rating, foso, ventajas por dimensión, márgenes, múltiplos ....... deterministas (info Finnhub)
-//    • Intro / pros / riesgos / valoración ............................. Sonnet 5 (AI_MODELS.narrative),
+//    • Intro / pros / riesgos / valoración ............................. Sonnet 5.5 (AI_MODELS.narrative),
 //        editorial COMPANY_BIOS si existe, cacheado 1× global en la nube (qbio:v3:TICKER)
 //    • Salud financiera: FCF, margen FCF (fcf/ventas), dividendo, D/E, beta . info Finnhub
 //    • Rango de objetivos de precio .................................... targetLow/Mean/High analistas
@@ -30495,7 +30496,7 @@ async function _getStockNarrative(ticker, info, facts){
 // (eqr:v1:TICKER en shared_analysis) → generar 1 sola vez y subir. Diferencias con la
 // narrativa: se dispara SOLO cuando la empresa reportó algo nuevo (cambia la earningsKey),
 // y usa 2 búsquedas web dirigidas porque la reacción del mercado no está en Finnhub.
-// Costo por generación ≈ $0.047 (2 búsquedas + ~8K input + ~900-1.300 output, Sonnet 5).
+// Costo por generación ≈ $0.047 (2 búsquedas + ~8K input + ~900-1.300 output, Sonnet 5.5).
 // No se pagan búsquedas para reconstruir cifras que YA tenemos: el EPS real vs. estimado
 // va en el prompt desde EPS._cache.
 const _EQR_LS = 'portiv_earnings_reaction_v3';   // v3: schema con 'perspectiva' y listas bueno/malo largas → purga los v2
@@ -30541,7 +30542,7 @@ function _eqrFactsFor(ticker){
     };
   } catch(e){ return null; }
 }
-// 1 llamada Sonnet 5 con 2 búsquedas web dirigidas. null si falla o no hay forma de generar.
+// 1 llamada Sonnet 5.5 con 2 búsquedas web dirigidas. null si falla o no hay forma de generar.
 async function _fetchEarningsReactionAI(ticker, info, epsFacts){
   if (typeof _aiFetch !== 'function' || !epsFacts) return null;
   const _canGen = (window._aiKeyAvailable && window._aiKeyAvailable())
@@ -36925,6 +36926,7 @@ const _CHAT_COOLDOWN = 3000;
 const _PRICING = {
   'claude-sonnet-4-6': { in: 3.00, out: 15.00 },
   'claude-sonnet-5':   { in: 2.00, out: 10.00 },   // precio de lanzamiento hecho permanente (platform.claude.com/docs/en/about-claude/pricing, 2026-09-08)
+  'claude-sonnet-5-5': { in: 2.00, out: 10.00 },   // mismo precio que Sonnet 5 (tabla de precios de Anthropic, 2026-10-18)
   'claude-haiku-4-5':  { in: 1.00, out:  5.00 },
   'claude-opus-4-8':   { in: 5.00, out: 25.00 },
   // Gemini (todo menos AI_MODELS.narrative). Precios de ai.google.dev/gemini-api/docs/pricing
