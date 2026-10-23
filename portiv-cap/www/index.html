@@ -10619,6 +10619,13 @@ const AI_MODELS = {
   // ~$0.0020/mensaje: unos 75 mensajes por semana. Sonnet 5.5 aquí lo bajaría a ~27.
   chatOpinion: 'gemini-3.7-flash',
 };
+// Techo de salida para las llamadas a AI_MODELS.narrative. Sonnet 5.5 piensa SIEMPRE (thinking
+// adaptativo, esfuerzo alto por defecto) y esos tokens salen del MISMO max_tokens: con 1200
+// (900 en la lectura técnica) el razonamiento se comía el presupuesto entero —medido el 23 oct
+// 2026: 1.163 de 1.268 tokens— y la respuesta volvía con `text` vacío, o sea "No se pudo
+// generar la lectura". Con búsqueda web, el pensamiento más el JSON rondan los 2.100 tokens;
+// 5000 deja margen y solo se paga lo que de verdad se genera (el proxy topa en 8192).
+const AI_NARR_MAX_TOKENS = 5000;
 
 // ── Pre-calentamiento de briefs "Cómo afecta al mercado" ─────────────────────────
 // Antes estaba apagado con literales (`if(!false) return`, `_subActive = false`,
@@ -24339,9 +24346,21 @@ let FINNHUB_KEY = localStorage.getItem('fh_api_key')
 const FH_PROXY_BASE = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/finnhub-proxy';
 const FH_PROXY_ANON = window.PV_SB_ANON;   // ← declarada una sola vez en el <head>
 const FH_NETLIFY_FN = '/.netlify/functions/finnhub';
-let _fhProxyDead = false;   // Supabase proxy no desplegado/caído → no reintentar en esta sesión
+// Proxy de Supabase caído → PAUSA CORTA, no "muerto para toda la sesión". Antes era un booleano
+// que nunca volvía a false: en el Mac la app se queda abierta días, y al despertar del reposo la
+// primera petición sale antes de que haya red (TypeError) o el proxy responde un 503 suelto. Con
+// eso bastaba para que _fhEndpoint diera null el resto de la sesión: sin cotizaciones, sin precios
+// en el análisis y, como _alpacaFetch también mira _fhSupabaseOn, sin velas. A la apertura del
+// mercado la app no se actualizaba hasta cerrarla y abrirla otra vez. Es la única vía de datos en
+// producción (Netlify está apagada y no hay key local), así que no hay "otro backend" al que
+// saltar: solo tiene sentido no martillear un rato y volver a probar.
+let _fhProxyDeadUntil = 0;
+const _FH_PAUSE_HTTP = 60 * 1000;   // 404 / 5xx≠502: función caída o reiniciándose
+const _FH_PAUSE_NET  = 15 * 1000;   // TypeError: sin red (p. ej. el Mac recién despierto)
 let _fhNetlifyDead = false; // Netlify function no desplegada/caída → no reintentar en esta sesión
-function _fhSupabaseOn() { return !!FH_PROXY_BASE && !_fhProxyDead && localStorage.getItem('fh_proxy_off') !== '1'; }
+function _fhSupabaseOn() { return !!FH_PROXY_BASE && Date.now() >= _fhProxyDeadUntil && localStorage.getItem('fh_proxy_off') !== '1'; }
+// La llaman la vuelta de la red, el despertar del equipo y la apertura del mercado.
+window._pvDataSourcesRevive = function(){ _fhProxyDeadUntil = 0; try { _alpacaDeadUntil = 0; } catch(e){} };
 // La app se sirve desde GitHub Pages, no desde Netlify: /.netlify/functions/finnhub no
 // existe. Se intentaba PRIMERO en cada sesión y siempre daba 404 antes de caer al proxy de
 // Supabase — una petición perdida y un error de consola por arranque. Desactivada.
@@ -24448,7 +24467,7 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
     // Backend proxy no desplegado/caído (404/5xx≠502) → márcalo muerto y prueba el siguiente.
     if ((ep.kind === 'supabase' || ep.kind === 'netlify') &&
         (res.status === 404 || (res.status >= 500 && res.status !== 502))) {
-      if (ep.kind === 'supabase') _fhProxyDead = true; else _fhNetlifyDead = true;
+      if (ep.kind === 'supabase') _fhProxyDeadUntil = Date.now() + _FH_PAUSE_HTTP; else _fhNetlifyDead = true;
       clearTimeout(tid);
       if (_fhEndpoint(path)) return _fhFetchRaw(path, timeoutMs, _retry);
       throw new Error(`Finnhub no disponible (${res.status})`);
@@ -24501,7 +24520,7 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
     // único 429 transitorio dejaba sin datos toda la sesión.
     const _networkFail = (e && e.name === 'TypeError');
     if ((ep.kind === 'supabase' || ep.kind === 'netlify') && _networkFail) {
-      if (ep.kind === 'supabase') _fhProxyDead = true; else _fhNetlifyDead = true;
+      if (ep.kind === 'supabase') _fhProxyDeadUntil = Date.now() + _FH_PAUSE_NET; else _fhNetlifyDead = true;
       if (_fhEndpoint(path)) return _fhFetchRaw(path, timeoutMs, _retry);
     }
     throw e.name === 'AbortError' ? new Error('Tiempo de espera agotado') : e;
@@ -30432,7 +30451,7 @@ Devuelve el JSON.`;
   try {
     const res = await _aiFetch( {
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: 1200, system: SYSTEM, prompt })
+      body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: AI_NARR_MAX_TOKENS, system: SYSTEM, prompt })
     }, true);
     if (!res.ok) return null;
     const data = await res.json();
@@ -30568,12 +30587,10 @@ Recuerda: "malo" no puede ir vacío, y el JSON lleva EXACTAMENTE los cinco campo
     const res = await _aiFetch({
       method:'POST', headers:{'content-type':'application/json'},
       body: JSON.stringify({
-        // 1200: el esquema volvió a cinco campos. Subió a 2000 cuando se le añadieron
-        // "lectura_mercado" y "perspectiva"; esos dos párrafos dejaron de pintarse el
-        // 31 de julio (commit 5046be1, que rehízo la tarjeta) y el prompt siguió
-        // pidiéndolos: ~600 tokens de salida por generación que nadie llegaba a leer,
-        // y la espera correspondiente. Con cinco campos, 1200 sobra sin truncar.
-        model: AI_MODELS.narrative, max_tokens: 1200, system: SYSTEM, prompt,
+        // El JSON de cinco campos son ~1.200 tokens, pero Sonnet 5.5 piensa antes de escribir
+        // y ese razonamiento cuenta en max_tokens: con 1200 la respuesta llegaba vacía y la
+        // tarjeta decía "No se pudo generar". Ver AI_NARR_MAX_TOKENS.
+        model: AI_MODELS.narrative, max_tokens: AI_NARR_MAX_TOKENS, system: SYSTEM, prompt,
         allowed_tools: ['WebSearch','WebFetch'],
         // max_uses 1 (antes 2): cada búsqueda son 5-10 s de espera en la apertura de la
         // acción, y una sola con reacción + guía cubre lo que pide el prompt.
@@ -31564,7 +31581,7 @@ async function _pvtNarrativaIA(ticker, facts){
   try {
     const res = await _aiFetch({
       method:'POST', headers:{'content-type':'application/json'},
-      body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: 900,
+      body: JSON.stringify({ model: AI_MODELS.narrative, max_tokens: AI_NARR_MAX_TOKENS,
                              system: _PVT_NARR_SYS,
                              prompt: 'HECHOS (JSON):\n' + JSON.stringify(facts) + '\n\nEscribe los tres párrafos.' })
     }, true);
@@ -40068,6 +40085,87 @@ function init() {
           } else if (typeof _redrawActiveChart === 'function') { _redrawActiveChart(); }
         } catch(e) {}
         }, { timeout: 500 });
+      });
+    }
+
+    // ── Apertura del mercado / día nuevo / despertar con la app ABIERTA ──────────────────
+    //    En el Mac la app no se cierra: se deja abierta de un día para otro y el equipo duerme.
+    //    Ahí no llega ningún `visibilitychange` (la ventana nunca se ocultó), así que lo que la
+    //    app hace al ARRANCAR —fecha del encabezado, cierre previo de la sesión, cotizaciones,
+    //    reconstrucción diaria + intradía, noticias, precio y gráfica de la acción abierta en
+    //    Análisis— no se repetía al sonar la campana: a las 09:30 se veía la foto de la víspera.
+    //    Este vigilante detecta cuatro cosas y en cada una repite esa carga:
+    //      · el mercado pasa de cerrado a abierto (la campana de las 09:30 ET),
+    //      · cambia el día de mercado (medianoche ET),
+    //      · un hueco del reloj de pared > 3 min entre ticks = el equipo estuvo dormido,
+    //      · vuelve la red (`online`).
+    if (!window._pvSessionWatchBound) {
+      window._pvSessionWatchBound = true;
+      let _wasOpen = isMarketOpen();
+      let _lastDay = _pvMarketDayISO();
+      let _lastBeat = Date.now();
+      let _lastRun = 0;
+      const _refreshAnalysis = () => {
+        try { if (_currentResearchTicker) _refreshResearchPrice(_currentResearchTicker); } catch(e) {}
+        // La gráfica usa su propia variable (la misma que setResearchPeriod).
+        const tk = (typeof currentResearchTicker !== 'undefined' && currentResearchTicker) || '';
+        if (!tk) return;
+        // La serie del período abierto se pide de nuevo (la de memoria es de la sesión anterior).
+        // Las demás se invalidan para que el próximo clic en un período baje la versión de hoy.
+        const rng = (typeof _activeResearchRange !== 'undefined' && _activeResearchRange) || '1mo';
+        try { researchChartCache = {}; } catch(e) {}
+        apiCall({ action:'history', ticker: tk, period: rng }, 8000).then(raw => {
+          const cl = ((raw && raw.closes) || []).filter(c => c != null);
+          if (cl.length < 2 || currentResearchTicker !== tk || _activeResearchRange !== rng) return;
+          researchChartCache[rng] = raw;
+          _chartLSset(tk, rng, raw);
+          _drawResearchChart(raw, cl[cl.length - 1] >= cl[0]);
+          _applyChartPeriodChange(raw, rng);
+        }).catch(() => {});
+      };
+      const _sessionRefresh = (why) => {
+        const n = Date.now();
+        if (n - _lastRun < 20000) return;          // varias señales juntas (wake + online) = 1 carga
+        _lastRun = n;
+        try { window._pvDataSourcesRevive && window._pvDataSourcesRevive(); } catch(e) {}
+        try { const _hd = $('hDate'); if (_hd) _hd.textContent = new Date().toLocaleDateString('es-MX',{weekday:'long',year:'numeric',month:'long',day:'numeric'}); } catch(e) {}
+        try { _pvHydratePrevCloseFromCache(); } catch(e) {}
+        try { fetchLivePrices(); } catch(e) {}
+        try {
+          if (typeof PORTIV_HIST !== 'undefined') {
+            if (PORTIV_HIST.ensureAsync) PORTIV_HIST.ensureAsync();
+            if (PORTIV_HIST.ensureIntradayAsync) PORTIV_HIST.ensureIntradayAsync();
+          }
+        } catch(e) {}
+        try { if (typeof renderAll === 'function') renderAll(); } catch(e) {}
+        try {
+          if (typeof activePeriod !== 'undefined' && activePeriod === '1D' && typeof PORTIV_CHART !== 'undefined') PORTIV_CHART.refresh('1D');
+          else if (typeof _redrawActiveChart === 'function') _redrawActiveChart();
+        } catch(e) {}
+        try { _refreshAnalysis(); } catch(e) {}
+        // Noticias un poco después, para no competir con las cotizaciones (igual que al arrancar).
+        setTimeout(() => { try { if (typeof autoUpdateNews === 'function') autoUpdateNews(); } catch(e) {} }, 6000);
+        try { console.info('[Portiv] recarga de sesión:', why); } catch(e) {}
+      };
+      setInterval(() => {
+        const n = Date.now();
+        const slept = (n - _lastBeat) > 3 * 60 * 1000;
+        _lastBeat = n;
+        const open = isMarketOpen();
+        const day = _pvMarketDayISO();
+        const why = (open && !_wasOpen) ? 'apertura' : (day !== _lastDay) ? 'día nuevo' : slept ? 'despertar' : '';
+        _wasOpen = open; _lastDay = day;
+        if (!why) return;
+        // Oculta: no se gasta red ahora; el gestor de visibilidad recarga al volver. Pero si la
+        // campana sonó con la app oculta, el regreso tiene que cargar como apertura completa.
+        if (document.hidden) { window._pvSessionStale = true; return; }
+        _sessionRefresh(why);
+      }, 30 * 1000);
+      window.addEventListener('online', () => { if (!document.hidden) _sessionRefresh('red'); else window._pvSessionStale = true; });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden || !window._pvSessionStale) return;
+        window._pvSessionStale = false;
+        _sessionRefresh('vuelta tras apertura');
       });
     }
 
