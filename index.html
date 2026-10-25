@@ -57276,47 +57276,185 @@ html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHe
      .eq('id', logId).then(function(){}, function(){});
   }
 
+  /* Push matutino ("Hoy: resultados de MSFT", "Hoy: IPC (inflación)"): lleva al evento
+     dentro de Noticias → "Esta semana" (o "Próxima semana") y lo ABRE. El id viene del
+     servidor (push-rank.js): earn_<TICKER>_<fecha> o macro_<KEY>_<fecha>. Las filas del
+     calendario no llevan ese id, así que se reconocen por lo que sí pintan: la categoría
+     "Resultados" + el ticker, o el título del dato macro. Si el evento no aparece se baja
+     al menos a su día, y si ni eso, a la sección de la semana. */
+  function abrirEventoCalendario(id, tituloEvento){
+    var norm = function(s){
+      return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ').trim();
+    };
+    var me = /^earn_([A-Z0-9.\-]+)_/i.exec(id) || /resultados de ([A-Z0-9.\-]+)/i.exec(tituloEvento || '');
+    var tkEarn = me ? me[1].toUpperCase() : '';
+    var mm = /^macro_([A-Z_]+)_/i.exec(id);
+    var claveMacro = mm ? norm(mm[1].split('_')[0]) : '';
+    var baseTitulo = norm(String(tituloEvento || '').split(' — ')[0]);
+    var mf = /(\d{4})-(\d{2})-(\d{2})$/.exec(id);
+    var fecha = mf ? new Date(+mf[1], +mf[2] - 1, +mf[3]) : null;
+
+    // Semana del evento: 'this' / 'next' / '' (fuera de las dos que se pintan).
+    var semana = (function(){
+      if (!fecha) return '';
+      var lun = null;
+      try { if (typeof _mondayOf === 'function') lun = _mondayOf(0); } catch(e){}
+      if (!lun) { lun = new Date(); lun.setHours(0,0,0,0); lun.setDate(lun.getDate() - ((lun.getDay() + 6) % 7)); }
+      var dias = Math.round((fecha - new Date(lun.getFullYear(), lun.getMonth(), lun.getDate())) / 86400000);
+      return dias >= 0 && dias < 7 ? 'this' : (dias >= 7 && dias < 14 ? 'next' : '');
+    })();
+    // Primero la semana (y el día) que tocan: "desempleo" o un ticker pueden salir en las dos.
+    var filas = function(){
+      var orden = semana === 'next' ? ['#nextWeekCard', '#thisWeekCard'] : ['#thisWeekCard', '#nextWeekCard'];
+      var out = [];
+      orden.forEach(function(sel){
+        var dia = semana && fecha && sel === '#' + semana + 'WeekCard'
+          ? document.getElementById('pvw-' + semana + '-d' + fecha.getDay()) : null;
+        if (dia) out.push.apply(out, dia.querySelectorAll('.pvw-ev:not(.pvw-ev--empty)'));
+        out.push.apply(out, document.querySelectorAll(sel + ' .pvw-ev:not(.pvw-ev--empty)'));
+      });
+      return out;
+    };
+    var buscarFila = function(){
+      var fs = filas(), i, f;
+      if (tkEarn) {
+        for (i = 0; i < fs.length; i++) {
+          f = fs[i];
+          if (!f.querySelector('.pvw-cat--earnings')) continue;
+          var tks = f.querySelectorAll('.pvw-tk');
+          for (var j = 0; j < tks.length; j++) if (tks[j].textContent.trim().toUpperCase() === tkEarn) return f;
+        }
+        return null;
+      }
+      var titulo = function(f){ var t = f.querySelector('.pvw-ev-t'); return norm(t && t.textContent); };
+      // Por título antes que por clave: "fomc" también está en el título de las actas.
+      if (baseTitulo) for (i = 0; i < fs.length; i++) if (titulo(fs[i]).indexOf(baseTitulo) >= 0) return fs[i];
+      if (claveMacro) for (i = 0; i < fs.length; i++) if (new RegExp('\\b' + claveMacro + '\\b').test(titulo(fs[i]))) return fs[i];
+      return null;
+    };
+    // Día del evento en la tira de la semana (pvw-this-dN / pvw-next-dN, N = 1 lunes … 5 viernes).
+    var buscarDia = function(){
+      if (!semana || fecha.getDay() < 1 || fecha.getDay() > 5) return null;
+      return document.getElementById('pvw-' + semana + '-d' + fecha.getDay());
+    };
+    // Bajo el candado de Portiv Pro (plan gratuito) la fila está difuminada: se lleva a la
+    // cabecera de la sección, donde se ve qué hay y el candado.
+    var visible = function(el){
+      var lk = el && el.closest && el.closest('.pv-lock');
+      if (lk && document.documentElement.classList.contains('pv-free')) return el.closest('.pvw-sec') || lk;
+      return el;
+    };
+    var irA = function(el){
+      el = visible(el);
+      if (!el) return;
+      if (!el.id) {
+        var prev = document.getElementById('pvw-push-destino');
+        if (prev) prev.removeAttribute('id');      // de un tap anterior: no dos con el mismo id
+        el.id = 'pvw-push-destino';
+      }
+      // Salto directo, sin animación: llega desde la notificación y la sección puede
+      // repintarse a media animación. Mismo contenedor que _pvwGo (el que de verdad hace
+      // scroll en esta pestaña, o la página), y que no quede bajo la cabecera fija.
+      try {
+        var m = cabecera() + 12, sc = el.parentElement;
+        while (sc && sc !== document.body) {
+          var oy = getComputedStyle(sc).overflowY;
+          if ((oy === 'auto' || oy === 'scroll') && sc.scrollHeight > sc.clientHeight + 1) break;
+          sc = sc.parentElement;
+        }
+        if (!sc || sc === document.body || sc === document.documentElement) {
+          window.scrollTo(0, Math.max(0, el.getBoundingClientRect().top + window.pageYOffset - m));
+        } else {
+          sc.scrollTop = Math.max(0, el.getBoundingClientRect().top - sc.getBoundingClientRect().top + sc.scrollTop - m);
+        }
+      } catch(e){ try { el.scrollIntoView(true); } catch(_){} }
+    };
+    var cabecera = function(){
+      var y = 0;
+      try {
+        document.elementsFromPoint(window.innerWidth / 2, 6).forEach(function(n){
+          for (var p = n; p && p !== document.body; p = p.parentElement) {
+            var pos = getComputedStyle(p).position;
+            if (pos === 'fixed' || pos === 'sticky') {
+              var r = p.getBoundingClientRect();
+              if (r.top <= 6 && r.bottom < window.innerHeight / 2) y = Math.max(y, r.bottom);
+              break;
+            }
+          }
+        });
+      } catch(e){}
+      return Math.round(y);
+    };
+    // Lo de arriba (panorama, la otra semana) termina de cargar DESPUÉS del salto y la
+    // sección se vuelve a pintar entera: la fila se mueve o se reemplaza. Durante ~3 s se
+    // vuelve a buscar y, si ya no está donde debe, se recoloca.
+    var corregir = function(veces){
+      if (veces <= 0 || tocado || !enNoticias()) return;
+      setTimeout(function(){
+        if (tocado || !enNoticias()) return;
+        // Con la ficha ya abierta no se mueve nada debajo (el modal guarda el scroll).
+        var nm = document.getElementById('newsModal');
+        if (nm && nm.classList.contains('open')) return;
+        var f = buscarFila();
+        if (f) {
+          var top = visible(f).getBoundingClientRect().top, meta = cabecera() + 12;
+          if (Math.abs(top - meta) > 40) irA(f);
+        }
+        corregir(veces - 1);
+      }, 600);
+    };
+    var enNoticias = function(){
+      var p = document.getElementById('tab-noticias'); return !!(p && p.classList.contains('active'));
+    };
+    // Si el usuario toca o desplaza mientras se espera a que cargue la semana, manda él:
+    // no se le mueve la pantalla ni se le abre nada encima.
+    var tocado = false;
+    var alTocar = function(){ tocado = true; };
+    var soltar = function(){
+      try { window.removeEventListener('touchstart', alTocar, true); window.removeEventListener('wheel', alTocar, true); } catch(e){}
+    };
+    try { window.addEventListener('touchstart', alTocar, true); window.addEventListener('wheel', alTocar, true); } catch(e){}
+    var TOTAL = 40;                       // ~18 s: en arranque en frío la semana llega por red
+    var intentar = function(n){
+      if (tocado || !enNoticias()) { soltar(); return; }   // el usuario ya hizo otra cosa
+      var fila = buscarFila();
+      if (fila) {
+        irA(fila);
+        corregir(5);
+        setTimeout(soltar, 3600);
+        // Se abre la ficha del evento, salvo que esté bajo el candado de Portiv Pro
+        // (próxima semana en el plan gratuito): ahí basta con llevarlo hasta él.
+        setTimeout(function(){
+          if (!enNoticias() || tocado) return;
+          var f = buscarFila() || fila;                 // puede haberse repintado
+          var bloqueada = f.closest('.pv-lock') && document.documentElement.classList.contains('pv-free');
+          if (!bloqueada) { try { f.click(); } catch(e){} }
+        }, 900);
+        return;
+      }
+      // Mientras no aparece, se deja al usuario en su día (o en la semana) para que no
+      // vea sólo el panorama de arriba; si luego llega el evento, se baja hasta él.
+      if (n === TOTAL - 8 || n === 0) irA(buscarDia() || document.getElementById('thisWeekCard'));
+      if (n > 0) { setTimeout(function(){ intentar(n - 1); }, 450); return; }
+      soltar();
+    };
+    setTimeout(function(){ intentar(TOTAL); }, 400);
+  }
+
   function abrirDeeplink(url, tituloEvento){
     var m;
-    if ((m = /^portiv:\/\/posicion\/([A-Z.\-]+)/i.exec(url))) {
-      var tk = m[1].toUpperCase();
+    // Push de cierre ("Cierre del día · tu portafolio …"): abre el PORTAFOLIO y nada más.
+    // El servidor sigue mandando portiv://posicion/<TICKER> (la posición que nombra el
+    // texto), pero abrir el cajón de esa posición dejaba al usuario en la pantalla de
+    // registrar un movimiento, que no es lo que pidió al tocar un resumen del día.
+    if (/^portiv:\/\/(posicion|portafolio)\b/i.test(url)) {
       try { if (typeof showTab === 'function') showTab('portfolio'); } catch(e){}
-      // toggleDrawer recibe el ÍNDICE dentro de HOLDINGS, no el ticker. En arranque
-      // en frío desde el tap, HOLDINGS todavía se está cargando de la nube: se
-      // reintenta hasta ~8 s antes de rendirse (queda al menos en la pestaña).
-      var abrirPosicion = function(intentos){
-        var idx = cartera().findIndex(function(h){
-          return h && String(h.ticker).toUpperCase() === tk; });
-        if (idx < 0) { if (intentos > 0) setTimeout(function(){ abrirPosicion(intentos - 1); }, 500); return; }
-        try {
-          if (typeof toggleDrawer === 'function') toggleDrawer(idx);
-          var fila = document.getElementById('drawer-' + idx);
-          if (fila && fila.scrollIntoView) fila.scrollIntoView({ behavior:'smooth', block:'center' });
-        } catch(e){}
-      };
-      setTimeout(function(){ abrirPosicion(16); }, 350);
       return;
     }
-    if (/^portiv:\/\/calendario\//i.test(url)) {
+    if ((m = /^portiv:\/\/calendario\/?(.*)$/i.exec(url))) {
       try { if (typeof showTab === 'function') showTab('noticias'); } catch(e){}
-      // El calendario no marca los eventos con ningún atributo propio, así que se
-      // localiza por el TÍTULO que sí se pinta. Si no aparece, al menos queda en la
-      // pestaña correcta en vez de en el home.
-      if (!tituloEvento) return;
-      var buscar = function(intentos){
-        var cont = document.getElementById('tab-noticias');
-        var nodos = cont ? cont.querySelectorAll('*') : [];
-        for (var i = 0; i < nodos.length; i++) {
-          var n = nodos[i];
-          if (n.children.length === 0 && n.textContent &&
-              n.textContent.indexOf(tituloEvento) >= 0) {
-            try { n.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(e){}
-            return;
-          }
-        }
-        if (intentos > 0) setTimeout(function(){ buscar(intentos - 1); }, 500);
-      };
-      setTimeout(function(){ buscar(4); }, 400);
+      abrirEventoCalendario(decodeURIComponent(m[1] || ''), tituloEvento);
       return;
     }
     // Aviso "Reconecta tu broker" (snaptrade-webhook / snaptrade-health). Lleva a la tarjeta
@@ -57375,6 +57513,9 @@ html body #tab-analizar:has(> #analizar-portfolio-section[style*="none"]) #pvaHe
   // ── API pública ───────────────────────────────────────────────────────────
   var API = {
     disponible: function(){ return esNativo() && !!plugin(); },
+    // Lo mismo que hace el tap en la notificación. Sirve para probar el destino desde la
+    // web: _pvPush.abrirDeeplink('portiv://calendario/earn_MSFT_2026-10-28', 'resultados de MSFT').
+    abrirDeeplink: abrirDeeplink,
 
     /* Tras el login. NO pide permiso: sólo re-registra si el usuario YA lo concedió
        (el token de APNs puede cambiar entre arranques y hay que refrescarlo). */
