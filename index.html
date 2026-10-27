@@ -23658,6 +23658,10 @@ function initPerfChart() {
           ticks: {
             display: !_PERF_MOB(),
             color: '#8A92A3', font: { size: 11 }, maxTicksLimit: 7,
+            // La primera fecha empieza en el borde y la última acaba en él: centradas bajo su
+            // punto, Chart.js corría toda la gráfica ~30 px a la derecha para que «25 Sep» cupiera
+            // y dejaba un hueco muerto a la izquierda de la tarjeta (pedido de Rafael, 27-oct).
+            align: 'inner',
             // Mostrar solo etiquetas de día (no las intradía con "HH:MM")
             callback: function(value, index, ticks) {
               const lbl = this.getLabelForValue(value);
@@ -27882,6 +27886,14 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
     // Sin dato no hay celda: nada de «—» sueltos en la tarjeta de métricas.
     ['rf-mktcap','rf-pe','rf-divy','rf-range'].forEach(id => { const v = document.getElementById(id), c = v && v.closest('.ra-mcard');
       if (c) c.style.display = (!v.textContent || v.textContent.trim() === '—') ? 'none' : ''; });
+    // Las líneas de la tarjeta se ponen por celda VISIBLE (ra-mc-*), no por posición: con el P/E
+    // oculto (empresas en pérdidas, p. ej. MP) :nth-child contaba la celda escondida y «Rango de
+    // 52 semanas» salía con la línea y la sangría de la columna derecha.
+    { const _cells = [...document.querySelectorAll('#researchResults .ra-metrics4 > .ra-mcard')];
+      const _vis = _cells.filter(c => c.style.display !== 'none');
+      _cells.forEach(c => c.classList.remove('ra-mc-first', 'ra-mc-even', 'ra-mc-row2', 'ra-mc-wide'));
+      _vis.forEach((c, i) => { if (i === 0) c.classList.add('ra-mc-first'); if (i % 2) c.classList.add('ra-mc-even'); if (i >= 2) c.classList.add('ra-mc-row2'); });
+      if (_vis.length % 2) _vis[_vis.length - 1].classList.add('ra-mc-wide'); }
   }
 
   const tgtPrice = info.targetMeanPrice;
@@ -33020,6 +33032,8 @@ function _drawResearchChart(chartData, isPos) {
         x:{grid:{display:false},border:{display:false},ticks:{
           display: true,
           color:'#8A92A3',font:{size:11},maxTicksLimit:7,
+          // Primera y última fecha hacia dentro: sin el hueco muerto a la izquierda (como en Rendimiento).
+          align:'inner',
           callback: function(value, index, ticks) {
             const lbl = this.getLabelForValue(value);
             return /\d{2}:\d{2}/.test(lbl) ? '' : lbl;
@@ -60334,6 +60348,7 @@ html body #tab-analizar #researchResults .ra-mcard {
   border:0 !important; border-radius:0 !important; box-shadow:none !important;
 }
 html body #tab-analizar #researchResults .ra-mcard + .ra-mcard { border-left:1px solid var(--pac-line) !important; }
+html body #tab-analizar #researchResults .ra-mcard.ra-mc-first { border-left:0 !important; }
 html body #tab-analizar #researchResults .ra-mlabel {
   margin:0 0 8px !important; font-size:13.5px !important; font-weight:700 !important; line-height:1.3; letter-spacing:0 !important;
   text-transform:none !important; color:var(--pac-muted) !important;
@@ -60706,9 +60721,9 @@ html body .px-kpm .x { box-shadow:none !important; border:1px solid #e2e7f0 !imp
 @media (max-width: 1279px) {
   html body #tab-analizar #researchResults .ra-metrics4 { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); padding:0 26px !important; }
   html body #tab-analizar #researchResults .ra-mcard, html body #tab-analizar #researchResults .ra-mcard + .ra-mcard { padding:16px 0 !important; border-left:0 !important; }
-  html body #tab-analizar #researchResults .ra-mcard:nth-child(even) { padding-left:24px !important; border-left:1px solid var(--pac-line) !important; }
-  html body #tab-analizar #researchResults .ra-mcard:nth-child(n+3) { border-top:1px solid var(--pac-line) !important; }
-  html body #tab-analizar #researchResults .ra-mcard:last-child:nth-child(odd) { grid-column:1 / -1; }
+  html body #tab-analizar #researchResults .ra-mcard.ra-mc-even { padding-left:24px !important; border-left:1px solid var(--pac-line) !important; }
+  html body #tab-analizar #researchResults .ra-mcard.ra-mc-row2 { border-top:1px solid var(--pac-line) !important; }
+  html body #tab-analizar #researchResults .ra-mcard.ra-mc-wide { grid-column:1 / -1; }
 }
 @media (max-width: 1099px) {
   html body #tab-analizar #researchResults :is(.px-rg, .px-eqr-g, .px-zg) { gap:28px; }
@@ -60768,7 +60783,8 @@ html.pv-ipad body #tab-analizar #researchResults #r-tabs-host .px-tab { padding:
     border-left:0 !important; border-top:1px solid var(--pac-line) !important;
   }
   html body #tab-analizar #researchResults .ra-mcard:nth-child(n) { padding:14px 2px !important; border-left:0 !important; border-top:1px solid var(--pac-line) !important; grid-column:auto; }
-  html body #tab-analizar #researchResults .ra-mcard:first-child { border-top:0 !important; }
+  html body #tab-analizar #researchResults .ra-mcard:first-child,
+  html body #tab-analizar #researchResults .ra-mcard.ra-mc-first { border-top:0 !important; }
   html body #tab-analizar #researchResults .ra-mlabel { margin:0 !important; font-size:13.5px !important; }
   html body #tab-analizar #researchResults .ra-mval { justify-content:flex-end; font-size:15.5px !important; }
   /* Pestañas: pastillas sueltas que se deslizan de lado. */
