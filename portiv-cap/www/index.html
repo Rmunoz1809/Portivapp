@@ -4240,6 +4240,27 @@ window._pvAwaitIAP = function(totalMs){
   });
 };
 </script>
+<style id="pvLogosCss">
+/* Logos de empresas (logos/<TICKER>.jpg, ver _pvLogoImg) y cuadro de logo/tema de las noticias (_pvNewsTile). */
+.pv-lg { position: relative !important; overflow: hidden !important; }
+.pv-lg > .pv-lgi { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+.pv-nt { position: relative; flex: 0 0 auto; width: 40px; height: 40px; border-radius: 11px; background: #eef1f5; color: #0b1c30;
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden; }
+.pv-nt svg { width: 21px; height: 21px; }
+.pv-nt-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+body.dark-theme .pv-nt { background: rgba(255,255,255,.08); color: #e6ebf2; }
+.sn-card-hrow { display: flex; align-items: flex-start; gap: 12px; }
+.sn-card-hrow > .sn-card-headline { flex: 1 1 auto; min-width: 0; margin-top: 0; }
+/* «También importante hoy»: el cuadro va en la esquina, a la altura del número. */
+.pvp-ar { position: relative; }
+.pvp-ar .pv-nt--also { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border-radius: 9px; }
+.pvp-ar .pv-nt--also svg { width: 18px; height: 18px; }
+.pvw-tk-lg { width: 16px; height: 16px; border-radius: 5px; object-fit: cover; display: inline-block; vertical-align: middle; margin: -3px 6px -2px -5px; }
+.ra-logo { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 12px; overflow: hidden; background: #fff; align-self: center; }
+.ra-logo[hidden] { display: none !important; }
+.ra-logo-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+@media (max-width: 700px) { .ra-logo { width: 38px; height: 38px; border-radius: 11px; } }
+</style>
 </head>
 <body>
 <!-- Aplica el tema guardado ANTES del primer render para evitar parpadeo (FOUC) -->
@@ -5350,6 +5371,7 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
     <div class="ra-header">
       <div class="ra-head-left">
         <div class="ra-title-row">
+          <span class="ra-logo" id="r-logo" hidden></span>
           <h1 class="ra-name" id="r-name"></h1>
           <span class="ra-ticker" id="r-ticker"></span>
           <span class="ra-sector" id="r-sector"></span>
@@ -16361,7 +16383,9 @@ function pctSigned(n) { return (n>=0?'+':'') + n.toFixed(2) + '%'; }
 // Avatar neutro de Portiv: cuadrado redondeado con la INICIAL del ticker, sin colores por
 // ticker (fondo y tinta en pvPosTablaCss, los mismos de la tabla de la pestaña Análisis).
 function _posAvatar(ticker) {
-  return `<span class="pos-avatar" aria-hidden="true">${pvEsc(_pnxLetter(ticker))}</span>`;
+  // Con logo (S&P 500 y populares, ver _pvLogoImg) la imagen tapa la inicial; si no carga, queda la inicial.
+  const lg = _pvLogoImg(ticker);
+  return `<span class="pos-avatar${lg ? ' pv-lg' : ''}" aria-hidden="true">${pvEsc(_pnxLetter(ticker))}${lg}</span>`;
 }
 
 // Una fila de posición (incluye su drawer de Trade)
@@ -19542,6 +19566,124 @@ function _newsContextLine(n, ticker){
 // Objetos derivados estables para el relleno de "Hoy" (ver renderTodayNews). WeakMap para
 // que no impida el recolector de basura ni se cuele en lo que se serializa a localStorage.
 const _newsFillCache = new WeakMap();
+// ── LOGOS DE EMPRESAS ────────────────────────────────────────────────────────────────────
+// logos/<TICKER>.jpg (128 px): las 500 del S&P 500 y algunas populares, descargadas de Finnhub
+// el 27-oct-2026 y empaquetadas con la app (web y Xcode) → sin red ni terceros al pintarlas.
+// _PV_LOGO_NAMES: cómo nombra un titular a cada empresa, para saber de quién habla una noticia.
+// _PV_LOGO_GLOBAL: las grandes que se reconocen en el titular aunque la noticia no las liste.
+const _PV_LOGOS = 'A AAPL ABBV ABNB ABT ACGL ACN ADBE ADI ADM ADP ADSK AEE AEP AES AFL AIG AIZ AJG AKAM ALB ALGN ALL ALLE AMAT AMCR AMD AME AMGN AMP AMT AMZN ANET AON AOS APA APD APH APO APP APTV ARE ARES ARM ASML ATO AVGO AVY AWK AXON AXP AZO BA BABA BAC BALL BAX BBY BDX BE BEN BF.B BG BIIB BKNG BKR BLK BMY BNY BR BRK.B BRO BSX BX BXP C CAH CARR CASY CAT CB CBOE CBRE CCI CCL CDNS CDW CEG CF CFG CHD CHRW CHTR CI CIEN CINF CL CLX CMCSA CME CMG CMI CMS CNC CNP COF COHR COIN COO COP COR COST CPAY CPRT CPT CRH CRL CRM CRWD CSCO CSGP CSX CTAS CTSH CVNA CVS CVX D DAL DASH DD DDOG DE DECK DELL DG DGX DHI DHR DIS DLR DLTR DOC DOV DOW DPZ DRI DTE DUK DVA DVN DXCM EBAY ECHO ECL ED EFX EG EIX EL ELV EME EMR EOG EQIX EQT ERIE ES ESS ETN ETR EVRG EW EXC EXE EXPD EXPE EXR F FANG FAST FCX FDS FDX FDXF FE FERG FFIV FICO FIS FISV FITB FIX FLEX FOX FOXA FRT FSLR FTNT FTV GD GDDY GE GEHC GEN GEV GILD GIS GL GLW GM GNRC GOOG GOOGL GPC GPN GRMN GS GWW HAL HAS HBAN HCA HD HIG HII HLT HON HOOD HPE HPQ HRL HSIC HST HSY HUBB HUM HWM IBKR IBM ICE IDXX IEX IFF ILMN INCY INTC INTU INVH IP IQV IR IRM ISRG IT ITW IVZ J JBHT JBL JCI JKHY JNJ JPM KDP KEY KEYS KHC KIM KKR KLAC KMB KMI KO KR KVUE L LDOS LEN LH LHX LII LIN LITE LLY LMT LNT LOW LRCX LULU LUV LVS LYB LYV MA MAA MAR MAS MCD MCHP MCK MCO MDLZ MDT MELI MET META MGM MKC MLM MMM MNST MO MOS MPC MPWR MRK MRNA MRSH MRVL MS MSCI MSFT MSI MSTR MTB MTD MU NCLH NDAQ NDSN NEE NEM NET NFLX NI NKE NOC NOW NRG NSC NTAP NTRS NU NUE NVDA NVR NWS NWSA NXPI O ODFL OKE OMC ON ORCL ORLY OTIS OXY P PANW PAYX PCAR PCG PEG PEP PFE PFG PG PGR PH PHM PKG PLD PLTR PM PNC PNR PNW PODD PPG PPL PRU PSA PSX PTC PWR PYPL Q QCOM RBLX RCL RDDT REG REGN RF RIVN RJF RL RMD ROK ROL ROP ROST RSG RTX RVTY SBAC SBUX SCHW SE SHOP SHW SJM SKYD SLB SMCI SNA SNDK SNOW SNPS SO SOFI SOLV SPG SPGI SPOT SRE STE STLD STT STX STZ SW SWK SWKS SYF SYK SYY T TDG TDY TECH TEL TER TFC TGT TJX TKO TMO TMUS TPL TPR TRGP TRMB TROW TRV TSCO TSLA TSM TSN TT TTWO TWLO TXN TXT TYL UAL UBER UDR UHS ULTA UNH UNP UPS URI USB V VEEV VICI VLO VLTO VMC VMRK VRSK VRSN VRT VRTX VST VTR VTRS VZ WAB WAT WDAY WDC WEC WELL WFC WM WMB WMT WRB WSM WST WTW WY WYNN XEL XOM XYL XYZ YUM ZBH ZBRA ZTS';
+const _PV_LOGO_NAMES = {"A":"Agilent","AAPL":"Apple|iPhone","ABBV":"AbbVie","ABNB":"Airbnb","ABT":"Abbott|Abbott Laboratories","ACGL":"Arch Capital","ACN":"Accenture","ADBE":"Adobe","ADI":"Analog Devices","ADM":"Archer Daniels Midland|Archer","ADP":"Automatic Data Processing|Automatic","ADSK":"Autodesk","AEE":"Ameren","AEP":"American Electric Power","AES":"AES","AFL":"Aflac","AIG":"AIG|American International","AIZ":"Assurant","AJG":"Arthur J. Gallagher|Arthur","AKAM":"Akamai","ALB":"Albemarle","ALGN":"Align Technology|Align","ALL":"Allstate","ALLE":"Allegion","AMAT":"Applied Materials","AMCR":"Amcor","AMD":"AMD|Advanced Micro Devices","AME":"Ametek","AMGN":"Amgen","AMP":"Ameriprise Financial|Ameriprise","AMT":"American Tower","AMZN":"Amazon|AWS","ANET":"Arista|Arista Networks","AON":"Aon","AOS":"A. O. Smith","APA":"APA","APD":"Air Products","APH":"Amphenol","APO":"Apollo Global Management|Apollo","APP":"AppLovin","APTV":"Aptiv","ARE":"Alexandria Real Estate Equities","ARES":"Ares Management|Ares","ARM":"Arm Holdings|Arm","ASML":"Asml|ASML","ATO":"Atmos Energy|Atmos","AVGO":"Broadcom","AVY":"Avery Dennison|Avery","AWK":"American Water Works","AXON":"Axon Enterprise|Axon","AXP":"American Express|Amex","AZO":"AutoZone","BA":"Boeing","BABA":"Alibaba","BAC":"Bank of America","BALL":"Ball","BAX":"Baxter International|Baxter","BBY":"Best Buy","BDX":"Becton Dickinson|Becton","BE":"Bloom Energy|Bloom","BEN":"Franklin Resources|Franklin","BF.B":"Brown–Forman","BG":"Bunge Global|Bunge","BIIB":"Biogen","BKNG":"Booking","BKR":"Baker Hughes|Baker","BLK":"BlackRock","BMY":"Bristol-Myers|Bristol Myers|Bristol Myers Squibb","BNY":"BNY Mellon","BR":"Broadridge Financial Solutions|Broadridge","BRK.B":"Berkshire|Berkshire Hathaway","BRO":"Brown & Brown|Brown","BSX":"Boston Scientific","BX":"Blackstone","BXP":"BXP","C":"Citigroup|Citi","CAH":"Cardinal Health|Cardinal","CARR":"Carrier Global","CASY":"Casey's","CAT":"Caterpillar","CB":"Chubb","CBOE":"Cboe Global Markets|Cboe","CBRE":"Cbre|CBRE","CCI":"Crown Castle|Crown","CCL":"Carnival","CDNS":"Cadence|Cadence Design Systems","CDW":"CDW","CEG":"Constellation Energy","CF":"CF Industries","CFG":"Citizens Financial|Citizens","CHD":"Church & Dwight","CHRW":"C.H. Robinson","CHTR":"Charter|Charter Communications","CI":"Cigna","CIEN":"Ciena","CINF":"Cincinnati Financial|Cincinnati","CL":"Colgate|Colgate-Palmolive","CLX":"Clorox","CMCSA":"Comcast","CME":"CME","CMG":"Chipotle|Chipotle Mexican Grill","CMI":"Cummins","CMS":"CMS Energy","CNC":"Centene","CNP":"CenterPoint Energy|CenterPoint","COF":"Capital One","COHR":"Coherent","COIN":"Coinbase","COO":"Cooper","COP":"ConocoPhillips","COR":"Cencora","COST":"Costco","CPAY":"Corpay","CPRT":"Copart","CPT":"Camden Property Trust","CRH":"CRH","CRL":"Charles River Laboratories|Charles","CRM":"Salesforce","CRWD":"CrowdStrike","CSCO":"Cisco","CSGP":"CoStar","CSX":"CSX","CTAS":"Cintas","CTSH":"Cognizant","CVNA":"Carvana","CVS":"CVS|CVS Health","CVX":"Chevron","D":"Dominion Energy|Dominion","DAL":"Delta Air|Delta|Delta Air Lines","DASH":"DoorDash","DD":"DuPont","DDOG":"Datadog","DE":"Deere|Deere &","DECK":"Deckers","DELL":"Dell","DG":"Dollar General|Dollar","DGX":"Quest Diagnostics","DHI":"D. R. Horton","DHR":"Danaher","DIS":"Disney|Walt Disney","DLR":"Digital Realty","DLTR":"Dollar Tree|Dollar","DOC":"Healthpeak Properties","DOV":"Dover","DOW":"Dow","DPZ":"Domino's","DRI":"Darden Restaurants","DTE":"DTE Energy","DUK":"Duke Energy","DVA":"DaVita","DVN":"Devon Energy|Devon","DXCM":"Dexcom","EBAY":"eBay","ECHO":"EchoStar","ECL":"Ecolab","ED":"Consolidated Edison|Consolidated","EFX":"Equifax","EG":"Everest","EIX":"Edison International","EL":"Estée Lauder|Estee Lauder","ELV":"Elevance|Elevance Health","EME":"Emcor","EMR":"Emerson Electric|Emerson","EOG":"EOG Resources","EQIX":"Equinix","EQT":"EQT","ERIE":"Erie Indemnity|Erie","ES":"Eversource Energy|Eversource","ESS":"Essex Property Trust","ETN":"Eaton","ETR":"Entergy","EVRG":"Evergy","EW":"Edwards Lifesciences|Edwards","EXC":"Exelon","EXE":"Expand Energy","EXPD":"Expeditors International|Expeditors","EXPE":"Expedia","EXR":"Extra Space Storage|Extra","F":"Ford|Ford Motor","FANG":"Diamondback Energy|Diamondback","FAST":"Fastenal","FCX":"Freeport|Freeport-McMoRan","FDS":"FactSet","FDX":"FedEx","FDXF":"FedEx Freight|FedEx","FE":"FirstEnergy","FERG":"Ferguson Enterprises|Ferguson","FICO":"Fair Isaac","FIS":"Fidelity National Information Services|Fidelity","FISV":"Fiserv","FITB":"Fifth Third Bancorp|Fifth","FIX":"Comfort Systems USA|Comfort","FLEX":"Flex","FOX":"Fox","FOXA":"Fox","FRT":"Federal Realty Investment Trust","FSLR":"First Solar","FTNT":"Fortinet","FTV":"Fortive","GD":"General Dynamics","GDDY":"GoDaddy","GE":"GE Aerospace|General Electric","GEHC":"GE HealthCare","GEN":"Gen Digital","GEV":"GE Vernova","GILD":"Gilead|Gilead Sciences","GIS":"General Mills","GL":"Globe Life|Globe","GLW":"Corning","GM":"General Motors","GNRC":"Generac","GOOG":"Google|Alphabet","GOOGL":"Google|Alphabet|YouTube","GPC":"Genuine Parts|Genuine","GPN":"Global Payments","GRMN":"Garmin","GS":"Goldman Sachs|Goldman","GWW":"W. W. Grainger","HAL":"Halliburton","HAS":"Hasbro","HBAN":"Huntington Bancshares|Huntington","HCA":"HCA|HCA Healthcare","HD":"Home Depot","HIG":"Hartford","HII":"Huntington Ingalls Industries|Huntington","HLT":"Hilton|Hilton Worldwide","HON":"Honeywell","HOOD":"Robinhood","HPE":"Hewlett Packard Enterprise","HRL":"Hormel Foods|Hormel","HSIC":"Henry Schein|Henry","HST":"Host Hotels & Resorts","HSY":"Hershey","HUBB":"Hubbell","HUM":"Humana","HWM":"Howmet Aerospace|Howmet","IBKR":"Interactive Brokers|Interactive","IBM":"IBM","ICE":"Intercontinental Exchange","IDXX":"Idexx Laboratories|Idexx","IEX":"IDEX|Idex","IFF":"International Flavors & Fragrances","ILMN":"Illumina","INCY":"Incyte","INTC":"Intel","INTU":"Intuit","INVH":"Invitation Homes|Invitation","IP":"International Paper","IQV":"IQVIA|Iqvia","IR":"Ingersoll Rand|Ingersoll","IRM":"Iron Mountain","ISRG":"Intuitive Surgical","IT":"Gartner","ITW":"Illinois Tool Works|Illinois","IVZ":"Invesco","J":"Jacobs Solutions|Jacobs","JBHT":"J.B. Hunt","JBL":"Jabil","JCI":"Johnson Controls|Johnson","JKHY":"Jack Henry & Associates","JNJ":"Johnson & Johnson","JPM":"JPMorgan|JP Morgan|JPMorgan Chase","KDP":"Keurig Dr Pepper|Keurig","KEY":"KeyCorp","KEYS":"Keysight","KHC":"Kraft Heinz","KIM":"Kimco Realty|Kimco","KKR":"KKR","KLAC":"KLA","KMB":"Kimberly-Clark","KMI":"Kinder Morgan|Kinder","KO":"Coca-Cola","KR":"Kroger","KVUE":"Kenvue","L":"Loews","LDOS":"Leidos","LEN":"Lennar","LH":"Labcorp","LHX":"L3Harris","LII":"Lennox International|Lennox","LIN":"Linde","LITE":"Lumentum","LLY":"Eli Lilly|Lilly","LMT":"Lockheed|Lockheed Martin","LNT":"Alliant Energy|Alliant","LOW":"Lowe's","LRCX":"Lam Research","LULU":"Lululemon|Lululemon Athletica","LUV":"Southwest|Southwest Airlines","LVS":"Las Vegas Sands","LYB":"LyondellBasell","LYV":"Live Nation Entertainment","MA":"Mastercard","MAA":"Mid-America Apartment Communities","MAR":"Marriott|Marriott International","MAS":"Masco","MCD":"McDonald's|McDonald","MCHP":"Microchip|Microchip Technology","MCK":"McKesson","MCO":"Moody's","MDLZ":"Mondelez|Mondelez International","MDT":"Medtronic","MELI":"Mercado Libre|MercadoLibre","MET":"MetLife","META":"Meta|Facebook|Instagram|WhatsApp|Meta Platforms","MGM":"MGM|MGM Resorts","MKC":"McCormick &|McCormick","MLM":"Martin Marietta Materials|Martin","MMM":"3M","MNST":"Monster Beverage","MO":"Altria","MOS":"Mosaic","MPC":"Marathon Petroleum","MPWR":"Monolithic Power Systems|Monolithic","MRK":"Merck","MRNA":"Moderna","MRSH":"Marsh McLennan|Marsh","MRVL":"Marvell|Marvell Technology","MS":"Morgan Stanley","MSCI":"MSCI|Msci","MSFT":"Microsoft","MSI":"Motorola Solutions|Motorola","MSTR":"MicroStrategy","MTB":"M&T Bank","MTD":"Mettler Toledo|Mettler","MU":"Micron|Micron Technology","NCLH":"Norwegian Cruise|Norwegian Cruise Line","NDAQ":"Nasdaq Inc|Nasdaq","NDSN":"Nordson","NEE":"NextEra|NextEra Energy","NEM":"Newmont","NET":"Cloudflare","NFLX":"Netflix","NI":"NiSource","NKE":"Nike","NOC":"Northrop|Northrop Grumman","NOW":"ServiceNow","NRG":"NRG Energy","NSC":"Norfolk Southern|Norfolk","NTAP":"NetApp","NTRS":"Northern Trust|Northern","NU":"Nubank|Nu Holdings","NUE":"Nucor","NVDA":"Nvidia|NVIDIA","NVR":"NVR","NWS":"News","NWSA":"News Corp|News","NXPI":"NXP|NXP Semiconductors","O":"Realty Income","ODFL":"Old Dominion","OKE":"Oneok","OMC":"Omnicom","ON":"onsemi|ON Semiconductor","ORCL":"Oracle","ORLY":"O'Reilly|O'Reilly Automotive","OTIS":"Otis Worldwide|Otis","OXY":"Occidental|Occidental Petroleum","P":"Everpure","PANW":"Palo Alto Networks","PAYX":"Paychex","PCAR":"Paccar","PCG":"PG&E|Pg&E","PEG":"Public Service Enterprise","PEP":"PepsiCo|Pepsi","PFE":"Pfizer","PFG":"Principal Financial","PG":"Procter|Procter & Gamble","PGR":"Progressive","PH":"Parker Hannifin|Parker","PHM":"PulteGroup","PKG":"Packaging of America","PLD":"Prologis","PLTR":"Palantir","PM":"Philip Morris|Philip Morris International","PNC":"PNC|PNC Financial Services","PNR":"Pentair","PNW":"Pinnacle West Capital|Pinnacle","PODD":"Insulet","PPG":"PPG Industries","PPL":"PPL","PRU":"Prudential|Prudential Financial","PSA":"Public Storage","PSX":"Phillips 66|Phillips","PTC":"PTC","PWR":"Quanta Services|Quanta","PYPL":"PayPal","Q":"Qnity Electronics|Qnity","QCOM":"Qualcomm","RBLX":"Roblox","RCL":"Royal Caribbean","RDDT":"Reddit","REG":"Regency Centers|Regency","REGN":"Regeneron|Regeneron Pharmaceuticals","RF":"Regions Financial","RIVN":"Rivian","RJF":"Raymond James Financial|Raymond","RL":"Ralph Lauren","RMD":"ResMed","ROK":"Rockwell Automation|Rockwell","ROL":"Rollins","ROP":"Roper","ROST":"Ross Stores","RSG":"Republic Services","RTX":"Raytheon|RTX","RVTY":"Revvity","SBAC":"SBA Communications","SBUX":"Starbucks","SCHW":"Schwab|Charles Schwab","SE":"Sea","SHOP":"Shopify","SHW":"Sherwin-Williams","SJM":"J.M. Smucker","SKYD":"Skydance","SLB":"SLB|Schlumberger","SMCI":"Supermicro|Super Micro","SNA":"Snap-on","SNDK":"SanDisk","SNOW":"Snowflake","SNPS":"Synopsys","SO":"Southern Company|Southern","SOFI":"SoFi","SOLV":"Solventum","SPG":"Simon Property","SPGI":"S&P Global","SPOT":"Spotify","SRE":"Sempra","STE":"Steris","STLD":"Steel Dynamics","STT":"State Street","STX":"Seagate|Seagate Technology","STZ":"Constellation","SW":"Smurfit Westrock","SWK":"Stanley Black & Decker|Stanley","SWKS":"Skyworks Solutions|Skyworks","SYF":"Synchrony Financial|Synchrony","SYK":"Stryker","SYY":"Sysco","T":"At&T|AT&T","TDG":"TransDigm","TDY":"Teledyne","TECH":"Bio-Techne","TEL":"TE Connectivity","TER":"Teradyne","TFC":"Truist|Truist Financial","TGT":"Target","TJX":"TJ Maxx|TJX","TKO":"TKO","TMO":"Thermo Fisher|Thermo Fisher Scientific","TMUS":"T-Mobile|T-Mobile US","TPL":"Texas Pacific Land","TPR":"Tapestry","TRGP":"Targa Resources|Targa","TRMB":"Trimble","TROW":"T. Rowe Price","TRV":"Travelers","TSCO":"Tractor Supply|Tractor","TSLA":"Tesla","TSM":"TSMC|Tsmc|Taiwan Semiconductor","TSN":"Tyson Foods|Tyson","TT":"Trane","TTWO":"Take-Two|Take-Two Interactive","TWLO":"Twilio","TXN":"Texas Instruments","TXT":"Textron","TYL":"Tyler","UAL":"United Airlines","UBER":"Uber","UDR":"UDR","UHS":"Universal Health Services","ULTA":"Ulta|Ulta Beauty","UNH":"UnitedHealth","UNP":"Union Pacific","UPS":"UPS|United Parcel Service","URI":"United Rentals","USB":"U.S. Bancorp","V":"Visa","VEEV":"Veeva Systems|Veeva","VICI":"Vici Properties|Vici","VLO":"Valero Energy|Valero","VLTO":"Veralto","VMC":"Vulcan Materials|Vulcan","VMRK":"Vivmark Residential|Vivmark","VRSK":"Verisk Analytics|Verisk","VRSN":"Verisign","VRT":"Vertiv","VRTX":"Vertex|Vertex Pharmaceuticals","VST":"Vistra","VTR":"Ventas","VTRS":"Viatris","VZ":"Verizon","WAB":"Wabtec","WAT":"Waters","WDAY":"Workday","WDC":"Western Digital","WEC":"WEC Energy","WELL":"Welltower","WFC":"Wells Fargo","WM":"Waste Management|Waste","WMB":"Williams","WMT":"Walmart","WRB":"W. R. Berkley","WSM":"Williams-Sonoma","WST":"West Pharmaceutical Services","WTW":"Willis Towers Watson","WY":"Weyerhaeuser","WYNN":"Wynn|Wynn Resorts","XEL":"Xcel Energy","XOM":"Exxon|ExxonMobil","XYL":"Xylem","XYZ":"Block Inc|Block","YUM":"Yum!","ZBH":"Zimmer Biomet","ZBRA":"Zebra","ZTS":"Zoetis"};
+const _PV_LOGO_GLOBAL = "GOOGL GOOG META NVDA AAPL MSFT AMZN TSLA BRK.B JPM UAL DAL LUV KO PEP TSM MA HD WMT BAC WFC VZ DIS MCD NKE SBUX XOM CVX COP LLY JNJ UNH PG BA CAT GEV GM INTC ORCL CRM NFLX AVGO ADBE CSCO QCOM PLTR UBER ABNB PYPL COIN HOOD MU SNDK WDC STX SMCI HPE ANET CEG VST LMT RTX NOC GD FDX COST LOW BKNG MAR HLT RCL CCL NCLH MRNA PFE MRK ABBV AMGN GILD BMY CMCSA TMUS SPOT SHOP MELI NU BABA ASML BX SCHW AXP BLK MSTR CRWD PANW INTU TXN LRCX AMAT MRVL SNOW RBLX RIVN SOFI DASH TTWO CMG HON MMM UNP ISRG VRTX REGN NEM FCX OXY SLB HAL DUK NEE SO MDLZ KHC ULTA LULU TJX ORLY AZO EBAY EXPE WYNN LVS NWSA CHTR SNPS CDNS ADI NXPI MCHP GLW WDAY ADSK FTNT DDOG EQIX AMT PLD SPG CBRE NDAQ SPGI MCO COF USB TFC PRU PGR ELV HUM CNC MDT ABT TMO DHR SYK BSX ZTS";
+const _PV_LOGO_SET = new Set(_PV_LOGOS.split(' '));
+const _PV_LOGO_GLOBAL_ARR = _PV_LOGO_GLOBAL.split(' ');
+function _pvLogoKey(t) {
+  let k = String(t || '').trim().toUpperCase().replace(/^\$/, '').replace(/[-/]/g, '.');
+  if (k === 'FB') k = 'META';
+  if (k === 'BRK.A' || k === 'BRKB') k = 'BRK.B';
+  return _PV_LOGO_SET.has(k) ? k : '';
+}
+function _pvLogoSrc(t) { const k = _pvLogoKey(t); return k ? 'logos/' + k + '.jpg' : ''; }
+// <img> que tapa el avatar con el logo; si no carga se quita sola y queda lo de debajo (la inicial).
+function _pvLogoImg(t, cls) {
+  const s = _pvLogoSrc(t);
+  return s ? `<img class="${cls || 'pv-lgi'}" src="${s}" alt="" loading="lazy" decoding="async" draggable="false" onerror="this.remove()">` : '';
+}
+const _pvLogoReCache = new Map();
+function _pvLogoNamed(k, txt) {
+  const alts = _PV_LOGO_NAMES[k];
+  if (!alts || !txt) return false;
+  let re = _pvLogoReCache.get(k);
+  if (!re) {
+    // Distingue mayúsculas: «Meta anuncia…» es la empresa; «la meta de inflación», no.
+    re = new RegExp('(?:^|[^\\p{L}\\p{N}])(?:' + alts.split('|').map(a => a.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![\\p{L}\\p{N}])', 'u');
+    _pvLogoReCache.set(k, re);
+  }
+  return re.test(txt);
+}
+// Íconos de tema (trazo, 24×24) para las noticias que no son de una empresa: índices, petróleo…
+const _PV_NT_ICO = {
+  mercado:'<path d="M9 5v4"/><rect width="4" height="6" x="7" y="9" rx="1"/><path d="M9 15v2"/><path d="M17 3v2"/><rect width="4" height="8" x="15" y="5" rx="1"/><path d="M17 13v3"/><path d="M3 3v16a2 2 0 0 0 2 2h16"/>',
+  petroleo:'<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
+  tasas:'<path d="M3 22h18"/><path d="M6 18v-7"/><path d="M10 18v-7"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M12 2 20 7H4z"/>',
+  oro:'<circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/>',
+  cripto:'<path d="M11.767 19.089c4.924.868 6.14-6.025 1.216-6.894m-1.216 6.894L5.86 18.047m5.908 1.042-.347 1.97m1.563-8.864c4.924.869 6.14-6.025 1.215-6.893m-1.215 6.893-3.94-.694m5.155-6.2L8.29 4.26m5.908 1.042.348-1.97M7.48 20.364l3.126-17.727"/>',
+  chips:'<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  ia:'<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+  aviones:'<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
+  mundo:'<circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+  dolar:'<path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  comercio:'<path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1 .6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-9-4-9 4c0 2.9.94 5.34 2.81 7.76"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M12 10v4"/><path d="M12 2v3"/>',
+  economia:'<rect width="20" height="14" x="2" y="7" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+  elecciones:'<path d="m9 12 2 2 4-4"/><path d="M5 7c0-1.1.9-2 2-2h10a2 2 0 0 1 2 2v12H5V7z"/><path d="M22 19H2"/>',
+  vivienda:'<path d="M3 10.5 12 3l9 7.5V21H3z"/><path d="M9 21v-6h6v6"/>',
+  salud:'<path d="m10.5 20.5 10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7Z"/><path d="m8.5 8.5 7 7"/>',
+  consumo:'<circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/>',
+  electricidad:'<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
+  noticia:'<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8M15 18h-5M10 6h8v4h-8z"/>'
+};
+// Por orden: el primero que encaja gana («chips de IA» → chips; «Anthropic… en Wall Street» → IA).
+const _PV_NT_TEMAS = [
+  ['cripto', /bitcoin|cripto|crypto|ethereum|\bbtc\b/],
+  ['oro', /\boro\b|\bgold\b|\bplata\b|silver|metales preciosos/],
+  ['chips', /semiconductor|\bchips?\b/],
+  ['ia', /inteligencia artificial|\bia\b|\bai\b|openai|anthropic|chatgpt/],
+  ['aviones', /aerolinea|airline|aviacion|vuelos|crucero/],
+  ['mercado', /wall street|\bindices\b|s&p ?500|nasdaq|dow jones|russell/],
+  ['petroleo', /petrol|crudo|brent|\bwti\b|\bopep|opec|gasolina|gas natural|\boil\b/],
+  ['tasas', /\bfed\b|reserva federal|fomc|tasas|tipos de interes|powell|tesoro|\bbonos?\b|treasury|rendimiento|banco central|\bbce\b|banxico|banco de inglaterra|banco de japon/],
+  ['dolar', /inflacion|\bipc\b|\bpce\b|\bcpi\b|dolar|divisa|\byen\b|\beuro\b|forex/],
+  ['economia', /empleo|nomina|desempleo|\bpib\b|\bgdp\b|recesion|econom/],
+  ['comercio', /arancel|tariff|guerra comercial|comercio|exportac|importac/],
+  ['elecciones', /eleccion|electoral|midterm|congreso|senado|shutdown|cierre del gobierno/],
+  ['vivienda', /vivienda|hipotec|inmobiliari|housing/],
+  ['salud', /farmac|salud|medicament|\bfda\b/],
+  ['consumo', /consumidor|minorista|retail|ventas/],
+  ['mundo', /europ|asia|china|japon|nikkei|\bdax\b|ftse|hang seng|emergentes|\bindia\b|mexico|brasil|canada/],
+  ['mercado', /\bbolsas?\b|mercado|acciones|stocks/]
+];
+// ETF/índices de la lista de afectados → tema (si el titular no lo dijo con palabras).
+const _PV_NT_ETF = { mercado:'SPY VOO IVV QQQ DIA IWM VTI RSP VT VIX VXX UVXY', tasas:'TLT IEF SHY BND AGG LQD HYG TIP GOVT SGOV BIL XLF KRE KBE', dolar:'DXY UUP FXE FXY FXB UDN',
+  petroleo:'XLE USO BNO XOP OIH VDE UNG', oro:'GLD IAU SLV GDX GDXJ PPLT', cripto:'IBIT GBTC ETHE BITO FBTC', chips:'SMH SOXX XLK VGT', aviones:'JETS',
+  mundo:'VGK EWG EFA EEM VWO VEA EWJ FXI MCHI KWEB EWZ INDA EWY EWT EWW', vivienda:'VNQ XLRE IYR ITB XHB', salud:'XLV XBI IBB', consumo:'XLY XRT XLP', electricidad:'XLU' };
+const _PV_NT_ETF_MAP = (() => { const m = {}; for (const t in _PV_NT_ETF) _PV_NT_ETF[t].split(' ').forEach(s => { m[s] = t; }); return m; })();
+// ¿De qué (o de quién) habla una noticia? {logo:'NVDA'} o {tema:'petroleo'}. Memo por objeto+titular.
+const _pvNewsSubjMemo = new WeakMap();
+function _pvNewsSubject(n) {
+  if (!n || typeof n !== 'object') return { tema: 'noticia' };
+  const txt = [n.h, n.h_en, n.headline].filter(Boolean).join(' · ');
+  const memo = _pvNewsSubjMemo.get(n);
+  if (memo && memo.txt === txt && memo.imp === n.impact) return memo.r;
+  const tks = [];
+  [n._ticker].concat(String(n.impact || '').split(/[,;/]/)).forEach(s => {
+    s = String(s || '').trim().toUpperCase();
+    if (/^[A-Z][A-Z0-9.\-]{0,6}$/.test(s) && !tks.includes(s)) tks.push(s);
+  });
+  let r = null;
+  // 1) una empresa de la lista de afectados que el titular nombra («Nvidia lidera…» → NVDA)
+  for (const t of tks) { const k = _pvLogoKey(t); if (k && _pvLogoNamed(k, txt)) { r = { logo: k }; break; } }
+  // 2) una grande nombrada en el titular aunque no venga en la lista
+  if (!r) for (const k of _PV_LOGO_GLOBAL_ARR) if (_pvLogoNamed(k, txt)) { r = { logo: k }; break; }
+  // 3) el tema del titular, o el de sus ETF/índices
+  if (!r) {
+    const low = txt.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+    for (const [t, re] of _PV_NT_TEMAS) if (re.test(low)) { r = { tema: t }; break; }
+    if (!r) for (const t of tks) if (_PV_NT_ETF_MAP[t]) { r = { tema: _PV_NT_ETF_MAP[t] }; break; }
+  }
+  // 4) noticia de una sola empresa que el titular no nombra (feed por ticker)
+  if (!r && tks.length === 1 && _pvLogoKey(tks[0])) r = { logo: _pvLogoKey(tks[0]) };
+  if (!r) r = { tema: 'noticia' };
+  _pvNewsSubjMemo.set(n, { txt, imp: n.impact, r });
+  return r;
+}
+function _pvNtSvg(tema) {
+  return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${_PV_NT_ICO[tema] || _PV_NT_ICO.noticia}</svg>`;
+}
+// Cuadro de la noticia: logo de la empresa o ícono del tema (debajo del logo, por si no carga).
+function _pvNewsTile(n, extra) {
+  const s = _pvNewsSubject(n);
+  return `<span class="pv-nt${s.logo ? ' pv-nt--logo' : ''}${extra ? ' ' + extra : ''}" aria-hidden="true">${_pvNtSvg(s.logo ? 'noticia' : s.tema)}${s.logo ? _pvLogoImg(s.logo, 'pv-nt-img') : ''}</span>`;
+}
+
 // Color del cuadrito de la fuente. Lo comparten las tarjetas (_snCard), las noticias de
 // «Noticias por posición» (_pnxItem) y «Panorama del mercado» (destacada y «También
 // importante hoy») para que un mismo medio salga igual en todas. Ampliado con los medios
@@ -19588,7 +19730,7 @@ function _snCard(n, idx, showHeld) {
       <span class="sn-card-source-name">${pvEsc(src)}</span>
       ${n.corroborated ? `<span title="Confirmada por Yahoo Finance y Finnhub" style="margin-left:6px;font-size:9px;font-weight:800;letter-spacing:.04em;color:#16794a;background:#e6f4ec;padding:2px 6px;border-radius:6px">✓ 2 FUENTES</span>` : ''}
     </div>
-    <div class="sn-card-headline">${pvEsc(n.h || n.headline || '')}</div>
+    <div class="sn-card-hrow">${_pvNewsTile(n)}<div class="sn-card-headline">${pvEsc(n.h || n.headline || '')}</div></div>
     <div class="sn-card-div"></div>
     <span class="sn-card-sentiment ${sentiment}">
       ${n.s==='pos'?'↑':n.s==='neg'?'↓':'·'} <span class="sn-sent-word">Sentimiento </span>${n.s==='pos'?'alcista':n.s==='neg'?'bajista':'neutral'}
@@ -19828,7 +19970,7 @@ function _pvpLede(n) {
 function _pvpAlsoItem(n, num) {
   const src = n.source || '', when = n.date ? _pnxWhen(n.date) : '';
   return `<button type="button" class="pvp-ar" onclick="openNewsByKey('${_newsRegister(n)}')">`
-    + `<span class="pvp-n">${num}</span><span class="pvp-at"><span class="pvp-src">`
+    + `<span class="pvp-n">${num}</span>${_pvNewsTile(n, 'pv-nt--also')}<span class="pvp-at"><span class="pvp-src">`
     + (src ? `<i class="pvp-dot" style="background:${_SN_SRC_COLORS[src] || '#44474d'}">${pvEsc(_snSrcInitial(src))}</i><span>${pvEsc(src)}</span>` : '')
     + (when ? `<em>${src ? '· ' : ''}${pvEsc(when)}</em>` : '')
     + `</span><b>${pvEsc(n.h || n.headline || '')}</b></span></button>`;
@@ -20328,7 +20470,7 @@ function _pnxRenderList() {
     : hs.map(h => {
         const v = _pnxChg(h), tk = pvEsc(h.ticker);
         return `<div class="pnx-ai" data-tk="${tk}"><button type="button" class="pnx-row">`
-          + `<span class="pnx-av">${pvEsc(_pnxLetter(h.ticker))}</span>`
+          + `<span class="pnx-av${_pvLogoKey(h.ticker) ? ' pv-lg' : ''}">${pvEsc(_pnxLetter(h.ticker))}${_pvLogoImg(h.ticker)}</span>`
           + `<span class="pnx-nm"><b>${tk}</b><small>${pvEsc(_pnxSub(h, tk))}</small></span>`
           + `<span class="pnx-rt"><b class="${_pnxCls(v)}">${_pnxPct(v)}</b><small>${_pnxCount((STOCK_NEWS[h.ticker] || []).length)}</small></span>`
           + `${_PNX_CHEV}</button></div>`;
@@ -20466,7 +20608,7 @@ function showStockNews(ticker, btn) {
   const gl = (Math.round(c.gl * 100) / 100) || 0, glp = +c.glPct || 0;
   const glpTxt = (glp > 0 ? '+' : '') + glp.toFixed(Math.abs(glp) < 1 ? 2 : 1) + '%';
   const html =
-      `<div class="pnx-ph"><span class="pnx-av">${pvEsc(_pnxLetter(ticker))}</span>`
+      `<div class="pnx-ph"><span class="pnx-av${_pvLogoKey(ticker) ? ' pv-lg' : ''}">${pvEsc(_pnxLetter(ticker))}${_pvLogoImg(ticker)}</span>`
     + `<div class="pnx-pn"><h3>${tk}</h3><small>${pvEsc(_pnxSub(h, tk))}</small></div>`
     + `<div class="pnx-px"><b>${_pvPx(h.price)}</b><span class="pnx-chg ${_pnxCls(v)}">${_pnxPct(v)} ${_L('hoy', 'today')}</span></div></div>`
     + `<div class="pnx-stats">`
@@ -27567,6 +27709,8 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   $('r-name').textContent = name;
   $('r-sub').textContent  = [ticker, sector, industry].filter(Boolean).join(' · ');
   { const _tk=document.getElementById('r-ticker'); if(_tk) _tk.textContent = ticker; }
+  // Logo de la empresa junto al nombre (S&P 500 y populares); sin logo, el cuadro no se muestra.
+  { const _lg=document.getElementById('r-logo'); if(_lg){ const _im=_pvLogoImg(ticker,'ra-logo-img'); _lg.innerHTML=_im; _lg.hidden=!_im; if(_im){ const i=_lg.firstChild; i.onerror=function(){ _lg.hidden=true; _lg.innerHTML=''; }; } } }
   // Antetítulo de la cabecera navy: «Análisis · Tecnología» (el sector, en español).
   { const _sc=document.getElementById('r-sector'); if(_sc){ const _se = _pvaSectorEs(sector || industry || ''); _sc.textContent = _se ? 'Análisis · ' + _se : 'Análisis'; } }
   $('r-price').textContent = `$${curPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
@@ -34946,7 +35090,7 @@ function _pvwRender(o){
     const body = evs.length ? evs.map(e => {
       const tks = (e.tickers || []).slice(0, 5).map(t => {
         const h = held.has(t); if (h) heldShown = true;
-        return `<span class="pvw-tk${h ? ' pvw-tk--held' : ''}">${E(t)}</span>`;
+        return `<span class="pvw-tk${h ? ' pvw-tk--held' : ''}">${_pvLogoImg(t, 'pvw-tk-lg')}${E(t)}</span>`;
       }).join('');
       const cat = catTxt[e.cat] ? e.cat : 'other';
       return `<div class="pvw-ev" role="button" tabindex="0" ${e.attrs || ''} onkeydown="_pvwKey(event,this)">`

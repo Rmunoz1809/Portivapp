@@ -193,6 +193,10 @@ async function build() {
   try {
     await fs.cp(path.join(ROOT, 'fonts'), path.join(ROOT, 'dist', 'fonts'), { recursive: true });
   } catch (e) { console.warn('  ! no se pudo copiar fonts/:', e.message); }
+  // Igual con los logos de empresas (logos/<TICKER>.jpg, ver _pvLogoImg en index.html).
+  try {
+    await fs.cp(path.join(ROOT, 'logos'), path.join(ROOT, 'dist', 'logos'), { recursive: true });
+  } catch (e) { console.warn('  ! no se pudo copiar logos/:', e.message); }
 
   const outBytes = Buffer.byteLength(out);
   const [gzSrc, gzOut] = await Promise.all([gzip(src), gzip(out)]);
