@@ -23057,10 +23057,6 @@ function unlockPeriods() {
 }
 
 let perfChart = null;
-// Padding izquierdo de la tarjeta de Rendimiento (lo que la gráfica se sale hacia el borde).
-function _perfPadL() {
-  try { const c = document.querySelector('#tab-portfolio .pvph-rend'); return c ? (parseFloat(getComputedStyle(c).paddingLeft) || 0) : 0; } catch (e) { return 0; }
-}
 let activePeriod = '1M';
 
 // ── Límites del eje Y siempre consistentes entre periodos ────────────────────
@@ -23619,7 +23615,6 @@ function initPerfChart() {
       onResize: (chart, size) => { try { const m = _PERF_MOB(); const s = chart.options.scales;
         s.x.ticks.display = !m; s.y.display = !m; s.y.ticks.display = !m; s.y.grid.display = !m;
         chart.options.layout = { padding: m ? { top: 6, bottom: 2, left: 0, right: 9 } : 0 };
-        s.x.ticks.labelOffset = _perfPadL();
       } catch(e){} },
       // Sin puntos estáticos sobre la línea en ningún período (incl. 1D "hoy").
       // El dot de hover sigue activo vía pointHoverRadius del dataset.
@@ -23663,13 +23658,6 @@ function initPerfChart() {
           ticks: {
             display: !_PERF_MOB(),
             color: '#8A92A3', font: { size: 11 }, maxTicksLimit: 7,
-            // La primera fecha empieza en el borde y la última acaba en él: centradas bajo su
-            // punto, Chart.js corría toda la gráfica ~30 px a la derecha para que «25 Sep» cupiera
-            // y dejaba un hueco muerto a la izquierda de la tarjeta (pedido de Rafael, 27-oct).
-            align: 'inner',
-            // La gráfica llega al borde de la tarjeta (margen negativo en CSS): las fechas se
-            // corren el padding de la tarjeta para seguir alineadas con «Rendimiento».
-            labelOffset: _perfPadL(),
             // Mostrar solo etiquetas de día (no las intradía con "HH:MM")
             callback: function(value, index, ticks) {
               const lbl = this.getLabelForValue(value);
@@ -33040,8 +33028,6 @@ function _drawResearchChart(chartData, isPos) {
         x:{grid:{display:false},border:{display:false},ticks:{
           display: true,
           color:'#8A92A3',font:{size:11},maxTicksLimit:7,
-          // Primera y última fecha hacia dentro: sin el hueco muerto a la izquierda (como en Rendimiento).
-          align:'inner',
           callback: function(value, index, ticks) {
             const lbl = this.getLabelForValue(value);
             return /\d{2}:\d{2}/.test(lbl) ? '' : lbl;
@@ -61304,16 +61290,6 @@ html body.dark-theme #tab-portfolio #pvphHero { border:1px solid rgba(255,255,25
 @media (prefers-reduced-motion: reduce) {
   html body #tab-portfolio #pvphRow .pvph-card,
   html body #tab-portfolio #pvphRow #periodBtns .period-btn { transition:none !important; }
-}
-/* ═══ Rendimiento: la gráfica llega al borde izquierdo de la tarjeta (pedido de Rafael, 27-oct) ═══
-   El margen negativo es el padding izquierdo de .pvph-card en cada ancho (28 / 24 / 16 px); las
-   fechas se corren lo mismo (labelOffset en _perfPadL) para seguir alineadas con el título. */
-html body #tab-portfolio #pvphRow .pvph-rend .perf-chart-wrap { margin-left:-28px !important; }
-@media (min-width: 900px) and (max-width: 1099px) {
-  html body #tab-portfolio #pvphRow .pvph-rend .perf-chart-wrap { margin-left:-24px !important; }
-}
-@media (max-width: 899px) {
-  html body #tab-portfolio #pvphRow .pvph-rend .perf-chart-wrap { margin-left:-16px !important; }
 }
 </style>
 <style id="pvTabsCss">
