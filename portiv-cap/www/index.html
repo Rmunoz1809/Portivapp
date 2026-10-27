@@ -18516,7 +18516,19 @@ function _openOutlookEvent(evKey, outlookKey) {
     const card = $('nmImpactCard');
     const affected = (ev.tickers_affected||ev.tickers||[]).map(t=>String(t).trim().toUpperCase()).filter(Boolean);
     const heldObjs = affected.map(t=>HOLDINGS.find(h=>h.ticker===t)).filter(Boolean);
-    if (!heldObjs.length) { if(card) card.style.display='none'; return; }
+    // Sin posiciones afectadas el cuadro también sale (pedido de Rafael, 27-oct): dice que el
+    // impacto es indirecto, con el mismo texto que el lector de noticias (openNewsModal).
+    if (!heldObjs.length) {
+      const _b = 'style="color:rgba(255,255,255,.85)"';
+      const _tks = affected.filter(t => /^[A-Z][A-Z0-9.\-]{0,6}$/.test(t)).slice(0, 4);
+      htm('nmImpactBody', `<div class="nm-ic-txt" style="margin-top:0;padding-top:0;border-top:none"><strong style="color:rgba(255,255,255,.9)">No afecta directamente tu portafolio.</strong> `
+        + (_tks.length
+          ? `Este evento es sobre ${pvEsc(_tks.join(', '))}, que no tienes en cartera. El impacto sería <strong ${_b}>indirecto</strong>, vía el sector y el mercado.`
+          : `Es un evento de mercado general; te afecta de forma <strong ${_b}>indirecta</strong>, vía el movimiento del mercado y el entorno macro.`)
+        + `</div>`);
+      if(card) card.style.display='';
+      return;
+    }
     // Catalizador PROGRAMADO: SIEMPRE texto prospectivo (posiciones a vigilar). Nunca
     // "Resultado: Sentimiento X" — no se dice si el evento salió bueno o malo.
     let footer;
