@@ -9641,6 +9641,40 @@ function _fraseAnalista(perfilId, clave, det) {
   return `${cifra}: ${txt}.`;
 }
 
+// Orden de lectura de cada tabla: de lo más importante a lo menos, y el dato ACTUAL antes
+// que su media de varios años (P/E antes que P/E normalizado, margen neto antes que su media
+// de 5 años). Antes las filas iban por peso en la nota del sector y, debajo, por cuánto se
+// separaban de sus pares: el P/E podía salir después del EV/Ingresos y una media de 5 años
+// encima del dato de hoy. Una métrica del sector que no está en la lista va detrás de las
+// listadas, en el orden que traía.
+const _PV_ORDEN_METRICAS = [
+  // Valoración
+  'peTTM', 'peAdelantado', 'peg', 'peNormalizado', 'evEbitda', 'pFcf', 'ps', 'evFcf', 'pFlujoCaja', 'pb', 'evIngresos', 'ptbv', 'dividendo',
+  // Rentabilidad: hoy, después sus medias de 5 años, después eficiencia
+  'margenNetoTTM', 'margenOperTTM', 'margenBrutoTTM', 'roeTTM', 'roiTTM', 'roaTTM', 'cicloMargen',
+  'margenNeto5Y', 'margenOper5Y', 'margenPreTax5Y', 'roe5Y', 'roi5Y', 'roa5Y',
+  'rotActivos', 'rotInventario', 'rotCobros', 'ingresoEmpleado', 'utilidadEmpleado',
+  // Crecimiento: último año y trimestre, después 3 y 5 años
+  'crecIngrTTM', 'crecEpsTTM', 'crecIngrQ', 'crecIngr3Y', 'crecEps3Y', 'crecIngr5Y', 'crecEps5Y',
+  'crecEbitda5Y', 'crecMargen5Y', 'crecDividendo5Y', 'crecBookValue5Y', 'crecTBV5Y',
+  // Solidez
+  'deudaTotalCapital', 'deudaLPCapital', 'cobInteres', 'liquidezCorriente', 'liquidezRapida', 'runwayMeses',
+  'flujoCajaAccion', 'payout', 'payoutFlujo', 'capexCagr5Y', 'volatilidad',
+  // Mercado: lo más reciente primero
+  'fuerzaRel13s', 'fuerzaRel26s', 'fuerzaRel52s'
+];
+const _PV_RANGO_METRICA = Object.fromEntries(_PV_ORDEN_METRICAS.map((k, i) => [k, i]));
+// `propia(k)`: si la métrica es del apartado de esta tabla. Las que el modelo del sector trae
+// de otro apartado (un ROA de 5 años entre las de solidez) van detrás de las propias.
+function _pvOrdenImportancia(filas, propia){
+  const rango = (f, i) => ((f._k in _PV_RANGO_METRICA) ? _PV_RANGO_METRICA[f._k]
+                       : 1000 + (f.fuera ? 1000 : 0) + i) + (propia && !propia(f._k) ? 5000 : 0);
+  const conRango = filas.map((f, i) => [rango(f, i), f]);
+  conRango.sort((a, b) => a[0] - b[0]);
+  conRango.forEach(([, f], i) => { filas[i] = f; });
+  return filas;
+}
+
 function sectorSections(ticker, info) {
   const r = computeSectorRating(ticker, info);
   if (!r || r.nota == null) return null;
@@ -9664,7 +9698,7 @@ function sectorSections(ticker, info) {
     const med = a ? ` · ${_medianaTxt(a, k)}` : '';
     return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
              v: _fmtMetrica(k, det.v),
-             s: _lectura(det.nota) + med };
+             s: _lectura(det.nota) + med, _k: k };
   });
 
   // ── Salud financiera: el pilar de solidez de este sector ──
@@ -9673,7 +9707,7 @@ function sectorSections(ticker, info) {
     const a = _ancla(r.perfilId, d.campo || k);
     return { kk: d.lbl, vv: _fmtMetrica(k, det.v),
              dd: _lectura(det.nota) + (a ? ` (${_medianaTxt(a, k)})` : ''),
-             tone: TONO(det.nota) };
+             tone: TONO(det.nota), _k: k };
   });
 
   // ── Pros y riesgos: donde de verdad gana y donde de verdad pierde, contra sus
@@ -9717,7 +9751,7 @@ function sectorSections(ticker, info) {
     return { l: d.lbl + (d.prox ? ` (≈ ${d.prox})` : ''),
              v: _fmtMetrica(k, det.v),
              s: _lectura(det.nota) + (a ? ` · ${_medianaTxt(a, k)}` : ''),
-             tone: TONO(det.nota) };
+             tone: TONO(det.nota), _k: k };
   };
 
   // ── Todas las cifras publicadas, en su apartado ─────────────────────────────────
@@ -9748,7 +9782,7 @@ function sectorSections(ticker, info) {
                 v: _fmtMetrica(k, x),
                 s: (n == null ? '' : _lectura(n)) + (a ? (n == null ? '' : ' · ') + _medianaTxt(a, k) : ''),
                 tone: n == null ? 'mid' : TONO(n),
-                fuera: true,
+                fuera: true, _k: k,
                 _d: n == null ? -1 : Math.abs(n - 5.5) };
     (extra[_GRUPO[k]] || otros).push(f);
   }
@@ -9758,10 +9792,13 @@ function sectorSections(ticker, info) {
   otros.sort(_ord);
   datos.push(...extra.valo);
   health.push(...extra.soli.map(f => ({ kk: f.l, vv: f.v,
-    dd: f.s.replace(/ · (mediana .*)$/, ' ($1)') || 'sin mediana del sector', tone: f.tone, fuera: true })));
+    dd: f.s.replace(/ · (mediana .*)$/, ' ($1)') || 'sin mediana del sector', tone: f.tone, fuera: true, _k: f._k })));
   const bloques = ['rent', 'crec', 'merc']
-    .map(p => ({ id: p, titulo: t[p] || _TITULOS_PILAR[p], filas: filas(p).map(_fila).concat(extra[p]) }))
+    .map(p => ({ id: p, titulo: t[p] || _TITULOS_PILAR[p],
+                 filas: _pvOrdenImportancia(filas(p).map(_fila).concat(extra[p]), k => !_GRUPO[k] || _GRUPO[k] === p) }))
     .filter(b => b.filas.length);
+  _pvOrdenImportancia(datos,  k => !_GRUPO[k] || _GRUPO[k] === 'valo');
+  _pvOrdenImportancia(health, k => !_GRUPO[k] || _GRUPO[k] === 'soli');
 
   return { datos, health, pros, riesgos, valText, valLabel, bloques, otros,
            tituloDatos: t.datos || 'Datos financieros',
@@ -21040,17 +21077,17 @@ function _pvxPartirLectura(s){
 }
 // Tabla «Métrica · Valor · Mediana de pares · Lectura». Las filas sin mediana ni lectura no
 // dejan celdas con guiones: la celda se queda vacía y la fila sigue alineada.
-function _pvxTablaValor(filas){
+function _pvxTablaValor(filas, opts){
   const esc = pvEsc;
   const P = filas.map(d => Object.assign({ d }, _pvxPartirLectura(d.s)));
   const origenes = Array.from(new Set(P.map(p => p.origen)));
   const uno = origenes.length === 1;
-  // Las filas `fuera` (cifras publicadas que el modelo del sector no puntúa) van debajo,
-  // tras un separador que lo dice: se ven todas, pero no se confunden con las que mueven la nota.
-  let _sep = false;
-  const rows = P.map(p => (p.d.fuera && !_sep && (_sep = true)
-      ? '<div class="px-vsep">Otras cifras publicadas · no entran en la nota</div>' : '')
-    + '<div class="px-vr"><span class="vm">' + esc(_pvaLbl(p.d.l)) + '</span>'
+  // Las filas van por importancia (_pvOrdenImportancia), así que las que el modelo del sector
+  // no puntúa (`fuera`) quedan mezcladas con las que sí: cada una lleva su marca debajo del
+  // nombre. Antes iban todas al final tras un separador, y el P/E podía quedar abajo.
+  const _marca = !(opts && opts.sinMarca);
+  const rows = P.map(p => '<div class="px-vr"><span class="vm">' + esc(_pvaLbl(p.d.l))
+    + (_marca && p.d.fuera ? '<i class="vnn">No entra en la nota</i>' : '') + '</span>'
     + '<b class="vv">' + esc(p.d.v) + '</b>'
     + '<span class="vmd">' + (p.med ? '<em>Mediana de pares </em>' + esc(p.med) + (!uno && p.origen ? ' <i>' + esc(p.origen) + '</i>' : '') : '') + '</span>'
     + '<span class="vl">' + _pvxLecturaPill(p.lect) + '</span></div>').join('');
@@ -29198,7 +29235,14 @@ function _pvxHealthDims(info){
   const sc  = (v, min, max) => Math.max(1, Math.min(10, 1 + (v - min) / (max - min) * 9));
   const avg = a => a.reduce((x, y) => x + y, 0) / a.length;
   const out = [];
-  const push = (n, v, d) => { if (v != null && isFinite(v)) out.push({n, v:Math.round(v*10)/10, d}); };
+  // `m` = las cifras que producen la nota, para pintarlas debajo de ella: cada columna tiene que
+  // poder justificarse sola. Antes solo llevaba qué mide, y la caja de debajo (otra cifra, de
+  // solidez) se leía como si respaldara a la nota que tenía encima.
+  const push = (n, v, d, m) => { if (v != null && isFinite(v)) out.push({n, v:Math.round(v*10)/10, d, m: (m || []).filter(Boolean).join(' · ')}); };
+  const pct  = v => `${(v*100).toFixed(1).replace(/\.0$/, '')}%`;
+  const pctS = v => `${v >= 0 ? '+' : '−'}${Math.abs(v*100).toFixed(1).replace(/\.0$/, '')}%`;
+  const usdC = v => { const a = Math.abs(v), sg = v < 0 ? '−' : '';
+    return a >= 1e9 ? `${sg}$${(a/1e9).toFixed(1).replace(/\.0$/, '')} mil M` : a >= 1e6 ? `${sg}$${(a/1e6).toFixed(0)} M` : `${sg}$${a.toFixed(0)}`; };
 
   // 1) Rentabilidad — lo que de verdad separa un buen negocio de uno mediocre.
   {
@@ -29206,36 +29250,42 @@ function _pvxHealthDims(info){
     if (pm  != null) p.push(sc(pm,  -.05, .30));
     if (roe != null) p.push(sc(roe, -.05, .45));
     if (gm  != null) p.push(sc(gm,   .15, .80));
-    if (p.length) push('Rentabilidad', avg(p), 'Cuánto beneficio deja cada dólar vendido y cuánto rinde el dinero de los dueños');
+    if (p.length) push('Rentabilidad', avg(p), 'Cuánto beneficio deja cada dólar vendido y cuánto rinde el dinero de los dueños',
+      [pm != null ? `Margen neto ${pct(pm)}` : null, roe != null ? `ROE ${pct(roe)}` : null,
+       (pm == null || roe == null) && gm != null ? `Margen bruto ${pct(gm)}` : null]);
   }
   // 2) Flujo de caja — que el beneficio contable se convierta en efectivo de verdad.
   {
     const fcf = num(info.freeCashflow), ps = num(info.priceToSales), mc = num(info.marketCap);
-    let v = null;
-    if (fcf != null && ps > 0 && mc > 0){ const rev = mc / ps; if (rev > 0) v = sc(fcf / rev, -.05, .35); }
+    let v = null, fm = null;
+    if (fcf != null && ps > 0 && mc > 0){ const rev = mc / ps; if (rev > 0){ fm = fcf / rev; v = sc(fm, -.05, .35); } }
     else if (fcf != null) v = fcf > 0 ? 7 : 2;
-    push('Flujo de caja', v, 'Qué parte de sus ventas acaba siendo efectivo libre, ya pagada la inversión del año');
+    push('Flujo de caja', v, 'Qué parte de sus ventas acaba siendo efectivo libre, ya pagada la inversión del año',
+      [fcf != null ? `Flujo libre ${usdC(fcf)}` : null, fm != null ? `${pct(fm)} de sus ventas` : null]);
   }
   // 3) Crecimiento — ingresos y ganancias contra el mismo periodo del año pasado.
   {
     const p = [], rg = num(info.revenueGrowth), eg = num(info.earningsGrowth);
     if (rg != null) p.push(sc(rg, -.10, .35));
     if (eg != null) p.push(sc(eg, -.10, .50));
-    if (p.length) push('Crecimiento', avg(p), 'A qué ritmo crecen sus ventas y sus ganancias frente a hace un año');
+    if (p.length) push('Crecimiento', avg(p), 'A qué ritmo crecen sus ventas y sus ganancias frente a hace un año',
+      [rg != null ? `Ventas ${pctS(rg)}` : null, eg != null ? `Ganancias ${pctS(eg)}` : null]);
   }
   // 4) Solidez del balance — lo que decide si aguanta un mal año sin diluir ni vender activos.
   {
     const p = [], de = num(info.debtToEquity), cr = num(info.currentRatio);
     if (de != null) p.push(sc(-Math.min(3, Math.max(0, de)), -3, 0));      // menos deuda, mejor nota
     if (cr != null) p.push(sc(Math.min(3.5, cr), .6, 2.5));
-    if (p.length) push('Solidez del balance', avg(p), 'Cuánta deuda carga frente a su patrimonio y si puede pagar lo que vence este año');
+    if (p.length) push('Solidez del balance', avg(p), 'Cuánta deuda carga frente a su patrimonio y si puede pagar lo que vence este año',
+      [de != null ? `Deuda / capital ${de.toFixed(2)}` : null, cr != null ? `Razón corriente ${cr.toFixed(2)}` : null]);
   }
   // 5) Momentum del precio — dónde cotiza dentro de su propio rango de 52 semanas.
   {
     const hi = num(info.fiftyTwoWeekHigh), lo = num(info.fiftyTwoWeekLow), px = num(info.regularMarketPrice);
     if (hi > 0 && lo > 0 && hi > lo && px > 0)
       push('Momentum del precio', sc((px - lo) / (hi - lo), 0, 1),
-           `Cotiza al ${(px/hi*100).toFixed(0)}% de su máximo de 52 semanas ($${hi.toFixed(2)}); su mínimo del año fue $${lo.toFixed(2)}`);
+           `Dónde cotiza dentro de su rango del último año: máximo $${hi.toFixed(2)}, mínimo $${lo.toFixed(2)}`,
+           [`$${px.toFixed(2)}`, `${(px/hi*100).toFixed(0)}% de su máximo`]);
   }
   return out.length ? out : null;
 }
@@ -30244,7 +30294,8 @@ function _renderQualAnalysis(a, el){
     const hc = v => v>=6.5 ? 'var(--px-green)' : v>=4 ? 'var(--px-amber)' : 'var(--px-red)';
     if (hd || hh) FI += `<div class="px-card">${stitle(a.tituloSalud || 'Salud financiera', hd ? 'Nota del 1 al 10' : 'Frente a sus pares')}
       ${hd ? `<div class="px-hd" style="--n:${hd.length}">${hd.map(x=>{const c=hc(x.v);
-        return `<div class="px-hdc"><div class="hdt"><span>${esc(x.n)}</span><b style="color:${c}">${x.v.toFixed(1)}</b></div><span class="px-track"><i style="width:${Math.round(x.v*10)}%;background:${c}"></i></span><p>${esc(x.d)}</p></div>`;}).join('')}</div>` : ''}
+        return `<div class="px-hdc"><div class="hdt"><span>${esc(x.n)}</span><b style="color:${c}">${x.v.toFixed(1)}</b></div><span class="px-track"><i style="width:${Math.round(x.v*10)}%;background:${c}"></i></span>${x.m ? `<div class="hdm">${esc(x.m)}</div>` : ''}<p>${esc(x.d)}</p></div>`;}).join('')}</div>` : ''}
+      ${hd && hh ? `<div class="px-hsub">${a.health_sector && a.health_sector.length ? 'Solidez del balance frente a sus pares' : 'Las cifras del negocio'}</div>` : ''}
       ${hh ? `<div class="px-hgrid">${hh.map(x=>`<div class="px-hbox"><div class="kk">${esc(x.kk)}</div><div class="vv">${esc(x.vv)}</div><div class="dd ${x.tone}">${esc(String(x.dd || '').replace(/ \((de su grupo afín|del mercado)\)\)$/, ', $1)'))}</div></div>`).join('')}</div>` : ''}
       ${hd ? `<div class="px-hint">Preguntas distintas sobre la misma empresa: una muy rentable que ya no crece y otra que crece perdiendo dinero pueden tener la misma nota global. Aquí se ve cuál es cuál${hh ? ', y debajo están las cifras que dan estas notas' : ''}.</div>` : ''}</div>`;
   }
@@ -30258,7 +30309,7 @@ function _renderQualAnalysis(a, el){
       const _tb = _pvxTablaValor(b.filas);
       FI += `<div class="px-card">${stitle(b.titulo, _pvxEbMediana(_tb.origen))}
         ${_tb.html}
-        <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero. Arriba, las que entran en la nota; debajo, el resto de cifras publicadas de este apartado.</div></div>`;
+        <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero. Van de la más importante a la menos, con el dato actual antes que su media de varios años; las marcadas «No entra en la nota» se ven, pero el modelo del sector no las puntúa.</div></div>`;
     }
   }
 
@@ -30269,7 +30320,7 @@ function _renderQualAnalysis(a, el){
     FI += `<div class="px-card"><details class="px-otros">
       <summary>${stitle('Otros datos publicados', `No entran en la nota · ${a.otros_sector.length} métricas`)}</summary>
       <p class="px-intro">Lo demás que el proveedor publica de esta empresa, con la mediana de sus pares al lado. Ordenado por lo que más se separa del sector.</p>
-      <div style="margin-top:14px">${_pvxTablaValor(a.otros_sector).html}</div>
+      <div style="margin-top:14px">${_pvxTablaValor(a.otros_sector, { sinMarca: true }).html}</div>
       <div class="px-hint">Estas métricas NO entran en la nota: el modelo de cada sector decide cuáles la mueven. Están aquí para que puedas verlas todas.</div>
     </details></div>`;
   }
@@ -60643,6 +60694,7 @@ html body #tab-analizar #researchResults .pvx .px-vr .vmd { font-size:15px; font
 html body #tab-analizar #researchResults .pvx .px-vr .vmd em { display:none; font-style:normal; }
 html body #tab-analizar #researchResults .pvx .px-vr .vmd i { font-style:normal; font-size:12.5px; color:var(--pac-muted); }
 html body #tab-analizar #researchResults .pvx .px-vsep { padding:18px 0 8px; border-top:1px solid var(--pac-line); font-size:13px; font-weight:700; color:var(--pac-muted); }
+html body #tab-analizar #researchResults .pvx .px-vr .vm .vnn { display:block; margin-top:2px; font-style:normal; font-size:12px; font-weight:600; color:var(--pac-muted); }
 html body #tab-analizar #researchResults .pvx .px-otros > summary .px-sec-title { margin:0 !important; }
 html body #tab-analizar #researchResults .pvx .px-otros[open] > summary { margin-bottom:14px; }
 html body #tab-analizar #researchResults .pvx .px-otros-n { font-size:13px !important; font-weight:700; color:var(--pac-muted) !important; }
@@ -60657,6 +60709,9 @@ html body #tab-analizar #researchResults .pvx .px-hdc .hdt { display:flex; align
 html body #tab-analizar #researchResults .pvx .px-hdc .px-track { display:block; margin:10px 0; overflow:hidden; }
 html body #tab-analizar #researchResults .pvx .px-hdc .px-track > i { display:block; height:100%; }
 html body #tab-analizar #researchResults .pvx .px-hdc p { margin:0; font-size:13.5px; line-height:1.55; color:var(--pac-muted); text-wrap:pretty; }
+html body #tab-analizar #researchResults .pvx .px-hdc .hdm { margin:0 0 6px; font-size:14px; font-weight:700; color:var(--pac-ink); font-variant-numeric:tabular-nums; }
+html body #tab-analizar #researchResults .pvx .px-hsub { margin-top:26px; padding-top:18px; border-top:1px solid var(--pac-line); font-size:13px; font-weight:700; color:var(--pac-muted); }
+html body #tab-analizar #researchResults .pvx .px-hsub + .px-hgrid { margin-top:12px !important; }
 html body #tab-analizar #researchResults .pvx .px-hgrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px,1fr)) !important; gap:12px !important; margin-top:22px !important; }
 html body #tab-analizar #researchResults .pvx .px-hbox { border:0 !important; border-radius:18px !important; background:var(--pac-wash) !important; padding:14px 16px !important; }
 html body #tab-analizar #researchResults .pvx .px-hbox .kk { font-size:13px !important; font-weight:700; color:var(--pac-muted) !important; }
