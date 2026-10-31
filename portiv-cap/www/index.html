@@ -44783,8 +44783,34 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     return null;
   }
 
+  // ── Freno de frecuencia ─────────────────────────────────────────────────
+  // El gate lo dispara mucha gente (arranque, foco, red, StoreKit, 403 de SnapTrade…).
+  // Pase lo que pase aguas arriba, aquí se garantiza un techo: una sola evaluación en
+  // vuelo, y como mucho una cada GATE_MIN_MS. Lo que llegue dentro de la ventana se
+  // funde en UNA pasada al final de ella, así ningún cambio real se pierde (quien
+  // acaba de restaurar o de recuperar la red sigue viendo el veredicto nuevo).
+  var GATE_MIN_MS = 3000;
+  var _gateInflight = null, _gateLastAt = 0, _gateTrailing = null;
+  window._pvSubGate = function(){
+    if (_gateInflight) return _gateInflight;
+    var wait = _gateLastAt + GATE_MIN_MS - Date.now();
+    if (wait > 0) {
+      if (!_gateTrailing) {
+        _gateTrailing = new Promise(function(res){
+          setTimeout(function(){ _gateTrailing = null; res(window._pvSubGate()); }, wait);
+        });
+      }
+      return _gateTrailing;
+    }
+    _gateLastAt = Date.now();
+    _gateInflight = _subGateRun()
+      .catch(function(){ return null; })
+      .then(function(r){ _gateInflight = null; _gateLastAt = Date.now(); return r; });
+    return _gateInflight;
+  };
+
   // ── Evaluación + pintado ────────────────────────────────────────────────
-  window._pvSubGate = async function(){
+  async function _subGateRun(){
     // Sólo la señal DURA corta antes de leer: si el sistema dice que no hay
     // interfaz, la petición no va a ninguna parte y el muro que se pintara sería
     // una acusación inventada con el wifi caído como única prueba.
@@ -44940,7 +44966,17 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     if (!(window._pvIsNativeApp && window._pvIsNativeApp())) return;   // en web no hay nada que atar
     try {
       if (window.PortivIAP && typeof window.PortivIAP.onChange === 'function') {
-        window.PortivIAP.onChange(function(){
+        // Sólo un CAMBIO real de isPro cuenta. portiv-iap.js emite en cada refresh(),
+        // cambie o no, y _pvSubStatus llama a refresh() cuando el servidor dice que no:
+        // gate → refresh → emit → gate… era un bucle sin fin. En la app de Mac llegó a
+        // ~1 millón de lecturas de `subscriptions` al día desde un solo dispositivo.
+        // La primera llamada (onChange invoca al registrar) sólo fija la referencia:
+        // el gate del arranque ya corre por su cuenta.
+        var _seen = null;
+        window.PortivIAP.onChange(function(isPro){
+          var v = !!isPro, first = (_seen === null), changed = (_seen !== v);
+          _seen = v;
+          if (first || !changed) return;
           if (!window._pvAuthReady) return;
           try { window._pvEntitlementSync(); } catch(e){}
           try { window._pvSubGate(); } catch(e){}
