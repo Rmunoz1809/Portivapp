@@ -18767,7 +18767,9 @@ async function _fetchEventBrief(ev){
   if (location.protocol === 'file:' && (!window._aiKeyAvailable || !window._aiKeyAvailable())) return null;
   const key = _briefCacheKey(ev);
   const cached = _nmAiGet(key);
-  if (cached) return cached;
+  // Solo vale un brief con `resumen`: uno incompleto en caché se devolvía como bueno, el
+  // detalle se quedaba en «Preparando…» y nunca se volvía a generar.
+  if (cached && cached.resumen) return cached;
   if (_evBriefInflight.has(key)) return _evBriefInflight.get(key);   // ya se está generando → reusa
   const _p = _fetchEventBrief_impl(ev, key);
   _evBriefInflight.set(key, _p);
@@ -18785,7 +18787,7 @@ async function _fetchEventBrief_impl(ev, key){
     _shared = await _eventSharedGet(key);
     if (!_shared) _sharedMiss.add(key);
   }
-  if (_shared) { _nmAiSet(key, _shared, 30*24*60*60*1000); return _shared; }
+  if (_shared && _shared.resumen) { _nmAiSet(key, _shared, 30*24*60*60*1000); return _shared; }
   const _tkList = (ev.tickers_affected || ev.tickers || []).map(t=>String(t).trim().toUpperCase()).filter(Boolean);
   const PROMPT = `Explica BREVEMENTE cómo afecta esta noticia al mercado. NO copies ni parafrasees el titular: interpreta el impacto.
 
@@ -18803,7 +18805,9 @@ Responde ÚNICAMENTE con JSON válido, sin texto adicional:
 }
 
 REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase de máx ~20 palabras. "contexto" máx 2 frases. Directo, claro y con contexto real, pero SIN relleno, sin listas dentro de un punto, sin "="/flechas. Responde en español.${(ev.description||ev.summary) ? '' : '\n\nEFICIENCIA: máximo UNA (1) búsqueda web, nunca más.'}`;
-  const _body = { model:'gemini-3.1-flash-lite', max_tokens:550, system:'Eres un analista financiero conciso. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código. Vas al grano: frases cortas, sin relleno.', prompt:PROMPT };
+  // 1500 y no 550: en Gemini 3 el razonamiento se descuenta del mismo maxOutputTokens, y con
+  // 550 el JSON podía llegar cortado → no se podía leer → «Preparando…» para siempre.
+  const _body = { model:'gemini-3.1-flash-lite', max_tokens:1500, system:'Eres un analista financiero conciso. Respondes ÚNICAMENTE con JSON válido en español, sin texto adicional ni bloques de código. Vas al grano: frases cortas, sin relleno.', prompt:PROMPT };
   if (!(ev.description||ev.summary)) { _body.allowed_tools = ['WebSearch','WebFetch']; _body.tools = [{ type:'web_search_20250305', name:'web_search', max_uses:1 }]; }
 
   // Texto que NO es análisis, sino un error/límite del proveedor (suscripción rate-limited, etc.).
@@ -18815,15 +18819,30 @@ REGLAS DE CONCISIÓN (importante): exactamente 3 puntos, cada uno UNA sola frase
     const r = await _aiFetch( { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(_body) }, true);   // essential: cloud-shared (shared_analysis) → 1× global, permitido en path de pago
     const j = await r.json().catch(()=>({}));
     try{ _tokAdd(j.usage, 'gemini-3.1-flash-lite', 'intel'); }catch(e){}
-    if (!r.ok) return '';
+    if (!r.ok) { _evBriefFallo(r.status, (j && j.error && j.error.message) || '', j && j.error_code); return ''; }
     return (j.text || '').trim();
+  };
+  // Un intento + un reintento: el fallo típico (respuesta cortada, error puntual del
+  // proveedor) se arregla solo al repetir. Sin permiso de IA o sin sesión no se repite.
+  const _intento = async () => {
+    const t = await _tryGetText();
+    if (!t) return null;
+    if (_looksLikeError(t)) { _evBriefFallo(429, t.slice(0, 120)); return null; }
+    const d = _aiExtractJson(t);
+    if (!d || !d.resumen) { _evBriefFallo(0, 'respuesta incompleta de la IA'); return null; }
+    return d;
   };
 
   try {
-    let t = await _tryGetText();
-    if (!t || _looksLikeError(t)) return null;   // fuente caída → se queda el determinista
-    const data = _aiExtractJson(t);
-    if (!data || !data.resumen) return null;
+    window._evBriefLastErr = null;
+    let data = await _intento();
+    const _e = window._evBriefLastErr;
+    if (!data && !(_e && (_e.code === 'ai_consent_required' || _e.code === 'auth_required' || _e.status === 401 || _e.status === 403))) {
+      await new Promise(res => setTimeout(res, 1200));
+      data = await _intento();
+    }
+    if (!data) return null;
+    window._evBriefLastErr = null;
     // Interpretación de un titular fijo → no cambia. Cache 30 días.
     _nmAiSet(key, data, 30 * 24 * 60 * 60 * 1000);
     _sharedMiss.delete(key);      // ya existe en la nube → la caché de negativos deja de aplicar
@@ -18890,18 +18909,39 @@ function _briefSkeleton(){
     <div class="nm-ai-skel-line" style="width:72%"></div>
   </div>`;
 }
-// Mensaje discreto cuando el análisis IA aún no está disponible (jamás el genérico).
+// Último motivo por el que el brief no salió ({status, msg, code}). Lo usa el mensaje de
+// abajo para decir QUÉ pasó, y queda en la consola para diagnosticar.
+function _evBriefFallo(status, msg, code){
+  window._evBriefLastErr = { status: status || 0, msg: String(msg || ''), code: code || '' };
+  try { console.warn('[brief evento] sin análisis:', status, msg, code || ''); } catch(e){}
+}
+// El análisis IA no salió (ya con su reintento). Antes decía «vuelve a abrirla en un
+// momento» aunque el fallo no se fuera a arreglar solo; ahora dice el motivo y deja
+// reintentar aquí mismo. Nunca el texto genérico.
 function _briefPreparing(){
-  return `<div style="background:#fff;border:1px solid var(--st-surface-highest,#d3e4fe);border-radius:12px;padding:18px;display:flex;align-items:center;gap:10px;color:var(--text2,#44474d);font-size:13px;line-height:1.5">
+  const e = window._evBriefLastErr || {};
+  const motivo = e.code === 'ai_consent_required' ? 'El análisis con IA está desactivado en Ajustes.'
+    : (e.code === 'auth_required' || e.status === 401) ? 'Tu sesión caducó: vuelve a iniciar sesión.'
+    : (e.status === 429 || e.status === 402) ? 'Se alcanzó el límite de uso de IA por ahora.'
+    : 'No se pudo generar el análisis de esta noticia.';
+  const sinReintento = e.code === 'ai_consent_required';
+  return `<div style="background:#fff;border:1px solid var(--st-surface-highest,#d3e4fe);border-radius:12px;padding:18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;color:var(--text2,#44474d);font-size:13px;line-height:1.5">
     <span class="material-symbols-outlined" style="font-size:18px;color:#5b6b7d;flex-shrink:0">insights</span>
-    <span>Preparando el análisis de esta noticia con IA… vuelve a abrirla en un momento.</span>
+    <span style="flex:1;min-width:180px">${pvEsc(motivo)}</span>
+    ${sinReintento ? '' : `<button type="button" onclick="_briefReintentar()" style="border:1px solid var(--st-surface-highest,#d3e4fe);background:#fff;color:#04162c;font:600 13px/1 var(--font,system-ui);padding:9px 14px;border-radius:999px;cursor:pointer">Reintentar</button>`}
   </div>`;
 }
+// Reintento desde el propio detalle: vuelve a pedir el brief del evento abierto.
+function _briefReintentar(){
+  try { const ev = window._nmCurrentEventObj; if (ev) _genEventResult(ev); } catch(e){}
+}
+window._briefReintentar = _briefReintentar;
 async function _genEventResult(ev) {
   const mkt = document.getElementById('nmMktBody');
   if (!mkt) return;
   // Marca cuál es el evento visible ahora (para descartar respuestas IA tardías de otro evento).
   window._nmCurrentEventTitle = ev && ev.title;
+  window._nmCurrentEventObj = ev;   // para el botón «Reintentar»
   const _titleAtStart = ev && ev.title;
   // 1) Análisis IA YA cacheado (pre-generado por el prewarm o leído de la nube) → muéstralo al
   //    instante. El usuario JAMÁS ve el texto genérico determinista.
