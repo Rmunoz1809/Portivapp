@@ -41297,12 +41297,28 @@ if (document.readyState === 'loading') {
         if (!ASI) throw new Error('Inicio de sesión con Apple no disponible en esta versión de la app.');
         var rawNonce = _appleGenNonce();
         var hashedNonce = await _appleSha256Hex(rawNonce);
-        var res = await ASI.authorize({
-          clientId: 'com.portivapp.portafolio',   // = Bundle ID; debe estar en los Client IDs del proveedor Apple en Supabase
-          redirectURI: 'https://portivapp.com/',   // ignorado por ASAuthorization nativo, requerido por la firma del plugin
-          scopes: 'email name',
-          nonce: hashedNonce
-        });
+        var res;
+        try {
+          res = await ASI.authorize({
+            clientId: 'com.portivapp.portafolio',   // = Bundle ID; debe estar en los Client IDs del proveedor Apple en Supabase
+            redirectURI: 'https://portivapp.com/',   // ignorado por ASAuthorization nativo, requerido por la firma del plugin
+            scopes: 'email name',
+            nonce: hashedNonce
+          });
+        } catch(eNat){
+          // 1000 en Mac: la app no tiene el permiso de Sign in with Apple (build sin firma del
+          // equipo) o el Mac no tiene Apple ID. La página web de Apple, dentro de la ventana de
+          // la app, no depende de ese permiso: es el mismo inicio que usa portivapp.com.
+          var _cN = String((eNat && eNat.code) || ''), _mN = String((eNat && eNat.message) || '');
+          var _W = window._pvMacWebSheet ? window._pvMacWebSheet() : null;
+          if (_W && (_cN === '1000' || /error 1000\b/.test(_mN))) {
+            await _authOAuthMacSheet(_W, 'apple', 'Continuar con Apple');
+            if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+            if (lbl) lbl.textContent = origTxt;
+            return;
+          }
+          throw eNat;
+        }
         var idToken = res && res.response && res.response.identityToken;
         if (!idToken) throw new Error('Apple no devolvió el token de identidad.');
         var rn = await sb.auth.signInWithIdToken({ provider: 'apple', token: idToken, nonce: rawNonce });
@@ -41366,16 +41382,17 @@ if (document.readyState === 'loading') {
     } catch(e){ return null; }
   };
 
-  // Google en Mac: OAuth de Supabase dentro de la ventana de la app. La página de Google
-  // termina redirigiendo a portivapp.com con la sesión (#access_token… o ?code=); la ventana
-  // corta esa navegación, se cierra y aquí se instala la sesión en este mismo cliente.
-  async function _authGoogleMacSheet(W){
+  // Google (y Apple sin permiso nativo) en Mac: OAuth de Supabase dentro de la ventana de la
+  // app. La página del proveedor termina redirigiendo a portivapp.com con la sesión
+  // (#access_token… o ?code=); la ventana corta esa navegación, se cierra y aquí se instala
+  // la sesión en este mismo cliente.
+  async function _authOAuthMacSheet(W, provider, title){
     var _ret = 'https://portivapp.com/';
-    var r = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: _ret, skipBrowserRedirect: true } });
+    var r = await sb.auth.signInWithOAuth({ provider: provider, options: { redirectTo: _ret, skipBrowserRedirect: true } });
     if (r && r.error) throw r.error;
     var authUrl = r && r.data && r.data.url;
-    if (!authUrl) throw new Error('No se pudo preparar el inicio de sesión con Google.');
-    var out = await W.open({ url: authUrl, returnPrefixes: [_ret], title: 'Continuar con Google' });
+    if (!authUrl) throw new Error('No se pudo preparar el inicio de sesión.');
+    var out = await W.open({ url: authUrl, returnPrefixes: [_ret], title: title });
     if (!out || out.closed || !out.url) throw new Error('canceled');
     var u = new URL(out.url);
     var h = new URLSearchParams((u.hash || '').replace(/^#/, ''));
@@ -41388,7 +41405,7 @@ if (document.readyState === 'loading') {
     } else if (q.get('code')) {
       res = await sb.auth.exchangeCodeForSession(q.get('code'));
     } else {
-      throw new Error('Google no devolvió la sesión.');
+      throw new Error('No se recibió la sesión.');
     }
     if (res && res.error) throw res.error;
   }
@@ -41406,7 +41423,7 @@ if (document.readyState === 'loading') {
       // Mac: dentro de la ventana de la app, no en Chrome.
       var _macSheet = _isNative ? window._pvMacWebSheet() : null;
       if (_macSheet) {
-        await _authGoogleMacSheet(_macSheet);
+        await _authOAuthMacSheet(_macSheet, 'google', 'Continuar con Google');
         if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
         if (lbl) lbl.textContent = origTxt;
         return;
