@@ -6930,43 +6930,6 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
 
   <div id="snapConnectCard" class="snap-card"></div>
 
-  <!-- ── 3. ANALIZAR IMÁGENES (OCR de screenshot del broker) ──
-       RETIRADO de la interfaz a pedido, junto con el Editor del Portafolio: el portafolio
-       se llena solo desde el broker (SnapTrade). El bloque se conserva OCULTO porque el
-       importador escribía en la misma tabla que hoy usa la sincronización del broker
-       (aiPortImportData → aiPortApply); borrar el DOM rompería esa ruta. -->
-  <div class="prof-card" style="order:3;display:none" aria-hidden="true">
-    <div class="prof-card-title">Sincronizar desde Screenshot del Broker</div>
-    <div style="font-size:15px;font-weight:700;color:var(--st-primary);font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;margin-bottom:6px;">Importar datos desde imagen</div>
-    <div style="font-size:13px;color:var(--text3);margin-bottom:16px;line-height:1.5;">Sube capturas de pantalla de tu broker. La IA extrae automáticamente posiciones, precios, costo base y cambios del día.</div>
-
-    <div id="aiDrop" class="prof-ai-drop"
-      ondragover="event.preventDefault();this.classList.add('drag')"
-      ondragleave="this.classList.remove('drag')"
-      ondrop="aiPortDrop(event)"
-      onclick="document.getElementById('aiFile').click()">
-      <div id="aiDropLabel">
-        <div class="prof-ai-drop-label" style="margin-bottom:4px">Arrastra screenshots aquí o haz clic para subir</div>
-        <div class="prof-ai-drop-sub">Puedes subir varios archivos · JPG, PNG, WEBP</div>
-      </div>
-      <div id="aiFileReady" class="prof-ai-ready">
-        <span id="aiFileName" style="font-size:12px;color:var(--text2);font-weight:600"></span>
-        <div class="prof-ai-actions">
-          <button class="pe-add-btn" style="background:var(--surface2);color:var(--text2);font-size:12px"
-            onclick="document.getElementById('aiFile').click();event.stopPropagation()">＋ Agregar otro</button>
-          <button id="aiExtractBtn" class="pe-apply-btn" style="font-size:12px"
-            onclick="aiPortExtract();event.stopPropagation()">
-            <span class="material-symbols-outlined" style="font-size:15px">auto_awesome</span>
-            Aplicar al portafolio
-          </button>
-          <button class="pe-del-btn" title="Quitar todos"
-            onclick="aiPortClearFiles();event.stopPropagation()" style="font-size:20px">×</button>
-        </div>
-      </div>
-      <input id="aiFile" type="file" accept="image/*" multiple style="display:none" onchange="aiPortFileSelected(this)" />
-    </div>
-  </div>
-
   <!-- ── 4. EDITOR DEL PORTAFOLIO ── RETIRADO de la interfaz a pedido.
        No se borra el markup: la sincronización con el broker (SnapTrade) escribe sus
        posiciones en esta tabla y luego llama a aiPortApply() para volcarlas al portafolio
@@ -10122,7 +10085,7 @@ function _aiSbOn(){ try { return _PV_NATIVE || /^https?:$/.test(location.protoco
 //
 // DÓNDE SE APLICA: no en cada feature (son 13 puntos de llamada y cualquiera nuevo se
 // olvidaría), sino en el único sitio por el que los datos SALEN del dispositivo — el
-// fetch a _AI_SB_URL dentro de _aiFetch y _aiFetchVision. Ahí el gate es imposible de
+// fetch a _AI_SB_URL dentro de _aiFetch. Ahí el gate es imposible de
 // esquivar y no se paga con un modal en features que ni siquiera llegan a la red (las
 // no esenciales se cortan antes con el 503 sintético de "paid-skip").
 //
@@ -10358,7 +10321,7 @@ const _PV_AI_CONSENT = {
       + '</div>'
       + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:12px">'
       +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ SE ENVÍA</div>'
-      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Los símbolos de tus posiciones, su peso en la cartera, el sector, la beta, el retorno esperado y el plan de rebalanceo calculado. Si usas el importador por captura, también la imagen que subes.</div>'
+      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Los símbolos de tus posiciones, su peso en la cartera, el sector, la beta, el retorno esperado y el plan de rebalanceo calculado.</div>'
       + '</div>'
       + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:16px">'
       +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ NO SE ENVÍA</div>'
@@ -10716,12 +10679,6 @@ const _ANTHROPIC_MODEL_MAP = {
 const AI_MODELS = {
   reasoning:  'gemini-3.1-flash-lite',
   structured: 'gemini-3.1-flash-lite',
-  // Visión = el Flash grande, NO el -lite: Haiku ya cometía errores de lectura en tablas
-  // densas (tickers/precios) y por eso la visión nunca corrió en el modelo chico. Se
-  // conserva esa decisión al migrar: calidad primero, porque el fallback solo salta ante
-  // un ERROR (502/timeout), no ante una lectura MALA — un OCR equivocado se guardaría
-  // como bueno. Fallback automático a gemini-3.1-flash-lite en _visionCall.
-  vision:     'gemini-3.7-flash',
   // Narrativa del análisis por acción (intro "qué es / cómo gana", pros, riesgos, valoración).
   // Sonnet 5.5 = mejor criterio de inversión. Se genera 1× por ticker y se cachea en la nube
   // (qbio:v3:TICKER vía _sharedAIGet/Set): el 1er usuario la paga, el resto la lee gratis.
@@ -10780,7 +10737,7 @@ window._aiKeyAvailable = function(){ return false; };   // key en cliente elimin
 
 
 // ── Caché en memoria del access token ────────────────────────────────────────
-// `_sbc.auth.getSession()` se llamaba en CADA petición de IA (_aiFetch y _aiFetchVision).
+// `_sbc.auth.getSession()` se llamaba en CADA petición de IA (_aiFetch).
 // En una ráfaga (prewarm de briefs, traducción, chat) eso son N lecturas/parseos de
 // localStorage seguidos. Con la caché, la ráfaga paga una sola.
 let _tokCache = { tok: null, exp: 0 };
@@ -10841,7 +10798,6 @@ async function _aiFetch(opts, essential) {
   // ── IDIOMA DE SALIDA (punto único) ──────────────────────────────────────────
   // Fuerza que TODA respuesta de IA de texto (noticias, análisis, briefs, chat…) salga
   // en el idioma elegido, sin importar el idioma escrito en el prompt. La visión (OCR)
-  // usa _aiFetchVision, NO pasa por aquí, así que su JSON numérico no se altera.
   // Proxy de destino según el modelo pedido. El modelo NO llega como parámetro: viaja
   // serializado dentro de opts.body, así que se resuelve en el MISMO JSON.parse que ya
   // hace el override de idioma (no se parsea dos veces). Si el body no es JSON válido o
@@ -10905,39 +10861,6 @@ async function _aiFetch(opts, essential) {
   return _sbErr || new Response(JSON.stringify({ error: { message: 'No se pudo conectar con el servicio de IA.' } }), { status: 502, headers: { 'content-type': 'application/json' } });
 }
 
-// ── Fetch de VISIÓN (analizador de fotos) ────────────────────────────────────
-// La visión (OCR de portafolio) pasa por el MISMO proxy server-side que el resto de la IA.
-async function _aiFetchVision(opts) {
-  // PRODUCCIÓN: proxy Supabase (key server-side) ANTES que Netlify. En GitHub Pages / host
-  // estático la Netlify Function no existe → daba 405 ("Error al importar: Error 405"). El
-  // analizador de fotos debe pasar por el MISMO proxy que el resto de la IA (_aiFetch).
-  // Mismo ruteo por proveedor que _aiFetch: el modelo viaja dentro de opts.body, no como
-  // parámetro. Aquí NO hay override de idioma (el JSON del OCR no se toca), así que este
-  // es el único parseo. Body inválido o sin `model` → _AI_SB_URL, como antes.
-  let _url = _AI_SB_URL;
-  try { if (opts && opts.body) _url = _aiProviderUrl(JSON.parse(opts.body).model); } catch(e){}
-  let _sbErr;
-  if (typeof _aiSbOn === 'function' && _aiSbOn()) {
-    try {
-      // GATE 5.1.2(i): la captura del broker es un dato personal más (a menudo con el
-      // saldo y el número de cuenta a la vista), así que la visión pasa por el MISMO
-      // permiso que el texto. Ver _PV_AI_CONSENT.
-      if (!(await _PV_AI_CONSENT.ensure())) return _pvAiNoConsentRes();
-      const r = await _aiPost(_url, opts && opts.body);
-      if (r.ok) return r;
-      _sbErr = r;
-      // Cuota/suscripción agotada → mensaje claro y NO seguir al fallback de pago.
-      if (r.status === 429 || r.status === 402) {
-        let _msg = 'Alcanzaste tu límite de uso de IA. Intenta más tarde.', _code = '';
-        try { const _ej = await r.clone().json(); _code = (_ej && _ej.error_code) || ''; if (_ej && _ej.error && _ej.error.message) _msg = _ej.error.message; } catch(e){}
-        return new Response(JSON.stringify({ error: { message: _msg }, error_code: _code }), { status: r.status, headers: { 'content-type': 'application/json' } });
-      }
-    } catch(e) {}
-  }
-  // Mismo motivo que en _aiFetch: el fallback a la Netlify Function era un proxy abierto
-  // a Anthropic con nuestra key. Eliminado.
-  return _sbErr || new Response(JSON.stringify({ error: { message: 'No se pudo conectar con el servicio de IA.' } }), { status: 502, headers: { 'content-type': 'application/json' } });
-}
 
 // ── Modelo adaptativo por COSTO ──────────────────────────────────────────────
 // Si hay suscripción personal, la IA es GRATIS → usa el
@@ -10947,7 +10870,6 @@ async function _aiFetchVision(opts) {
 // suficiente para estos análisis estructurados.
 function _aiQualityModel(preferred){
   // Forzado al modelo chico en TODOS los entornos (local y Netlify). Única excepción del
-  // modelo grande: el analizador de fotos (AI_MODELS.vision / _visionCall). No subirlo aquí.
   // OJO: este helper decide el modelo REAL que se manda (ver PV_AI.render → body.model),
   // mientras que el _tokAdd de PV_AI cobra con PV_AI.MODEL. Si cambias uno, cambia el otro
   // o el badge de gasto atribuirá el costo a un modelo que no se usó.
@@ -16738,10 +16660,9 @@ function renderTable(T, opts) {
   if (!HOLDINGS.length && !_pvLocked()) {
     html = `<tr><td colspan="13" style="padding:38px 20px;text-align:center;">
       <div style="font-size:15px;font-weight:700;color:var(--text2);margin-bottom:6px;">Todavía no tienes posiciones</div>
-      <div style="font-size:13px;color:var(--text3);line-height:1.6;max-width:420px;margin:0 auto 16px;">Conecta tu broker para importarlas automáticamente, sube una captura de pantalla y deja que la IA las extraiga, o añádelas a mano.</div>
+      <div style="font-size:13px;color:var(--text3);line-height:1.6;max-width:420px;margin:0 auto 16px;">Conecta tu broker para importarlas automáticamente o añádelas a mano.</div>
       <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;">
         <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Conectar broker</button>
-        <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Subir captura</button>
         <button class="pe-add-btn" onclick="try{showTab('settings')}catch(e){}">Añadir manualmente</button>
       </div>
     </td></tr>` + html;
@@ -17179,13 +17100,23 @@ function _pvphSegReveal(){
 // ═══════════════════════════════════════════════════
 //  DRAWER LOGIC
 // ═══════════════════════════════════════════════════
+// Foco automático solo con ratón (Mac, escritorio). En iPhone y iPad enfocar un campo abre
+// el teclado de golpe, encima de la hoja de compra/venta que se acaba de abrir: ahí el
+// teclado sale cuando el usuario toca el campo.
+function _pvAutoFocus(el){
+  if (!el) return;
+  try { if (matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0) return; } catch(e){}
+  try { el.focus(); } catch(e){}
+}
+window._pvAutoFocus = _pvAutoFocus;
+
 function toggleDrawer(idx) {
   if (activeDrawer && activeDrawer.idx === idx) {
     closeDrawer();
   } else {
     activeDrawer = { idx, mode: 'buy', orderType: 'money' };
     renderTable(calcTotals(), { force: true });
-    setTimeout(() => { const inp = document.getElementById(`amt-${idx}`); if(inp) inp.focus(); }, 50);
+    setTimeout(() => _pvAutoFocus(document.getElementById(`amt-${idx}`)), 50);
   }
 }
 
@@ -17197,14 +17128,14 @@ function closeDrawer() {
 function setMode(idx, mode) {
   activeDrawer = { idx, mode, orderType: 'money' };
   renderTable(calcTotals(), { force: true });
-  setTimeout(() => { const inp = document.getElementById(`amt-${idx}`); if(inp) inp.focus(); }, 50);
+  setTimeout(() => _pvAutoFocus(document.getElementById(`amt-${idx}`)), 50);
 }
 
 function setOrderType(idx, type) {
   activeDrawer = { ...activeDrawer, idx, orderType: type };
   renderTable(calcTotals(), { force: true });
   if (type !== 'all') {
-    setTimeout(() => { const inp = document.getElementById(`amt-${idx}`); if(inp) inp.focus(); }, 50);
+    setTimeout(() => _pvAutoFocus(document.getElementById(`amt-${idx}`)), 50);
   }
 }
 
@@ -33648,7 +33579,7 @@ function openAddStock() {
   _addBuyType = 'money';
   _addSugItems = []; _addSugIdx = -1; _renderAddSuggestions();
   _addResetToggle();
-  setTimeout(()=>$('addTickerInput').focus(), 100);
+  setTimeout(()=>_pvAutoFocus($('addTickerInput')), 100);
 }
 
 // ── Movimiento de los diálogos de compra / efectivo ───────────────────────
@@ -33734,7 +33665,7 @@ function openCashModal(type) {
   $('cashWarn').classList.remove('show'); $('cashWarn').textContent = '';
   $('cashConfirmBtn').disabled = true;
   _cashSetType(_cashOpType);
-  setTimeout(()=>$('cashAmountInput').focus(), 100);
+  setTimeout(()=>_pvAutoFocus($('cashAmountInput')), 100);
 }
 
 function closeCashModal() {
@@ -33851,7 +33782,7 @@ function _addSetOrderType(type) {
   if ($('asSummary'))    $('asSummary').style.display    = 'none';
   if ($('addWarn'))      { $('addWarn').classList.remove('show'); $('addWarn').textContent = ''; }
   $('addConfirmBtn').disabled = true;
-  if (inp) inp.focus();
+  _pvAutoFocus(inp);
 }
 
 function _addSetQuick(val) {
@@ -34094,7 +34025,7 @@ async function lookupAddPrice() {
   _addRevealOrder(ticker, seedName, cached ? cached.price : 0, cached ? cached.pct : null);
   _addResetToggle();
   if ($('asOrderInput')) $('asOrderInput').value = '';
-  setTimeout(() => { if ($('asOrderInput')) $('asOrderInput').focus(); }, 80);
+  setTimeout(() => _pvAutoFocus($('asOrderInput')), 80);
 
   // 2) Precio en vivo con TECHO DURO de tiempo: la red nunca puede dejar el panel
   //    colgado "cargando". Si tarda más de 8s, seguimos con lo que haya (caché o aviso).
@@ -36876,7 +36807,7 @@ async function autoUpdateNews(force) {
 }
 
 // ═══════════════════════════════════════════════════
-//  AI PORTFOLIO — importar screenshot/JSON y editar todo el portafolio + gráfica
+//  AI PORTFOLIO — importar los datos del broker (SnapTrade) y editar el portafolio + gráfica
 // ═══════════════════════════════════════════════════
 
 const _AI_KNOWN_ETFS = new Set(['VOO','VTI','SPY','QQQ','QQQM','VUG','VEA','VWO','SCHD','IVV','VIG','VYM','ARKK','DIA','IWM','XLK','XLF','SOXX','SMH','VGT','VT','BND','AGG']);
@@ -36972,406 +36903,6 @@ let _currentFeaturedNews  = null;
 let _featuredDay          = '';   // YYYY-MM-DD del featured actual → fuerza refresco diario
 
 let _AI_CHART_APPLIED = false;
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  ANALIZADOR DE FOTOS — OCR de screenshots del broker → importa posiciones.
-//  Restaurado (fue removido en 80fd00f). Backend: proxy de visión (OAuth,
-//  sin API key) local · Netlify Function en producción. Modelo: Sonnet 4.6 con
-//  fallback a Haiku. Flujo: subir imágenes → extraer (1º pase) → verificar celda
-//  por celda (2º pase, salteado si la 1ª lectura cuadra) → editor de revisión.
-// ═══════════════════════════════════════════════════════════════════════════
-const _AI_EXTRACTION_PROMPT = `You are a precise OCR-grade financial data extractor. Your job is to read a brokerage screenshot and report ONLY what is physically printed — like a scanner, not an analyst. Return ONLY valid compact JSON, no commentary, no markdown.
-
-━━ WORKFLOW: TRANSCRIBE FIRST, INTERPRET SECOND ━━
-Do these steps in order. Do NOT skip step 1.
-STEP 1 — VERBATIM TRANSCRIPTION: Before structuring anything, transcribe the holdings table LITERALLY, row by row, exactly as printed (every symbol, every number, every +/- sign, in left-to-right column order). Put each row's own literal line in that position's "raw_transcription". This is your source of truth — the structured fields below must be copied from this transcription, never re-derived.
-STEP 2 — COUNT ROWS: Count how many position rows are visible in the holdings table and put that number in "row_count". You MUST output exactly that many positions (see COMPLETENESS).
-STEP 3 — DETECT HEADERS: Identify the column header of EACH numeric column (e.g. "Price", "Day Chng %", "Mkt Val", "Gain/Loss %"). Map every number in a row to the header above it. Only then fill the structured fields.
-
-━━ ANTI-HALLUCINATION (ABSOLUTE — violating these is the worst possible error) ━━
-• Report ONLY what is printed. You are FORBIDDEN from using outside/world knowledge to "correct", adjust, round, or infer ANY price, percent, share count or ticker. If your memory says NVDA trades near $X but the screenshot shows another number, output the SCREENSHOT's number. Never "fix" a value to match what you think it should be.
-• Never guess, estimate or invent. If a value is not clearly legible → output null for that field and set the row's "needs_review": true. Null + needs_review is ALWAYS better than a guessed number.
-• Do NOT infer or calculate a price from a percentage, or a percentage from a price.
-• Preserve the EXACT sign (+/-). Negatives may show as "-", "(123)", or red text. NEVER drop a negative or flip a sign.
-• Do NOT move decimals or rescale. "+1.05%" stays 1.05 (not 10.5, not 0.0105). "$441.31" stays 441.31.
-• Each field has an implicit confidence; the row-level "confidence" (0–1) is your honest certainty that the whole row was read correctly. < 0.8 means something was hard to read.
-
-━━ ANY BROKER, ANY AMOUNT ━━
-• Screenshots may come from ANY broker (Schwab, Fidelity, Robinhood, Vanguard, E*Trade, Webull, IBKR, Merrill, crypto apps…). Identify each value by its MEANING (the header above it), not by a fixed position.
-• Column synonyms (treat as equivalent): shares ≈ "Qty"/"Quantity"/"Shares"/"Units"; current price ≈ "Price"/"Last"/"Mkt Price"/"Current"; day change % ≈ "Day Chng %"/"Price Chng %"/"Day %"/"Today %"/"Chg%"; cost ≈ "Cost Basis"/"Cost"/"Avg Cost"/"Amount Invested"; total return ≈ "Gain/Loss"/"G/L"/"Total Return"/"Unrealized P/L".
-• Currency/format variants: "$10,270.03", "10.270,03" (European: dot=thousands, comma=decimal → 10270.03), "$11.50K"→11500, "1.2M"→1200000. Amounts vary wildly between users — never anchor to any example number here.
-
-━━ COLUMN DISAMBIGUATION (the #1 cause of % errors — read slowly) ━━
-A broker row has MANY numeric columns. The two that are constantly confused:
-  • day_change_pct = ONLY the intraday "today" change column ("Day Chng %"/"Price Chng %"/"Day %"). Usually sits next to the current price or the day-$ change.
-  • total_return_pct = ONLY the whole-life position return column ("Gain/Loss %"/"G/L %"/"Total Return %"). Usually sits next to market value or total gain $.
-These are DIFFERENT numbers. Find the header of each and never put one's value in the other's field. If only ONE of the two is printed, fill that one and leave the other null + needs_review — NEVER copy a % into the wrong field to "fill it in".
-"Price Chng %" is NOT the price. "G/L %" is NOT the price. Never use a % as a dollar value.
-
-━━ TICKER (fixes the META→NFLX class of errors) ━━
-• The ticker is the SHORT uppercase symbol in the symbol column (1–5 letters, e.g. "NVDA", "VOO", "BRK.B"). Read it LETTER BY LETTER from the printed text — NEVER from a logo, icon, or color.
-• company_name = the long name printed next to it (e.g. "NVIDIA Corp", "Meta Platforms"). It is NOT the ticker.
-• CROSS-CHECK name ↔ ticker: if the name says "Meta" the ticker must be META; "Microsoft"→MSFT; "Apple"→AAPL. If the printed ticker contradicts the printed name, output what you SEE for both and set needs_review: true (do not silently swap).
-• If the symbol is blurry/cut off but the row clearly exists, still output the row with ticker as best-read (or null) and needs_review: true — do NOT drop the row.
-
-━━ COMPLETENESS (no missing companies) ━━
-• Output EXACTLY row_count positions — one per visible row, no more, no fewer.
-• A row you cannot fully read is INCLUDED with needs_review: true and nulls for the unreadable fields — never omitted.
-• Do NOT add a row that isn't physically in the table. Do not add well-known tickers unless they literally appear.
-
-━━ ACCOUNT-LEVEL FIELDS ━━
-portfolio_value: TOTAL ACCOUNT VALUE shown prominently ("Total Value", "Account Value"). Verbatim to the cent.
-cash_balance: cash/money-market row ("Cash & Cash Investments"/"Cash"). Exact amount.
-day_change: account-level day change $ ("Day Change"/"Price Chng $"). Signed.
-total_gain_loss / total_gain_loss_percent: account-level unrealized G/L $ and %, if shown.
-invested_capital: ONLY if explicitly labeled "Cost Basis"/"Amount Invested" at account total level — NEVER sum the per-position cost column.
-period_changes: ONLY explicitly-labeled period returns printed as text (e.g. "3-Month +$393.92 (+3.90%)"). Use the PERCENT with sign. NEVER compute from the chart. Omit unlabeled periods.
-
-━━ SANITY CROSS-CHECKS (re-read, do not fabricate) ━━
-• current_price × shares should ≈ market value of the row. If your numbers don't, re-read them — do NOT invent a price to make it match.
-• sum(position market values) + cash ≈ portfolio_value (±1%). If far off, re-read before outputting.
-
-━━ CHART (read very carefully — this is the hardest part) ━━
-chart_x_labels: EXACT date labels on the x-axis left→right (e.g. ["Apr 24","Apr 26",...,"Jun 5"]). Use the SELECTED period button (e.g. "3M" highlighted) to confirm the date range. Read ALL visible x-axis labels, not just a few.
-chart_y_axis: The dollar price labels on the VERTICAL price axis — usually on the RIGHT side of the chart (Schwab, Fidelity), sometimes the left. Read EVERY gridline label bottom→top EXACTLY as printed (e.g. ["$10.0K","$10.5K","$11.0K","$11.5K"] or ["10,200","10,600","11,000"]). These gridlines are ALWAYS evenly spaced — the gap between consecutive labels is constant (e.g. 500). Read at least the lowest and highest label precisely; they define the visible price band.
-value_chart: Replicate the chart line as [{date:"YYYY-MM-DD",value:N}] oldest-first. This is a SHAPE-TRACING task: your points, connected by straight lines, must reproduce the SAME silhouette as the printed line — every climb, drop, zigzag and plateau. A smooth single arc is almost always WRONG: real broker lines are jagged. METHOD:
-  (A) If a "Table View" / data table of the chart is visible: read those EXACT date→value rows — most accurate, prefer this.
-  (B) Otherwise calibrate using chart_y_axis: the lowest gridline = its dollar value, top gridline = its dollar value, evenly spaced between. For EACH x-axis label, measure the line's vertical position relative to the gridlines and interpolate (e.g. line sitting 40% of the way from $10.5K up to $11.0K = $10,700).
-  DENSE TRACING (most important — this is what makes the chart look alive instead of a basic curve):
-   • Sample the line at MANY x-positions, not just at the x-axis labels. Walk left→right and drop a point every time the line CHANGES DIRECTION (every local peak, local trough, and bend), PLUS evenly-spaced points along long runs. Target 60-90 points for a normal chart, more if the line is very wiggly.
-   • Capture EVERY local up/down, not only the global high/low. If the line goes up-down-up-down between two labels, your points must go up-down-up-down there too — never average a jagged run into one straight diagonal.
-   • Preserve the relative SIZE of each swing: a small wiggle stays small, a big drop stays big. Do not smooth, round, denoise, or "tidy" the curve — transcribe its roughness faithfully.
-  PEAKS & TROUGHS (read carefully — common error is flattening the curve): find the SINGLE highest point and SINGLE lowest point of the line and read each against the nearest gridlines precisely. If the line clearly rises near a gridline (e.g. touches or nears $11K), its value there must reflect that — do NOT compress tall peaks toward the middle. The vertical range your points span should match how tall the line actually swings between its visible high and low. Also keep every secondary peak/trough between them.
-  HARD CONSTRAINTS:
-   • EVERY value MUST fall inside the visible price band [lowest y-axis label, highest y-axis label]. If a value would fall outside, you misread it — recompute.
-   • FIRST point date = leftmost x-axis label; LAST point value MUST equal portfolio_value EXACTLY.
-   • If a labeled period change exists (e.g. "3-Month +3.90%"), then first_value ≈ portfolio_value ÷ (1 + 0.0390). Use this to sanity-check your first point.
-   • Date range = ONLY what's visible on the x-axis of the SELECTED (highlighted) period button. Infer the year from the "Updated"/"as of" timestamp.
-   • null if no value chart is visible.
-
-━━ PERIOD BUTTON DETECTION ━━
-chart_selected_period: Look at the row of period buttons (1W / 2W / 1M / 3M / 6M / 1Y / YTD / ALL etc.).
-One button will appear visually selected — it has a dark/filled background, rounded pill, or is otherwise highlighted compared to the others.
-Output the EXACT label text of that selected button (e.g. "1M", "3M", "6M", "1Y", "ALL").
-This is critical: the chart was drawn for THAT period, so the x-axis dates and value line belong to that period.
-If you cannot identify a selected button, output null.
-
-━━ OUTPUT — STRICT JSON ONLY (no markdown, no prose) ━━
-Each number is a plain number or null. Each percent is the signed percent number (e.g. -1.05). "confidence" is 0–1. "needs_review" is true whenever ANYTHING in the row was uncertain, contradictory, or unreadable. "raw_transcription" is the literal printed line of that row.
-FIELD ORDER MATTERS: output "positions" EARLY (right after the account totals) and put the chart arrays LAST. This way, if the response is ever cut short, the positions are already complete. Emit fields in exactly this order:
-{"page_type":"summary"|"positions","row_count":N,"portfolio_value":N,"cash_balance":N,"money_market":N,"day_change":N,"total_gain_loss":N,"total_gain_loss_percent":N,"invested_capital":N,"period_changes":{"1M":N,"3M":N,"6M":N,"YTD":N,"1Y":N,"2Y":N}|null,"positions":[{"ticker":"STR","company_name":"STR","shares":N,"avg_cost":N,"current_price":N,"day_change_pct":N,"total_return_pct":N,"total_gain_usd":N,"confidence":N,"needs_review":true|false,"raw_transcription":"STR"}]|null,"chart_x_labels":["STR"]|[],"chart_y_axis":["STR"]|[],"chart_selected_period":"STR"|null,"value_chart":[{"date":"YYYY-MM-DD","value":N}]|null}`;
-// Se retiró el "raw_transcription" DE PRIMER NIVEL (la tabla entera transcrita otra vez).
-// Nadie lo leía nunca, se emitía DESPUÉS de las posiciones —así que tampoco servía de
-// borrador para razonar mejor—, era el campo más largo de la respuesta y sus saltos de
-// línea sin escapar son la causa documentada del "0 posiciones" que _aiJsonEscapeControls
-// tuvo que salir a parchear. El anclaje que sí importa —la línea literal de CADA fila—
-// se mantiene en el "raw_transcription" de cada posición.
-
-// ── Segundo pase: VERIFICACIÓN celda-por-celda contra los píxeles ──────────────
-// Recibe las MISMAS imágenes + un JSON de primera lectura. Re-mira cada fila y corrige
-// SOLO errores claros (dígitos, signos, y sobre todo columnas cruzadas day% ↔ total%).
-const _AI_VERIFY_PROMPT = `You are a meticulous OCR VERIFIER. You are given the SAME brokerage screenshot(s) AND a JSON produced by a first read ("PRIMERA LECTURA" below). Your job: re-check EVERY position row against the actual pixels and return the SAME JSON schema, corrected. This is a proofreading pass — keep values that are already right, fix ONLY what is clearly wrong.
-
-━━ WHAT TO RE-VERIFY (in priority order) ━━
-1. COLUMN CROSSING (the #1 bug — check this first for every row): a broker row has several numeric columns. Two are constantly swapped:
-   • day_change_pct = ONLY the intraday "today" column ("Day Chng %"/"Price Chng %"/"Day %"/"Today %"/"Chg%"). Sits next to current price or the day-$ change.
-   • total_return_pct = ONLY the whole-life position column ("Gain/Loss %"/"G/L %"/"Total Return %"). Sits next to market value or total gain $.
-   Find the HEADER above each number and confirm each % is in its correct field. If the first read put a day% into total_return_pct (or vice-versa), SWAP them to match the printed columns. If only ONE of the two is printed, fill that one and set the other to null — never copy a % across.
-2. TICKER: read the symbol LETTER BY LETTER from the text (never from a logo/color). Fix META↔NFLX-type swaps; cross-check against company_name. If they contradict, output what is printed and set needs_review:true.
-3. SIGNS: preserve exact +/- (negatives may show as "-", "(123)", or red). Never drop or flip a sign.
-4. DIGITS/DECIMALS: transcribe exactly — do NOT round, do NOT move the decimal or thousands separator. "+1.05%" stays 1.05. "$441.31" stays 441.31.
-5. SHARES / PRICE / MARKET VALUE: sanity-check current_price × shares ≈ market value; if inconsistent, re-read the pixels (do NOT invent a number to force a match).
-
-━━ RULES ━━
-• Report ONLY what is printed. Never use world knowledge to "correct" a price/percent/ticker to what you think it should be.
-• If a cell is genuinely illegible → null for that field + needs_review:true. Null is always better than a guess.
-• Do NOT drop or add rows: output exactly the rows that are physically in the table.
-• Keep account-level fields (portfolio_value, cash_balance, day_change, total_gain_loss, total_gain_loss_percent, invested_capital, period_changes) — correct them only if clearly misread.
-• You do NOT need to re-trace the chart (value_chart/chart_*): you may omit those fields or set them null — they are preserved from the first read.
-
-━━ OUTPUT ━━
-Return ONLY the corrected JSON in the EXACT SAME schema as the first read (page_type, positions[...], account fields). No markdown, no prose, no explanations.`;
-
-// ── COMPUERTA DE RECONCILIACIÓN: ¿la 1ª lectura del OCR es lo bastante coherente para
-//    SALTAR el 2º pase de verificación (Sonnet, imágenes reenviadas → ~2x del import)? ──
-function _ocrFirstReadTrustworthy(data){
-  try{
-    const pos = Array.isArray(data.positions) ? data.positions.filter(p=>p&&p.ticker) : [];
-    if(!pos.length) return false;                       // sin posiciones legibles → no aplica el ahorro
-    for(const p of pos){
-      if(p.needs_review === true) return false;         // el propio OCR marcó la fila como dudosa
-      if(typeof p.confidence === 'number' && p.confidence < 0.8) return false;  // lectura poco segura
-      const price = _aiNum(p.current_price), sh = _aiNum(p.shares);
-      if(price==null || price<=0) return false;         // precio faltante/ilegible
-      if(sh==null || sh<=0) return false;               // shares faltantes/ilegibles
-      // day% cruzado con total%: un cambio DIARIO real rara vez supera ±25%. Si el campo day%
-      // trae algo así, casi seguro es un total return metido en la columna equivocada → verify.
-      const dp = _aiNum(p.day_change_pct);
-      if(dp!=null && Math.abs(dp) > 25) return false;
-    }
-    // Cuadre de valor de cartera (la comprobación más fuerte contra columnas/dígitos mal leídos).
-    const pv = _aiNum(data.portfolio_value);
-    if(pv!=null && pv>0){
-      const sumPos = pos.reduce((s,p)=> s + (_aiNum(p.current_price)||0)*(_aiNum(p.shares)||0), 0);
-      const recon = sumPos + (_aiNum(data.cash_balance)||0) + (_aiNum(data.money_market)||0);
-      if(recon>0 && Math.abs(recon - pv)/pv > 0.02) return false;   // descuadre >2% → verify
-    }
-    return true;   // 1ª lectura coherente → salta el 2º pase (mismo resultado, ~mitad de costo del import)
-  }catch(e){ return false; }   // ante cualquier error, corre el verify (nunca degradar calidad)
-}
-
-let _aiFiles = []; // [{base64, mediaType, name}]
-const _ocrCache = new Map(); // base64_key → parsed JSON result (TTL: session)
-
-// Llama a la API de IA con soporte de imágenes (visión).
-// - Visión: proxy server-side (gemini-proxy), key como secreto
-// - Producción: Netlify Function (la key vive en el servidor; el visitante no la ve)
-async function _visionCall(messages, model = AI_MODELS.vision, max_tokens = 8000) {
-  // temperature:0 → determinista, anti-alucinación: el modelo NO "redondea" ni "corrige"
-  // números/tickers. Intento 1: gemini-3.7-flash. Si falla (502 timeout, error, red)
-  // reintenta UNA vez con gemini-3.1-flash-lite (más rápido → cabe en el tope de la función).
-  const _attempt = async (mdl) => {
-    const res = await _aiFetchVision({
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: mdl, max_tokens, temperature: 0, messages })
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      const e = new Error(err.error?.message || 'Error ' + res.status);
-      e._status = res.status;
-      throw e;
-    }
-    const data = await res.json();
-    try { _tokAdd(data.usage, mdl, 'photo'); } catch(e){}
-    return data;
-  };
-  try {
-    return await _attempt(model);
-  } catch (e) {
-    const _fb = 'gemini-3.1-flash-lite';
-    if (model !== _fb) {
-      console.warn('Visión: ' + model + ' falló (' + (e._status || e.message) + ') → reintento con ' + _fb);
-      return await _attempt(_fb);
-    }
-    throw e;
-  }
-}
-
-// ── Preparación de imagen para OCR de ALTA fidelidad ───────────────────────────
-// Calidad alta (JPEG 0.92 o PNG), respeta límites de la API (lado ≤1568px, área ≤1.15M px),
-// y parte tablas ALTAS en 2 mitades con ~8% de solape (el dedup por ticker en aiPortImportData
-// elimina las filas repetidas del solape).
-const _OCR_MAX_SIDE = 1568;
-const _OCR_MAX_AREA = 1150000;
-async function _prepImagesForOCR(base64, mediaType) {
-  const img = await new Promise(resolve => {
-    const im = new Image();
-    im.onload = () => resolve(im);
-    im.onerror = () => resolve(null);
-    im.src = `data:${mediaType};base64,${base64}`;
-  });
-  if (!img) return [{ base64, mediaType }];                 // fallback: manda el original
-  const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
-  if (!W || !H) return [{ base64, mediaType }];
-  const wantPNG = (mediaType === 'image/png');
-
-  const _emit = (sy, sh) => {
-    let scale = Math.min(1, _OCR_MAX_SIDE / Math.max(W, sh));  // lado largo ≤ MAX_SIDE
-    const areaScale = Math.sqrt(_OCR_MAX_AREA / (W * sh));     // área ≤ MAX_AREA
-    if (areaScale < scale) scale = areaScale;
-    const dw = Math.max(1, Math.round(W * scale));
-    const dh = Math.max(1, Math.round(sh * scale));
-    const c = document.createElement('canvas');
-    c.width = dw; c.height = dh;
-    const ctx = c.getContext('2d');
-    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(img, 0, sy, W, sh, 0, 0, dw, dh);
-    if (wantPNG) {
-      const png = c.toDataURL('image/png').split(',')[1];     // PNG = sin pérdida
-      if (png && png.length < 4500000) return { base64: png, mediaType: 'image/png' };
-    }
-    const jpg = c.toDataURL('image/jpeg', 0.92).split(',')[1];
-    return { base64: jpg, mediaType: 'image/jpeg' };
-  };
-
-  // Tabla ALTA → 2 mitades con ~8% de solape (no aplastar filas).
-  if (H > W * 1.7 && H > 1600) {
-    const overlap = Math.round(H * 0.08);
-    const half = Math.ceil(H / 2);
-    const topH = Math.min(H, half + overlap);
-    const botY = Math.max(0, half - overlap);
-    return [ _emit(0, topH), _emit(botY, H - botY) ];
-  }
-  return [ _emit(0, H) ];
-}
-
-function _aiRenderFileList(){
-  const ready = document.getElementById('aiFileReady');
-  const label = document.getElementById('aiDropLabel');
-  if (!_aiFiles.length) {
-    ready.style.display = 'none';
-    label.style.display = '';
-    return;
-  }
-  label.style.display = 'none';
-  ready.style.display = 'flex';
-  const names = _aiFiles.map(f => f.name).join('  ·  ');
-  document.getElementById('aiFileName').textContent =
-    _aiFiles.length + (_aiFiles.length === 1 ? ' imagen: ' : ' imágenes: ') + names;
-}
-
-function aiPortFileSelected(input){
-  const files = Array.from(input.files || []);
-  files.forEach(file => {
-    const r = new FileReader();
-    r.onload = e => { _aiFiles.push({ base64: e.target.result.split(',')[1], mediaType: file.type, name: file.name }); _aiRenderFileList(); };
-    r.readAsDataURL(file);
-  });
-  input.value = ''; // permite volver a elegir el mismo archivo / agregar más
-}
-
-function aiPortClearFiles(){
-  _aiFiles = [];
-  document.getElementById('aiFile').value = '';
-  _aiRenderFileList();
-}
-
-function aiPortDrop(e){
-  e.preventDefault();
-  const dz = document.getElementById('aiDrop'); if (dz) dz.classList.remove('drag');
-  const files = e.dataTransfer && e.dataTransfer.files;
-  if (!files || !files.length) return;
-  aiPortFileSelected({ files, value: '' });
-}
-
-// Principio H — Tras extraer, NO se aplica nada automáticamente: se abre el editor con la
-// tabla EDITABLE para que el usuario revise/corrija (filas dudosas resaltadas en ⚠ ámbar)
-// y recién entonces pulse "Aplicar al portafolio".
-function _aiOpenReviewEditor(posCount){
-  aiPortClearFiles();
-  const body = document.getElementById('aiEditorBody');
-  const chev = document.getElementById('aiEditorChevron');
-  if (body && !body.classList.contains('open')) { body.classList.add('open'); if (chev) chev.classList.add('open'); }
-  const flagged = document.querySelectorAll('#aiPosRows tr[data-review]').length;
-  try { (body || document.getElementById('aiPosRows')).scrollIntoView({ behavior:'smooth', block:'start' }); } catch(e){}
-  if (posCount === 0) {
-    showToast('Resumen leído. Revisá los valores y pulsá “Aplicar al portafolio”.', 'var(--green)');
-  } else if (flagged > 0) {
-    showToast(`${posCount} posiciones leídas · ${flagged} para revisar (⚠). Corregí y pulsá “Aplicar”.`, '#d99a00');
-  } else {
-    showToast(`${posCount} posiciones leídas. Revisá y pulsá “Aplicar al portafolio”.`, 'var(--green)');
-  }
-}
-
-// Hash barato y determinista de TODO el base64 (muestrea cada ~997 chars → rápido en imágenes
-// grandes). Se usa para la clave de caché OCR: dos screenshots del mismo dispositivo comparten
-// cabecera (los primeros ~120 chars) → una clave por prefijo colisionaba y servía un resultado
-// cacheado equivocado. Longitud total + hash del contenido completo desambigua sin costo notable.
-function _cheapHash(s){
-  const n = s.length; let h = 0x811c9dc5;
-  // Muestrea TODO el string con paso adaptativo (≤~2048 muestras → rápido incluso en base64 de
-  // varios MB) y mezcla SIEMPRE el último char + la longitud. Un paso fijo (p.ej. 997) podía
-  // saltarse justo el byte que difiere entre dos screenshots de igual longitud → falsa colisión.
-  const step = Math.max(1, Math.floor(n / 2048));
-  for (let i = 0; i < n; i += step) { h = (h ^ s.charCodeAt(i)); h = Math.imul(h, 16777619) >>> 0; }
-  if (n) { h = (h ^ s.charCodeAt(n - 1)) >>> 0; }
-  h = (h ^ n) >>> 0;
-  return h.toString(36);
-}
-
-async function aiPortExtract(){
-  if (location.protocol === 'file:' && !window._aiKeyAvailable()) {
-    showToast('No se pudo conectar con el servicio de análisis. Revisa tu conexión e intenta de nuevo.', 'var(--red)');
-    return;
-  }
-  if (!_aiFiles.length) { showToast('Sube un screenshot primero', 'var(--red)'); return; }
-
-  // Check OCR cache (clave = longitud total + hash de TODO el base64, no solo el prefijo → sin colisiones)
-  const cacheKey = _aiFiles.map(f => f.base64.length + ':' + _cheapHash(f.base64)).join('|');
-  if (_ocrCache.has(cacheKey)) {
-    const cached = _ocrCache.get(cacheKey);
-    aiPortImportData(cached);
-    const _posCount = Array.isArray(cached.positions) ? cached.positions.filter(p=>p&&p.ticker).length : 0;
-    _aiOpenReviewEditor(_posCount);   // revisión obligatoria — NO aplica solo
-    return;
-  }
-
-  const btn = document.getElementById('aiExtractBtn');
-  const _btnOrigHTML = btn ? btn.innerHTML : '';
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span style="font-size:12px">⏳ Analizando...</span>'; }
-  try {
-    // Preparación de alta fidelidad (calidad 0.92, tablas altas partidas en 2). Se aplanan
-    // TODAS las partes de TODOS los archivos en un solo array de bloques de imagen; el prompt
-    // de extracción va UNA sola vez al final.
-    const partsPerFile = await Promise.all(_aiFiles.map(f => _prepImagesForOCR(f.base64, f.mediaType)));
-    const imgBlocks = partsPerFile.flat().map(p => ({ type: 'image', source: { type: 'base64', media_type: p.mediaType, data: p.base64 } }));
-    const content = [...imgBlocks, { type: 'text', text: _AI_EXTRACTION_PROMPT }];
-
-    const resp = await _visionCall([{ role: 'user', content }]);
-    if (!resp.content || !resp.content[0] || !resp.content[0].text) {
-      const errMsg = (resp.error && resp.error.message) || (resp.type === 'error' ? JSON.stringify(resp.error||resp) : 'Respuesta vacía del modelo');
-      throw new Error(errMsg);
-    }
-    const text = resp.content[0].text;
-    const data = _aiExtractJson(text);
-    if (!data) throw new Error('No se pudo extraer JSON de la respuesta');
-
-    // ── 2º PASE: VERIFICACIÓN celda-por-celda (corrige columnas cruzadas day% ↔ total%) ──
-    // Solo si la primera lectura trae posiciones con ticker Y NO cuadra internamente
-    // (_ocrFirstReadTrustworthy). Reusa los MISMOS bloques de imagen. Si el JSON de
-    // verificación no parsea, se conserva la primera lectura (no rompe).
-    let finalData = data;
-    const _hasPositions = Array.isArray(data.positions) && data.positions.some(p => p && p.ticker);
-    if (_hasPositions && !_ocrFirstReadTrustworthy(data)) {
-      try {
-        const _firstRead = {
-          page_type: data.page_type, positions: data.positions,
-          portfolio_value: data.portfolio_value, cash_balance: data.cash_balance,
-          money_market: data.money_market, day_change: data.day_change,
-          total_gain_loss: data.total_gain_loss, total_gain_loss_percent: data.total_gain_loss_percent,
-          invested_capital: data.invested_capital, period_changes: data.period_changes,
-        };
-        const verifyContent = [...imgBlocks, { type: 'text', text: _AI_VERIFY_PROMPT + '\n\nPRIMERA LECTURA:\n' + JSON.stringify(_firstRead) }];
-        const vresp = await _visionCall([{ role: 'user', content: verifyContent }]);
-        const vtext = vresp && vresp.content && vresp.content[0] && vresp.content[0].text;
-        const vdata = vtext ? _aiExtractJson(vtext) : null;
-        if (vdata && Array.isArray(vdata.positions) && vdata.positions.length) {
-          // La verificación se enfoca en posiciones/totales; conserva chart de la 1ª lectura.
-          finalData = { ...data, ...vdata };
-          // Bloque 5.2: NUNCA reducir el conjunto de posiciones. Si la verificación trae MENOS
-          // filas que la 1ª lectura, fusiona por ticker: parte de la 1ª lectura COMPLETA y solo
-          // actualiza (o agrega) las filas que la verificación corrige. Solo se acepta como
-          // reemplazo total cuando trae ≥ tantas filas como la 1ª lectura.
-          const _firstPos = Array.isArray(data.positions) ? data.positions : [];
-          const _vPos = vdata.positions;
-          if (_vPos.length >= _firstPos.length) {
-            finalData.positions = _vPos;                         // conjunto igual o mayor → reemplazo directo
-          } else {
-            const _tk = p => String((p && p.ticker) || '').trim().toUpperCase();
-            const _byTk = new Map();
-            _firstPos.forEach(p => { const k = _tk(p); if (k) _byTk.set(k, p); });   // base = 1ª lectura
-            _vPos.forEach(p => { const k = _tk(p); if (k) _byTk.set(k, p); });       // corrige/añade con la verificación
-            // Conserva cualquier fila sin ticker de la 1ª lectura (no identificable, no se descarta).
-            const _noTk = _firstPos.filter(p => !_tk(p));
-            finalData.positions = [..._byTk.values(), ..._noTk];
-          }
-          ['value_chart','chart_x_labels','chart_y_axis','chart_selected_period'].forEach(k => {
-            if (vdata[k] == null && data[k] != null) finalData[k] = data[k];
-          });
-        }
-      } catch(e) { console.warn('Verificación OCR falló → uso primera lectura:', e); }
-    }
-
-    _ocrCache.set(cacheKey, finalData);
-    aiPortImportData(finalData);
-    const _posCount = Array.isArray(finalData.positions) ? finalData.positions.filter(p=>p&&p.ticker).length : 0;
-    _aiOpenReviewEditor(_posCount);   // revisión obligatoria — NO aplica solo
-  } catch(e) {
-    pvReportError('IA · importar portafolio', e, { userMsg: 'Error al importar: ' + e.message });
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerHTML = _btnOrigHTML || '<span class="material-symbols-outlined" style="font-size:15px">auto_awesome</span> Aplicar al portafolio'; }
-  }
-}
 
 function aiEditorToggle(){
   const body = document.getElementById('aiEditorBody');
@@ -43371,7 +42902,7 @@ html body #pqOverlay .pq-ibkr:hover { color:var(--pq-ink); }
         <div class="pw-feat"><span class="pw-dot"></span><div><div class="pw-feat-t">Análisis con IA de cada acción</div><div class="pw-feat-d">Recomendación, calidad y riesgo al instante.</div></div></div>
         <div class="pw-feat"><span class="pw-dot"></span><div><div class="pw-feat-t">Chat inteligente</div><div class="pw-feat-d">Pregúntale a la IA sobre tu cartera y resuelve dudas al momento.</div></div></div>
         <div class="pw-feat"><span class="pw-dot"></span><div><div class="pw-feat-t">Noticias que mueven tu cartera</div><div class="pw-feat-d">Solo lo que afecta tus posiciones, explicado claro.</div></div></div>
-        <div class="pw-feat"><span class="pw-dot"></span><div><div class="pw-feat-t">Sincronización inteligente con screenshots</div><div class="pw-feat-d">Reconstruye tu portafolio en segundos con solo una captura.</div></div></div>
+        <div class="pw-feat"><span class="pw-dot"></span><div><div class="pw-feat-t">Conexión con tu broker</div><div class="pw-feat-d">Tus posiciones se actualizan solas, en solo lectura.</div></div></div>
       </div>
       <div class="pw-cta">
         <div class="pw-nopay">
@@ -43866,7 +43397,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   // Portafolio, Noticias): cada ventaja se reconoce por el sitio de la app donde vive.
   var _PVW_FEATS = [
     ['<path d="M4 12a8 8 0 0 1 14.9-4"/><path d="M18.9 3.4V8h-4.6"/><path d="M20 12a8 8 0 0 1-14.9 4"/><path d="M5.1 20.6V16h4.6"/>',
-      'Conecta tu broker', 'Tus posiciones y tu efectivo se actualizan solos, sin capturas ni hojas de cálculo.'],
+      'Conecta tu broker', 'Tus posiciones y tu efectivo se actualizan solos, sin hojas de cálculo.'],
     ['<path d="M10.5 4.5Q11.4 10.6 17.5 11.5Q11.4 12.4 10.5 18.5Q9.6 12.4 3.5 11.5Q9.6 10.6 10.5 4.5Z"/><path d="M18.5 2.75v3.5M16.75 4.5h3.5"/>',
       'Portiv IA sin límites', 'Pregúntale lo que quieras sobre tu cartera, cuando quieras.'],
     ['<path d="M4 4.5V18a1.5 1.5 0 0 0 1.5 1.5H20"/><path d="M7.5 15l3.5-4 3 2.5 5-6"/><path d="M15.5 7.5H19v3.5"/>',
