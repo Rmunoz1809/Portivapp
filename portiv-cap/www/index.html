@@ -41349,6 +41349,50 @@ if (document.readyState === 'loading') {
   // Por eso el nativo usa el SDK de Google y le pasa el id_token a Supabase, igual
   // que Apple hace con ASAuthorization.
   var _googleSdkReady = false;   // el SDK solo se inicializa una vez por sesión
+
+  // Ventana de navegador DENTRO de la app, solo en Mac. En iPhone/iPad el SDK de Google y
+  // @capacitor/browser ya abren una hoja dentro de Portiv; en Mac macOS los manda al
+  // navegador predeterminado (Chrome) y el usuario sale de la app. El plugin WebSheet
+  // (portiv-cap/ios/App/App/WebSheetPlugin.swift) abre la página en una ventana propia.
+  // Mac = mismo criterio que ES_MAC: user agent de Mac y sin pantalla táctil (el iPad
+  // también se anuncia como Macintosh, pero tiene puntos táctiles).
+  window._pvMacWebSheet = function(){
+    try {
+      var C = window.Capacitor;
+      if (!(C && C.isNativePlatform && C.isNativePlatform())) return null;
+      if (!(/Macintosh/.test(navigator.userAgent || '') && !(navigator.maxTouchPoints > 0))) return null;
+      var W = C.Plugins && C.Plugins.WebSheet;
+      return (W && typeof W.open === 'function') ? W : null;
+    } catch(e){ return null; }
+  };
+
+  // Google en Mac: OAuth de Supabase dentro de la ventana de la app. La página de Google
+  // termina redirigiendo a portivapp.com con la sesión (#access_token… o ?code=); la ventana
+  // corta esa navegación, se cierra y aquí se instala la sesión en este mismo cliente.
+  async function _authGoogleMacSheet(W){
+    var _ret = 'https://portivapp.com/';
+    var r = await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: _ret, skipBrowserRedirect: true } });
+    if (r && r.error) throw r.error;
+    var authUrl = r && r.data && r.data.url;
+    if (!authUrl) throw new Error('No se pudo preparar el inicio de sesión con Google.');
+    var out = await W.open({ url: authUrl, returnPrefixes: [_ret], title: 'Continuar con Google' });
+    if (!out || out.closed || !out.url) throw new Error('canceled');
+    var u = new URL(out.url);
+    var h = new URLSearchParams((u.hash || '').replace(/^#/, ''));
+    var q = u.searchParams;
+    var _err = h.get('error_description') || q.get('error_description') || h.get('error') || q.get('error');
+    if (_err) throw new Error(_err.replace(/\+/g, ' '));
+    var res;
+    if (h.get('access_token') && h.get('refresh_token')) {
+      res = await sb.auth.setSession({ access_token: h.get('access_token'), refresh_token: h.get('refresh_token') });
+    } else if (q.get('code')) {
+      res = await sb.auth.exchangeCodeForSession(q.get('code'));
+    } else {
+      throw new Error('Google no devolvió la sesión.');
+    }
+    if (res && res.error) throw res.error;
+  }
+
   window._authGoogleSignin = async function(){
     var btn = document.getElementById('googleSignInBtn');
     var lbl = btn ? btn.querySelector('span') : null;
@@ -41359,6 +41403,14 @@ if (document.readyState === 'loading') {
     try {
       // ── iOS nativo: Google Sign-In NATIVO (GIDSignIn vía @capgo/capacitor-social-login).
       //    El diálogo vive dentro de la app; devuelve idToken → signInWithIdToken. ──
+      // Mac: dentro de la ventana de la app, no en Chrome.
+      var _macSheet = _isNative ? window._pvMacWebSheet() : null;
+      if (_macSheet) {
+        await _authGoogleMacSheet(_macSheet);
+        if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
+        if (lbl) lbl.textContent = origTxt;
+        return;
+      }
       if (_isNative) {
         var SL = (window.Capacitor.Plugins && window.Capacitor.Plugins.SocialLogin) || null;
         if (!SL) throw new Error('Inicio de sesión con Google no disponible en esta versión de la app.');
@@ -43567,6 +43619,13 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     var _own = !/^https?:/i.test(path);
     var abs = _own ? ('https://portivapp.com/' + String(path).replace(/^\//,'')) : path;
     try {
+      // Mac: en la ventana de la app (con Browser.open, macOS lo abriría en Chrome).
+      var _W = (typeof window._pvMacWebSheet === 'function') ? window._pvMacWebSheet() : null;
+      if (_W) {
+        if (_own) abs += (abs.indexOf('?') === -1 ? '?' : '&') + 'app=ios';
+        _W.open({ url: abs });
+        return false;
+      }
       if (window._pvIsNativeApp() && window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Browser) {
         // Marca de "abierto desde la app de iOS". Las páginas legales la leen para ocultar
         // las secciones que describen la compra web por Paddle: dentro de la app, hablar de
@@ -49864,6 +49923,22 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
   // detecta el regreso: (a) deep link portiv:// que SnapTrade dispara al terminar, o (b) el usuario
   // cierra el navegador. En ambos casos recarga → _boot() ve pv_snap_pending y sincroniza el broker.
   function _snapOpenInApp(url){
+    // Mac: @capacitor/browser abriría Chrome. La ventana de la app vuelve sola al llegar a
+    // portiv:// (fin del portal) o al cerrarla; en los dos casos se recarga como en iOS.
+    var _W = (typeof window._pvMacWebSheet === 'function') ? window._pvMacWebSheet() : null;
+    if (_W) {
+      Promise.resolve(_W.open({ url: url, returnPrefixes: ['portiv://'], title: 'Conectar tu broker' })).then(function(){
+        _setBusy(false);
+        try{ window.location.reload(); }catch(e){}   // _boot detecta pv_snap_pending
+      }).catch(function(){
+        _setBusy(false);
+        try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(e){}
+        try{ if(typeof showToast==='function') showToast('No se pudo abrir el portal. Toca "Conectar mi broker" otra vez.','var(--red)'); }catch(e){}
+      });
+      // La ventana ya cubre la pantalla: fuera el aviso «Conectando con SnapTrade…».
+      setTimeout(function(){ _setBusy(false); try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(e){} }, 400);
+      return;
+    }
     var P = (window.Capacitor && window.Capacitor.Plugins) || {};
     var B = P.Browser, A = P.App;
     if(!B || !B.open){ window.location.href = url; return; }   // sin plugin Browser → fallback web
