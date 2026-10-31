@@ -41326,10 +41326,16 @@ if (document.readyState === 'loading') {
       if (r && r.error) throw r.error;
       // Éxito: el navegador se va a apple.com. No restauramos el botón (se sale de la página).
     } catch(e){
-      // El usuario canceló el diálogo nativo → no es un error que mostrar.
+      // El usuario canceló el diálogo nativo → no es un error que mostrar. El plugin manda el
+      // código aparte: 1001 = canceló; 1000 = el dispositivo no tiene Apple ID o la app no
+      // tiene el permiso. Antes cualquier «AuthorizationError» contaba como cancelación y el
+      // botón volvía sin decir nada.
       var _msg = (e && (e.message || e.error)) || '';
-      var _canceled = /cancel|1001|AuthorizationError|popup_closed/i.test(String(_msg));
-      if (!_canceled) setMsg(_msg || 'No se pudo iniciar sesión con Apple.', true);
+      var _code = String((e && e.code) || '');
+      var _canceled = _code === '1001' || /cancel|error 1001\b|popup_closed/i.test(String(_msg));
+      var _sinCuenta = _code === '1000' || /error 1000\b/.test(String(_msg));
+      if (_sinCuenta) setMsg('No se pudo abrir el inicio de sesión de Apple. Revisa que este dispositivo tenga tu Apple ID iniciado en Ajustes e inténtalo de nuevo.', true);
+      else if (!_canceled) setMsg(_msg || 'No se pudo iniciar sesión con Apple.', true);
       if (btn) { btn.disabled = false; btn.style.opacity = ''; btn.style.cursor = 'pointer'; }
       if (lbl) lbl.textContent = origTxt;
     }

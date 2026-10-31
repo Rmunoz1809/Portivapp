@@ -1,0 +1,70 @@
+diff --git a/node_modules/@capacitor-community/apple-sign-in/ios/Sources/SignInWithApple/Plugin.swift b/node_modules/@capacitor-community/apple-sign-in/ios/Sources/SignInWithApple/Plugin.swift
+index f53087c..37ef7c4 100755
+--- a/node_modules/@capacitor-community/apple-sign-in/ios/Sources/SignInWithApple/Plugin.swift
++++ b/node_modules/@capacitor-community/apple-sign-in/ios/Sources/SignInWithApple/Plugin.swift
+@@ -10,6 +10,10 @@ public class SignInWithApple: CAPPlugin, CAPBridgedPlugin {
+         CAPPluginMethod(name: "authorize", returnType: CAPPluginReturnPromise),
+     ] 
+ 
++    // Referencia fuerte mientras dura la petición: sin ella el controlador puede liberarse
++    // antes de presentar la hoja de Apple.
++    private var authorizationController: ASAuthorizationController?
++
+     @objc func authorize(_ call: CAPPluginCall) {
+         let appleIDProvider = ASAuthorizationAppleIDProvider()
+         let request = appleIDProvider.createRequest()
+@@ -22,9 +26,16 @@ public class SignInWithApple: CAPPlugin, CAPBridgedPlugin {
+ 
+         self.bridge?.saveCall(call)
+ 
+-        let authorizationController = ASAuthorizationController(authorizationRequests: [request])
+-        authorizationController.delegate = self
+-        authorizationController.performRequests()
++        // Capacitor llama a los plugins fuera del hilo principal. La hoja de Apple es UI: en Mac
++        // (Catalyst), sin hilo principal y sin ventana donde anclarse, nunca aparecía y el botón
++        // se quedaba en «Conectando con Apple…».
++        DispatchQueue.main.async {
++            let controller = ASAuthorizationController(authorizationRequests: [request])
++            controller.delegate = self
++            controller.presentationContextProvider = self
++            self.authorizationController = controller
++            controller.performRequests()
++        }
+     }
+ 
+     func getRequestedScopes(from call: CAPPluginCall) -> [ASAuthorization.Scope]? {
+@@ -48,6 +59,14 @@ public class SignInWithApple: CAPPlugin, CAPBridgedPlugin {
+     }
+ }
+ 
++extension SignInWithApple: ASAuthorizationControllerPresentationContextProviding {
++    public func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
++        if let window = self.bridge?.webView?.window { return window }
++        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
++        return scenes.flatMap { $0.windows }.first(where: { $0.isKeyWindow }) ?? ASPresentationAnchor()
++    }
++}
++
+ extension SignInWithApple: ASAuthorizationControllerDelegate {
+     public func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
+         guard let appleIDCredential = authorization.credential as? ASAuthorizationAppleIDCredential else { return }
+@@ -71,6 +90,7 @@ extension SignInWithApple: ASAuthorizationControllerDelegate {
+ 
+         call.resolve(result)
+         self.bridge?.releaseCall(call)
++        self.authorizationController = nil
+     }
+ 
+     public func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+@@ -79,7 +99,10 @@ extension SignInWithApple: ASAuthorizationControllerDelegate {
+         guard let call = self.bridge?.savedCall(withID: id) else {
+             return
+         }
+-        call.reject(error.localizedDescription)
++        // El código (1001 = canceló, 1000 = sin cuenta de Apple o sin permiso) va aparte para
++        // que la web distinga una cancelación de un fallo real.
++        call.reject(error.localizedDescription, String((error as NSError).code))
+         self.bridge?.releaseCall(call)
++        self.authorizationController = nil
+     }
+ }
