@@ -8272,13 +8272,17 @@ async function renderSettings(){
      desbordado podía quedar fuera de pantalla; el fondo siempre está ahí.
      El guard target===currentTarget es obligatorio: sin él, cualquier clic
      dentro de la tarjeta burbujea hasta aquí y cierra el modal a media compra. -->
-<div class="as-overlay" id="addStockOverlay"
+<div class="as-overlay pvts" id="addStockOverlay"
      onclick="if(event.target===event.currentTarget){ try{ closeAddStock(); }catch(e){} }">
   <div class="as-card">
     <div class="as-broker-header">
-      <div class="as-title" id="asModalTitle">Comprar Activo</div>
-      <button class="as-close-x" onclick="closeAddStock()">×</button>
+      <div class="pvts-hd">
+        <div class="as-title" id="asModalTitle">Comprar activo</div>
+        <div class="pvts-sub" id="asSub"></div>
+      </div>
+      <button class="as-close-x" onclick="closeAddStock()" aria-label="Cerrar">×</button>
     </div>
+    <div class="pvts-steps" id="asSteps" aria-hidden="true"></div>
 
     <div class="as-body">
     <!-- Ticker search — se pliega en cuanto hay activo elegido (.picked) -->
@@ -8296,6 +8300,8 @@ async function renderSettings(){
       <div class="as-spinner" id="addLookupSpinner"></div>
     </div>
     </div><!-- /#asSearchBlock -->
+    <!-- Paso 1 sin texto escrito: tus posiciones y los más buscados, para tocar y seguir -->
+    <div id="asPickList" class="pvts-pick"></div>
 
     <!-- Company card — shown after lookup -->
     <div class="as-company-card" id="addLookupResult">
@@ -8346,7 +8352,7 @@ async function renderSettings(){
         <button class="as-quick-btn" onclick="_addSetQuick(250)">$250</button>
         <button class="as-quick-btn" onclick="_addSetQuick(500)">$500</button>
         <button class="as-quick-btn" onclick="_addSetQuick(1000)">$1,000</button>
-        <button class="as-quick-btn as-max-btn" onclick="_addSetQuick(-1)">Max cash</button>
+        <button class="as-quick-btn as-max-btn" onclick="_addSetQuick(-1)">Máximo</button>
       </div>
 
       <!-- Calculated counterpart -->
@@ -8372,17 +8378,21 @@ async function renderSettings(){
           <span id="asSumTotal">—</span>
         </div>
         <div class="as-summary-row">
-          <span>Cash disponible</span>
+          <span>Efectivo ahora</span>
           <span id="asSumCash">—</span>
         </div>
         <div class="as-summary-row">
-          <span>Cash restante</span>
+          <span>Efectivo después</span>
           <span id="asSumCashAfter">—</span>
         </div>
       </div>
 
       <div class="as-warn" id="addWarn"></div>
     </div>
+
+    <!-- Paso 3 (revisar) y confirmación: los pinta _tsAsNext -->
+    <div class="pvts-review" id="asReview" hidden></div>
+    <div class="pvts-done" id="asDone" hidden></div>
 
     <!-- Hidden legacy refs for JS compat -->
     <div style="display:none">
@@ -8396,19 +8406,24 @@ async function renderSettings(){
     </div><!-- /.as-body -->
 
     <div class="as-btns">
-      <button class="as-cancel" onclick="closeAddStock()">Cancelar</button>
-      <button class="as-confirm" id="addConfirmBtn" onclick="confirmAddStock()" disabled>Confirmar compra</button>
+      <button class="as-cancel" id="asBackBtn" onclick="_tsAsBack()">Cancelar</button>
+      <button class="as-confirm" id="addConfirmBtn" onclick="_tsAsNext()" disabled>Revisar compra</button>
     </div>
   </div>
 </div>
 
 <!-- CASH MODAL (Agregar fondos / Retirar) -->
-<div class="as-overlay" id="cashOverlay">
+<div class="as-overlay pvts" id="cashOverlay"
+     onclick="if(event.target===event.currentTarget){ try{ closeCashModal(); }catch(e){} }">
   <div class="as-card">
     <div class="as-broker-header">
-      <div class="as-title" id="cashModalTitle">Agregar fondos</div>
-      <button class="as-close-x" onclick="closeCashModal()">×</button>
+      <div class="pvts-hd">
+        <div class="as-title" id="cashModalTitle">Agregar fondos</div>
+        <div class="pvts-sub" id="cashSub"></div>
+      </div>
+      <button class="as-close-x" onclick="closeCashModal()" aria-label="Cerrar">×</button>
     </div>
+    <div class="pvts-steps" id="cashSteps" aria-hidden="true"></div>
 
     <div class="as-body">
     <!-- Deposit / Withdraw toggle -->
@@ -8436,21 +8451,49 @@ async function renderSettings(){
     <!-- Summary preview -->
     <div class="as-summary">
       <div class="as-summary-row">
-        <span>Cash disponible actual</span>
+        <span>Efectivo ahora</span>
         <span id="cashSumBefore">—</span>
       </div>
       <div class="as-summary-row as-summary-total">
-        <span>Cash disponible después</span>
+        <span>Efectivo después</span>
         <span id="cashSumAfter">—</span>
       </div>
     </div>
 
     <div class="as-warn" id="cashWarn"></div>
+    <div class="pvts-review" id="cashReview" hidden></div>
+    <div class="pvts-done" id="cashDone" hidden></div>
     </div><!-- /.as-body -->
 
     <div class="as-btns">
-      <button class="as-cancel" onclick="closeCashModal()">Cancelar</button>
-      <button class="as-confirm" id="cashConfirmBtn" onclick="confirmCashOp()" disabled>Confirmar</button>
+      <button class="as-cancel" id="cashBackBtn" onclick="_tsCashBack()">Cancelar</button>
+      <button class="as-confirm" id="cashConfirmBtn" onclick="_tsCashNext()" disabled>Revisar</button>
+    </div>
+  </div>
+</div>
+
+<!-- OPERAR UNA POSICIÓN (Comprar más / Vender): hoja propia. Antes era un cajón metido en
+     la fila de la tabla; el contenido lo sigue construyendo buildDrawer(). -->
+<div class="as-overlay pvts" id="pvTradeSheet"
+     onclick="if(event.target===event.currentTarget){ try{ _tsPosClose(); }catch(e){} }">
+  <div class="as-card">
+    <div class="as-broker-header">
+      <div class="pvts-hd">
+        <div class="as-title" id="pvtsTitle">Operar</div>
+        <div class="pvts-sub" id="pvtsSub"></div>
+      </div>
+      <button class="as-close-x" onclick="_tsPosClose()" aria-label="Cerrar">×</button>
+    </div>
+    <div class="pvts-steps" id="pvtsSteps" aria-hidden="true"></div>
+    <div class="as-body">
+      <div id="pvtsAmount"></div>
+      <div class="pvts-review" id="pvtsReview" hidden></div>
+      <div class="pvts-done" id="pvtsDone" hidden></div>
+    </div>
+    <div class="as-btns" id="pvtsFoot">
+      <div class="pvts-foot-amount" id="pvtsFootAmount"></div>
+      <button class="as-cancel" id="pvtsBack" onclick="_tsPosBack()">Atrás</button>
+      <button class="as-confirm" id="pvtsConfirm" onclick="_tsPosConfirm()">Confirmar</button>
     </div>
   </div>
 </div>
@@ -16534,8 +16577,8 @@ function posRowHTML(h, idx, c, T) {
     <span class="pvpt-mk">${_L('Costo', 'Cost')} <b>${usd(round2(h.costBasis))}</b></span>
     <span class="pvpt-mk">${_L('Reinvertir', 'Reinvest')} ${_dripPill(h, idx)}</span>
   </div></td></tr>
-  <tr class="trade-drawer-row ${isOpen?'open':''}" id="drawer-${idx}">
-    <td class="trade-drawer-cell" colspan="13">${isOpen ? buildDrawer(idx, T) : ''}</td>
+  <tr class="trade-drawer-row" id="drawer-${idx}">
+    <td class="trade-drawer-cell" colspan="13"></td>
   </tr>`;
 }
 
@@ -16791,7 +16834,7 @@ function buildDrawer(idx, T) {
     ? [100,250,500,1000].map(v=>`<button class="qbtn" onclick="setAmt(${idx},${v})">${_pvSym()}${v}</button>`).join('')
       + (mode==='sell'
           ? `<button class="qbtn" onclick="setOrderType(${idx},'all')">Vender todo</button>`
-          : `<button class="qbtn" onclick="setAmt(${idx},${CASH.toFixed(2)})">Max cash</button>`)
+          : `<button class="qbtn" onclick="setAmt(${idx},${CASH.toFixed(2)})">Máximo</button>`)
     : [1,5,10,25].map(v=>`<button class="qbtn" onclick="setAmt(${idx},${v})">${v} sh</button>`).join('')
       + (mode==='sell'
           ? `<button class="qbtn" onclick="setOrderType(${idx},'all')">Vender todo</button>`
@@ -33769,7 +33812,7 @@ function _addResetToggle() {
     <button class="as-quick-btn" onclick="_addSetQuick(250)">$250</button>
     <button class="as-quick-btn" onclick="_addSetQuick(500)">$500</button>
     <button class="as-quick-btn" onclick="_addSetQuick(1000)">$1,000</button>
-    <button class="as-quick-btn as-max-btn" onclick="_addSetQuick(-1)">Max cash</button>`;
+    <button class="as-quick-btn as-max-btn" onclick="_addSetQuick(-1)">Máximo</button>`;
 }
 
 function _addSetOrderType(type) {
@@ -33792,7 +33835,7 @@ function _addSetOrderType(type) {
       <button class="as-quick-btn" onclick="_addSetQuick(250)">$250</button>
       <button class="as-quick-btn" onclick="_addSetQuick(500)">$500</button>
       <button class="as-quick-btn" onclick="_addSetQuick(1000)">$1,000</button>
-      <button class="as-quick-btn as-max-btn" onclick="_addSetQuick(-1)">Max cash</button>`;
+      <button class="as-quick-btn as-max-btn" onclick="_addSetQuick(-1)">Máximo</button>`;
   } else {
     if (label)  label.textContent  = 'Cantidad de acciones';
     if (prefix) prefix.textContent = '';
@@ -64669,5 +64712,651 @@ html body .px-kpm.open .box > .x { animation:pvmFade var(--pvm-in) var(--pvm-eas
 })();
 </script>
 <!-- ═══ fin MOVIMIENTO · ANÁLISIS ═══ -->
+<!-- ═══ COMPRAR · VENDER · EFECTIVO — rediseño por pasos (hojas .pvts) ═══════════════════
+     Las tres hojas (Comprar activo, Agregar fondos / Retirar y Operar una posición) comparten
+     el mismo esqueleto: cabecera con el contexto (efectivo o lo que tienes), los pasos que
+     faltan, el contenido con su propio scroll y el botón principal fijo abajo. En el iPhone
+     ocupan el 92 % de la pantalla; en iPad y escritorio, un modal ancho centrado.
+     Va al final a propósito: pisa las capas anteriores de .as-card sin tocarlas. La lógica
+     de las operaciones (buyAsset, sellAsset, confirmAddStock, confirmCashOp) no cambia. -->
+<style id="pvTradeV2Css">
+html body .as-overlay.pvts{ padding:24px !important; align-items:center !important; overflow:hidden; }
+html body .as-overlay.pvts > .as-card{
+  width:min(640px, calc(100vw - 48px)) !important; max-width:none !important;
+  height:min(760px, calc(100dvh - 48px)) !important; max-height:none !important;
+  margin:auto !important; padding:0 !important; border-radius:28px !important;
+  display:flex !important; flex-direction:column !important; overflow:hidden !important;
+  box-shadow:none !important;
+}
+html body:not(.dark-theme) .as-overlay.pvts > .as-card{ background:#fff !important; }
+
+/* Cabecera: título, contexto y cierre */
+html body .as-overlay.pvts .as-broker-header{
+  flex:0 0 auto; display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+  margin:0 !important; padding:26px 28px 0;
+}
+html body .as-overlay.pvts .pvts-hd{ min-width:0; }
+html body .as-overlay.pvts .as-title{ font:800 26px/1.15 var(--font, system-ui) !important; letter-spacing:-.025em; }
+html body:not(.dark-theme) .as-overlay.pvts .as-title{ color:#0b1c30 !important; }
+html body .as-overlay.pvts .pvts-sub{ margin-top:6px; font-size:14px; font-weight:600; color:#6b7789; font-variant-numeric:tabular-nums; }
+html body:not(.dark-theme) .as-overlay.pvts .pvts-sub b{ color:#0b1c30; font-weight:800; }
+html body .as-overlay.pvts .as-close-x{
+  width:40px !important; height:40px !important; flex:0 0 40px; border-radius:14px !important;
+  font-size:22px !important;
+}
+html body:not(.dark-theme) .as-overlay.pvts .as-close-x{ background:#eef1f8 !important; color:#0b1c30 !important; }
+
+/* Pasos: dónde estás y qué falta */
+.pvts-steps{ flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:16px 28px 18px; border-bottom:1px solid #e2e7f0; }
+.pvts-st{ display:inline-flex; align-items:center; gap:8px; font-size:13px; font-weight:700; color:#9aa5b5; white-space:nowrap; transition:color .3s var(--pv-ease, ease); }
+.pvts-st b{ width:24px; height:24px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;
+  font-size:12px; font-weight:800; background:#eef1f8; color:#7a879b;
+  transition:background .3s var(--pv-ease, ease), color .3s var(--pv-ease, ease), transform .3s var(--pv-ease-out, ease); }
+.pvts-st.on{ color:#0b1c30; }
+.pvts-st.on b{ background:#0b1c30; color:#fff; transform:scale(1.08); }
+.pvts-st.ok{ color:#0f8a5f; }
+.pvts-st.ok b{ background:#dcf6e9; color:#0f8a5f; }
+.pvts-st-sep{ flex:1 1 auto; height:2px; min-width:10px; border-radius:2px; background:#e2e7f0; transition:background .3s var(--pv-ease, ease); }
+.pvts-st-sep.ok{ background:#9fdcbf; }
+
+/* Cuerpo con su propio scroll y pie fijo */
+html body .as-overlay.pvts .as-body{
+  flex:1 1 auto !important; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain; margin:0 !important; padding:22px 28px 28px !important;
+}
+html body .as-overlay.pvts > .as-card > .as-btns{
+  flex:0 0 auto; display:flex !important; align-items:stretch; gap:10px; margin:0 !important;
+  padding:14px 28px calc(18px + env(safe-area-inset-bottom, 0px)) !important;
+  border-top:1px solid #e2e7f0 !important;
+}
+html body:not(.dark-theme) .as-overlay.pvts > .as-card > .as-btns{ background:#fff !important; }
+html body .as-overlay.pvts .as-confirm{
+  flex:1 1 auto; height:58px; padding:0 20px !important; border-radius:18px !important;
+  font:700 17px var(--font, system-ui) !important; letter-spacing:-.01em;
+  color:#fff !important; background:#0b1c30 !important; box-shadow:none !important; opacity:1;
+  transition:background .25s var(--pv-ease, ease), transform .1s, opacity .2s;
+}
+html body .as-overlay.pvts .as-confirm.pvts-buy{ background:#0f8a5f !important; }
+html body .as-overlay.pvts .as-confirm.pvts-sell{ background:#c62828 !important; }
+html body .as-overlay.pvts .as-confirm:disabled{ background:#c9d1dd !important; opacity:1 !important; }
+html body .as-overlay.pvts .as-cancel{
+  flex:0 0 auto; height:58px; padding:0 22px !important; border-radius:18px !important;
+  font:700 16px var(--font, system-ui) !important;
+}
+html body:not(.dark-theme) .as-overlay.pvts .as-cancel{ background:#eef1f8 !important; color:#0b1c30 !important; }
+
+/* Paso 1 · buscar y elegir */
+html body .as-overlay.pvts .as-field-label{
+  font:700 14px var(--font, system-ui) !important; letter-spacing:0 !important; text-transform:none !important;
+  color:#6b7789 !important; margin-bottom:10px !important;
+}
+html body .as-overlay.pvts .as-ticker-input{
+  height:58px; padding:0 16px 0 48px !important; border-radius:18px !important; font-size:18px !important;
+  border:2px solid transparent !important;
+}
+html body:not(.dark-theme) .as-overlay.pvts .as-ticker-input{ background:#f2f4f9 !important; color:#0b1c30 !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-ticker-input:focus{ border-color:#0b1c30 !important; background:#fff !important; }
+html body .as-overlay.pvts .as-search-icon{ left:16px !important; font-size:22px !important; }
+html body .as-overlay.pvts .as-suggest{ max-height:none !important; border-radius:18px !important; margin-top:10px !important; }
+html body .as-overlay.pvts .as-sug-item{ padding:14px 16px !important; gap:14px !important; }
+html body .as-overlay.pvts .as-sug-tkr{ font-size:15px !important; min-width:60px !important; }
+html body .as-overlay.pvts .as-sug-name{ font-size:14px !important; }
+
+.pvts-pick{ margin-top:24px; }
+.pvts-pick[hidden]{ display:none !important; }
+.pvts-pick-l{ font:700 14px var(--font, system-ui); color:#6b7789; margin:0 0 6px; }
+.pvts-pick-l + .pvts-pick-list{ margin-bottom:22px; }
+.pvts-pick-row{
+  display:flex; align-items:center; gap:14px; width:100%; padding:12px 6px; margin:0;
+  border:0; border-bottom:1px solid #eef1f6; background:none; text-align:left; cursor:pointer;
+  font-family:var(--font, system-ui); border-radius:14px; transition:background .15s, transform .1s;
+}
+.pvts-pick-row:last-child{ border-bottom:0; }
+.pvts-pick-row:active{ background:#f2f4f9; transform:scale(.99); }
+.pvts-pick-row .pos-avatar{ width:44px !important; height:44px !important; flex:0 0 44px; border-radius:14px !important; font-size:15px !important; }
+.pvts-pick-tx{ min-width:0; flex:1 1 auto; }
+.pvts-pick-tk{ display:block; font-size:16px; font-weight:800; color:#0b1c30; letter-spacing:-.01em; }
+.pvts-pick-nm{ display:block; font-size:13px; font-weight:600; color:#6b7789; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pvts-pick-v{ flex:0 0 auto; text-align:right; font-size:15px; font-weight:800; color:#0b1c30; font-variant-numeric:tabular-nums; }
+.pvts-pick-v small{ display:block; font-size:12px; font-weight:700; color:#6b7789; }
+.pvts-pick-go{ flex:0 0 auto; color:#9aa5b5; font-size:22px; line-height:1; }
+
+/* Paso 2 · monto */
+html body .as-overlay.pvts .as-company-card{ padding:16px 18px !important; border-radius:20px !important; border:0 !important; gap:14px !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-company-card{ background:#f2f4f9 !important; }
+html body .as-overlay.pvts .as-company-avatar{ position:relative; overflow:hidden; width:48px !important; height:48px !important; border-radius:14px !important; font-size:15px !important; }
+html body .as-overlay.pvts .as-company-avatar img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#fff; }
+html body .as-overlay.pvts .as-company-name{ font-size:16px !important; font-weight:800 !important; }
+html body .as-overlay.pvts .as-company-exch{ font-size:13px !important; }
+html body .as-overlay.pvts .as-company-price-val{ font-size:22px !important; }
+html body .as-overlay.pvts .as-company-price-day{ font-size:13px !important; }
+html body .as-overlay.pvts .as-divider{ margin:20px 0 !important; }
+html body .as-overlay.pvts .as-type-toggle{ border-radius:16px !important; padding:5px !important; margin-bottom:20px !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-type-toggle{ background:#eef1f8 !important; }
+html body .as-overlay.pvts .as-type-toggle::before{ top:5px !important; bottom:5px !important; left:5px !important; width:calc((100% - 14px) / 2) !important; border-radius:12px !important; }
+html body .as-overlay.pvts .as-type-btn{ padding:12px 6px !important; font-size:15px !important; border-radius:12px !important; }
+html body .as-overlay.pvts .as-big-input{
+  height:84px; padding:0 18px 0 46px !important; border-radius:20px !important;
+  font-size:40px !important; letter-spacing:-.02em; border:2px solid transparent !important;
+}
+html body .as-overlay.pvts .as-big-input.no-prefix{ padding-left:20px !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-big-input{ background:#f2f4f9 !important; color:#0b1c30 !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-big-input:focus{ border-color:#0b1c30 !important; background:#fff !important; }
+html body .as-overlay.pvts .as-prefix{ left:18px !important; font-size:30px !important; }
+html body .as-overlay.pvts .as-quick-row{ gap:8px !important; margin-top:12px !important; }
+html body .as-overlay.pvts .as-quick-btn{ padding:10px 16px !important; font-size:14px !important; border:0 !important; border-radius:999px !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-quick-btn{ background:#eef1f8 !important; color:#0b1c30 !important; }
+html body:not(.dark-theme) .as-overlay.pvts .as-quick-btn:hover{ background:#0b1c30 !important; color:#fff !important; }
+html body .as-overlay.pvts .as-calc-result{ margin-top:16px !important; padding:16px 18px !important; border-radius:20px !important; background:#0b1c30 !important; }
+html body .as-overlay.pvts .as-calc-label{ color:rgba(255,255,255,.72) !important; font-size:14px !important; }
+html body .as-overlay.pvts .as-calc-val{ color:#fff !important; font-size:22px !important; }
+html body .as-overlay.pvts .as-summary{ margin-top:12px !important; padding:6px 18px !important; border-radius:20px !important; border:1px solid #e2e7f0 !important; background:transparent !important; }
+html body .as-overlay.pvts .as-summary-row{ padding:12px 0 !important; font-size:15px !important; border-bottom:1px solid #eef1f6; }
+html body .as-overlay.pvts .as-summary-row:last-child{ border-bottom:0; }
+html body .as-overlay.pvts .as-summary-total{ border-top:0 !important; margin-top:0 !important; }
+html body .as-overlay.pvts .as-summary-total span{ font-size:16px !important; }
+html body .as-overlay.pvts #asSumRowPrice, html body .as-overlay.pvts #asSumRowShares{ display:flex !important; }
+html body .as-overlay.pvts .as-warn{ font-size:14px !important; padding:12px 16px !important; border-radius:14px !important; margin-top:14px !important; }
+
+/* Paso 3 · revisar, y confirmación */
+.pvts-review[hidden], .pvts-done[hidden]{ display:none !important; }
+.pvts-lead{ border-radius:22px; background:#0b1c30; color:#fff; padding:22px 22px 20px; }
+.pvts-lead.sell{ background:#7f1d1d; }
+.pvts-lead-k{ font-size:14px; font-weight:700; color:rgba(255,255,255,.72); }
+.pvts-lead-v{ margin-top:6px; font:800 32px/1.1 var(--font, system-ui); letter-spacing:-.025em; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.pvts-lead-s{ margin-top:8px; font-size:14px; font-weight:600; color:rgba(255,255,255,.82); font-variant-numeric:tabular-nums; }
+.pvts-rows{ margin-top:14px; }
+.pvts-row{ display:flex; align-items:baseline; justify-content:space-between; gap:16px; padding:14px 2px; border-bottom:1px solid #eef1f6; font-size:15px; }
+.pvts-row:last-child{ border-bottom:0; }
+.pvts-row span{ color:#6b7789; font-weight:600; }
+.pvts-row b{ color:#0b1c30; font-weight:800; text-align:right; font-variant-numeric:tabular-nums; }
+.pvts-row b.pos{ color:#0f8a5f; } .pvts-row b.neg{ color:#c62828; }
+.pvts-note{ display:flex; gap:10px; align-items:flex-start; margin-top:16px; padding:14px 16px; border-radius:16px; background:#f2f4f9; font-size:13.5px; line-height:1.5; color:#4b5768; }
+.pvts-note .material-symbols-outlined{ font-size:19px; color:#0b1c30; flex:0 0 auto; }
+.pvts-done{ text-align:center; padding-top:18px; }
+.pvts-check{ width:88px; height:88px; border-radius:50%; background:#dcf6e9; margin:6px auto 18px; display:flex; align-items:center; justify-content:center; }
+.pvts-check path{ stroke:#0f8a5f; stroke-dasharray:24; stroke-dashoffset:0; }
+.pvts-done h3{ margin:0; font:800 25px/1.2 var(--font, system-ui); letter-spacing:-.02em; color:#0b1c30; }
+.pvts-done p{ margin:8px auto 0; max-width:420px; font-size:15px; line-height:1.55; color:#6b7789; font-variant-numeric:tabular-nums; }
+.pvts-done .pvts-rows{ text-align:left; margin-top:22px; border:1px solid #e2e7f0; border-radius:20px; padding:4px 18px; }
+@keyframes pvtsPop{ 0%{ transform:scale(.6); opacity:0 } 60%{ transform:scale(1.06); opacity:1 } 100%{ transform:none } }
+@keyframes pvtsDraw{ from{ stroke-dashoffset:24 } to{ stroke-dashoffset:0 } }
+.pvts-done:not([hidden]) .pvts-check{ animation:pvtsPop .5s var(--pv-ease-out, cubic-bezier(.22,1,.36,1)) both; }
+.pvts-done:not([hidden]) .pvts-check path{ animation:pvtsDraw .42s .18s var(--pv-ease-out, cubic-bezier(.22,1,.36,1)) both; }
+
+/* Qué se ve en cada paso */
+html body .as-overlay.pvts.pvts-at-review .as-body > :not(.pvts-review),
+html body .as-overlay.pvts.pvts-at-done .as-body > :not(.pvts-done){ display:none !important; }
+html body #addStockOverlay.pvts.pvts-at-pick > .as-card > .as-btns{ display:none !important; }
+html body .as-overlay.pvts.pvts-at-done .as-cancel#cashBackBtn{ display:none !important; }
+
+/* Operar una posición: el cajón de siempre, dentro de la hoja */
+#pvTradeSheet .trade-drawer{ padding:0 !important; margin:0 !important; background:transparent !important; border-radius:0 !important; box-shadow:none !important; position:static !important; width:auto !important; }
+#pvTradeSheet .drawer-close, #pvTradeSheet .pvpt-thumb{ display:none !important; }
+#pvTradeSheet .drawer-header{ display:flex !important; flex-direction:column; align-items:flex-start !important; gap:8px !important; margin:0 0 20px !important; padding:16px 18px !important; border-radius:20px; background:#f2f4f9; }
+#pvTradeSheet .drawer-id{ gap:12px !important; }
+#pvTradeSheet .drawer-ticker{ font-size:22px !important; color:#0b1c30 !important; }
+#pvTradeSheet .drawer-price{ font-size:17px !important; color:#0b1c30 !important; font-weight:700 !important; }
+#pvTradeSheet .drawer-mktval{ font-size:13px !important; padding:5px 12px !important; background:#fff !important; border:0 !important; }
+#pvTradeSheet .drawer-gl{ font-size:13px !important; }
+#pvTradeSheet .mode-toggle{ background:#eef1f8 !important; border:0 !important; border-radius:16px !important; padding:5px !important; gap:4px !important; margin-bottom:14px !important; }
+#pvTradeSheet .mode-btn{ padding:13px 8px !important; font-size:16px !important; border-radius:12px !important; color:#6b7789 !important; }
+#pvTradeSheet .mode-btn.buy.active{ background:#0f8a5f !important; color:#fff !important; box-shadow:none !important; }
+#pvTradeSheet .mode-btn.sell.active{ background:#c62828 !important; color:#fff !important; box-shadow:none !important; }
+#pvTradeSheet .order-type-toggle{ gap:8px !important; margin-bottom:20px !important; }
+#pvTradeSheet .order-type-btn{ padding:12px 6px !important; font-size:14px !important; border-radius:14px !important; border:2px solid #e2e7f0 !important; background:#fff !important; color:#4b5768 !important; }
+#pvTradeSheet .order-type-btn.active{ border-color:#0b1c30 !important; background:#0b1c30 !important; color:#fff !important; }
+#pvTradeSheet .input-label{ font:700 14px var(--font, system-ui) !important; letter-spacing:0 !important; text-transform:none !important; color:#6b7789 !important; margin-bottom:10px !important; }
+#pvTradeSheet .amount-wrap{ position:relative; }
+#pvTradeSheet .amount-input{ height:84px; padding:0 18px 0 46px !important; border-radius:20px !important; font-size:40px !important; letter-spacing:-.02em; background:#f2f4f9 !important; border:2px solid transparent !important; color:#0b1c30 !important; }
+#pvTradeSheet .amount-input.no-prefix{ padding-left:20px !important; }
+#pvTradeSheet .amount-input:focus{ border-color:#0b1c30 !important; background:#fff !important; box-shadow:none !important; }
+#pvTradeSheet .amount-input::placeholder{ font-size:24px !important; }
+#pvTradeSheet .amount-wrap .prefix{ position:absolute; top:50%; transform:translateY(-50%); left:18px !important; font-size:30px !important; z-index:1; }
+#pvTradeSheet .pvpt-hint{ margin-top:10px; min-height:20px; font-size:15px; font-weight:700; color:#0b1c30; font-variant-numeric:tabular-nums; }
+#pvTradeSheet .input-group + .input-group{ margin-top:18px !important; }
+#pvTradeSheet .quick-amounts{ gap:8px !important; }
+#pvTradeSheet .qbtn{ padding:10px 16px !important; font-size:14px !important; border:0 !important; background:#eef1f8 !important; color:#0b1c30 !important; }
+#pvTradeSheet .qbtn:hover, #pvTradeSheet .qbtn:active{ background:#0b1c30 !important; color:#fff !important; }
+#pvTradeSheet .preview-block{ display:grid !important; grid-template-columns:1fr 1fr; gap:16px 14px !important; padding:18px !important; border-radius:20px !important; border:1px solid #e2e7f0 !important; background:#fff !important; margin:18px 0 0 !important; }
+#pvTradeSheet .preview-block[style*="none"]{ display:none !important; }
+#pvTradeSheet .preview-item{ max-width:none !important; }
+#pvTradeSheet .preview-label{ font:700 13px var(--font, system-ui) !important; letter-spacing:0 !important; text-transform:none !important; color:#6b7789 !important; }
+#pvTradeSheet .preview-value{ font:800 16px var(--font, system-ui) !important; color:#0b1c30 !important; margin-top:4px; }
+#pvTradeSheet .warn{ font-size:14px !important; padding:12px 16px !important; border-radius:14px !important; margin:14px 0 0 !important; }
+#pvTradeSheet .pvpt-sellall{ border-radius:20px !important; padding:18px !important; }
+#pvTradeSheet .pvpt-sellall > div:first-child{ font-size:16px !important; }
+#pvTradeSheet .pvpt-sellall > div:last-child{ font-size:14px !important; }
+#pvtsFootAmount{ flex:1 1 auto; min-width:0; }
+#pvtsFootAmount .drawer-cta{ display:block; margin:0; }
+#pvtsFootAmount .exec-btn{ width:100%; height:58px; border:0; border-radius:18px; font:700 17px var(--font, system-ui); color:#fff; cursor:pointer; transition:background .25s, opacity .2s, transform .1s; }
+#pvtsFootAmount .exec-btn.buy{ background:#0f8a5f; }
+#pvtsFootAmount .exec-btn.sell{ background:#c62828; }
+#pvtsFootAmount .exec-btn:disabled{ background:#c9d1dd; cursor:default; }
+#pvtsFootAmount .exec-btn:active{ transform:scale(.99); }
+#pvtsFootAmount .drawer-cta-note{ display:block; margin-top:7px; text-align:center; font-size:12px; font-weight:600; color:#7a879b; }
+#pvTradeSheet.pvts-at-amount #pvtsBack, #pvTradeSheet.pvts-at-amount #pvtsConfirm,
+#pvTradeSheet.pvts-at-review #pvtsFootAmount,
+#pvTradeSheet.pvts-at-done #pvtsFootAmount, #pvTradeSheet.pvts-at-done #pvtsBack{ display:none !important; }
+
+/* iPhone: hoja casi a pantalla completa, pie sobre la zona segura */
+@media (max-width:700px){
+  html:not(.pv-ipad) body .as-overlay.pvts{ align-items:flex-end !important; padding:calc(env(safe-area-inset-top, 0px) + 12px) 0 0 !important; }
+  html:not(.pv-ipad) body .as-overlay.pvts > .as-card{ width:100% !important; height:92% !important; border-radius:28px 28px 0 0 !important; margin:0 !important; }
+  html:not(.pv-ipad) body .as-overlay.pvts > .as-card::before{
+    content:''; display:block; flex:0 0 auto; width:40px; height:5px; border-radius:99px; background:#d5dbe5; margin:10px auto 0 !important;
+  }
+  html:not(.pv-ipad) body .as-overlay.pvts .as-broker-header{ padding:14px 20px 0; }
+  html:not(.pv-ipad) body .as-overlay.pvts .as-title{ font-size:24px !important; }
+  .pvts-steps{ padding:14px 20px; }
+  .pvts-st{ font-size:12.5px; gap:6px; }
+  html:not(.pv-ipad) body .as-overlay.pvts .as-body{ padding:18px 20px 24px !important; }
+  html:not(.pv-ipad) body .as-overlay.pvts > .as-card > .as-btns{ padding:12px 20px calc(14px + env(safe-area-inset-bottom, 0px)) !important; }
+  html:not(.pv-ipad) body .as-overlay.pvts .as-big-input,
+  #pvTradeSheet .amount-input{ height:76px; font-size:36px !important; }
+  .pvts-lead-v{ font-size:28px; }
+}
+
+@media (prefers-reduced-motion: reduce){
+  .pvts-st, .pvts-st b, .pvts-st-sep{ transition:none !important; }
+  .pvts-done:not([hidden]) .pvts-check, .pvts-done:not([hidden]) .pvts-check path{ animation:none !important; }
+}
+</style>
+<script>
+/* ═══ COMPRAR · VENDER · EFECTIVO — flujo por pasos ═════════════════════════════════════
+   Solo presentación y orden de pasos. Cada hoja pasa por: elegir (si hace falta) → monto →
+   revisar → listo. Las operaciones las siguen haciendo las funciones de siempre
+   (confirmAddStock, confirmCashOp, requestTrade/executeConfirmed → buyAsset/sellAsset);
+   aquí solo se envuelven para meter el paso de revisión y la pantalla de confirmación. */
+(function(){
+  var $i = function(id){ return document.getElementById(id); };
+  var esc = function(v){ return (typeof pvEsc === 'function') ? pvEsc(String(v == null ? '' : v)) : String(v == null ? '' : v); };
+  var money = function(v){ return (typeof usd === 'function') ? usd(v) : ('$' + (+v || 0).toFixed(2)); };
+  var px = function(v){ return (typeof _pvPx === 'function') ? _pvPx(v) : money(v); };
+  var sh = function(q){ q = +q || 0; return q >= 1000 ? q.toFixed(2) : q.toFixed(4); };
+  var cash = function(){ return (typeof CASH === 'number' && isFinite(CASH)) ? CASH : 0; };
+  var reduce = function(){ try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; } };
+  var NOTA = '<div class="pvts-note"><span class="material-symbols-outlined">info</span><span>Esto actualiza tu portafolio en Portiv. No envía ninguna orden a tu broker.</span></div>';
+  var NOTA_CASH = '<div class="pvts-note"><span class="material-symbols-outlined">info</span><span>Solo cambia el efectivo que Portiv muestra. No mueve dinero de tu banco ni de tu broker.</span></div>';
+
+  function steps(el, labels, at){
+    if (!el) return;
+    var h = '';
+    labels.forEach(function(l, i){
+      if (i) h += '<i class="pvts-st-sep' + (i <= at ? ' ok' : '') + '"></i>';
+      h += '<span class="pvts-st' + (i < at ? ' ok' : (i === at ? ' on' : '')) + '"><b>' + (i < at ? '✓' : (i + 1)) + '</b>' + esc(l) + '</span>';
+    });
+    el.innerHTML = h;
+  }
+  function setStep(ov, step){
+    ['pick', 'amount', 'review', 'done'].forEach(function(s){ ov.classList.toggle('pvts-at-' + s, s === step); });
+  }
+  // Entrada de un panel nuevo: el mismo gesto que el resto de la app (sube 10 px y aparece).
+  function enter(el){
+    if (!el || reduce() || !el.animate) return;
+    try { el.animate([{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }], { duration: 300, easing: 'cubic-bezier(.22,1,.36,1)' }); } catch(e){}
+  }
+  function topOf(ov){ try { var b = ov.querySelector('.as-body'); if (b) b.scrollTop = 0; } catch(e){} }
+  function rows(list){
+    return '<div class="pvts-rows">' + list.filter(Boolean).map(function(r){
+      return '<div class="pvts-row"><span>' + esc(r[0]) + '</span><b' + (r[2] ? ' class="' + r[2] + '"' : '') + '>' + esc(r[1]) + '</b></div>';
+    }).join('') + '</div>';
+  }
+  function lead(k, v, s, cls){
+    return '<div class="pvts-lead' + (cls ? ' ' + cls : '') + '"><div class="pvts-lead-k">' + esc(k) + '</div><div class="pvts-lead-v">' + esc(v) + '</div>' + (s ? '<div class="pvts-lead-s">' + esc(s) + '</div>' : '') + '</div>';
+  }
+  function done(title, text, list){
+    return '<div class="pvts-check"><svg viewBox="0 0 24 24" width="42" height="42" fill="none" aria-hidden="true"><path d="M5 12.5l4.2 4.2L19 7" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>'
+      + '<h3>' + esc(title) + '</h3><p>' + esc(text) + '</p>' + rows(list);
+  }
+  function holding(tk){ try { return HOLDINGS.find(function(h){ return h && h.ticker === tk; }) || null; } catch(e){ return null; } }
+
+  /* ─── 1) Comprar activo ─────────────────────────────────────────────────────────── */
+  var AS = { step: 'pick', confirming: false, ok: false, tx: null };
+  function asRefresh(){
+    var ov = $i('addStockOverlay'); if (!ov) return;
+    var st = AS.step;
+    setStep(ov, st);
+    steps($i('asSteps'), ['Activo', 'Monto', 'Revisar'], st === 'pick' ? 0 : st === 'amount' ? 1 : st === 'review' ? 2 : 3);
+    var sub = $i('asSub'); if (sub) sub.innerHTML = 'Efectivo disponible <b>' + esc(money(cash())) + '</b>';
+    var b = $i('addConfirmBtn'), back = $i('asBackBtn');
+    if (b){
+      b.classList.toggle('pvts-buy', st === 'review');
+      b.textContent = st === 'review' ? 'Confirmar compra' : st === 'done' ? 'Listo' : 'Revisar compra';
+      if (st === 'review' || st === 'done') b.disabled = false;
+    }
+    if (back) back.textContent = st === 'review' ? 'Atrás' : st === 'done' ? 'Comprar otro' : 'Cancelar';
+    if ($i('asReview')) $i('asReview').hidden = st !== 'review';
+    if ($i('asDone'))   $i('asDone').hidden   = st !== 'done';
+    var pl = $i('asPickList'), inp = $i('addTickerInput');
+    if (pl) pl.hidden = !(st === 'pick' && !(inp && inp.value.trim()));
+  }
+  // Paso 1 sin nada escrito: tus posiciones (por valor) y los más buscados, para tocar y seguir.
+  function asBuildPick(){
+    var box = $i('asPickList'); if (!box) return;
+    var own = [];
+    try {
+      own = HOLDINGS.filter(function(h){ return h && h.ticker && h.qty > 0; })
+        .map(function(h){ return { h: h, v: (typeof calcH === 'function' ? calcH(h).mktVal : h.qty * h.price) || 0 }; })
+        .sort(function(a, b){ return b.v - a.v; }).slice(0, 6);
+    } catch(e){}
+    var mine = new Set(own.map(function(o){ return o.h.ticker; }));
+    var pop = [];
+    try { pop = (_ADD_SUG_FALLBACK || []).filter(function(x){ return !mine.has(x.symbol); }).slice(0, 8); } catch(e){}
+    var av = function(t){ return (typeof _posAvatar === 'function') ? _posAvatar(t) : ''; };
+    var row = function(t, name, right){
+      return '<button type="button" class="pvts-pick-row" data-tk="' + esc(t) + '" data-nm="' + esc(name) + '">' + av(t)
+        + '<span class="pvts-pick-tx"><span class="pvts-pick-tk">' + esc(t) + '</span><span class="pvts-pick-nm">' + esc(name) + '</span></span>'
+        + right + '</button>';
+    };
+    var h = '';
+    if (own.length){
+      h += '<div class="pvts-pick-l">Tus posiciones</div><div class="pvts-pick-list">'
+        + own.map(function(o){ return row(o.h.ticker, o.h.name || o.h.ticker, '<span class="pvts-pick-v">' + esc(money(o.v)) + '<small>Tienes</small></span>'); }).join('') + '</div>';
+    }
+    if (pop.length){
+      h += '<div class="pvts-pick-l">Los más buscados</div><div class="pvts-pick-list">'
+        + pop.map(function(x){ return row(x.symbol, x.name, '<span class="pvts-pick-go" aria-hidden="true">›</span>'); }).join('') + '</div>';
+    }
+    box.innerHTML = h;
+  }
+  document.addEventListener('click', function(e){
+    var r = e.target && e.target.closest && e.target.closest('#asPickList .pvts-pick-row');
+    if (!r) return;
+    var inp = $i('addTickerInput'); if (!inp) return;
+    inp.value = r.getAttribute('data-tk') || '';
+    try { _addPickedName = r.getAttribute('data-nm') || ''; } catch(err){}
+    try { _addSugItems = []; _addSugIdx = -1; _renderAddSuggestions(); } catch(err){}
+    try { lookupAddPrice(); } catch(err){}
+  });
+
+  if (typeof openAddStock === 'function'){
+    var _oOpenAdd = openAddStock;
+    openAddStock = function(){
+      AS.step = 'pick'; AS.tx = null; AS.confirming = false;
+      var r = _oOpenAdd.apply(this, arguments);
+      asBuildPick(); asRefresh();
+      return r;
+    };
+  }
+  if (typeof _addRevealOrder === 'function'){
+    var _oReveal = _addRevealOrder;
+    _addRevealOrder = function(ticker){
+      var r = _oReveal.apply(this, arguments);
+      // El logo de la empresa sobre la inicial (si no carga, queda la inicial).
+      try { var a = $i('addCompanyAvatar'); if (a && typeof _pvLogoImg === 'function' && !a.querySelector('img')) a.insertAdjacentHTML('beforeend', _pvLogoImg(ticker)); } catch(e){}
+      if (AS.step === 'pick' || AS.step === 'amount'){ var was = AS.step; AS.step = 'amount'; asRefresh(); if (was === 'pick') topOf($i('addStockOverlay')); }
+      return r;
+    };
+  }
+  ['onAddTickerInput', '_addChangeTicker'].forEach(function(fn){
+    var o = window[fn]; if (typeof o !== 'function') return;
+    window[fn] = function(){ var r = o.apply(this, arguments); if (AS.step !== 'done'){ AS.step = 'pick'; asRefresh(); } return r; };
+  });
+  if (typeof _addCalcPreview === 'function'){
+    var _oCalc = _addCalcPreview;
+    _addCalcPreview = function(){
+      var r = _oCalc.apply(this, arguments);
+      if (AS.step === 'review' || AS.step === 'done'){ var b = $i('addConfirmBtn'); if (b) b.disabled = false; }
+      return r;
+    };
+  }
+  if (typeof closeAddStock === 'function'){
+    var _oCloseAdd = closeAddStock;
+    closeAddStock = function(){
+      // confirmAddStock cierra la hoja al terminar bien: en vez de cerrarla, se enseña «Listo».
+      if (AS.confirming){ AS.ok = true; return; }
+      return _oCloseAdd.apply(this, arguments);
+    };
+  }
+  window._tsAsNext = function(){
+    var ov = $i('addStockOverlay'), b = $i('addConfirmBtn');
+    if (AS.step === 'amount'){
+      if (!b || b.disabled) return;
+      var p = _addPxEff(), val = parseFloat(($i('asOrderInput') || {}).value);
+      if (!(p > 0) || !(val > 0)) return;
+      var byMoney = _addBuyType === 'money';
+      var shares = byMoney ? val / p : val, amt = byMoney ? val : val * p;
+      if (amt > cash() + 0.01) return;
+      var ex = holding(_addTicker);
+      AS.tx = { tk: _addTicker, name: _addName || _addTicker, p: p, shares: shares, amt: amt };
+      $i('asReview').innerHTML = lead('Vas a comprar', money(amt) + ' de ' + _addTicker, '≈ ' + sh(shares) + ' acciones a ' + px(p) + ' cada una')
+        + rows([
+            ['Activo', (_addName && _addName !== _addTicker ? _addName + ' · ' : '') + _addTicker],
+            ['Precio por acción', px(p)],
+            ['Acciones', '+' + sh(shares)],
+            ['Total', money(amt)],
+            ['Efectivo ahora', money(cash())],
+            ['Efectivo después', money(Math.max(0, cash() - amt))],
+            ex ? ['Tu posición después', sh(ex.qty + shares) + ' acciones'] : ['Posición', 'Nueva en tu portafolio']
+          ]) + NOTA;
+      AS.step = 'review'; asRefresh(); topOf(ov); enter($i('asReview'));
+      return;
+    }
+    if (AS.step === 'review'){
+      var tx = AS.tx;
+      AS.confirming = true; AS.ok = false;
+      try { confirmAddStock(); } finally { AS.confirming = false; }
+      if (!AS.ok || !tx){ AS.step = 'amount'; asRefresh(); return; }
+      var h2 = holding(tx.tk);
+      $i('asDone').innerHTML = done('Compra registrada',
+        'Compraste ' + sh(tx.shares) + ' acciones de ' + tx.tk + ' por ' + money(tx.amt) + '.',
+        [['Efectivo disponible', money(cash())],
+         h2 ? ['Tu posición en ' + tx.tk, sh(h2.qty) + ' acciones · ' + money(h2.qty * (h2.price || tx.p))] : null]);
+      AS.step = 'done'; asRefresh(); topOf(ov); enter($i('asDone'));
+      return;
+    }
+    if (AS.step === 'done'){ AS.step = 'pick'; _oCloseAdd(); return; }
+  };
+  window._tsAsBack = function(){
+    if (AS.step === 'review'){ AS.step = 'amount'; asRefresh(); enter($i('asOrderSection')); return; }
+    if (AS.step === 'done'){ openAddStock(); return; }
+    closeAddStock();
+  };
+
+  /* ─── 2) Agregar fondos / Retirar ───────────────────────────────────────────────── */
+  var CS = { step: 'amount', confirming: false, ok: false, tx: null };
+  function csIsW(){ try { return _cashOpType === 'withdraw'; } catch(e){ return false; } }
+  function csRefresh(){
+    var ov = $i('cashOverlay'); if (!ov) return;
+    var st = CS.step, w = csIsW();
+    setStep(ov, st);
+    steps($i('cashSteps'), ['Monto', 'Revisar'], st === 'amount' ? 0 : st === 'review' ? 1 : 2);
+    var sub = $i('cashSub'); if (sub) sub.innerHTML = 'Efectivo disponible <b>' + esc(money(cash())) + '</b>';
+    var b = $i('cashConfirmBtn'), back = $i('cashBackBtn');
+    if (b){
+      b.classList.toggle('pvts-buy', st === 'review' && !w);
+      b.textContent = st === 'review' ? (w ? 'Confirmar retiro' : 'Confirmar depósito') : st === 'done' ? 'Listo' : (w ? 'Revisar retiro' : 'Revisar depósito');
+      if (st === 'review' || st === 'done') b.disabled = false;
+    }
+    if (back) back.textContent = st === 'review' ? 'Atrás' : 'Cancelar';
+    if ($i('cashReview')) $i('cashReview').hidden = st !== 'review';
+    if ($i('cashDone'))   $i('cashDone').hidden   = st !== 'done';
+  }
+  if (typeof openCashModal === 'function'){
+    var _oOpenCash = openCashModal;
+    openCashModal = function(){ CS.step = 'amount'; CS.tx = null; CS.confirming = false; var r = _oOpenCash.apply(this, arguments); csRefresh(); return r; };
+  }
+  if (typeof _cashSetType === 'function'){
+    var _oCashType = _cashSetType;
+    _cashSetType = function(){ var r = _oCashType.apply(this, arguments); if (CS.step === 'amount') csRefresh(); return r; };
+  }
+  if (typeof _cashCalcPreview === 'function'){
+    var _oCashCalc = _cashCalcPreview;
+    _cashCalcPreview = function(){
+      var r = _oCashCalc.apply(this, arguments);
+      if (CS.step === 'review' || CS.step === 'done'){ var b = $i('cashConfirmBtn'); if (b) b.disabled = false; }
+      return r;
+    };
+  }
+  if (typeof closeCashModal === 'function'){
+    var _oCloseCash = closeCashModal;
+    closeCashModal = function(){ if (CS.confirming){ CS.ok = true; return; } return _oCloseCash.apply(this, arguments); };
+  }
+  window._tsCashNext = function(){
+    var ov = $i('cashOverlay'), b = $i('cashConfirmBtn'), w = csIsW();
+    if (CS.step === 'amount'){
+      if (!b || b.disabled) return;
+      var raw = parseFloat(($i('cashAmountInput') || {}).value);
+      if (!(raw > 0)) return;
+      var amt = (typeof round2 === 'function') ? round2(raw) : Math.round(raw * 100) / 100;
+      if (w && amt > cash()) return;
+      CS.tx = { w: w, amt: amt };
+      var after = w ? cash() - amt : cash() + amt;
+      $i('cashReview').innerHTML = lead(w ? 'Vas a retirar' : 'Vas a agregar', money(amt), w ? 'de tu efectivo en Portiv' : 'a tu efectivo en Portiv', w ? 'sell' : '')
+        + rows([['Efectivo ahora', money(cash())], ['Efectivo después', money(Math.max(0, after)), w ? '' : 'pos']]) + NOTA_CASH;
+      CS.step = 'review'; csRefresh(); topOf(ov); enter($i('cashReview'));
+      return;
+    }
+    if (CS.step === 'review'){
+      var tx = CS.tx;
+      CS.confirming = true; CS.ok = false;
+      try { confirmCashOp(); } finally { CS.confirming = false; }
+      if (!CS.ok || !tx){ CS.step = 'amount'; csRefresh(); return; }
+      $i('cashDone').innerHTML = done(tx.w ? 'Retiro registrado' : 'Fondos agregados',
+        (tx.w ? 'Retiraste ' : 'Agregaste ') + money(tx.amt) + (tx.w ? ' de tu efectivo.' : ' a tu efectivo.'),
+        [['Efectivo disponible', money(cash())]]);
+      CS.step = 'done'; csRefresh(); topOf(ov); enter($i('cashDone'));
+      return;
+    }
+    if (CS.step === 'done'){ CS.step = 'amount'; _oCloseCash(); }
+  };
+  window._tsCashBack = function(){
+    if (CS.step === 'review'){ CS.step = 'amount'; csRefresh(); return; }
+    closeCashModal();
+  };
+
+  /* ─── 3) Operar una posición: Comprar más / Vender ──────────────────────────────── */
+  // El cajón (buildDrawer) se pinta ahora dentro de #pvTradeSheet en lugar de una fila de la
+  // tabla; su botón de ejecutar pasa al pie fijo. requestTrade ya no abre su modal aparte: su
+  // resumen se enseña como el paso «Revisar» de la misma hoja.
+  var PS = { step: null, idx: -1, type: '', tx: null };
+  function psRefresh(){
+    var ov = $i('pvTradeSheet'); if (!ov || !PS.step) return;
+    setStep(ov, PS.step);
+    steps($i('pvtsSteps'), ['Monto', 'Revisar'], PS.step === 'amount' ? 0 : PS.step === 'review' ? 1 : 2);
+    var a = (typeof activeDrawer !== 'undefined' && activeDrawer) || null;
+    var tx = PS.tx, h = a ? HOLDINGS[a.idx] : (tx ? holding(tx.ticker) : null);
+    var mode = a ? a.mode : (tx ? tx.mode : 'buy'), tk = h ? h.ticker : (tx ? tx.ticker : '');
+    if ($i('pvtsTitle')) $i('pvtsTitle').textContent = (mode === 'sell' ? 'Vender ' : 'Comprar ') + tk;
+    var sub = $i('pvtsSub');
+    if (sub && PS.step !== 'done'){
+      sub.innerHTML = mode === 'sell' && h
+        ? 'Tienes <b>' + esc(sh(h.qty)) + ' acciones</b> · ' + esc(money(h.qty * h.price))
+        : 'Efectivo disponible <b>' + esc(money(cash())) + '</b>';
+    } else if (sub) sub.innerHTML = 'Efectivo disponible <b>' + esc(money(cash())) + '</b>';
+    var c = $i('pvtsConfirm');
+    if (c){
+      c.classList.toggle('pvts-buy', PS.step === 'review' && mode !== 'sell');
+      c.classList.toggle('pvts-sell', PS.step === 'review' && mode === 'sell');
+      c.textContent = PS.step === 'done' ? 'Listo' : (mode === 'sell' ? 'Confirmar venta' : 'Confirmar compra');
+    }
+    $i('pvtsAmount').hidden = PS.step !== 'amount';
+    $i('pvtsReview').hidden = PS.step !== 'review';
+    $i('pvtsDone').hidden   = PS.step !== 'done';
+  }
+  function psOpen(){
+    var ov = $i('pvTradeSheet'); if (!ov) return;
+    if (!ov.classList.contains('open')){ ov.classList.remove('closing'); ov.classList.add('open'); }
+  }
+  function psHide(){
+    PS.step = null; PS.tx = null;
+    var ov = $i('pvTradeSheet'); if (!ov || !ov.classList.contains('open')) return;
+    if (typeof _asCerrar === 'function') _asCerrar('pvTradeSheet'); else ov.classList.remove('open');
+  }
+  function psSync(){
+    var a = (typeof activeDrawer !== 'undefined' && activeDrawer) || null;
+    if (!a || !HOLDINGS[a.idx]){ if (PS.step && PS.step !== 'done') psHide(); return; }
+    var idx = a.idx, type = a.orderType || 'money';
+    // El importe tecleado sobrevive a cambiar Comprar ⇄ Vender; al cambiar dinero ⇄ acciones
+    // cambia de significado y se vacía.
+    var prev = document.querySelector('#pvtsAmount #amt-' + idx);
+    var keep = (prev && PS.idx === idx && PS.type === type) ? prev.value : '';
+    var box = $i('pvtsAmount');
+    box.innerHTML = buildDrawer(idx, calcTotals());
+    var foot = $i('pvtsFootAmount'); foot.innerHTML = '';
+    var cta = box.querySelector('.drawer-cta'); if (cta) foot.appendChild(cta);
+    PS.idx = idx; PS.type = type; PS.tx = null;
+    var wasOpen = !!PS.step;
+    PS.step = 'amount';
+    psRefresh(); psOpen();
+    var inp = document.getElementById('amt-' + idx);
+    if (inp && keep){ inp.value = keep; try { updatePreview(idx); } catch(e){} }
+    if (!wasOpen) topOf($i('pvTradeSheet'));
+  }
+  ['toggleDrawer', 'setMode', 'setOrderType', 'closeDrawer'].forEach(function(fn){
+    var o = window[fn]; if (typeof o !== 'function') return;
+    window[fn] = function(){ var r = o.apply(this, arguments); try { psSync(); } catch(e){ try { console.warn('[trade]', e); } catch(_){} } return r; };
+  });
+  if (typeof requestTrade === 'function'){
+    var _oReq = requestTrade;
+    requestTrade = function(idx){
+      var r = _oReq.apply(this, arguments);
+      var mo = $i('modalOverlay'), ov = $i('pvTradeSheet');
+      if (PS.step === 'amount' && mo && mo.classList.contains('open') && typeof pendingTx !== 'undefined' && pendingTx){
+        mo.classList.remove('open');
+        var t = pendingTx, h = holding(t.ticker), p = h ? h.price : (t.shares > 0 ? t.amt / t.shares : 0);
+        var sell = t.mode === 'sell';
+        var gl = (sell && h && h.qty > 0) ? (h.price - h.costBasis / h.qty) * t.shares : null;
+        PS.tx = { ticker: t.ticker, mode: t.mode, shares: t.shares, amt: t.amt };
+        $i('pvtsReview').innerHTML = lead(sell ? 'Vas a vender' : 'Vas a comprar', money(t.amt) + ' de ' + t.ticker,
+            '≈ ' + sh(t.shares) + ' acciones a ' + px(p) + ' cada una', sell ? 'sell' : '')
+          + rows([
+              ['Acciones', (sell ? '−' : '+') + sh(t.shares)],
+              ['Precio por acción', px(p)],
+              ['Total', money(t.amt)],
+              ['Te quedarán', t.newQty > 0 ? sh(t.newQty) + ' acciones · ' + money(t.newQty * p) : 'Ninguna: vendes toda la posición'],
+              ['Efectivo después', money(t.newCash)],
+              gl != null ? ['Ganancia realizada', (gl >= 0 ? '+' : '−') + money(Math.abs(gl)), gl >= 0 ? 'pos' : 'neg'] : null
+            ]) + NOTA;
+        PS.step = 'review'; psRefresh(); topOf(ov); enter($i('pvtsReview'));
+      }
+      return r;
+    };
+  }
+  window._tsPosBack = function(){
+    if (PS.step === 'review'){ try { pendingTx = null; } catch(e){} PS.step = 'amount'; psRefresh(); enter($i('pvtsAmount')); }
+  };
+  window._tsPosConfirm = function(){
+    var ov = $i('pvTradeSheet');
+    if (PS.step === 'done'){ psHide(); return; }
+    if (PS.step !== 'review' || typeof pendingTx === 'undefined' || !pendingTx) return;
+    var tx = PS.tx || { ticker: pendingTx.ticker, mode: pendingTx.mode, shares: pendingTx.shares, amt: pendingTx.amt };
+    var c0 = cash();
+    PS.step = 'done';   // executeConfirmed suelta activeDrawer: que eso no cierre la hoja
+    try { executeConfirmed(); } catch(e){ try { console.warn('[trade]', e); } catch(_){} }
+    var ok = Math.abs(cash() - c0) > 1e-6;
+    if (!ok){
+      // No se ejecutó (el aviso ya salió en un toast): de vuelta al monto si el cajón sigue.
+      if (typeof activeDrawer !== 'undefined' && !activeDrawer && PS.idx >= 0 && HOLDINGS[PS.idx]){
+        try { activeDrawer = { idx: PS.idx, mode: tx.mode, orderType: PS.type || 'money' }; } catch(e){}
+        PS.step = null; psSync();
+      } else psHide();
+      return;
+    }
+    var sell = tx.mode === 'sell', h2 = holding(tx.ticker);
+    PS.tx = tx;
+    $i('pvtsDone').innerHTML = done(sell ? 'Venta registrada' : 'Compra registrada',
+      (sell ? 'Vendiste ' : 'Compraste ') + sh(tx.shares) + ' acciones de ' + tx.ticker + ' por ' + money(tx.amt) + '.',
+      [['Efectivo disponible', money(cash())],
+       ['Tu posición en ' + tx.ticker, h2 && h2.qty > 0 ? sh(h2.qty) + ' acciones · ' + money(h2.qty * h2.price) : 'Vendida por completo']]);
+    psRefresh(); topOf(ov); enter($i('pvtsDone'));
+  };
+  window._tsPosClose = function(){
+    if (typeof activeDrawer !== 'undefined' && activeDrawer && PS.step !== 'done'){ closeDrawer(); return; }
+    psHide();
+  };
+
+  // Escape cierra la hoja de arriba (teclado en iPad y Mac).
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape') return;
+    var ps = $i('pvTradeSheet'), as = $i('addStockOverlay'), cs = $i('cashOverlay');
+    if (ps && ps.classList.contains('open')) { window._tsPosClose(); return; }
+    if (cs && cs.classList.contains('open')) { closeCashModal(); return; }
+    if (as && as.classList.contains('open') && !(_addSugItems && _addSugItems.length)) { closeAddStock(); }
+  });
+})();
+</script>
+<!-- ═══ fin COMPRAR · VENDER · EFECTIVO ═══ -->
 </body>
 </html>
