@@ -20901,8 +20901,10 @@ function _lsSet(k, v){
 }
 
 // Escape HTML único para TODA la app. Cubre texto y atributos (incluye comillas).
+// También quita las etiquetas <cite index="…"> de la búsqueda web de la IA: así ningún
+// texto generado que se pinte escapado las muestra, aunque su origen no lo haya limpiado.
 function pvEsc(s){
-  return String(s == null ? '' : s).replace(/[&<>"'`]/g, c => ({
+  return String(s == null ? '' : s).replace(/<\s*\/?\s*cite\b[^>]*>|[‹＜]\s*\/?\s*cite\b[^›＞]*[›＞]/gi, '').replace(/[&<>"'`]/g, c => ({
     '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'
   }[c]));
 }
@@ -29969,7 +29971,8 @@ function _pvxEqrCard(a){
   // 7c) REACCIÓN AL ÚLTIMO REPORTE (IA, 1× global por earnings). Va DESPUÉS de "Crecimiento
   //     reciente": primero la tendencia de trimestres, luego la lectura del último.
   //     Si no hay objeto → nada: la sección desaparece entera, sin placeholders.
-  const eqr = a.earningsReaction;
+  // Las lecturas ya guardadas en la nube pueden traer <cite index="…"> de la búsqueda web.
+  const eqr = a.earningsReaction ? _cleanAIDeep(a.earningsReaction) : null;
   if (eqr && (eqr.resumen || (eqr.bueno && eqr.bueno.length) || (eqr.malo && eqr.malo.length))) {
     // Día del reporte: solo uno confirmado (EPS.reportedOn). Las lecturas sin `reportDateReal`
     // traen en `reportDate` el cierre del trimestre (ORCL: «30 de septiembre» por el 9 sep): a
@@ -30907,8 +30910,10 @@ async function _getEarningsReaction(ticker, info, opts){
     // 2) Nadie la ha generado para este reporte → este usuario es el 1º y paga 1 sola vez.
     const facts = _eqrFactsFor(ticker);
     if (!facts) return null;
-    const obj = await _fetchEarningsReactionAI(ticker, info, facts);
-    if (!obj) return null;
+    // Sin etiquetas <cite> de la búsqueda web: se limpia ANTES de guardar en la nube.
+    const _raw = await _fetchEarningsReactionAI(ticker, info, facts);
+    if (!_raw) return null;
+    const obj = _cleanAIDeep(_raw);
     obj.earningsKey = eKey;
     // Hasta oct 2026 `reportDate` guardaba el `period` (cierre del trimestre) y la tarjeta lo
     // daba como día del reporte. Ahora solo va si el calendario confirma el día real, marcado
@@ -31942,6 +31947,27 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   // Etiquetas de la derecha (medias y la vela en curso): se colocan al final sin encimarse.
   const etqDer = [];
 
+  // Zona de compra (la misma de la tarjeta «Rango de compra»): franja detrás de las velas.
+  // Solo si cae dentro de los precios que muestra la gráfica; no estira la escala para alcanzarla.
+  let zonaY = null;
+  const zc = _ex.zona;
+  if (zc && zc.hi > min && zc.lo < max){
+    const yA = Math.max(pTop, yP(Math.min(zc.hi, max))), yB = Math.min(pBot, yP(Math.max(zc.lo, min)));
+    if (yB - yA >= 1){
+      zonaY = { top: yA, bot: yB };
+      ctx.save();
+      ctx.globalAlpha = 0.12; ctx.fillStyle = SUBE;
+      ctx.fillRect(x0, yA, ancho, yB - yA);
+      ctx.globalAlpha = 0.55; ctx.strokeStyle = SUBE; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      for (const [y, dentro] of [[yA, zc.hi <= max], [yB, zc.lo >= min]]){
+        if (!dentro) continue;   // borde fuera de la gráfica: no se dibuja una línea falsa
+        const yy = Math.round(y) + 0.5;
+        ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x0 + ancho, yy); ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
   // Volumen: una barra por sesión, del color de SU vela. El gris neutro no distinguía una
   // sesión de compra de una de venta, que es justo lo que el volumen aporta.
   ctx.save(); ctx.globalAlpha = 0.55;
@@ -32006,6 +32032,24 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   ctx.globalAlpha = 0.6; ctx.strokeStyle = colHoy; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
   ctx.beginPath(); ctx.moveTo(x0, yHoy); ctx.lineTo(x0 + ancho, yHoy); ctx.stroke();
   ctx.setLineDash([]); ctx.restore();
+
+  // Cuadro «Zona de compra» encima de las velas, en el borde izquierdo de la franja.
+  if (zonaY){
+    const f$ = v => '$' + (v >= 100 ? v.toFixed(0) : v.toFixed(2));
+    const txt = 'Zona de compra ' + f$(zc.lo) + ' – ' + f$(zc.hi);
+    ctx.save();
+    ctx.font = '600 10px Manrope, system-ui, sans-serif';
+    const bw = Math.min(ancho - 8, Math.ceil(ctx.measureText(txt).width) + 14), bh = 18;
+    const by = Math.max(pTop, Math.min(pBot - bh, (zonaY.top + zonaY.bot) / 2 - bh / 2));
+    const bx = x0 + 6;
+    ctx.fillStyle = SUBE;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 5); else ctx.rect(bx, by, bw, bh);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, bx + 7, by + bh / 2 + 0.5, bw - 14);
+    ctx.restore();
+  }
 
   // Etiquetas sin encimarse: primero las de más prioridad; si una choca, se corre una línea
   // arriba o abajo, y si tampoco cabe se omite (mejor sin etiqueta que ilegible).
@@ -32411,7 +32455,8 @@ async function _pvtFillInto(host, ticker, biz){
   const pxVivo = bars[bars.length - 1].c;
   const zona  = _pvtZonaEntrada(base, ind, biz, pxVivo);
   _pvtEstado[tk] = { bars, ind, periodo: _PVT_PERIODO_DEF, host,
-                     extra: { enCurso: bars.length > cerradas.length ? bars.length - 1 : null } };
+                     extra: { enCurso: bars.length > cerradas.length ? bars.length - 1 : null,
+                              zona: (zona && isFinite(zona.lo) && isFinite(zona.hi)) ? { lo: zona.lo, hi: zona.hi } : null } };
 
   // La zona de entrada vive en su propia tarjeta, ENCIMA de la técnica, y se pinta con las
   // mismas barras: una sola llamada a Alpaca alimenta las dos.
@@ -37795,7 +37840,8 @@ function _chatRouteCore(q, prevKind){
 
 function _chatEscape(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function _chatMarkdown(s){
-  let h=_chatEscape(s);
+  // Sin etiquetas (cite index="…"> de la búsqueda web (las respuestas de Portiv IA también las traen).
+  let h=_chatEscape(String(s == null ? '' : s).replace(/<\s*\/?\s*cite\b[^>]*>|[‹＜]\s*\/?\s*cite\b[^›＞]*[›＞]/gi, ''));
   h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
   // onclick → en nativo abre el navegador in-app (SFSafariViewController) en vez de dejar al
   // usuario atrapado en una WKWebView de terceros sin barra de navegación.
