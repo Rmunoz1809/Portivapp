@@ -266,6 +266,73 @@ export async function resolveIbkrSlugs(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// CATÁLOGO DE BROKERS (selector propio de Portiv)
+// ─────────────────────────────────────────────────────────────────────────────
+// El usuario elige su broker en una hoja con el diseño de la app y el portal de SnapTrade
+// se abre ya dentro del flujo de ESE broker (parámetro `broker` de loginSnapTradeUser), sin
+// su pantalla de selección. La lista sale de los brokers PERMITIDOS para este proyecto
+// (getPartnerInfo → allowed_brokerages); si esa lectura falla, del catálogo completo. Es
+// reference data: sin usuario y sin coste por conexión. Se cachea por isolate.
+export type BrokerEntry = {
+  slug: string;
+  name: string;
+  logo: string | null;
+  maintenance: boolean;
+  degraded: boolean;
+  type: string | null;
+  crypto: boolean;
+  realtime: boolean;
+  reporting: boolean;
+  url: string | null;
+};
+let _catalog: BrokerEntry[] | undefined = undefined;
+let _catalogAt = 0;
+const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** Brokers que el usuario puede enlazar, ordenados por nombre. Nunca lanza; puede devolver []. */
+export async function brokerCatalog(st: Snaptrade): Promise<BrokerEntry[]> {
+  if (_catalog && _catalog.length && Date.now() - _catalogAt < CATALOG_TTL_MS) return _catalog;
+  let raw: any[] = [];
+  try {
+    const p = (await st.referenceData.getPartnerInfo()).data as any;
+    raw = Array.isArray(p?.allowed_brokerages) ? p.allowed_brokerages : [];
+  } catch (e: any) {
+    console.warn("[snaptrade] getPartnerInfo falló:",
+      (e?.response?.data?.detail ?? e?.message ?? String(e)).toString().slice(0, 160));
+  }
+  if (!raw.length) {
+    try { raw = ((await st.referenceData.listAllBrokerages()).data as any[]) ?? []; }
+    catch (e: any) {
+      console.warn("[snaptrade] listAllBrokerages falló:",
+        (e?.response?.data?.detail ?? e?.message ?? String(e)).toString().slice(0, 160));
+      return _catalog ?? [];
+    }
+  }
+  const out: BrokerEntry[] = [];
+  const seen = new Set<string>();
+  for (const b of raw) {
+    const slug = typeof b?.slug === "string" ? b.slug : "";
+    if (!slug || seen.has(slug) || b?.enabled === false) continue;
+    seen.add(slug);
+    out.push({
+      slug,
+      name: String(b?.display_name || b?.name || slug),
+      logo: b?.aws_s3_square_logo_url || b?.aws_s3_logo_url || null,
+      maintenance: b?.maintenance_mode === true,
+      degraded: b?.is_degraded === true,
+      type: b?.brokerage_type?.name ?? null,
+      crypto: /crypto/i.test(String(b?.brokerage_type?.name ?? "")),
+      realtime: b?.is_real_time_connection === true,
+      reporting: b?.has_reporting === true,
+      url: typeof b?.url === "string" ? b.url : null,
+    });
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  if (out.length) { _catalog = out; _catalogAt = Date.now(); }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TIPOS DE CAMBIO
 // ─────────────────────────────────────────────────────────────────────────────
 // Una cuenta de Interactive Brokers es multidivisa por diseño: el efectivo va por moneda y

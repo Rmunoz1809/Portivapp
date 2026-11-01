@@ -7,8 +7,9 @@
 // The SnapTrade userId IS the Supabase auth user.id (immutable UUID) — never the
 // email. userSecret is generated once by SnapTrade and stored server-side only.
 //
-// Request  (POST): { userId?: string, mode?: 'add', connectionId?: string, broker?: 'ibkr' }
-//   userId opcional (se toma del JWT). `broker` es un ALIAS, no un slug: ver BROKER_ALIASES.
+// Request  (POST): { userId?: string, mode?: 'add', connectionId?: string, broker?: 'ibkr' | <slug> }
+//   userId opcional (se toma del JWT). `broker` es un ALIAS (ver BROKER_ALIASES) o el slug
+//   que el usuario eligió en el selector de Portiv, validado contra brokerCatalog().
 // Response (200):  { redirectURI: string }
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
@@ -19,6 +20,7 @@ import {
   loadProfile,
   requireEntitlement,
   resolveIbkrSlug,
+  brokerCatalog,
 } from "../_shared/snaptrade.ts";
 
 // ── Entrada directa al flujo de un broker concreto ───────────────────────────────
@@ -228,10 +230,18 @@ Deno.serve(async (req) => {
     let brokerSlug: string | null = null;
     if (brokerAlias) {
       if (!Object.prototype.hasOwnProperty.call(BROKER_ALIASES, brokerAlias)) {
-        return jsonResponse(req, { error: `Broker no reconocido: ${brokerAlias}` }, 400);
-      }
-      brokerSlug = await BROKER_ALIASES[brokerAlias](st);
-      if (!brokerSlug) {
+        // No es un alias: es el slug que el usuario tocó en el selector de Portiv. Sólo pasa
+        // si existe en el catálogo de brokers permitidos (el mismo que pintó la lista), y se
+        // manda TAL CUAL lo escribe SnapTrade. Si el catálogo no responde, mejor el portal con
+        // su pantalla de selección que un slug sin validar que deje el portal en blanco.
+        const cat = await brokerCatalog(st);
+        const hit = cat.find((b) => b.slug.toLowerCase() === brokerAlias);
+        if (!hit && cat.length) {
+          return jsonResponse(req, { error: `Broker no reconocido: ${brokerAlias}` }, 400);
+        }
+        brokerSlug = hit ? hit.slug : null;
+      } else brokerSlug = await BROKER_ALIASES[brokerAlias](st);
+      if (!brokerSlug && Object.prototype.hasOwnProperty.call(BROKER_ALIASES, brokerAlias)) {
         // El alias es válido pero su slug no está configurado. Es un fallo NUESTRO de
         // despliegue, no del usuario, y se dice como tal: mandarlo al portal genérico sin
         // avisar le dejaría buscando IBKR en una lista larguísima sin saber por qué.

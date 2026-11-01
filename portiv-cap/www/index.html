@@ -43835,7 +43835,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         close('done');
         // Pantalla "Conectando…" llena (nunca vacía) y, con la hoja de StoreKit ya cerrada,
         // _pvConfirmTrial: confirma el entitlement y conecta el broker.
-        try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); } catch(e){}
+        try { if (typeof window._pvConnectingOverlay === 'function') window._pvConnectingOverlay(true, 'Activando tu suscripción…'); } catch(e){}
         setTimeout(function(){ try { if (typeof window._pvConfirmTrial === 'function') window._pvConfirmTrial(); } catch(e){} }, 400);
       }, 900);
     }
@@ -49580,8 +49580,12 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
   // `broker`: alias opcional ('ibkr') para entrar DIRECTO al flujo de ese broker, sin la
   //         pantalla de selección del portal. El slug real lo resuelve el servidor contra su
   //         allowlist: aquí no se escribe ningún slug. Los tres llamadores de siempre siguen
-  //         funcionando sin tocarlos (el parámetro es el tercero y opcional).
-  function snapConnect(mode, connectionId, broker){
+  //         funcionando sin tocarlos (el parámetro es el tercero y opcional). También vale el
+  //         slug que el usuario tocó en «Elige tu broker»: el servidor lo valida contra el catálogo.
+  // `opt`:  { name } nombre del broker elegido (para el aviso «Conectando con …»);
+  //         { portal:true } salta el selector propio y abre la lista del portal (plan B).
+  function snapConnect(mode, connectionId, broker, opt){
+    opt = opt || {};
     // GATE DE ENTITLEMENT (cliente). Sin suscripción, snaptrade-connect responde 403
     // subscription_required y el usuario vería un error genérico en vez del camino
     // para arreglarlo. Se lee el ÚLTIMO veredicto del servidor de forma SÍNCRONA
@@ -49591,11 +49595,21 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     // (_pvIsPro undefined) NO se bloquea. Y tras pagar, _pvAwaitEntitlement llama a
     // _pvApplyProClass ANTES de snapConnect(), así que ahí ya vale true.
     if (window._pvIsPro === false) { try{ window._pvShowPaywall(); }catch(e){} return; }
+    // Alta de un broker nuevo sin broker elegido → primero «Elige tu broker», la hoja propia
+    // de Portiv; ella vuelve a llamar aquí con el slug. Reconectar una conexión caída
+    // (connectionId, o estado 'broken'), un enlace que sigue vivo o una sincronización en
+    // curso no necesitan elegir nada: el servidor ya sabe de qué broker se trata.
+    if (!broker && !connectionId && !opt.portal && typeof window._pvBrokerPicker === 'function'
+        && (mode === 'add' || (_state !== 'connected' && _state !== 'broken' && _state !== 'syncing'
+                               && !(_lastMeta && _lastMeta.brokerLinked)))) {
+      try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(false); } catch(e){}
+      if (window._pvBrokerPicker({ mode: mode || '' })) return;
+    }
     _setBusy(true);
     // Aviso a pantalla completa ANTES de pedir el portal. Va aquí y no en cada llamador
     // porque la espera existe en los tres caminos (tras el pago, fallback sin paywall y
     // botón "Conectar mi broker"), y sin él la pantalla se queda muda varios segundos.
-    try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(true, 'Conectando con SnapTrade…'); }catch(e){}
+    try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(true, opt.name ? ('Conectando con ' + opt.name + '…') : 'Conectando con tu broker…'); }catch(e){}
     var _nativeCap = !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
     // iOS nativo: el portal SnapTrade se abre DENTRO de la app (in-app browser) y al terminar
     // vuelve por deep link portiv://  → nada se abre en Safari externo. Web: navegación normal.
@@ -49625,11 +49639,17 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       // El reintento tiene que repetir la MISMA petición: pasar `snapConnect` pelado hacía
       // que el botón "Reintentar" perdiera el modo y el broker, y quien venía del botón de
       // IBKR acababa en la pantalla de selección genérica sin saber por qué.
-      var _retry = function(){ return snapConnect(mode, connectionId, broker); };
+      var _retry = function(){ return snapConnect(mode, connectionId, broker, opt); };
       var _m = (e && e.message) || 'No se pudo iniciar la conexión.';
       // Fallo NUESTRO de configuración (falta el secreto con el slug del broker). Reintentar
       // no lo arregla, y mandar al usuario al portal genérico sin decírselo lo dejaría
       // buscando su broker en una lista larguísima.
+      // Un broker elegido en «Elige tu broker» que el servidor no reconoce (catálogo cambiado,
+      // o un servidor anterior al selector): mejor el portal con su lista que un callejón sin
+      // salida. El alias de IBKR sigue por su aviso de abajo.
+      if (broker && broker !== 'ibkr' && !opt.portal && /Broker no reconocido/i.test(String(_m))) {
+        return snapConnect(mode, connectionId, '', { portal: true, name: opt.name });
+      }
       if (/broker_not_configured|Broker no reconocido/i.test(String(_m))) {
         try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
         toast('Esa conexión no está disponible ahora mismo. Usa "Conectar mi broker" y elige tu broker en la lista.');
@@ -51453,7 +51473,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     var o=document.createElement('div'); o.id='pvConnOverlay';
     o.style.cssText='position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;flex-direction:column;gap:18px;background:rgba(6,15,30,.80);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)';
     o.innerHTML='<div style="width:52px;height:52px;border:4px solid rgba(255,255,255,.22);border-top-color:#12d18e;border-radius:50%;animation:pvSpin .9s linear infinite"></div>'
-      +'<div id="pvConnMsg" style="color:#fff;font:600 17px/1.4 var(--font,system-ui);text-align:center;max-width:82%">Conectando con SnapTrade…</div>'
+      +'<div id="pvConnMsg" style="color:#fff;font:600 17px/1.4 var(--font,system-ui);text-align:center;max-width:82%">Conectando con tu broker…</div>'
       +'<div style="color:rgba(255,255,255,.72);font:400 13px/1.45 var(--font,system-ui);text-align:center;max-width:78%">Estableciendo la conexión segura con tu broker. Un momento…</div>';
     document.body.appendChild(o);
   }
@@ -64925,5 +64945,497 @@ html body .as-overlay.pvts.pvts-at-done .as-cancel#cashBackBtn{ display:none !im
 })();
 </script>
 <!-- ═══ fin COMPRAR · VENDER · EFECTIVO ═══ -->
+<!-- ═══ ELIGE TU BROKER — selector propio (antes: pantalla de selección de SnapTrade) ═══════
+     «Conectar mi broker» abría el portal de SnapTrade en su propia lista de brokers, con su
+     diseño. Ahora el usuario elige aquí, en una hoja con el esqueleto de Comprar/Vender
+     (.pvts: cabecera, pasos, cuerpo con scroll y botón fijo abajo), y el portal se abre YA
+     dentro del flujo de ese broker (snapConnect con su slug → loginSnapTradeUser `broker`).
+     Catálogo: el que trae la app (CAT, con su logo en logos/brokers/<SLUG>.png) y, encima, el
+     de snaptrade-brokers (los brokers PERMITIDOS del proyecto), guardado en localStorage. Si
+     el servidor añade un broker que la app no conoce, sale con el logo del catálogo remoto.
+     Interactive Brokers sigue por su guía (_pvIbkrConnect): exige un Query ID y un Token. -->
+<div class="as-overlay pvts" id="pvBrokerPick" role="dialog" aria-modal="true" aria-labelledby="pvbpTitle"
+     onclick="if(event.target===event.currentTarget){ try{ window._pvBrokerPickClose(); }catch(e){} }">
+  <div class="as-card">
+    <div class="as-broker-header">
+      <div class="pvts-hd">
+        <div class="as-title" id="pvbpTitle">Conecta tu broker</div>
+        <div class="pvts-sub" id="pvbpSub">Elige dónde tienes tus inversiones</div>
+      </div>
+      <button class="as-close-x" onclick="window._pvBrokerPickClose()" aria-label="Cerrar">×</button>
+    </div>
+    <div class="pvts-steps" id="pvbpSteps" aria-hidden="true"></div>
+    <div class="as-body" id="pvbpBody">
+      <div class="pvbp-pick" id="pvbpPick">
+        <div class="pvbp-top">
+          <label class="pvbp-search">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            <input type="search" id="pvbpQ" placeholder="Busca tu broker o exchange" autocomplete="off" autocorrect="off"
+                   autocapitalize="off" spellcheck="false" enterkeyhint="search" aria-label="Busca tu broker">
+            <button type="button" class="pvbp-clear" id="pvbpClear" aria-label="Borrar búsqueda" hidden>
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+            </button>
+          </label>
+          <div class="pvbp-seg" id="pvbpSeg" role="tablist" aria-label="Tipo de cuenta">
+            <i class="pvbp-seg-th" aria-hidden="true"></i>
+            <button type="button" role="tab" class="on" data-f="all" aria-selected="true">Todos</button>
+            <button type="button" role="tab" data-f="stock" aria-selected="false">Bolsa</button>
+            <button type="button" role="tab" data-f="crypto" aria-selected="false">Cripto</button>
+          </div>
+        </div>
+        <ul class="pvbp-trust" aria-label="Seguridad">
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5.5c0 4.3-2.9 8.1-7 9.5-4.1-1.4-7-5.2-7-9.5V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.8 12.2l2.2 2.2 4.3-4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Solo lectura</li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8.5 10.5V7.8a3.5 3.5 0 017 0v2.7" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>Cifrado</li>
+          <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 12h11M16 8l4 4-4 4M14 4H6.5A2.5 2.5 0 004 6.5v11A2.5 2.5 0 006.5 20H14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>Desconecta cuando quieras</li>
+        </ul>
+        <div id="pvbpList"></div>
+      </div>
+      <div class="pvbp-go" id="pvbpGo" hidden></div>
+    </div>
+    <div class="as-btns" id="pvbpFoot">
+      <button class="as-cancel" id="pvbpBack" onclick="window._pvBrokerPickBack()">Atrás</button>
+      <button class="as-confirm" id="pvbpConfirm" onclick="window._pvBrokerPickGo()">Continuar</button>
+    </div>
+  </div>
+</div>
+<style id="pvBrokerPickCss">
+/* Por encima del cuestionario de perfil (12000), por debajo del aviso «Conectando…» (99999). */
+html body #pvBrokerPick{ z-index:12500; }
+/* Paso 1 sin pie: elegir es tocar una fila. El pie (Atrás / Continuar) sale en el paso 2. */
+html body #pvBrokerPick.pvbp-at-pick > .as-card > .as-btns{ display:none !important; }
+html body #pvBrokerPick .as-confirm{ min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pvbp-pick[hidden], .pvbp-go[hidden]{ display:none !important; }
+#pvBrokerPick{ --bp-ink:#0b1c30; --bp-mute:#6b7789; --bp-soft:#8e99aa; --bp-line:#e6eaf1; --bp-fill:#f4f6fa; --bp-card:#fff; --bp-ok:#0f8a5f; }
+
+/* ── Buscador + Todos / Bolsa / Cripto ── */
+.pvbp-top{ display:flex; flex-direction:column; gap:12px; }
+.pvbp-search{ position:relative; display:block; }
+.pvbp-search > svg{ position:absolute; left:15px; top:50%; transform:translateY(-50%); color:var(--bp-soft); pointer-events:none; }
+.pvbp-search input{
+  -webkit-appearance:none; appearance:none; box-sizing:border-box; width:100%; height:50px; margin:0;
+  padding:0 44px; border-radius:14px; border:1px solid var(--bp-line); outline:none;
+  background:var(--bp-fill); color:var(--bp-ink); font:500 16px var(--font, system-ui);
+  transition:border-color .2s var(--pv-ease, ease), background .2s var(--pv-ease, ease), box-shadow .2s var(--pv-ease, ease);
+}
+.pvbp-search input::placeholder{ color:var(--bp-soft); }
+.pvbp-search input::-webkit-search-cancel-button{ display:none; }
+.pvbp-search input:focus{ border-color:var(--bp-ink); background:var(--bp-card); box-shadow:0 0 0 4px rgba(11,28,48,.06); }
+.pvbp-clear{ position:absolute; right:10px; top:50%; transform:translateY(-50%); width:28px; height:28px; border:0; border-radius:50%;
+  display:flex; align-items:center; justify-content:center; background:#dde2eb; color:var(--bp-ink); cursor:pointer; padding:0; }
+.pvbp-clear[hidden]{ display:none; }
+.pvbp-seg{ position:relative; display:grid; grid-template-columns:repeat(3, 1fr); padding:3px; border-radius:12px; background:var(--bp-fill); border:1px solid var(--bp-line); isolation:isolate; }
+.pvbp-seg button{ position:relative; z-index:1; height:34px; border:0; background:none; border-radius:9px; cursor:pointer;
+  font:600 13.5px var(--font, system-ui); color:var(--bp-mute); transition:color .25s var(--pv-ease, ease); }
+.pvbp-seg button.on{ color:var(--bp-ink); }
+.pvbp-seg-th{ position:absolute; z-index:0; top:3px; bottom:3px; left:3px; width:calc((100% - 6px) / 3); border-radius:9px; background:var(--bp-card);
+  box-shadow:0 1px 2px rgba(11,28,48,.08), 0 0 0 1px rgba(11,28,48,.04); transition:transform .32s var(--pv-ease-out, cubic-bezier(.22,1,.36,1)); }
+
+/* ── Franja de seguridad ── */
+.pvbp-trust{ list-style:none; margin:14px 0 0; padding:0; display:flex; flex-wrap:wrap; gap:6px 12px; }
+.pvbp-trust li{ display:inline-flex; align-items:center; gap:5px; font:600 12px var(--font, system-ui); color:var(--bp-mute); white-space:nowrap; }
+.pvbp-trust svg{ width:16px; height:16px; color:var(--bp-ok); flex:0 0 auto; }
+
+.pvbp-l{ display:flex; align-items:baseline; justify-content:space-between; margin:24px 0 10px;
+  font:700 12px var(--font, system-ui); letter-spacing:.06em; text-transform:uppercase; color:var(--bp-soft); }
+.pvbp-l small{ font-size:12px; font-weight:600; letter-spacing:0; text-transform:none; }
+
+/* ── Logo: siempre la imagen del broker; la inicial sólo si la imagen no carga ── */
+.pvbp-logo{ position:relative; overflow:hidden; flex:0 0 auto; width:40px; height:40px; border-radius:11px;
+  display:inline-flex; align-items:center; justify-content:center; background:var(--bp-fill); color:var(--bp-mute);
+  font:700 15px var(--font, system-ui); }
+.pvbp-logo img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; background:#fff; }
+.pvbp-logo::after{ content:''; position:absolute; inset:0; border-radius:inherit; box-shadow:inset 0 0 0 1px rgba(11,28,48,.08); pointer-events:none; }
+
+/* ── Populares: tarjetas con borde fino, 2 columnas (3 en pantallas anchas) ── */
+.pvbp-grid{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+@media (min-width:560px){ .pvbp-grid{ grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+.pvbp-card{
+  display:flex; align-items:center; gap:11px; min-width:0; padding:11px 12px; margin:0; text-align:left;
+  border:1px solid var(--bp-line); border-radius:14px; background:var(--bp-card); cursor:pointer; font-family:var(--font, system-ui);
+  transition:border-color .2s var(--pv-ease, ease), box-shadow .2s var(--pv-ease, ease), transform .12s var(--pv-ease, ease);
+}
+.pvbp-card:hover{ border-color:#cfd6e2; box-shadow:0 4px 14px -8px rgba(11,28,48,.25); }
+.pvbp-card:active{ transform:scale(.98); }
+.pvbp-card-tx{ min-width:0; }
+.pvbp-card-n{ display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; font-size:14.5px; font-weight:700; line-height:1.25; color:var(--bp-ink); letter-spacing:-.01em; overflow-wrap:anywhere; }
+.pvbp-card-m{ display:block; margin-top:1px; font-size:12px; font-weight:500; color:var(--bp-mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* ── Lista completa ── */
+.pvbp-list{ border:1px solid var(--bp-line); border-radius:16px; overflow:hidden; background:var(--bp-card); }
+.pvbp-row{
+  display:flex; align-items:center; gap:13px; width:100%; padding:11px 14px; margin:0; border:0; border-top:1px solid var(--bp-line);
+  background:none; text-align:left; cursor:pointer; font-family:var(--font, system-ui); transition:background .15s;
+}
+.pvbp-list > .pvbp-row:first-child, .pvbp-letter + .pvbp-row{ border-top:0; }
+.pvbp-row:hover{ background:#f8f9fc; }
+.pvbp-row:active{ background:var(--bp-fill); }
+.pvbp-row-tx{ min-width:0; flex:1 1 auto; }
+.pvbp-row-n{ display:block; font-size:15px; font-weight:700; color:var(--bp-ink); letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pvbp-row-m{ display:block; margin-top:1px; font-size:12.5px; font-weight:500; color:var(--bp-mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pvbp-tag{ flex:0 0 auto; padding:3px 8px; border-radius:6px; font:700 11px var(--font, system-ui); letter-spacing:.01em; background:var(--bp-fill); color:var(--bp-mute); }
+.pvbp-tag.warn{ background:#fff4e2; color:#9a5a06; }
+.pvbp-chev{ flex:0 0 auto; width:16px; height:16px; color:#b4bdca; }
+.pvbp-letter{ font:700 11.5px var(--font, system-ui); color:var(--bp-soft); letter-spacing:.08em; padding:9px 14px 5px; background:#fafbfd; border-top:1px solid var(--bp-line); }
+.pvbp-list > .pvbp-letter:first-child{ border-top:0; }
+
+/* ── Cargando / vacío / error ── */
+@keyframes pvbpShim{ 0%{ background-position:-200px 0 } 100%{ background-position:calc(200px + 100%) 0 } }
+.pvbp-sk{ display:flex; align-items:center; gap:13px; padding:11px 14px; border-top:1px solid var(--bp-line); }
+.pvbp-sk:first-child{ border-top:0; }
+.pvbp-sk i, .pvbp-sk b{ display:block; border-radius:11px;
+  background:#eef1f6 linear-gradient(90deg, #eef1f6 0, #f7f9fc 80px, #eef1f6 160px) no-repeat; background-size:200px 100%;
+  animation:pvbpShim 1.2s linear infinite; }
+.pvbp-sk i{ width:40px; height:40px; flex:0 0 40px; }
+.pvbp-sk b{ height:12px; flex:0 1 50%; border-radius:6px; }
+.pvbp-empty{ text-align:center; padding:30px 16px 8px; }
+.pvbp-empty svg{ width:30px; height:30px; color:var(--bp-soft); }
+.pvbp-empty h4{ margin:10px 0 6px; font:700 17px/1.3 var(--font, system-ui); color:var(--bp-ink); letter-spacing:-.01em; }
+.pvbp-empty p{ margin:0 auto; max-width:360px; font-size:14px; line-height:1.5; color:var(--bp-mute); }
+.pvbp-empty-b{ display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-top:16px; }
+.pvbp-empty-b button{ height:44px; padding:0 18px; border:0; border-radius:12px; background:var(--bp-ink); color:#fff; font:700 14px var(--font, system-ui); cursor:pointer; }
+.pvbp-empty-b button.sec{ background:var(--bp-fill); color:var(--bp-ink); border:1px solid var(--bp-line); }
+
+/* ── Paso 2 · ficha del broker, qué verá Portiv, qué no, cómo funciona ── */
+.pvbp-head{ display:flex; align-items:center; gap:14px; padding:16px; border:1px solid var(--bp-line); border-radius:18px; background:var(--bp-card); }
+.pvbp-head .pvbp-logo{ width:58px; height:58px; border-radius:15px; font-size:21px; }
+.pvbp-head-tx{ min-width:0; flex:1 1 auto; }
+.pvbp-head h3{ margin:0; font:800 20px/1.2 var(--font, system-ui); letter-spacing:-.02em; color:var(--bp-ink); }
+.pvbp-head-u{ display:block; margin-top:2px; font-size:13px; font-weight:500; color:var(--bp-mute); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pvbp-chips{ display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+.pvbp-chip{ display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px; font:600 11.5px var(--font, system-ui); background:var(--bp-fill); color:#4b5768; }
+.pvbp-chip i{ width:6px; height:6px; border-radius:50%; background:var(--bp-ok); }
+.pvbp-sec{ margin-top:22px; }
+.pvbp-sec-h{ margin:0 0 10px; font:700 12px var(--font, system-ui); letter-spacing:.06em; text-transform:uppercase; color:var(--bp-soft); }
+.pvbp-can{ display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:8px; }
+.pvbp-can > div{ display:flex; align-items:flex-start; gap:9px; padding:11px 12px; border-radius:12px; background:var(--bp-fill); font-size:13.5px; font-weight:600; line-height:1.35; color:var(--bp-ink); }
+.pvbp-can svg{ flex:0 0 18px; width:18px; height:18px; margin-top:-1px; }
+.pvbp-can.yes svg{ color:var(--bp-ok); }
+.pvbp-can.no > div{ background:transparent; border:1px solid var(--bp-line); color:#4b5768; }
+.pvbp-can.no svg{ color:#c0392b; }
+.pvbp-flow{ position:relative; margin:0; padding:0; list-style:none; }
+.pvbp-flow li{ position:relative; display:flex; gap:14px; padding:0 0 16px; }
+.pvbp-flow li:last-child{ padding-bottom:0; }
+.pvbp-flow li::before{ content:''; position:absolute; left:13px; top:28px; bottom:2px; width:2px; border-radius:2px; background:var(--bp-line); }
+.pvbp-flow li:last-child::before{ display:none; }
+.pvbp-flow b{ position:relative; z-index:1; flex:0 0 28px; width:28px; height:28px; border-radius:50%; background:var(--bp-ink); color:#fff;
+  display:inline-flex; align-items:center; justify-content:center; font:700 12.5px var(--font, system-ui); }
+.pvbp-flow-t{ display:block; padding-top:4px; font-size:14.5px; font-weight:700; color:var(--bp-ink); letter-spacing:-.01em; }
+.pvbp-flow-d{ display:block; margin-top:2px; font-size:13px; line-height:1.45; color:var(--bp-mute); }
+.pvbp-warn{ display:flex; gap:10px; align-items:flex-start; margin-top:16px; padding:12px 14px; border-radius:12px;
+  background:#fff6e8; color:#8a4b06; font-size:13.5px; line-height:1.5; }
+.pvbp-warn svg, .pvbp-foot svg{ flex:0 0 18px; width:18px; height:18px; margin-top:1px; }
+.pvbp-foot{ display:flex; gap:10px; align-items:flex-start; margin-top:20px; padding:12px 14px; border-radius:12px; border:1px solid var(--bp-line);
+  font-size:12.5px; line-height:1.5; color:var(--bp-mute); }
+.pvbp-foot svg{ color:var(--bp-ok); }
+
+/* ── Oscuro (la hoja entera: .pvts sólo pinta el modo claro) ── */
+body.dark-theme #pvBrokerPick{ --bp-ink:#e8edf7; --bp-mute:#aab4c2; --bp-soft:#7f8a9b; --bp-line:#2a3446; --bp-fill:#161e2d; --bp-card:#111a28; }
+html body.dark-theme #pvBrokerPick > .as-card,
+html body.dark-theme #pvBrokerPick > .as-card > .as-btns{ background:#0d1522 !important; }
+html body.dark-theme #pvBrokerPick > .as-card > .as-btns, body.dark-theme #pvBrokerPick .pvts-steps{ border-color:#2a3446 !important; }
+html body.dark-theme #pvBrokerPick .as-title, body.dark-theme #pvBrokerPick .pvts-sub b, body.dark-theme #pvBrokerPick .pvts-st.on{ color:#e8edf7 !important; }
+html body.dark-theme #pvBrokerPick .as-close-x, html body.dark-theme #pvBrokerPick .as-cancel{ background:#1e2838 !important; color:#e8edf7 !important; }
+html body.dark-theme #pvBrokerPick .as-confirm{ background:#fff !important; color:#0b1c30 !important; }
+body.dark-theme #pvBrokerPick .pvts-st.on b, body.dark-theme .pvbp-flow b{ background:#fff; color:#0b1c30; }
+body.dark-theme .pvbp-search input:focus{ border-color:#7aa2ff; box-shadow:none; }
+body.dark-theme .pvbp-clear{ background:#2a3446; color:#e8edf7; }
+body.dark-theme .pvbp-row:hover, body.dark-theme .pvbp-letter{ background:#141c2a; }
+body.dark-theme .pvbp-chip, body.dark-theme .pvbp-can.no > div{ color:#c3cbd7; }
+body.dark-theme .pvbp-sk i, body.dark-theme .pvbp-sk b{ background:#1b2433 linear-gradient(90deg, #1b2433 0, #253046 80px, #1b2433 160px) no-repeat; background-size:200px 100%; }
+body.dark-theme .pvbp-empty-b button{ background:#fff; color:#0b1c30; }
+body.dark-theme .pvbp-empty-b button.sec{ background:var(--bp-fill); color:var(--bp-ink); }
+
+@media (max-width:340px){ .pvbp-can{ grid-template-columns:1fr; } }
+@media (prefers-reduced-motion: reduce){
+  .pvbp-sk i, .pvbp-sk b{ animation:none !important; }
+  .pvbp-card, .pvbp-row, .pvbp-seg-th, .pvbp-seg button{ transition:none !important; }
+}
+</style>
+<script id="pvBrokerPickJs">
+(function(){
+  'use strict';
+  var $i = function(id){ return document.getElementById(id); };
+  var esc = function(v){ return (typeof pvEsc === 'function') ? pvEsc(String(v == null ? '' : v)) : String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return '&#' + c.charCodeAt(0) + ';'; }); };
+  var reduce = function(){ try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch(e){ return false; } };
+  var norm = function(s){ return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]/g, ''); };
+  var KEY = 'pv_brokers_v2', TTL = 12 * 60 * 60 * 1000;
+
+  // Catálogo que trae la app (SnapTrade, 1-nov-2026): [slug, nombre, cripto, región, tiempo real,
+  // histórico, web]. Su logo está en logos/brokers/<slug>.png. Sirve de base y de plan B: la
+  // lista que manda snaptrade-brokers decide QUÉ brokers salen y estos datos los completan.
+  var CAT = [["AJ-BELL","AJ Bell",0,"UK",0,1,"ajbell.com"],["ALPACA","Alpaca",0,"US",1,1,"alpaca.markets"],["ALPACA-PAPER","Alpaca Paper",0,"US",1,1,"alpaca.markets"],["BINANCE","Binance",1,"GL",1,1,"binance.com"],["BMO-INVESTORLINE","BMO InvestorLine",0,"CA",1,1,"bmoinvestorline.com"],["BUX","Bux",0,"EU",1,1,"getbux.com"],["CHASE","Chase",0,"US",1,1,"chase.com"],["CIBC-INVESTORS-EDGE","CIBC Investor's Edge",0,"CA",1,0,"investorsedge.cibc.com"],["COINBASE","Coinbase",1,"GL",1,1,"coinbase.com"],["COMMSEC","CommSec",0,"AU",1,0,"commsec.com"],["DEGIRO","DEGIRO",0,"EU",1,1,"degiro.com"],["ETRADE","E*Trade",0,"US",1,1,"us.etrade.com"],["EMPOWER","Empower",0,"US",1,1,"empower.com"],["ETORO","eToro",0,"GL",1,0,"etoro.com"],["FIDELITY","Fidelity",0,"US",1,1,"fidelity.com"],["INTERACTIVE-BROKERS","IBKR",0,"US",1,0,"interactivebrokers.com"],["INTERACTIVE-BROKERS-FLEX","Interactive Brokers",0,"US",1,1,"interactivebrokers.com"],["KRAKEN","Kraken",1,"GL",1,1,"kraken.com"],["MOOMOO","moomoo",0,"US",1,1,"moomoo.com"],["PUBLIC","Public",0,"US",1,1,"public.com"],["QUESTRADE","Questrade",0,"CA",1,1,"questrade.com"],["ROBINHOOD","Robinhood",0,"US",1,1,"robinhood.com"],["SCHWAB","Schwab",0,"US",1,1,"schwab.com"],["STAKEAUS","Stake Australia",0,"AU",1,1,"hellostake.com"],["TASTYTRADE","tastytrade",0,"US",1,1,"tastytrade.com"],["TD-DIRECT-INVESTING","TD Direct Investing",0,"CA",0,1,"td.com"],["TRADESTATION","TradeStation",0,"US",1,0,"tradestation.com"],["TRADESTATION-SIM","TradeStation Sim",0,"US",1,0,"tradestation.com"],["TRADIER","Tradier",0,"US",1,1,"tradier.com"],["TRADING212","Trading212",0,"EU",1,1,"trading212.com"],["TRADING212-PRACTICE","Trading212 Practice",0,"EU",1,1,"trading212.com"],["UPSTOX","Upstox",0,"IN",1,0,"upstox.com"],["VANGUARD","Vanguard US",0,"US",0,1,"investor.vanguard.com"],["WEALTHSIMPLETRADE","Wealthsimple",0,"CA",1,1,"wealthsimple.com"],["WEBULL-CANADA","Webull Canada",0,"CA",1,1,"webull.ca"],["WEBULL","Webull US",0,"US",1,1,"webull.com"],["WELLS-FARGO","Wells Fargo",0,"US",1,1,"wellsfargo.com"],["ZERODHA","Zerodha",0,"IN",1,1,"zerodha.com"]];
+  var LOCAL = {}; CAT.forEach(function(r){ LOCAL[r[0]] = 1; });
+  var REG = { US:'EE. UU.', CA:'Canadá', UK:'Reino Unido', EU:'Europa', AU:'Australia', IN:'India', GL:'Global' };
+  var NAME = { SCHWAB:'Charles Schwab', 'INTERACTIVE-BROKERS-FLEX':'Interactive Brokers', TRADING212:'Trading 212', 'TRADING212-PRACTICE':'Trading 212 Práctica', ETRADE:'E*TRADE' };
+  // Los más usados por quien abre Portiv, en este orden (sólo salen si están en la lista).
+  var POPULAR = ['ROBINHOOD', 'SCHWAB', 'FIDELITY', 'INTERACTIVE-BROKERS-FLEX', 'WEBULL', 'ETRADE', 'VANGUARD', 'PUBLIC', 'COINBASE', 'TRADING212', 'TASTYTRADE', 'MOOMOO'];
+  var IBKR_RE = /^interactivebrokers|^ibkr/;
+
+  function fromCat(r){ return { slug:r[0], name:NAME[r[0]] || r[1], crypto:!!r[2], region:r[3], realtime:!!r[4], reporting:!!r[5], host:r[6], logo:null, maintenance:false, degraded:false }; }
+  function host(u){ try { return new URL(u).hostname.replace(/^www\./, ''); } catch(e){ return ''; } }
+  // Lista del servidor → fichas completas, con los datos de la app donde los haya.
+  function merge(remote){
+    var byCat = {}; CAT.forEach(function(r){ byCat[r[0]] = r; });
+    return remote.map(function(b){
+      var base = byCat[b.slug] ? fromCat(byCat[b.slug]) : { slug:b.slug, name:b.name, crypto:!!b.crypto, region:'', realtime:!!b.realtime, reporting:!!b.reporting, host:host(b.url) };
+      base.logo = b.logo || null; base.maintenance = !!b.maintenance; base.degraded = !!b.degraded;
+      if (!byCat[b.slug]) base.name = b.name;
+      return base;
+    });
+  }
+  var S = { list: null, loading: false, failed: false, step: 'pick', pick: null, mode: '', q: '', f: 'all' };
+
+  function isIbkr(b){ return !!b && (IBKR_RE.test(norm(b.slug)) || norm(b.name).indexOf('interactivebrokers') === 0); }
+  function isDemo(b){ return /paper|-sim$|practice/i.test(b.slug); }
+  function visible(){
+    // IBKR viene dos veces en el catálogo (Flex y la estándar) y las dos van por la misma guía.
+    // Se queda la de nombre completo («Interactive Brokers», la Flex) si está en la lista.
+    var src = S.list || [];
+    var ib = src.filter(isIbkr), keep = (ib.find(function(b){ return b.slug === 'INTERACTIVE-BROKERS-FLEX'; }) || ib[0] || {}).slug;
+    var l = src.filter(function(b){ return !isIbkr(b) || b.slug === keep; });
+    l.sort(function(a, b){ return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }); });
+    return l;
+  }
+  function meta(b){
+    if (isDemo(b)) return 'Cuenta de práctica';
+    var t = b.crypto ? 'Cripto' : 'Bolsa';
+    return t + (b.region && REG[b.region] ? ' · ' + REG[b.region] : '');
+  }
+  function logo(b){
+    var src = LOCAL[b.slug] ? ('logos/brokers/' + b.slug + '.png') : b.logo;
+    var ini = esc((String(b.name || '?').replace(/[^A-Za-z0-9]/g, '')[0] || '?').toUpperCase());
+    // Si la copia local falla (no debería), se prueba la del catálogo remoto antes de la inicial.
+    var alt = (LOCAL[b.slug] && b.logo) ? ' data-alt="' + esc(b.logo) + '"' : '';
+    return '<span class="pvbp-logo" aria-hidden="true">' + ini
+      + (src ? '<img src="' + esc(src) + '"' + alt + ' alt="" loading="lazy" decoding="async" onerror="if(this.dataset.alt){this.src=this.dataset.alt;this.removeAttribute(\'data-alt\');}else{this.remove();}">' : '')
+      + '</span>';
+  }
+  var CHEV = '<svg class="pvbp-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function tag(b){
+    if (b.maintenance) return '<span class="pvbp-tag warn">Mantenimiento</span>';
+    if (b.degraded) return '<span class="pvbp-tag warn">Incidencias</span>';
+    if (isIbkr(b)) return '<span class="pvbp-tag">Con guía</span>';
+    return '';
+  }
+
+  // ── Catálogo: caché → servidor; mientras tanto, el de la app ──
+  function readCache(){
+    try { var c = JSON.parse(localStorage.getItem(KEY) || 'null'); if (c && Array.isArray(c.list) && c.list.length) return c; } catch(e){}
+    return null;
+  }
+  function load(force){
+    var c = readCache();
+    if (!S.list) S.list = c ? merge(c.list) : CAT.map(fromCat);
+    if (S.loading || (!force && c && Date.now() - (c.t || 0) < TTL)) return;
+    if (typeof window.stCall !== 'function') return;
+    S.loading = true;
+    window.stCall('snaptrade-brokers', {}).then(function(j){
+      var l = (j && Array.isArray(j.brokers)) ? j.brokers.filter(function(b){ return b && b.slug && b.name; }) : [];
+      S.loading = false;
+      if (!l.length) return;
+      try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), list: l })); } catch(e){}
+      var before = (S.list || []).map(function(b){ return b.slug; }).join();
+      S.list = merge(l);
+      if (S.step === 'pick' && before !== S.list.map(function(b){ return b.slug; }).join()) paint(false);
+    }).catch(function(){ S.loading = false; });
+  }
+
+  // ── Pintar ──
+  function steps(at){
+    var el = $i('pvbpSteps'); if (!el) return;
+    var h = '';
+    ['Broker', 'Conectar'].forEach(function(l, i){
+      if (i) h += '<i class="pvts-st-sep' + (i <= at ? ' ok' : '') + '"></i>';
+      h += '<span class="pvts-st' + (i < at ? ' ok' : (i === at ? ' on' : '')) + '"><b>' + (i < at ? '✓' : (i + 1)) + '</b>' + l + '</span>';
+    });
+    el.innerHTML = h;
+  }
+  function enter(nodes, op){
+    if (reduce()) return;
+    try { if (window.PVM && window.PVM.enter) { window.PVM.enter(nodes, op || { step: 26, max: 10 }); return; } } catch(e){}
+    op = op || {};
+    Array.prototype.forEach.call(nodes || [], function(el, i){
+      try { el.animate([{ opacity: 0, transform: 'translateY(10px)' }, { opacity: 1, transform: 'none' }],
+        { duration: 300, delay: (op.delay || 0) + Math.min(i, op.max || 10) * (op.step || 26), easing: 'cubic-bezier(.22,1,.36,1)', fill: 'backwards' }); } catch(e){}
+    });
+  }
+  function card(b){
+    return '<button type="button" class="pvbp-card" data-slug="' + esc(b.slug) + '">' + logo(b)
+      + '<span class="pvbp-card-tx"><span class="pvbp-card-n">' + esc(b.name) + '</span><span class="pvbp-card-m">' + esc(meta(b)) + '</span></span></button>';
+  }
+  function row(b){
+    return '<button type="button" class="pvbp-row" data-slug="' + esc(b.slug) + '">' + logo(b)
+      + '<span class="pvbp-row-tx"><span class="pvbp-row-n">' + esc(b.name) + '</span><span class="pvbp-row-m">' + esc(meta(b)) + '</span></span>'
+      + tag(b) + CHEV + '</button>';
+  }
+  function filtered(){
+    var f = S.f;
+    return visible().filter(function(b){ return f === 'all' || (f === 'crypto' ? b.crypto : !b.crypto); });
+  }
+  function paint(animate){
+    var box = $i('pvbpList'); if (!box) return;
+    var all = filtered(), q = norm(S.q), h = '';
+    if (q) {
+      var res = all.filter(function(b){ return norm(b.name).indexOf(q) >= 0 || norm(b.slug).indexOf(q) >= 0 || norm(b.host).indexOf(q) >= 0; });
+      res.sort(function(a, b){ return (norm(a.name).indexOf(q) === 0 ? 0 : 1) - (norm(b.name).indexOf(q) === 0 ? 0 : 1); });
+      if (!res.length) {
+        box.innerHTML = '<div class="pvbp-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
+          + '<h4>Sin resultados para «' + esc(S.q.trim()) + '»</h4><p>Portiv se conecta con los brokers de esta lista. Revisa el nombre o elige tu broker en la página segura de conexión.</p>'
+          + '<div class="pvbp-empty-b"><button type="button" class="sec" data-pvbp="clear">Ver todos</button><button type="button" data-pvbp="portal">Página segura</button></div></div>';
+        return;
+      }
+      h = '<div class="pvbp-l">Resultados<small>' + res.length + '</small></div><div class="pvbp-list">' + res.map(row).join('') + '</div>';
+    } else {
+      var bySlug = {}; all.forEach(function(b){ bySlug[b.slug] = b; });
+      var pop = POPULAR.map(function(s){ return bySlug[s]; }).filter(Boolean);
+      if (!pop.length) pop = all.filter(function(b){ return !isDemo(b); }).slice(0, 6);
+      // Filas completas: 3×3 en pantallas anchas, 2×3 en el iPhone.
+      var cols = (window.innerWidth >= 560) ? 3 : 2, cap = cols === 3 ? 9 : 6;
+      pop = pop.slice(0, Math.max(cols, Math.floor(Math.min(pop.length, cap) / cols) * cols));
+      if (pop.length) h += '<div class="pvbp-l">Populares</div><div class="pvbp-grid">' + pop.map(card).join('') + '</div>';
+      h += '<div class="pvbp-l">' + (S.f === 'crypto' ? 'Exchanges de cripto' : S.f === 'stock' ? 'Brokers de bolsa' : 'Todos los brokers') + '<small>' + all.length + '</small></div><div class="pvbp-list">';
+      var last = '';
+      all.forEach(function(b){
+        var L = (norm(b.name)[0] || '#').toUpperCase(); if (/[0-9]/.test(L)) L = '#';
+        if (L !== last) { h += '<div class="pvbp-letter" aria-hidden="true">' + L + '</div>'; last = L; }
+        h += row(b);
+      });
+      h += '</div>';
+    }
+    box.innerHTML = h;
+    if (animate) enter(box.querySelectorAll('.pvbp-l, .pvbp-card, .pvbp-list'), { step: 24, max: 10 });
+  }
+
+  function setStep(st){
+    var ov = $i('pvBrokerPick'); if (!ov) return;
+    S.step = st;
+    ov.classList.toggle('pvbp-at-pick', st === 'pick');
+    ov.classList.toggle('pvbp-at-go', st === 'go');
+    $i('pvbpPick').hidden = st !== 'pick';
+    $i('pvbpGo').hidden = st !== 'go';
+    steps(st === 'pick' ? 0 : 1);
+    var sub = $i('pvbpSub');
+    if (sub) sub.innerHTML = st === 'go' && S.pick ? 'Vas a conectar <b>' + esc(S.pick.name) + '</b>' : 'Elige dónde tienes tus inversiones';
+    try { var b = $i('pvbpBody'); if (b) b.scrollTop = 0; } catch(e){}
+  }
+  function setFilter(f){
+    S.f = f;
+    var seg = $i('pvbpSeg'); if (!seg) return;
+    var bs = seg.querySelectorAll('button'), idx = 0;
+    Array.prototype.forEach.call(bs, function(b, i){ var on = b.getAttribute('data-f') === f; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); if (on) idx = i; });
+    var th = seg.querySelector('.pvbp-seg-th'); if (th) th.style.transform = 'translateX(' + (idx * 100) + '%)';
+  }
+
+  var ICON_OK = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="currentColor" opacity=".14"/><path d="M8 12.3l2.6 2.6L16 9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_NO = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="currentColor" opacity=".12"/><path d="M9.2 9.2l5.6 5.6M14.8 9.2l-5.6 5.6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+  var ICON_SHIELD = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5.5c0 4.3-2.9 8.1-7 9.5-4.1-1.4-7-5.2-7-9.5V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.8 12.2l2.2 2.2 4.3-4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  var ICON_WARN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 16H3l9-16z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M12 10v4.5M12 17.2v.3" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>';
+
+  function choose(slug){
+    var b = (S.list || []).find(function(x){ return x.slug === slug; }); if (!b) return;
+    // IBKR: su guía primero (Query ID + Token). Se cierra la hoja y sigue el camino de siempre.
+    if (isIbkr(b)) { close(function(){ try { window._pvIbkrConnect(); } catch(e){} }); return; }
+    S.pick = b;
+    var n = esc(b.name), cr = b.crypto;
+    var chips = '<span class="pvbp-chip">' + (cr ? 'Cripto' : 'Bolsa') + '</span>'
+      + (b.region && REG[b.region] ? '<span class="pvbp-chip">' + esc(REG[b.region]) + '</span>' : '')
+      + (isDemo(b) ? '<span class="pvbp-chip">Práctica</span>' : '')
+      + (b.realtime ? '<span class="pvbp-chip"><i></i>Sincroniza al momento</span>' : '<span class="pvbp-chip">Se actualiza a diario</span>');
+    var yes = [cr ? 'Saldos de cada moneda' : 'Posiciones y acciones', 'Efectivo disponible', 'Valor y rendimiento', b.reporting ? 'Historial de tu cuenta' : 'Cambios del día'];
+    var no = ['Comprar ni vender', 'Mover ni retirar dinero', 'Ver tu contraseña', 'Cambiar tu cuenta'];
+    $i('pvbpGo').innerHTML =
+        '<div class="pvbp-head">' + logo(b) + '<div class="pvbp-head-tx"><h3>' + n + '</h3>'
+      + (b.host ? '<span class="pvbp-head-u">' + esc(b.host) + '</span>' : '')
+      + '<div class="pvbp-chips">' + chips + '</div></div></div>'
+      + ((b.maintenance || b.degraded) ? '<div class="pvbp-warn">' + ICON_WARN + '<span>' + n
+          + (b.maintenance ? ' está en mantenimiento' : ' tiene incidencias ahora mismo') + ': la conexión podría fallar. Si pasa, inténtalo más tarde.</span></div>' : '')
+      + '<div class="pvbp-sec"><div class="pvbp-sec-h">Portiv podrá ver</div><div class="pvbp-can yes">'
+      + yes.map(function(t){ return '<div>' + ICON_OK + '<span>' + esc(t) + '</span></div>'; }).join('') + '</div></div>'
+      + '<div class="pvbp-sec"><div class="pvbp-sec-h">Portiv nunca podrá</div><div class="pvbp-can no">'
+      + no.map(function(t){ return '<div>' + ICON_NO + '<span>' + esc(t) + '</span></div>'; }).join('') + '</div></div>'
+      + '<div class="pvbp-sec"><div class="pvbp-sec-h">Cómo funciona</div><ol class="pvbp-flow">'
+      + '<li><b>1</b><span><span class="pvbp-flow-t">Inicia sesión en ' + n + '</span><span class="pvbp-flow-d">Se abre su página oficial. Entras con tu usuario de siempre.</span></span></li>'
+      + '<li><b>2</b><span><span class="pvbp-flow-t">Autoriza el acceso de solo lectura</span><span class="pvbp-flow-d">' + n + ' te pide confirmar qué compartes. Puedes retirarlo cuando quieras.</span></span></li>'
+      + '<li><b>3</b><span><span class="pvbp-flow-t">Vuelve a Portiv</span><span class="pvbp-flow-d">Tus ' + (cr ? 'saldos' : 'posiciones') + ' llegan en unos minutos y se mantienen al día solas.</span></span></li>'
+      + '</ol></div>'
+      + '<div class="pvbp-foot">' + ICON_SHIELD + '<span>La conexión va cifrada y Portiv nunca ve ni guarda tu contraseña. Puedes desconectarla cuando quieras desde Ajustes.</span></div>';
+    var c = $i('pvbpConfirm'); if (c) c.textContent = String(b.name).length > 14 ? 'Continuar' : 'Continuar a ' + b.name;
+    setStep('go');
+    enter($i('pvbpGo').querySelectorAll('.pvbp-head, .pvbp-warn, .pvbp-sec, .pvbp-foot'), { delay: 30, step: 50, max: 6 });
+  }
+
+  function open(opts){
+    var ov = $i('pvBrokerPick'); if (!ov) return false;
+    S.mode = (opts && opts.mode) || '';
+    S.q = ''; S.pick = null;
+    var q = $i('pvbpQ'); if (q) q.value = '';
+    var cl = $i('pvbpClear'); if (cl) cl.hidden = true;
+    setFilter('all');
+    load(false);
+    setStep('pick');
+    paint(false);
+    ov.classList.remove('closing');
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    // Lo de dentro entra un pelo después que la hoja, como en el resto de la app.
+    setTimeout(function(){ enter(ov.querySelectorAll('.pvbp-trust, #pvbpList .pvbp-l, #pvbpList .pvbp-card, #pvbpList .pvbp-list'), { delay: 40, step: 26, max: 10 }); }, 60);
+    return true;
+  }
+  function close(cb){
+    document.body.style.overflow = '';
+    try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch(e){}
+    if (typeof _asCerrar === 'function') { _asCerrar('pvBrokerPick', cb); return; }
+    var ov = $i('pvBrokerPick'); if (ov) ov.classList.remove('open', 'closing');
+    if (cb) cb();
+  }
+  function go(){
+    var b = S.pick; if (!b) return;
+    var mode = S.mode;
+    close(function(){ try { window.snapConnect(mode, '', b.slug, { name: b.name }); } catch(e){} });
+  }
+  function clearQ(focus){
+    var qi = $i('pvbpQ'); if (qi) { qi.value = ''; if (focus) qi.focus(); }
+    S.q = ''; $i('pvbpClear').hidden = true; paint(true);
+  }
+
+  // ── Eventos ──
+  document.addEventListener('click', function(e){
+    var t = e.target && e.target.closest && e.target.closest('#pvBrokerPick [data-slug], #pvBrokerPick [data-pvbp], #pvbpSeg button, #pvbpClear');
+    if (!t) return;
+    if (t.id === 'pvbpClear') { e.preventDefault(); clearQ(true); return; }
+    if (t.hasAttribute('data-f')) { if (t.getAttribute('data-f') !== S.f) { setFilter(t.getAttribute('data-f')); paint(true); } return; }
+    var a = t.getAttribute('data-pvbp');
+    if (a === 'portal') { var m = S.mode; close(function(){ try { window.snapConnect(m, '', '', { portal: true }); } catch(err){} }); return; }
+    if (a === 'clear') { clearQ(false); return; }
+    choose(t.getAttribute('data-slug'));
+  });
+  document.addEventListener('input', function(e){
+    if (!e.target || e.target.id !== 'pvbpQ') return;
+    S.q = e.target.value || '';
+    $i('pvbpClear').hidden = !S.q;
+    paint(false);
+  });
+  document.addEventListener('keydown', function(e){
+    var ov = $i('pvBrokerPick');
+    if (e.key !== 'Escape' || !ov || !ov.classList.contains('open')) return;
+    if (S.step === 'go') window._pvBrokerPickBack(); else close();
+  });
+
+  window._pvBrokerPicker = open;
+  window._pvBrokerPickClose = function(){ close(); };
+  window._pvBrokerPickBack = function(){
+    if (S.step !== 'go') { close(); return; }
+    setStep('pick');
+    enter($i('pvbpList').querySelectorAll('.pvbp-l, .pvbp-card'), { step: 22, max: 10 });
+  };
+  window._pvBrokerPickGo = go;
+  // Precarga en segundo plano tras el arranque, para que la primera apertura ya tenga lista.
+  try {
+    var pre = function(){ setTimeout(function(){ try { if (window.sbClient) load(false); } catch(e){} }, 4000); };
+    if (document.readyState === 'complete') pre(); else window.addEventListener('load', pre);
+  } catch(e){}
+})();
+</script>
+<!-- ═══ fin ELIGE TU BROKER ═══ -->
 </body>
 </html>
