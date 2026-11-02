@@ -42520,7 +42520,8 @@ if (document.readyState === 'loading') {
 
 <!-- ═══ BOTTOM NAV MOBILE ═══ -->
 <!-- Rediseño (1-oct): los iconos de la barra de escritorio más el engranaje; el icono va en
-     .pv-bt-pill (la pastilla navy de la pestaña activa) y el rótulo en .pv-bt-l. Estilo: #pvTabsCss. -->
+     .pv-bt-pill (caja del icono) y el rótulo en .pv-bt-l; la pastilla activa (.pv-bt-glider) la crea
+     pvTabsJs y se desliza entre pestañas. Estilo: #pvTabsCss. -->
 <div class="bottom-tabs" id="pvTabs" style="display:none">
   <button class="bottom-tab active" onclick="showTab('portfolio');_btActive(this)" id="bt-portfolio">
     <span class="pv-bt-pill"><svg viewBox="0.5 -0.25 24 24" aria-hidden="true"><path d="M11.5 4A8.5 8.5 0 1 0 20 12.5H11.5Z"/><path d="M13.5 2.5A8.5 8.5 0 0 1 22 11h-8.5Z"/></svg></span>
@@ -42565,6 +42566,106 @@ document.addEventListener('DOMContentLoaded', function(){
     };
   }
 });
+</script>
+<script id="pvTabsJs">
+/* Cápsula flotante (#pvTabs, 2-nov): la pastilla que se desliza entre pestañas y el arrastre con
+   el dedo. Estilo y gestos de cada icono en #pvTabsCss. No decide qué pestaña está activa: mira
+   la clase .active que ya ponen showTab() y _btActive(), así que sigue a cualquier navegación
+   (la lupa o el engranaje de arriba, una tarjeta, el fallback a Portafolio). */
+(function(){
+  var bar = document.getElementById('pvTabs'); if (!bar) return;
+  var gl = document.createElement('span');
+  gl.className = 'pv-bt-glider'; gl.setAttribute('aria-hidden', 'true');
+  gl.innerHTML = '<span class="pv-bt-glider-in"></span>';
+  bar.insertBefore(gl, bar.firstChild);
+  var inner = gl.firstChild, shown = null, lastX = null, lastW = null;
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function tabs(){ return Array.prototype.filter.call(bar.querySelectorAll('.bottom-tab'), function(b){ return b.offsetWidth > 0; }); }
+  function active(){ var b = bar.querySelector('.bottom-tab.active'); return b && b.offsetWidth > 0 ? b : null; }
+  function put(x, w, instant){
+    gl.classList.toggle('pv-bt-instant', !!instant);
+    gl.style.width = w + 'px';
+    gl.style.transform = 'translateX(' + x + 'px)';
+    if (instant) void gl.offsetWidth;
+  }
+  // Coloca la pastilla bajo la pestaña activa. Con animación sólo si ya estaba a la vista y
+  // cambió de pestaña: al aparecer la barra o al girar el aparato llega directo, sin viaje.
+  function sync(animate){
+    if (bar.classList.contains('pv-bt-dragging')) return;   // el dedo manda
+    var b = active();
+    if (!b || !bar.offsetWidth) { gl.classList.remove('pv-bt-ready'); shown = null; return; }
+    var x = b.offsetLeft, w = b.offsetWidth;
+    // Nada que mover (el observador también salta con las clases que pone este mismo código).
+    if (b === shown && x === lastX && w === lastW && gl.classList.contains('pv-bt-ready')) return;
+    var travel = animate && shown && shown !== b && gl.classList.contains('pv-bt-ready') && !reduce;
+    if (travel && lastX != null && inner.animate) {
+      // Se estira en el viaje (más cuanto más lejos va) y se asienta con un rebote corto.
+      var k = Math.min(.42, Math.abs(x - lastX) / (w * 6));
+      inner.animate([
+        { transform:'scale(1,1)' },
+        { transform:'scale(' + (1 + k) + ',' + (1 - k * .4) + ')', offset:.32 },
+        { transform:'scale(' + (1 - k * .18) + ',' + (1 + k * .12) + ')', offset:.72 },
+        { transform:'scale(1,1)' }
+      ], { duration:560, easing:'cubic-bezier(.22,1,.36,1)' });
+    }
+    put(x, w, !travel);
+    gl.classList.add('pv-bt-ready');
+    if (travel || (animate && shown !== b)) {
+      tabs().forEach(function(t){ if (t !== b) t.classList.remove('pv-bt-pop'); });
+      b.classList.remove('pv-bt-pop'); void b.offsetWidth; b.classList.add('pv-bt-pop');
+    }
+    shown = b; lastX = x; lastW = w;
+  }
+
+  new MutationObserver(function(){ sync(true); })
+    .observe(bar, { subtree:true, attributes:true, attributeFilter:['class'] });
+  if (window.ResizeObserver) new ResizeObserver(function(){ sync(false); }).observe(bar);
+  window.addEventListener('orientationchange', function(){ setTimeout(function(){ sync(false); }, 350); });
+  requestAnimationFrame(function(){ sync(false); });
+
+  // ── Arrastrar el dedo por la barra (como en iOS 26) ──
+  // Hasta pasar 8 px es un toque normal (el click del botón no se toca). Pasado eso la pastilla
+  // sigue al dedo, la pestaña de debajo se enciende y al soltar se abre la más cercana; el click
+  // nativo que llega después del arrastre se descarta.
+  var drag = null, swallow = false;
+  function nearest(px){
+    var best = null, bd = 1e9;
+    tabs().forEach(function(t){ var d = Math.abs(t.offsetLeft + t.offsetWidth / 2 - px); if (d < bd) { bd = d; best = t; } });
+    return best;
+  }
+  bar.addEventListener('pointerdown', function(e){
+    if (e.button !== 0 || !active()) return;
+    drag = { id:e.pointerId, x0:e.clientX, on:false };
+  });
+  bar.addEventListener('pointermove', function(e){
+    if (!drag || e.pointerId !== drag.id) return;
+    var r = bar.getBoundingClientRect(), px = e.clientX - r.left;
+    if (!drag.on) {
+      if (Math.abs(e.clientX - drag.x0) < 8) return;
+      drag.on = true; bar.classList.add('pv-bt-dragging');
+      try { bar.setPointerCapture(e.pointerId); } catch(_){}
+    }
+    var all = tabs(), w = gl.offsetWidth, first = all[0], last = all[all.length - 1];
+    var x = Math.max(first.offsetLeft, Math.min(last.offsetLeft + last.offsetWidth - w, px - w / 2));
+    gl.style.transform = 'translateX(' + x + 'px)';
+    var n = nearest(px);
+    all.forEach(function(t){ t.classList.toggle('pv-bt-hover', t === n); });
+  });
+  function end(e, cancel){
+    if (!drag || e.pointerId !== drag.id) return;
+    var was = drag.on; drag = null;
+    if (!was) return;
+    bar.classList.remove('pv-bt-dragging');
+    var n = cancel ? null : nearest(e.clientX - bar.getBoundingClientRect().left);
+    tabs().forEach(function(t){ t.classList.remove('pv-bt-hover'); });
+    if (n && n !== active()) n.click(); else put(lastX, lastW, false);
+    swallow = true; setTimeout(function(){ swallow = false; }, 400);
+  }
+  bar.addEventListener('pointerup', function(e){ end(e, false); });
+  bar.addEventListener('pointercancel', function(e){ end(e, true); });
+  bar.addEventListener('click', function(e){ if (swallow) { e.stopPropagation(); e.preventDefault(); } }, true);
+})();
 </script>
 
 <!-- ── BOTTOM NAV (mobile only) ── -->
@@ -61215,61 +61316,158 @@ html body.dark-theme #tab-portfolio #pvphHero { border:1px solid rgba(255,255,25
 }
 </style>
 <style id="pvTabsCss">
-/* ═══ Barra de pestañas del celular y del iPad (#pvTabs) — rediseño (pedido de Rafael, 1-oct) ═══
-   Los iconos de la barra de escritorio (tarta, noticia, estrella, análisis, destellos) más el
-   engranaje, con trazo fino y redondeado. La pestaña activa lleva el icono en una pastilla navy
-   (clara en el tema oscuro) y el rótulo en navy; las demás, en gris. Barra con filo arriba y sin
-   sombra. Cada regla cuelga de #pvTabs con «html body»: gana a las capas anteriores (≤899, ≤760,
-   ≤700, html.pv-ipad y los bloques pvr/pvd) sin tocarlas. Sin animaciones de entrada: sólo el
-   cambio de color de la pastilla. */
+/* ═══ Barra de pestañas del celular y del iPad (#pvTabs) — cápsula flotante (pedido de Rafael, 2-nov) ═══
+   Réplica de la barra de iOS 26 (la de Yahoo Finanzas) con los iconos de Portiv: una cápsula de
+   vidrio que flota sobre el contenido, separada de los bordes, y una sola pastilla (.pv-bt-glider)
+   que marca la pestaña activa y se DESLIZA de una a otra con un muelle: se estira mientras viaja
+   y se asienta al llegar. El icono de la pestaña nueva hace su propio gesto (la tarta saca su
+   porción, la estrella gira, los destellos titilan…). Se puede arrastrar el dedo por la barra:
+   la pastilla lo sigue, crece como una lupa y suelta en la pestaña más cercana (como en iOS).
+   Siempre clara, también con el tema oscuro (pedido de Rafael, 2-nov): vidrio blanco y tinta navy.
+   Cada regla cuelga de #pvTabs con «html body»: gana a las capas anteriores (≤899, ≤760, ≤700,
+   html.pv-ipad y los bloques pvr/pvd) sin tocarlas. El JS que mueve la pastilla, en pvTabsJs. */
 html body #pvTabs {
-  --pvt-bar:#fff; --pvt-line:#e2e7f0; --pvt-ink:#0b1c30; --pvt-muted:#7a879b;
-  --pvt-pill:#0b1c30; --pvt-pill-ink:#fff; --pvt-press:#eef1f8;
-  background:var(--pvt-bar) !important; border-top:1px solid var(--pvt-line) !important; box-shadow:none !important;
+  --pvt-glass:rgba(255,255,255,.74); --pvt-edge:rgba(11,28,48,.09); --pvt-hi:rgba(255,255,255,.95);
+  --pvt-ink:#0b1c30; --pvt-muted:#6b778a; --pvt-glide:rgba(11,28,48,.075); --pvt-glide-hi:rgba(255,255,255,.75);
+  --pvt-shadow:0 10px 30px rgba(11,28,48,.16), 0 2px 8px rgba(11,28,48,.07);
+  --pvt-h:64px; --pvt-gap:max(10px, calc(var(--pv-safe-b) - 12px));
+  --pvt-spring:cubic-bezier(.3,1.32,.52,1);
+  position:fixed !important; top:auto !important; left:16px !important; right:16px !important;
+  bottom:var(--pvt-gap) !important; height:var(--pvt-h) !important; max-width:520px; margin:0 auto !important;
+  padding:4px !important; box-sizing:border-box !important; border-radius:999px !important;
+  align-items:stretch !important; justify-content:space-between !important;
+  background:var(--pvt-glass) !important; border:0 !important;
+  -webkit-backdrop-filter:blur(22px) saturate(1.8); backdrop-filter:blur(22px) saturate(1.8);
+  box-shadow:var(--pvt-shadow), 0 0 0 .5px var(--pvt-edge), inset 0 1px 0 var(--pvt-hi) !important;
+  touch-action:none; -webkit-user-select:none; user-select:none; isolation:isolate;
+  animation:pvtIn .62s var(--pvt-spring) both;
 }
-html body.dark-theme #pvTabs {
-  --pvt-bar:var(--surface, #0f1623); --pvt-line:rgba(255,255,255,.08); --pvt-ink:#e8edf7; --pvt-muted:#8a96a3;
-  --pvt-pill:#e8edf7; --pvt-pill-ink:#0b1c30; --pvt-press:rgba(255,255,255,.07);
+/* Con el tema oscuro sigue blanca: el vidrio va más opaco para que el fondo oscuro no la agrise. */
+html body.dark-theme #pvTabs { --pvt-glass:rgba(255,255,255,.93); --pvt-shadow:0 12px 34px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.25); }
+/* Filo de luz del vidrio: más claro arriba, se apaga hacia abajo (como el borde de la de iOS). */
+html body #pvTabs::before {
+  content:""; position:absolute; inset:0; border-radius:inherit; padding:1px; pointer-events:none; z-index:2;
+  background:linear-gradient(180deg, rgba(255,255,255,.85), rgba(255,255,255,0) 55%, rgba(255,255,255,.25));
+  -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor;
+  mask:linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
 }
+@keyframes pvtIn { from { transform:translateY(calc(100% + 24px)) scale(.94); opacity:0; } to { transform:none; opacity:1; } }
+
+/* La pastilla que viaja. La posición (translateX + ancho) la pone el JS; .pv-bt-glider-in se
+   estira y se encoge por dentro (squash & stretch) sin pelear con esa transformación. */
+html body #pvTabs .pv-bt-glider {
+  position:absolute; top:4px; bottom:4px; left:0; width:0; z-index:0; pointer-events:none; opacity:0;
+  transition:transform .56s var(--pvt-spring), width .56s var(--pvt-spring), opacity .2s ease;
+  will-change:transform;
+}
+html body #pvTabs .pv-bt-glider.pv-bt-ready { opacity:1; }
+html body #pvTabs .pv-bt-glider.pv-bt-instant { transition:opacity .2s ease; }
+html body #pvTabs .pv-bt-glider-in {
+  position:absolute; inset:0; border-radius:999px; background:var(--pvt-glide);
+  box-shadow:inset 0 1px 0 var(--pvt-glide-hi), inset 0 0 0 .5px rgba(11,28,48,.04);
+  transition:transform .32s var(--pvt-spring), background-color .25s ease, box-shadow .25s ease;
+}
+/* Arrastrando: la pastilla se levanta como una lupa de vidrio y sigue el dedo sin retraso. */
+html body #pvTabs.pv-bt-dragging .pv-bt-glider { transition:opacity .2s ease; }
+html body #pvTabs.pv-bt-dragging .pv-bt-glider-in {
+  transform:scale(1.1, 1.14); background:rgba(255,255,255,.55);
+  box-shadow:0 8px 22px rgba(11,28,48,.18), inset 0 1px 0 #fff, inset 0 0 0 .5px rgba(11,28,48,.10);
+}
+
 html body #pvTabs .bottom-tab {
-  gap:4px !important; padding:7px 2px 6px !important; color:var(--pvt-muted) !important; background:none !important;
-  font-family:var(--font) !important; font-size:10.5px !important; font-weight:700 !important; line-height:1.3 !important;
-  letter-spacing:0 !important; white-space:nowrap !important; -webkit-tap-highlight-color:transparent;
+  position:relative; z-index:1; flex:1 1 0 !important; min-width:0;
+  display:flex !important; flex-direction:column !important; align-items:center !important; justify-content:center !important;
+  gap:2px !important; padding:0 2px !important; margin:0 !important; border:0 !important; border-radius:999px;
+  color:var(--pvt-muted) !important; background:none !important; box-shadow:none !important;
+  font-family:var(--font) !important; font-size:10.5px !important; font-weight:700 !important; line-height:1.25 !important;
+  letter-spacing:0 !important; white-space:nowrap !important; -webkit-tap-highlight-color:transparent; cursor:pointer;
+  transition:color .28s ease !important;
 }
-html body #pvTabs .bottom-tab.active { color:var(--pvt-ink) !important; font-weight:800 !important; }
+html body #pvTabs .bottom-tab.active,
+html body #pvTabs.pv-bt-dragging .bottom-tab.pv-bt-hover { color:var(--pvt-ink) !important; font-weight:700 !important; }
+html body #pvTabs.pv-bt-dragging .bottom-tab.active:not(.pv-bt-hover) { color:var(--pvt-muted) !important; }
 html body #pvTabs .bottom-tab::after { display:none !important; }
+html body #pvTabs .pv-bt-l { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+
+/* El icono: caja de 28, sin fondo (la pastilla ahora es .pv-bt-glider). Al tocar se hunde. */
 html body #pvTabs .pv-bt-pill {
-  display:grid; place-items:center; width:52px; height:30px; border-radius:999px; color:inherit;
-  transition:background-color .22s cubic-bezier(.22,1,.36,1), color .22s cubic-bezier(.22,1,.36,1);
+  display:grid; place-items:center; width:28px; height:28px; border-radius:0; background:none !important; color:inherit;
+  transition:transform .3s var(--pvt-spring);
 }
-html body #pvTabs .bottom-tab.active .pv-bt-pill { background:var(--pvt-pill); color:var(--pvt-pill-ink); }
-html body #pvTabs .bottom-tab:not(.active):active .pv-bt-pill { background:var(--pvt-press); }
+html body #pvTabs .bottom-tab:active .pv-bt-pill { transform:scale(.86); transition-duration:.12s; }
 html body #pvTabs .bottom-tab svg {
-  width:21px !important; height:21px !important; transform:none !important; overflow:visible;
-  fill:none !important; stroke:currentColor !important; stroke-width:1.8 !important; stroke-linecap:round !important; stroke-linejoin:round !important;
+  width:25px !important; height:25px !important; transform:none !important; overflow:visible;
+  fill:none !important; stroke:currentColor !important; stroke-width:1.9 !important; stroke-linecap:round !important; stroke-linejoin:round !important;
 }
-html body #pvTabs .bottom-tab svg :is(path, rect, circle) { fill:none !important; }
-html.pv-ipad body #pvTabs .bottom-tab { gap:4px !important; padding:4px 6px !important; font-size:11.5px !important; }
-html.pv-ipad body #pvTabs .pv-bt-pill { width:58px; height:31px; }
-html.pv-ipad body #pvTabs .bottom-tab svg { width:22px !important; height:22px !important; }
-/* Iconos más grandes y parejos (pedido de Rafael, 1-nov). Cada dibujo ocupaba otra parte de su
-   lienzo de 24 (la estrella 16 de ancho, la tarta 19; el destello iba 1.4 más arriba), así que se
-   veían de tallas distintas y descentrados. El viewBox de cada <svg> del HTML ya va recortado a
-   su dibujo y centrado en él: los seis miden lo mismo (≈79 % de la caja) y caen en el centro de
-   su pastilla. El trazo no escala con ese recorte (non-scaling-stroke): mismo grosor en todos.
-   En el iPad cada pestaña pasa de 150 a 176 px: con cinco, la barra centrada llena mejor. */
-html body #pvTabs .bottom-tab { padding:6px 2px 6px !important; }
-html body #pvTabs .pv-bt-pill { width:58px; height:34px; }
-html body #pvTabs .bottom-tab svg { width:25px !important; height:25px !important; stroke-width:1.9 !important; }
-html body #pvTabs .bottom-tab svg :is(path, rect, circle) { vector-effect:non-scaling-stroke; }
-html.pv-ipad body #pvTabs .bottom-tab { flex:0 1 176px !important; padding:4px 6px !important; }
-html.pv-ipad body #pvTabs .pv-bt-pill { width:66px; height:38px; }
-html.pv-ipad body #pvTabs .bottom-tab svg { width:28px !important; height:28px !important; stroke-width:2 !important; }
+html body #pvTabs .bottom-tab svg :is(path, rect, circle) {
+  fill:currentColor !important; fill-opacity:0; vector-effect:non-scaling-stroke;
+  transform-box:fill-box; transform-origin:center; transition:fill-opacity .3s ease;
+}
+/* Activa: las figuras cerradas se rellenan un poco (en iOS el icono activo va relleno). Las
+   líneas abiertas (ejes, renglones, la cruz del destello) no: rellenarlas pintaría triángulos. */
+html body #pvTabs #bt-portfolio.active svg path,
+html body #pvTabs #bt-noticias.active svg rect,
+html body #pvTabs #bt-watchlist.active svg path,
+html body #pvTabs #bt-aianalyst.active svg path:first-child,
+html body #pvTabs #bt-settings.active svg circle { fill-opacity:.2; }
+html body #pvTabs #bt-noticias.active svg rect + rect { fill-opacity:.55; }
+
+/* ── El gesto de cada icono al volverse activo (.pv-bt-pop lo pone el JS) ── */
+html body #pvTabs .pv-bt-pop .pv-bt-pill { animation:pvtPop .62s var(--pvt-spring) both; }
+@keyframes pvtPop { 0% { transform:scale(.72); } 45% { transform:scale(1.14); } 100% { transform:scale(1); } }
+/* Portafolio: la porción se separa de la tarta y vuelve a encajar; la tarta gira un poco. */
+html body #pvTabs #bt-portfolio.pv-bt-pop svg path:first-child { animation:pvtPie .7s var(--pvt-spring) both; }
+html body #pvTabs #bt-portfolio.pv-bt-pop svg path:last-child { animation:pvtSlice .7s var(--pvt-spring) both; }
+@keyframes pvtPie { 0% { transform:rotate(-24deg); } 100% { transform:none; } }
+@keyframes pvtSlice { 0% { transform:translate(0,0); } 35% { transform:translate(2.6px,-2.6px); } 100% { transform:none; } }
+/* Noticias: la foto salta y los renglones entran escritos de izquierda a derecha. */
+html body #pvTabs #bt-noticias.pv-bt-pop svg rect + rect { animation:pvtPhoto .6s var(--pvt-spring) both; }
+html body #pvTabs #bt-noticias.pv-bt-pop svg path { animation:pvtLines .55s cubic-bezier(.22,1,.36,1) .08s both; transform-origin:left center; }
+@keyframes pvtPhoto { 0% { transform:scale(.3); } 60% { transform:scale(1.25); } 100% { transform:none; } }
+@keyframes pvtLines { 0% { transform:scaleX(0); opacity:0; } 100% { transform:none; opacity:1; } }
+/* Watchlist: la estrella da un giro de una punta (72°) y rebota. */
+html body #pvTabs #bt-watchlist.pv-bt-pop svg path { animation:pvtStar .72s var(--pvt-spring) both; }
+@keyframes pvtStar { 0% { transform:rotate(-72deg) scale(.6); } 100% { transform:none; } }
+/* Analizar: la línea de tendencia sube desde abajo con su flecha. */
+html body #pvTabs #bt-analizar.pv-bt-pop svg path + path { animation:pvtTrend .6s var(--pvt-spring) both; }
+@keyframes pvtTrend { 0% { transform:translate(-3px,3px); opacity:0; } 100% { transform:none; opacity:1; } }
+/* Portiv IA: el destello grande gira un cuarto y el pequeño titila después. */
+html body #pvTabs #bt-aianalyst.pv-bt-pop svg path:first-child { animation:pvtSpark .7s var(--pvt-spring) both; }
+html body #pvTabs #bt-aianalyst.pv-bt-pop svg path:last-child { animation:pvtTwinkle .6s var(--pvt-spring) .14s both; }
+@keyframes pvtSpark { 0% { transform:rotate(-90deg) scale(.5); } 100% { transform:none; } }
+@keyframes pvtTwinkle { 0% { transform:scale(0); } 55% { transform:scale(1.5); } 100% { transform:none; } }
+/* Ajustes (sólo en horizontal): el engranaje gira. */
+html body #pvTabs #bt-settings.pv-bt-pop svg path { animation:pvtGear .7s var(--pvt-spring) both; }
+@keyframes pvtGear { 0% { transform:rotate(-90deg); } 100% { transform:none; } }
+
+/* iPad: la cápsula se centra con pestañas anchas (no se estira de borde a borde). */
+html.pv-ipad body #pvTabs { --pvt-h:66px; --pvt-gap:max(14px, calc(var(--pv-safe-b) - 4px)); max-width:620px; }
+html.pv-ipad body #pvTabs .bottom-tab { font-size:11.5px !important; gap:3px !important; }
+html.pv-ipad body #pvTabs .pv-bt-pill { width:30px; height:30px; }
+html.pv-ipad body #pvTabs .bottom-tab svg { width:27px !important; height:27px !important; stroke-width:2 !important; }
+@media (orientation: landscape) { html.pv-ipad body #pvTabs { max-width:720px; } }
+@media (max-height: 1100px) { html.pv-ipad body #pvTabs { --pvt-h:62px; } }
+
+/* Portiv IA: con la barra flotando, el chat baja hasta el borde de la pantalla (pasa por detrás de
+   la cápsula) y reserva abajo el mismo alto que antes ocupaba la barra, así el compositor queda
+   justo encima. Sin esto, el hueco bajo el chat dejaba ver el navy del body alrededor de la
+   cápsula. Con el teclado abierto la barra se va y mandan las reglas de pv-kb-open. */
+@media (max-width: 899px) {
+  html:not(.pv-ipad) body.chat-active:not(.pv-kb-open) #tab-aianalyst .ai-chat-page {
+    height:100dvh !important; padding-bottom:calc(max(10px, var(--pv-safe-b) - 12px) + 74px) !important;
+  }
+}
+html.pv-ipad body:not(.pv-kb-open) #tab-aianalyst { height:100dvh !important; }
+html.pv-ipad body:not(.pv-kb-open) #tab-aianalyst .ai-chat-page { box-sizing:border-box !important; padding-bottom:var(--pv-ipad-nav-total) !important; }
+
 /* Ajustes fuera de la barra en vertical, celular e iPad (pedido de Rafael, 1-nov): quedan las cinco
    pestañas y a Ajustes se entra por el engranaje de la barra de arriba (.m-topbar), que en vertical
    siempre está a la vista. En horizontal no se toca: en el celular apaisado esa barra no sale. */
 @media (orientation: portrait) { html body #pvTabs #bt-settings { display:none !important; } }
-@media (prefers-reduced-motion: reduce) { html body #pvTabs .pv-bt-pill { transition:none; } }
+@media (prefers-reduced-motion: reduce) {
+  html body #pvTabs, html body #pvTabs .pv-bt-glider, html body #pvTabs .pv-bt-glider-in,
+  html body #pvTabs .pv-bt-pill, html body #pvTabs svg * { animation:none !important; transition:none !important; }
+}
 
 /* ── Portiv IA en el celular y el iPad: el navy de la cabecera llega hasta arriba ──
    En esta pestaña la barra de marca va oculta (body.chat-active) y Safari (iOS 26) pinta la
