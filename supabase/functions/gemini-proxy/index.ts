@@ -16,7 +16,16 @@
 // La key nunca sale del servidor: GEMINI_API_KEY se lee del entorno de la función
 // (Edge Functions → Secrets), mismo patrón que ANTHROPIC_API_KEY.
 
+import { guardAi, logUsage, modelAllowed } from "../_shared/ai-guard.ts";
+
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
+
+// Sólo los Flash que usa la app (AI_MODELS: 3.1/3.5-flash-lite, 3.7-flash). Los Pro, no:
+// un cliente manipulado no debe poder pedir el modelo caro con la key de Portiv.
+const MODEL_ALLOW = [/^gemini-[\d.]+-flash(-lite)?(-preview[\w.-]*)?$/];
+// Noticias, outlook, chat y visión: decenas de llamadas en un día de uso intenso. El tope
+// sólo frena bucles y abuso (3 nov 2026: antes no había ninguno).
+const LIMITS = { perMinute: 30, perDay: 600 };
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 
 // Aliases → id válido, para reintentar si el id pedido no existe (mismo patrón que
@@ -38,27 +47,10 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-// ── GATE DE IDENTIDAD ────────────────────────────────────────────────────────
-// `verify_jwt: true` de la plataforma solo comprueba que el JWT esté FIRMADO por este
-// proyecto. La ANON KEY lo está — y viaja en el bundle público de portivapp.com, a la
-// vista de cualquiera que abra "ver código fuente". Resultado: esta función era un proxy
-// ABIERTO a Gemini pagado con nuestra key, sin techo de gasto y sin forma de saber quién
-// lo usaba. El cliente ya manda el access token del usuario cuando hay sesión
-// (_pvAccessToken en _aiFetch/_aiFetchVision); lo único que faltaba era EXIGIRLO.
-//
-// No hace falta llamar a auth.getUser(): la plataforma ya validó la FIRMA antes de
-// entrar aquí, así que leer el claim `role` del payload es suficiente y no cuesta un
-// round trip por petición. Un token falsificado nunca llega a este punto.
-function roleOfJwt(tok: string): string {
-  try {
-    const p = tok.split(".")[1];
-    if (!p) return "";
-    const b = atob(p.replace(/-/g, "+").replace(/_/g, "/"));
-    return String((JSON.parse(b) || {}).role || "");
-  } catch {
-    return "";
-  }
-}
+// ── PUERTA ───────────────────────────────────────────────────────────────────
+// `verify_jwt: true` sólo comprueba que el JWT esté FIRMADO por este proyecto, y la ANON
+// KEY lo está (viaja en el bundle público). La identidad, el modelo y el cupo por usuario
+// los exige _shared/ai-guard.ts, igual que en anthropic-proxy.
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -170,20 +162,10 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: { message: "Method Not Allowed" } }, 405);
 
-  // El gate va ANTES de mirar el body o la key: nada de trabajo para quien no debería estar.
-  {
-    const _auth = req.headers.get("authorization") || "";
-    const _tok = _auth.replace(/^Bearer\s+/i, "").trim();
-    const _role = roleOfJwt(_tok);
-    // service_role queda permitido para un futuro uso server-side; la ANON key, no: es la
-    // que va en el bundle público y la que abría la puerta.
-    if (_role !== "authenticated" && _role !== "service_role") {
-      return json({
-        error: { message: "Inicia sesión para usar las funciones de IA." },
-        error_code: "auth_required",
-      }, 401);
-    }
-  }
+  // La puerta va ANTES de mirar el body o la key: nada de trabajo para quien no debería
+  // estar. Sesión obligatoria (la anon key del bundle público no entra) + cupo por usuario.
+  const g = await guardAi(req, "gemini", LIMITS);
+  if (!g.ok) return json(g.body, g.status);
 
   if (!GEMINI_KEY) {
     return json({ error: { message: "GEMINI_API_KEY no está configurada en Supabase (Edge Functions → Secrets)." } }, 500);
@@ -199,6 +181,9 @@ Deno.serve(async (req) => {
   }
 
   let model = payload.model || "gemini-3.5-flash-lite";
+  if (!modelAllowed(model, MODEL_ALLOW)) {
+    return json({ error: { message: "Modelo no permitido." }, error_code: "model_not_allowed" }, 400);
+  }
   // Mismo clamp que anthropic-proxy: techo duro server-side (anti-abuso de costo desde
   // un cliente manipulado). 8192 cubre holgado visión/chat/análisis.
   const _maxTok = Math.min(Math.max(1, payload.max_tokens || 4096), 8192);
@@ -285,6 +270,7 @@ Deno.serve(async (req) => {
 
     const out = textOf(j);
     const usage = usageOf(j);
+    logUsage("gemini-proxy", g.userId, model, usage);
 
     // grounded: se pidió búsqueda y Gemini ejecutó al menos una query real. Sin esto el
     // cliente no podía distinguir una respuesta buscada de una "de memoria".
