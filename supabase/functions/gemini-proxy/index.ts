@@ -25,7 +25,9 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const MODEL_ALLOW = [/^gemini-[\d.]+-flash(-lite)?(-preview[\w.-]*)?$/];
 // Noticias, outlook, chat y visión: decenas de llamadas en un día de uso intenso. El tope
 // sólo frena bucles y abuso (3 nov 2026: antes no había ninguno).
-const LIMITS = { perMinute: 30, perDay: 600 };
+// globalPerDay: hoy son ~200 llamadas al día con ~11 usuarios activos; 40.000 dejan margen
+// para mil usuarios y cortan una fuga antes de que la factura se dispare.
+const LIMITS = { perMinute: 30, perDay: 600, globalPerDay: 40000 };
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 
 // Aliases → id válido, para reintentar si el id pedido no existe (mismo patrón que

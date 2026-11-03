@@ -23,7 +23,12 @@ const db = SUPABASE_URL && SERVICE_ROLE
 // Visión manda imágenes en base64 (ya reducidas por _prepImagesForOCR): 8 MB sobra.
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 
-export type AiLimits = { perMinute: number; perDay: number };
+// perDay es por usuario; globalPerDay, para TODOS juntos: con «Confirm email» apagado una
+// persona puede abrir cuentas sin fin, y el tope por usuario no basta como techo de gasto.
+export type AiLimits = { perMinute: number; perDay: number; globalPerDay: number };
+
+// Fila de rate_limits que lleva la cuenta global (no es un usuario real).
+const GLOBAL_UID = "00000000-0000-0000-0000-000000000000";
 
 type Claims = { role: string; sub: string };
 
@@ -64,12 +69,17 @@ export async function guardAi(req: Request, bucket: string, limits: AiLimits): P
 
   if (db) {
     try {
-      const [m, d] = await Promise.all([
+      const [m, d, all] = await Promise.all([
         db.rpc("bump_rate_limit", { p_user: sub, p_bucket: `ai:${bucket}:min`, p_max: limits.perMinute, p_window_secs: 60 }),
         db.rpc("bump_rate_limit", { p_user: sub, p_bucket: `ai:${bucket}:day`, p_max: limits.perDay, p_window_secs: 86400 }),
+        db.rpc("bump_rate_limit", { p_user: GLOBAL_UID, p_bucket: `ai:${bucket}:global`, p_max: limits.globalPerDay, p_window_secs: 86400 }),
       ]);
       if (m.data === false) return fail(429, "Vas muy rápido. Espera un minuto e inténtalo de nuevo.", "rate_limited");
       if (d.data === false) return fail(429, "Alcanzaste tu límite diario de IA. Vuelve mañana.", "daily_limit");
+      if (all.data === false) {
+        console.error(`[ai-guard] tope GLOBAL diario de ${bucket} alcanzado (${limits.globalPerDay})`);
+        return fail(503, "La IA está saturada en este momento. Inténtalo más tarde.", "global_limit");
+      }
     } catch (_e) { /* fail-open */ }
   }
   return { ok: true, userId: sub };

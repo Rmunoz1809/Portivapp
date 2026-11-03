@@ -44735,7 +44735,11 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   // viajan en un HTML público: publicarlos no concede nada, el servidor valida igual.
   // (Se cayeron al borrar el muro en a31579c y _isOwner() lanzaba ReferenceError →
   // el bypass devolvía siempre false.)
-  var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com', 'rafa10pro3@gmail.com'];
+  // Sólo cuentas que EXISTEN: con «Confirm email» apagado, un correo de la lista sin
+  // registrar lo podía crear cualquiera (rafa10pro3@gmail.com, retirado el 3 nov 2026).
+  // El servidor ya no mira el email: has_active_entitlement() concede por uid
+  // (tabla access_grants); esto sólo quita el candado visual.
+  var OWNER_EMAILS = ['rafaelmunozanselmi@icloud.com'];
   // Estados que SIGUEN dando acceso pero merecen aviso: past_due (Paddle/Apple
   // reintentan el cobro) y canceled (renovación cancelada, periodo ya pagado).
   // Sin esta tabla _pvSubGate reventaba justo antes de pintar/retirar el banner.
@@ -44910,6 +44914,8 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
   // _pvSubGate() corre en cada visibilitychange y en cada appStateChange → volver a
   // la app 10 veces serían 10 llamadas a la API de RevenueCat.
   // stCall() ya adjunta el access_token y normaliza los errores con .status.
+  // _pvSubRowMemo: última lectura de `subscriptions` (ver _pvSubStatus); la sync la olvida.
+  var _pvSubRowMemo = null;
   window._pvEntitlementSync = (function(){
     var _last = 0, _inflight = null;
     return function(force){
@@ -44927,7 +44933,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
           ? window.stCall('entitlement-sync', {})
           : Promise.resolve(null))
         .catch(function(){ return null; })
-        .then(function(r){ _inflight = null; return r; });
+        .then(function(r){ _inflight = null; _pvSubRowMemo = null; return r; });
       return _inflight;
     };
   })();
@@ -44962,10 +44968,19 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       var _u = null;
       try { var _s = await sb.auth.getSession(); _u = _s && _s.data && _s.data.session && _s.data.session.user && _s.data.session.user.id; } catch(e){}
       if (!_u) return null;                     // sin sesión no hay nada que consultar
-      var r = await sb.from('subscriptions')
-        .select('entitlement_active,status,expires_at,will_renew')
-        .eq('user_id', _u)
-        .maybeSingle();
+      // Una sola lectura cada 10 s por usuario: el gate, cada llamada de IA (_pvAiEntitled)
+      // y los candados la piden a la vez, y dos iPhones llegaron a ~2.500 lecturas al día
+      // cada uno (3 nov 2026). La reconciliación con la tienda (_pvEntitlementSync) olvida
+      // la lectura, así que tras una compra o un «Restaurar» se vuelve a leer en el acto.
+      var _now = Date.now(), _m = _pvSubRowMemo;
+      if (!_m || _m.uid !== _u || (_now - _m.t) > 10000) {
+        _m = _pvSubRowMemo = { uid: _u, t: _now, p: sb.from('subscriptions')
+          .select('entitlement_active,status,expires_at,will_renew')
+          .eq('user_id', _u)
+          .maybeSingle() };
+      }
+      var r = await _m.p;
+      if (!r || r.error) _pvSubRowMemo = null;   // un fallo no se recuerda
       // Fallo de red / RLS: se devuelve null y el llamador NO bloquea. Mismo criterio
       // fail-open que requireEntitlement en el servidor: una caída nuestra no debe
       // dejar fuera a alguien que sí pagó.

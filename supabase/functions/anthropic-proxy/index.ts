@@ -28,7 +28,8 @@ const MODEL_ALLOW = [/^claude-sonnet-[\w.-]+$/, /^claude-haiku-[\w.-]+$/];
 
 // La narrativa por acción se genera 1× por ticker y se cachea en la nube: un uso normal son
 // unas pocas llamadas al día. El tope sólo frena bucles y abuso.
-const LIMITS = { perMinute: 12, perDay: 150 };
+// globalPerDay: hoy son ~10 llamadas al día; 3.000 cubren de sobra mil usuarios.
+const LIMITS = { perMinute: 12, perDay: 150, globalPerDay: 3000 };
 
 // Techo de búsquedas web por petición (el cliente pide 1–2; el chat hasta _webN).
 const MAX_WEB_USES = 3;

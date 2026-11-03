@@ -67,3 +67,79 @@ as $$
 $$;
 revoke execute on function public.rate_limits_purge() from public, anon, authenticated;
 select cron.schedule('rate-limits-purge', '27 4 * * *', $$select public.rate_limits_purge()$$);
+
+-- 5 · Acceso de dueño y de demo por CUENTA, no por email.
+-- has_active_entitlement() regalaba Portiv Pro a cualquier email de una lista, y la lista
+-- incluía rafa10pro3@gmail.com, que NUNCA se registró. Con «Confirm email» apagado
+-- (mailer_autoconfirm) cualquiera podía crear esa cuenta con una contraseña cualquiera y
+-- tener Pro gratis en el servidor: IA de pago y conexiones de SnapTrade (~$1/mes cada una).
+-- Ahora el bypass sale de una tabla con los uid de las cuentas que YA existen; un email
+-- nuevo, aunque coincida, no hereda nada.
+create table if not exists public.access_grants (
+  user_id    uuid primary key references auth.users (id) on delete cascade,
+  kind       text not null check (kind in ('owner', 'demo')),
+  created_at timestamptz not null default now()
+);
+alter table public.access_grants enable row level security;
+revoke all on public.access_grants from public, anon, authenticated;
+
+insert into public.access_grants (user_id, kind)
+select id, case when lower(email) = 'review@portivapp01.com' then 'demo' else 'owner' end
+  from auth.users
+ where lower(email) in ('rafaelmunozanselmi@icloud.com', 'review@portivapp01.com')
+   and email_confirmed_at is not null
+on conflict (user_id) do nothing;
+
+do $$
+begin
+  if not exists (select 1 from public.access_grants where kind = 'owner') then
+    raise exception 'access_grants: no se encontró la cuenta del dueño; no se aplica nada';
+  end if;
+end $$;
+
+create or replace function public.has_active_entitlement(uid uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  r       public.subscriptions%rowtype;
+  caller  uuid := auth.uid();
+begin
+  if uid is null then return false; end if;
+
+  -- Gate de aislamiento: un usuario autenticado sólo puede preguntar por sí mismo.
+  -- Las Edge Functions usan service_role → auth.uid() es null → pasan sin problema.
+  if caller is not null and caller <> uid then
+    raise exception 'has_active_entitlement: solo se permite consultar el propio uid'
+      using errcode = '42501';
+  end if;
+
+  -- Dueño y cuentas de DEMO/REVIEW: acceso concedido a mano, sin compra, por uid.
+  if exists (select 1 from public.access_grants g where g.user_id = uid) then
+    return true;
+  end if;
+
+  select * into r from public.subscriptions where user_id = uid;
+  if not found then return false; end if;
+  if r.entitlement_active is not true then return false; end if;
+
+  if r.grace_until is not null and r.grace_until > now() then
+    return true;
+  end if;
+
+  if r.expires_at is not null and r.expires_at < now() - interval '48 hours' then
+    return false;
+  end if;
+
+  return true;
+end;
+$$;
+revoke all on function public.has_active_entitlement(uuid) from public, anon;
+grant execute on function public.has_active_entitlement(uuid) to authenticated, service_role;
+
+-- 6 · client_errors: cualquier usuario puede insertar (es su función); sin purga crecería
+-- para siempre si alguien la inunda. 30 días bastan para depurar.
+select cron.schedule('client-errors-purge', '37 4 * * *',
+  $$delete from public.client_errors where created_at < now() - interval '30 days'$$);
