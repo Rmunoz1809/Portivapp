@@ -12705,7 +12705,11 @@ function _canonicalSector(ticker){
   const ind = (ci && ci.sector) ? String(ci.sector) : '';  // 3) industria real del API
   if (ind){
     for (const [re, canon] of _INDUSTRY_TO_SECTOR) if (re.test(ind)) return canon;
-    return ind;   // industria real pero sin regla → mostrarla cruda (mejor que "Otro")
+    // Industria real pero sin regla → se muestra (mejor que "Otro"), pero sólo con letras,
+    // cifras y puntuación simple: el `info` puede venir de shared_analysis, que escribe
+    // cualquier usuario, y este texto acaba en notas que se pintan como HTML.
+    const _safe = ind.replace(/[^\p{L}\p{N} &,.\-\/()·]/gu, '').trim().slice(0, 60);
+    return _safe || 'Sin clasificar';
   }
   return 'Sin clasificar';                                 // 4) sin dato real → no inventar
 }
@@ -17675,9 +17679,15 @@ let _newsCache = [];
 // resetea: el click resuelve la noticia por su ID, no por su posición en el array.
 const _newsReg = new Map();
 let _newsRegSeq = 0;
+// El id va crudo a un onclick="openNewsByKey('…')". Sólo vale un id emitido AQUÍ: las
+// noticias compartidas (__NEWS_GENERAL_V3__, escrita por cualquier usuario vía
+// shared-write) podían traer su propio __nid con markup, y ese texto acababa ejecutándose
+// en el navegador de todos al pintar Noticias (3 nov 2026).
 function _newsRegister(n){
   if(!n || typeof n!=='object') return '';
-  if(!n.__nid) n.__nid = 'n' + (++_newsRegSeq);
+  if(typeof n.__nid !== 'string' || !/^n\d+$/.test(n.__nid) || (_newsReg.has(n.__nid) && _newsReg.get(n.__nid) !== n)) {
+    n.__nid = 'n' + (++_newsRegSeq);
+  }
   _newsReg.set(n.__nid, n);
   return n.__nid;
 }
@@ -19274,8 +19284,8 @@ function _buildCalResultChip(d) {
   const col = d.sentimiento==='pos'?'#16794a':d.sentimiento==='neg'?'#b91c1c':'#5b6b7d';
   const bg  = d.sentimiento==='pos'?'#d1fae5':d.sentimiento==='neg'?'#fee2e2':'#f1f5f9';
   const lbl = d.sentimiento==='pos'?'Sentimiento Alcista':d.sentimiento==='neg'?'Sentimiento Bajista':'Sentimiento Neutral';
-  const realPart = d.real ? ` · ${d.real}` : '';
-  const why = d.porque ? `<div style="font-weight:400;font-size:10.5px;color:#374259;margin-top:3px;line-height:1.4">${String(d.porque).slice(0,130)}${d.porque.length>130?'…':''}</div>` : '';
+  const realPart = d.real ? ` · ${pvEsc(d.real)}` : '';
+  const why = d.porque ? `<div style="font-weight:400;font-size:10.5px;color:#374259;margin-top:3px;line-height:1.4">${pvEsc(String(d.porque).slice(0,130))}${String(d.porque).length>130?'…':''}</div>` : '';
   return `<div class="swc-result-chip" style="margin-top:7px;padding:5px 8px;background:${bg};border-radius:7px;border-left:3px solid ${col};font-size:11px;font-weight:700;color:${col};letter-spacing:.03em">RESULTADO: ${lbl}${realPart}${why}</div>`;
 }
 
@@ -26537,11 +26547,14 @@ function onOverlayClick(e) {
   if (e.target === $('searchOverlay')) closeSearchOverlay();
 }
 
+// El texto viene de la búsqueda remota (Finnhub /search): se escapa cada trozo, como
+// _highlight, para que un nombre con markup no se pinte como HTML.
 function _hlMark(str, q) {
-  if (!q) return str;
+  str = String(str == null ? '' : str);
+  if (!q) return _escHtml(str);
   const idx = str.toLowerCase().indexOf(q.toLowerCase());
-  if (idx < 0) return str;
-  return str.slice(0, idx) + '<mark class="search-modal-mark">' + str.slice(idx, idx + q.length) + '</mark>' + str.slice(idx + q.length);
+  if (idx < 0) return _escHtml(str);
+  return _escHtml(str.slice(0, idx)) + '<mark class="search-modal-mark">' + _escHtml(str.slice(idx, idx + q.length)) + '</mark>' + _escHtml(str.slice(idx + q.length));
 }
 
 let _navRemTimer = null;
@@ -35331,7 +35344,7 @@ function _renderWeeklyOutlook(data) {
     // Resumen corto para móvil: primera oración completa (sin cortar a media palabra).
     const _shortTheme = function(t){ if(!t) return ''; var m = String(t).match(/^[\s\S]*?[.!?](?=\s|$)/); return (m ? m[0] : String(t)).trim(); };
     const _themeBar = data.theme
-      ? `<div class="wo-theme-bar"><span class="wo-theme-full">${data.theme}</span><span class="wo-theme-short">${_shortTheme(data.theme)}</span></div>`
+      ? `<div class="wo-theme-bar"><span class="wo-theme-full">${pvEsc(data.theme)}</span><span class="wo-theme-short">${pvEsc(_shortTheme(data.theme))}</span></div>`
       : '';
     const _ctxBar   = data.market_context ? `<div class="wo-ctx">${pvEsc(data.market_context)}</div>` : '';
     wrap.innerHTML = `<div class="wo-report">${_themeBar}${_ctxBar}${daysHtml}${data.narrative?`<div class="wo-section-lbl">Outlook — Próxima Semana</div><div class="wo-narrative">${_outlookNarrativeHtml(data.narrative)}</div>`:''}${themesHtml?`<div class="wo-section-lbl">Temas clave</div>${themesHtml}`:''}${ts?`<div class="wo-footer">Actualizado ${ts}</div>`:''}<div class="wo-footer" style="opacity:.85">Perspectiva generada por IA con fines educativos. No es asesoría financiera ni una recomendación de compra o venta.</div></div>`;
@@ -39701,7 +39714,9 @@ function aiPortImportData(data){
   const positions = (Array.isArray(data.positions) ? data.positions : [])
     .map(p => {
       if (!p) return null;
-      const tk = String(p.ticker || '').trim().toUpperCase().replace(/\s+/g, '');
+      // Sólo caracteres de símbolo: el ticker sale de una lectura de IA sobre una captura y
+      // luego se pinta en filas, botones y onclick; comillas o < > no tienen sitio ahí.
+      const tk = String(p.ticker || '').trim().toUpperCase().replace(/\s+/g, '').replace(/[^A-Z0-9.\-^=\/:]/g, '').slice(0, 24);
       const hasNum = _aiNum(p.current_price ?? p.price) != null || _aiNum(p.shares) != null
                   || _aiNum(p.market_value) != null || _aiNum(p.avg_cost) != null;
       // Fila completamente vacía (ni símbolo ni números) → no aporta nada, se omite.
@@ -50295,7 +50310,9 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
           : (so && (so.symbol || so.raw_symbol || so.ticker || so.code)) || '';
     if (typeof t !== 'string') t = '';
     if (!t && p) t = String((p.ticker || p.description || '') || '');
-    return t.toUpperCase().trim();
+    // El ticker se pinta en muchas filas y botones: sólo caracteres de símbolo bursátil
+    // (BRK.B, BTC-USD, ^GSPC, EUR=X…). Comillas o < > de un dato del broker no pasan.
+    return t.toUpperCase().replace(/[^A-Z0-9.\-^=\/: ]/g, '').trim().slice(0, 24);
   }
   // La BOLSA del símbolo. SnapTrade la entrega en `exchange` con un `suffix` ya en formato
   // Yahoo ('.PA' para París, '.TO' para Toronto, vacío para las plazas de EE. UU.). Sin él,
