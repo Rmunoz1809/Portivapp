@@ -21763,16 +21763,20 @@ const PORTIV_CHART = {
     //    "2-jun" aunque el punto en vivo llega al 12-jul. El hueco entre el último dato y hoy se
     //    rellena con datos REALES (reconstrucción PORTIV_HIST) o, si no está lista, por
     //    interpolación de la serie real — nunca reutilizando fechas viejas fuera de la ventana.
-    const _wAnchor=()=> new Date(today+'T00:00:00');
+    // Mediodía local y fecha leída en LOCAL: con 'T00:00:00' + toISOString(), al este de UTC
+    // (España, UTC+1) la medianoche local ya es el día anterior en UTC y la ventana de 1M abría
+    // el 1-oct en vez del 2-oct (un día de más en cada período).
+    const _wAnchor=()=> new Date(today+'T12:00:00');
+    const _isoLocal=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     let fromISO=null;
     if(period==='YTD'){
       fromISO=`${todayParts.y}-01-01`;
     } else if(monthsMap[period]){
       const cut=_wAnchor(); cut.setMonth(cut.getMonth()-monthsMap[period]);
-      fromISO=cut.toISOString().slice(0,10);
+      fromISO=_isoLocal(cut);
     } else if(daysMap[period]){
       const cut=_wAnchor(); cut.setDate(cut.getDate()-daysMap[period]);
-      fromISO=cut.toISOString().slice(0,10);
+      fromISO=_isoLocal(cut);
     }
     let _fromWin=fromISO;   // ventana REAL pedida (sin el clamp de la foto) → reconstrucción real
     // Broker conectado (flag persistido). Con serie real densa aplicada window._BROKER_LIVE=true.
@@ -23533,6 +23537,21 @@ var portivRetinaGuard = {
       cv.addEventListener('contextrestored', chart._pvOnRestore);
     } catch (e) {}
   },
+  // Búfer EXACTO. retinaScale de Chart.js 4 calcula el búfer con el ancho con decimales del
+  // contenedor y DESPUÉS trunca el ancho CSS: en una tarjeta de 609.8 px quedaba un lienzo de
+  // 609 px con búfer de 1219 (no 1218) y el navegador re-muestreaba todo el dibujo a 2.0016×,
+  // un desenfoque leve en línea, ejes y texto. Aquí, tras cada cambio de tamaño y antes de
+  // pintar, el búfer pasa a ser ancho × dpr justo.
+  resize(chart) {
+    try {
+      const cv = chart.canvas, r = chart.currentDevicePixelRatio || 1;
+      const w = Math.round(chart.width * r), h = Math.round(chart.height * r);
+      if (cv && (cv.width !== w || cv.height !== h)) {
+        cv.width = w; cv.height = h;
+        if (chart.ctx) chart.ctx.setTransform(r, 0, 0, r, 0, 0);
+      }
+    } catch (e) {}
+  },
   beforeDraw(chart) {
     try {
       const c = chart.ctx;
@@ -23580,11 +23599,15 @@ const portivCrosshair = {
     const color = _perfColorOf(chart);
     const c = chart.ctx;
     c.save();
-    // Guía vertical
+    // Guía vertical, ajustada a píxel físico: en x fraccionaria (la de casi todos los puntos) la
+    // línea de 1 px se repartía en tres columnas a medio tono y se veía gruesa y borrosa. Con un
+    // número impar de píxeles físicos va centrada en el medio píxel; con uno par, en el borde.
+    const r = chart.currentDevicePixelRatio || 1, wd = Math.max(1, Math.round(r));
+    const gx = ((wd % 2) ? Math.floor(el.x * r) + 0.5 : Math.round(el.x * r)) / r;
     c.beginPath();
-    c.moveTo(el.x, top);
-    c.lineTo(el.x, bottom);
-    c.lineWidth = 1;
+    c.moveTo(gx, top);
+    c.lineTo(gx, bottom);
+    c.lineWidth = wd / r;
     c.strokeStyle = 'rgba(20,30,48,0.16)';
     c.stroke();
     // Punto sobre la línea
@@ -23782,7 +23805,14 @@ function initPerfChart() {
           ticks: {
             display: !_PERF_MOB(),
             color: '#8A92A3', font: { size: 11 },
-            callback: function (v) { return _fmtAxisY(v, this.chart && this.chart._axStep); }
+            // Sin paso fijado (cartera vacía o serie de un punto: camino de respaldo de
+            // _applyChartYBounds) se usa la separación REAL entre marcas; con el paso 1 por
+            // defecto, una banda 0–1 rotulaba «$1 $1 $1 $1 $1 $1 $0 $0 $0 $0 $0».
+            callback: function (v) {
+              const t = this.ticks;
+              const st = (this.chart && this.chart._axStep) || ((t && t.length > 1) ? Math.abs(t[1].value - t[0].value) : 0);
+              return _fmtAxisY(v, st);
+            }
           }
           // min/max se fijan dinámicamente en _applyChartYBounds() — siempre consistentes entre periodos.
         }
@@ -23832,6 +23862,13 @@ function initPerfChart() {
         if (perfChart && perfChart.canvas && perfChart.canvas.offsetParent !== null) {
           perfChart.resize(); // re-evalúa _PERF_MOB() en onResize; repinta sin regenerar datos
         }
+      } catch(e){}
+      // Y las demás gráficas vivas (Análisis, dona): la de Análisis no tenía este respaldo y, al
+      // girar el iPad con el ResizeObserver tardío, se quedaba con el ancho de antes del giro.
+      try {
+        _pvLiveCharts.forEach(function (ch) {
+          if (ch !== perfChart && ch.canvas && ch.canvas.offsetParent !== null) ch.resize();
+        });
       } catch(e){}
       // Cambio de pantalla/escala (ventana del Mac entre monitores, rotación): repintar y
       // verificar con píxeles todas las gráficas (ver Blindaje Retina).
@@ -24942,7 +24979,9 @@ function _alpacaPlan(period){
     case '1mo': return { tf: '1Day',   start: iso(now - 45*D)  };
     case '3mo': return { tf: '1Day',   start: iso(now - 105*D) };
     case '6mo': return { tf: '1Day',   start: iso(now - 200*D) };
-    case 'ytd': return { tf: '1Day',   start: `${new Date().getFullYear()}-01-01` };
+    // YTD arranca a mediados de diciembre: la base del año es el ÚLTIMO cierre del año pasado
+    // (como PV_RETURNS y cualquier bróker), no el cierre del primer día hábil de enero.
+    case 'ytd': return { tf: '1Day',   start: `${new Date().getFullYear() - 1}-12-15` };
     case '1y':  return { tf: '1Day',   start: iso(now - 370*D) };
     case '2y':  return { tf: '1Week',  start: iso(now - 740*D) };
     case '3y':  return { tf: '1Week',  start: iso(now - 1110*D) };
@@ -24950,6 +24989,63 @@ function _alpacaPlan(period){
     case 'max': return { tf: '1Month', start: iso(now - 20*365*D) };
     default:    return { tf: '1Day',   start: iso(now - 45*D) };
   }
+}
+
+// Minuto del día (0–1439) en Nueva York de un timestamp en segundos.
+function _pvNyMinOf(sec){
+  const p = PORTIV_CHART._nyParts(new Date(sec * 1000));
+  return p.h * 60 + p.mi;
+}
+// Fecha de mercado (YYYY-MM-DD, hora de Nueva York) de un timestamp en segundos.
+function _pvNyDayOf(sec){
+  const p = PORTIV_CHART._nyParts(new Date(sec * 1000));
+  return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
+}
+
+// ── Ventana EXACTA de cada período ────────────────────────────────────────────────────────
+// Las peticiones piden margen (1M = 45 días, 3M = 105, 1A = 370…) para no quedarse cortas en
+// fines de semana y feriados, pero nadie recortaba después: la gráfica «1M» de Análisis pintaba
+// seis semanas y su «−$0.30 (−0.09 %) en 1 mes» era en realidad el cambio de seis semanas (AAPL,
+// 2-nov: el de 1 mes es +1.37 %, desde el cierre del 2-oct). Aquí se deja exactamente el período, con la MISMA regla que
+// PV_RETURNS (la tarjeta de rendimientos): el primer punto es el último cierre con fecha ≤ hoy
+// menos el período (1M = mismo día del mes anterior, YTD = último cierre del año pasado, 1S =
+// hace 7 días). En intradía (1D/1S) sólo entra el horario regular 09:30–16:00 ET: Alpaca manda
+// también pre y post-mercado y la 1D empezaba a las 8:00 con un precio de pre-mercado y acababa
+// a las 16:55 con uno de post-mercado, que no son los del % del día. Además ordena, quita barras
+// duplicadas y cierres no válidos. Es idempotente: pasar dos veces deja lo mismo.
+const _PV_HIST_H = { '5d':'1S', '1mo':'1M', '3mo':'3M', '6mo':'6M', '1y':'1A', 'ytd':'YTD', '3y':'3A', '5y':'5A' };
+function _pvHistWindow(res, period){
+  try {
+    if (!res || !Array.isArray(res.timestamps) || !Array.isArray(res.closes)) return res;
+    let pts = [];
+    for (let i = 0; i < res.timestamps.length; i++) {
+      const t = +res.timestamps[i], c = +res.closes[i];
+      if (isFinite(t) && t > 0 && isFinite(c) && c > 0) pts.push({ t, c });
+    }
+    pts.sort((a, b) => a.t - b.t);
+    pts = pts.filter((p, i) => i === pts.length - 1 || pts[i + 1].t !== p.t);   // barra repetida: gana la última
+    if (pts.length < 2) return res;
+    if (period === '1d' || period === '5d') {
+      const reg = pts.filter(p => { const m = _pvNyMinOf(p.t); return m >= 570 && m < 960; });
+      if (reg.length >= 2) pts = reg;
+      if (period === '1d') {
+        const day = _pvNyDayOf(pts[pts.length - 1].t);
+        const ses = pts.filter(p => _pvNyDayOf(p.t) === day);
+        if (ses.length >= 2) pts = ses;
+      }
+    }
+    const h = _PV_HIST_H[period];
+    let target = null;
+    try { if (h && typeof PV_RETURNS !== 'undefined') target = PV_RETURNS._pure._pvrTarget(h, Date.now()); } catch(e){}
+    if (target != null) {
+      const tSec = Math.floor(target / 1000);
+      let i0 = -1;
+      for (let i = 0; i < pts.length; i++) { if (pts[i].t <= tSec) i0 = i; else break; }
+      // Sin historia suficiente (salida a bolsa reciente) se deja lo que hay.
+      if (i0 > 0 && pts.length - i0 >= 2) pts = pts.slice(i0);
+    }
+    return Object.assign({}, res, { timestamps: pts.map(p => p.t), closes: pts.map(p => p.c) });
+  } catch(e) { return res; }
 }
 
 // Serie real → {timestamps:[s], closes:[$]}. null si no hay dato (jamás inventa nada).
@@ -24977,10 +25073,15 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
   }
   if (bars.length < 2) return null;
 
-  // 1D = sólo la última sesión: la ventana pide 6 días para no fallar en lunes/feriados.
+  // 1D = sólo la última sesión: la ventana pide 6 días para no fallar en lunes/feriados. El
+  // recorte fino (horario regular, última sesión) lo hace _pvHistWindow en apiCall.
   if (plan.intraday && period === '1d') {
     const nyDay = ms => new Date(ms).toLocaleDateString('en-US', { timeZone: 'America/New_York' });
-    const last = nyDay(Date.parse(bars[bars.length - 1].t));
+    // La última sesión con horario REGULAR: a las 8:00 ET la última barra es pre-mercado de hoy
+    // y quedarse con ese día dejaba la 1D sin una sola barra de la sesión que muestra el %.
+    const reg = bars.filter(b => { const m = _pvNyMinOf(Date.parse(b.t) / 1000); return m >= 570 && m < 960; });
+    const ref = reg.length ? reg : bars;
+    const last = nyDay(Date.parse(ref[ref.length - 1].t));
     const sameDay = bars.filter(b => nyDay(Date.parse(b.t)) === last);
     if (sameDay.length >= 2) bars = sameDay;
   }
@@ -25365,7 +25466,7 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
     // Intento 1: Alpaca (licenciado, feed IEX) vía alpaca-proxy. Sustituye a Yahoo, que se
     // retiró por falta de licencia y quedó como stub devolviendo null.
     try {
-      const a = await _alpacaBars(ticker, period, timeoutMs);
+      const a = _pvHistWindow(await _alpacaBars(ticker, period, timeoutMs), period);
       if (a && a.timestamps.length > 1) return a;
     } catch(e) { /* caer al respaldo Finnhub */ }
 
@@ -25377,7 +25478,7 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       '1mo': { from: nowTs - 35*86400,     resolution: 'D'  },
       '3mo': { from: nowTs - 95*86400,     resolution: 'D'  },
       '6mo': { from: nowTs - 185*86400,    resolution: 'D'  },
-      'ytd': { from: Math.floor(new Date(new Date().getFullYear(),0,1).getTime()/1000), resolution: 'D' },
+      'ytd': { from: Math.floor(new Date(new Date().getFullYear()-1,11,15).getTime()/1000), resolution: 'D' },
       '1y':  { from: nowTs - 370*86400,    resolution: 'W'  },
       '2y':  { from: nowTs - 2*370*86400,  resolution: 'W'  },
       '3y':  { from: nowTs - 3*370*86400,  resolution: 'W'  },
@@ -25388,7 +25489,11 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
     try {
       const d = await fhFetch(`/stock/candle?symbol=${ticker}&resolution=${resolution}&from=${from}&to=${nowTs}`, timeoutMs);
       if (d && d.s === 'ok' && Array.isArray(d.t) && d.t.length > 1) {
-        return { timestamps: d.t, closes: d.c.map(v => Math.round(v * 10000) / 10000) };
+        // Las velas D/W/M de Finnhub van a las 00:00 UTC, que en Nueva York es la TARDE del día
+        // anterior: se corren 5 h para que caigan en su fecha de mercado, como las de Alpaca.
+        const _dia = /^[DWM]$/.test(resolution);
+        return _pvHistWindow({ timestamps: d.t.map(t => _dia ? t + 5 * 3600 : t),
+                               closes: d.c.map(v => Math.round(v * 10000) / 10000) }, period);
       }
     } catch(e) { /* sin datos */ }
     return { timestamps: [], closes: [] };
@@ -31997,14 +32102,25 @@ function _pvtPasoEje(rango, marcas){
 }
 
 function _pvtDibujar(canvas, velas, sma50, sma200, extra){
-  const W = canvas.offsetWidth | 0;
-  if (!W || !velas || velas.length < 2) return false;   // Trampa 2: contenedor todavía sin ancho
+  // Ancho de maquetación CON decimales (el computado no lo deforman las transformaciones de las
+  // transiciones). offsetWidth lo truncaba: en una tarjeta de 343.5 px el búfer salía para 343 y
+  // el navegador lo estiraba 3.0044× en vez de 3× → todo el dibujo re-muestreado y borroso. Y
+  // aun sin truncar, 343.5 × 3 = 1030.5 píxeles físicos no es un búfer posible: se recorta el
+  // ancho CSS esa fracción (calc, sigue siendo fluido) para que la escala sea exactamente el dpr.
+  canvas.style.width = '';
+  const Wl = parseFloat(getComputedStyle(canvas).width) || canvas.offsetWidth || 0;
+  if (!(Wl >= 1) || !velas || velas.length < 2) return false;   // Trampa 2: contenedor todavía sin ancho
 
   const H = _PVT_H, dpr = window.devicePixelRatio || 1;
+  const W = Math.floor(Wl * dpr + 1e-6) / dpr;
+  if (Wl - W > 1e-3) canvas.style.width = 'calc(100% - ' + (Wl - W).toFixed(4) + 'px)';
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
   const ctx = canvas.getContext('2d');
   if (!ctx) return false;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // Escala exacta búfer/CSS (no el dpr redondeado) y ajuste a píxel físico para los bordes.
+  const sx = canvas.width / W, sy = canvas.height / H;
+  const py = v => Math.round(v * sy) / sy;
+  ctx.setTransform(sx, 0, 0, sy, 0, 0);
   ctx.clearRect(0, 0, W, H);
 
   const cs  = getComputedStyle(canvas);
@@ -32042,21 +32158,32 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   const yV = v => vmax > 0 ? vBot - (v / vmax) * ALTO_V : vBot;
 
   const n = velas.length, paso = ancho / n;
-  const cuerpo = Math.max(1, Math.min(14, Math.floor(paso * 0.72)));
+  // Cuerpo de ancho IMPAR: así queda centrado en la mecha (que va en el medio píxel) y sus
+  // bordes caen en píxel entero. Con ancho par y x fraccionaria se veían borrosos y corridos.
+  let cuerpo = Math.max(1, Math.min(14, Math.floor(paso * 0.72)));
+  if (cuerpo % 2 === 0) cuerpo += (cuerpo + 1 <= paso - 1) ? 1 : -1;
   const cx = i => x0 + paso * i + paso / 2;
+  const xm = i => Math.round(cx(i)) + 0.5;          // mecha: centro del píxel
+  const xc = i => xm(i) - cuerpo / 2;               // borde izquierdo del cuerpo (entero)
 
   ctx.font = '10px Manrope, system-ui, sans-serif';
   ctx.textBaseline = 'middle';
 
   // Grilla y eje de precio a la DERECHA, en valores redondos.
   const pasoEje = _pvtPasoEje(max - min, 5);
+  // Decimales que pide el PASO: con «0 si el paso es ≥ 1» un paso de 2.5 rotulaba la línea de
+  // 102.5 como «103» (y la de 107.5 como «108»), así que la etiqueta mentía sobre su línea.
+  let decEje = 0;
+  while (decEje < 4 && Math.abs(Math.round(pasoEje * Math.pow(10, decEje)) - pasoEje * Math.pow(10, decEje)) > 1e-6) decEje++;
+  if (pasoEje < 1) decEje = Math.max(2, decEje);
   ctx.textAlign = 'left';
-  for (let p = Math.ceil(min/pasoEje)*pasoEje; p <= max; p += pasoEje){
+  for (let k = Math.ceil(min / pasoEje); k * pasoEje <= max; k++){
+    const p = k * pasoEje;                           // sin acumular error de coma flotante
     const y = Math.round(yP(p)) + 0.5;
     ctx.strokeStyle = LINEA; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + ancho, y); ctx.stroke();
     ctx.fillStyle = MUTED;
-    ctx.fillText(_pvtFmt(p, pasoEje < 1 ? 2 : 0), x0 + ancho + 8, y);
+    ctx.fillText(_pvtFmt(p, decEje), x0 + ancho + 8, y);
   }
 
   // Etiquetas de la derecha (medias y la vela en curso): se colocan al final sin encimarse.
@@ -32090,8 +32217,8 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
     const v = velas[i];
     ctx.fillStyle = (v.c >= v.o) ? SUBE : BAJA;
     if (enCurso && i === n - 1) ctx.globalAlpha = 0.22;   // volumen a medias: se atenúa
-    const y = yV(v.v), alto = Math.max(1, vBot - y);
-    ctx.fillRect(cx(i) - cuerpo/2, vBot - alto, cuerpo, alto);
+    const alto = Math.max(1, vBot - py(yV(v.v)));
+    ctx.fillRect(xc(i), vBot - alto, cuerpo, alto);
   }
   ctx.restore();
   ctx.fillStyle = MUTED; ctx.textAlign = 'left';
@@ -32102,17 +32229,20 @@ function _pvtDibujar(canvas, velas, sma50, sma200, extra){
   // un doji no desaparezca. La sesión EN CURSO va hueca: todavía no es una vela.
   for (let i = 0; i < n; i++){
     const v = velas[i], col = (v.c >= v.o) ? SUBE : BAJA;
-    const x = Math.round(cx(i)) + 0.5, viva = enCurso && i === n - 1;
+    const x = xm(i), viva = enCurso && i === n - 1;
     ctx.save();
     if (viva) ctx.globalAlpha = 0.75;
     ctx.strokeStyle = col; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x, yP(v.h)); ctx.lineTo(x, yP(v.l)); ctx.stroke();
-    const yA = yP(v.o), yC = yP(v.c), top = Math.min(yA, yC), alto = Math.max(1.2, Math.abs(yC - yA));
+    ctx.beginPath(); ctx.moveTo(x, py(yP(v.h))); ctx.lineTo(x, py(yP(v.l))); ctx.stroke();
+    // Bordes del cuerpo en píxel físico; piso de ~1.2 px (redondeado a píxel) para que un doji
+    // no desaparezca.
+    const yA = yP(v.o), yC = yP(v.c), top = py(Math.min(yA, yC));
+    const alto = Math.max(Math.max(1, Math.round(1.2 * sy)) / sy, py(Math.max(yA, yC)) - top);
     if (viva){
-      ctx.fillStyle = FONDO; ctx.fillRect(cx(i) - cuerpo/2, top, cuerpo, alto);
-      ctx.strokeRect(Math.round(cx(i) - cuerpo/2) + 0.5, Math.round(top) + 0.5, Math.max(1, cuerpo - 1), Math.max(1, Math.round(alto)));
+      ctx.fillStyle = FONDO; ctx.fillRect(xc(i), top, cuerpo, alto);
+      ctx.strokeRect(xc(i) + 0.5, Math.round(top) + 0.5, Math.max(1, cuerpo - 1), Math.max(1, Math.round(alto)));
     } else {
-      ctx.fillStyle = col; ctx.fillRect(cx(i) - cuerpo/2, top, cuerpo, alto);
+      ctx.fillStyle = col; ctx.fillRect(xc(i), top, cuerpo, alto);
     }
     ctx.restore();
   }
@@ -33102,6 +33232,106 @@ function _chartEmptyState(on){
   wrap.appendChild(ph);
 }
 
+// ── Serie, fechas y ejes de la gráfica de Análisis ───────────────────────────────────────
+// Lo que se dibuja (y de donde sale el % del período): la ventana exacta del período y, si la
+// sesión de la última barra ya cerró y tenemos la cotización de Finnhub pedida DESPUÉS del
+// cierre, el último punto pasa a ser ese precio oficial. Las barras son del feed IEX, cuyo
+// último trade no es el cierre consolidado: AAPL 2-nov cerró en $338.32 y la curva terminaba
+// en $338.70 (1M) o $338.95 (1D, post-mercado), con el precio grande diciendo $338.32.
+function _rcSerie(chartData, range){
+  const w = _pvHistWindow(chartData, range) || chartData || {};
+  const ts = [], cl = [];
+  (w.timestamps || []).forEach((t, i) => {
+    const c = w.closes ? w.closes[i] : null;
+    if (c != null && isFinite(c) && isFinite(t)) { ts.push(+t); cl.push(+c); }
+  });
+  try {
+    const q = (typeof _quoteCacheGet === 'function') ? _quoteCacheGet(currentResearchTicker) : null;
+    if (q && ts.length >= 2) {
+      const n = ts.length - 1, lastTs = ts[n];
+      const closeSec = _pvQuoteEsCierre(lastTs, q.ts);
+      // ±3 %: guarda contra una cotización de otro ticker o de otra moneda.
+      if (closeSec && Math.abs(q.price / cl[n] - 1) < 0.03) {
+        if ((range === '1d' || range === '5d') && closeSec > lastTs) { ts.push(closeSec); cl.push(q.price); }
+        else cl[n] = q.price;
+      }
+    }
+  } catch(e){}
+  return { ts, cl };
+}
+// ¿La cotización pedida en `qMs` es ya el cierre oficial de la sesión cuya última barra es
+// `lastSec`? Devuelve el timestamp (s) de las 16:00 ET de esa sesión, o 0. Vale si se pidió
+// después de la campana y antes de la siguiente apertura (09:30 ET del próximo día laborable);
+// una posterior ya es precio de otra sesión.
+function _pvQuoteEsCierre(lastSec, qMs){
+  if (!(lastSec > 0) || !(qMs > 0)) return 0;
+  const closeSec = lastSec + (960 - _pvNyMinOf(lastSec)) * 60;
+  const wd0 = PORTIV_CHART._nyParts(new Date(lastSec * 1000)).wd;
+  let dd = 1; while ((wd0 + dd) % 7 === 0 || (wd0 + dd) % 7 === 6) dd++;
+  const nextOpen = closeSec + dd * 86400 - 390 * 60;
+  const qs = qMs / 1000;
+  return (qs >= closeSec && qs < nextOpen) ? closeSec : 0;
+}
+// «17 Abr» en hora de Nueva York (la fecha de mercado), sea cual sea la zona del aparato.
+function _fmtDayMonthET(sec) {
+  return _pvDTF('es-MX', { day:'numeric', month:'short', timeZone:'America/New_York' }).format(new Date(sec * 1000))
+    .replace(/\./g, '').trim()
+    .replace(/([a-záéíóúñ]+)\s*$/i, m => m.charAt(0).toUpperCase() + m.slice(1));
+}
+// «9:30» en hora de Nueva York.
+function _fmtHourET(sec) {
+  const p = PORTIV_CHART._nyParts(new Date(sec * 1000));
+  return p.h + ':' + String(p.mi).padStart(2, '0');
+}
+// Precio del tooltip: 2 decimales, 4 por debajo de $1 (con 2, $0.4567 y $0.4612 eran «$0.46»).
+function _pvPxTxt(v) {
+  return Math.abs(v) < 1 ? v.toFixed(4) : v.toFixed(2);
+}
+// Etiqueta del eje de precio con los decimales que pide el PASO entre marcas.
+function _fmtAxisPx(v, step) {
+  const s = step > 0 ? step : 1;
+  if (Math.abs(v) >= 1000 && s >= 100) {
+    const dk = (s % 1000 === 0) ? 0 : (s % 100 === 0) ? 1 : 2;
+    return '$' + (v / 1000).toFixed(dk) + 'K';
+  }
+  let d = 0;
+  while (d < 4 && Math.abs(Math.round(s * Math.pow(10, d)) - s * Math.pow(10, d)) > 1e-6) d++;
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+// Marcas del eje X en intradía (etiquetas «2 Nov 10:35»). Una sola sesión → una por hora;
+// varias → una marca al empezar cada sesión con al menos 3 barras (el punto base de la víspera,
+// suelto en el borde, no se rotula: chocaba con la fecha siguiente). Deja el modo en el chart
+// para el formateador de etiquetas. En series diarias no toca nada.
+function _rcIntraTicks(scale) {
+  const ch = scale.chart, lb = (ch.data && ch.data.labels) || [];
+  const re = /^(.*?)\s+(\d{1,2}):(\d{2})$/;
+  const ms = lb.map(l => String(l == null ? '' : l).match(re));
+  if (!ms.some(Boolean)) { ch._rcModo = null; return; }
+  const cnt = {};
+  ms.forEach(m => { if (m) cnt[m[1]] = (cnt[m[1]] || 0) + 1; });
+  const out = [];
+  if (Object.keys(cnt).length <= 1) {
+    ch._rcModo = '1d';
+    // Primera barra de cada hora (en series densas es la de «:00»; en tickers con poco volumen
+    // en IEX faltan barras y exigir «:00» dejaba el eje con dos o tres horas sueltas).
+    let hPrev = null;
+    ms.forEach((m, i) => { if (!m) return; if (hPrev !== null && m[2] !== hPrev) out.push({ value: i }); hPrev = m[2]; });
+  } else {
+    ch._rcModo = '5d';
+    let prev = null;
+    ms.forEach((m, i) => { if (m && m[1] !== prev) { if (cnt[m[1]] >= 3) out.push({ value: i }); prev = m[1]; } });
+  }
+  // Que quepan: ~52 px por etiqueta. En el iPhone las siete horas se tocaban («10:00 11:00»);
+  // se aclara desde la derecha para conservar siempre la marca del cierre.
+  const cabe = Math.max(2, Math.floor((scale.width || 0) / 52));
+  if (out.length > cabe) {
+    const k = Math.ceil(out.length / cabe), sel = [];
+    for (let j = out.length - 1; j >= 0; j -= k) sel.unshift(out[j]);
+    out.length = 0; out.push(...sel);
+  }
+  if (out.length >= 2) scale.ticks = out;
+}
+
 function _drawResearchChart(chartData, isPos) {
   // chart.js se carga bajo demanda (ya no viene en el <head>) → se pide y se re-entra.
   if (!window.Chart) { try { window._ensureChartJs().then(() => _drawResearchChart(chartData, isPos)).catch(()=>{}); } catch(e){} return; }
@@ -33109,13 +33339,18 @@ function _drawResearchChart(chartData, isPos) {
   // REGLA DURA: a este lienzo SOLO entran precios reales. La curva "estimada" se retiró.
   { const _est = document.getElementById('r-chart-estimated'); if (_est) _est.style.display = 'none'; }
   if (chartData._synthetic) { _chartEmptyState(true); return; }
-  const ts = chartData.timestamps || [];
-  const cl = chartData.closes || [];
+  const _rng = _activeResearchRange;
+  const { ts, cl } = _rcSerie(chartData, _rng);
+  const _intra = (_rng === '1d' || _rng === '5d');
   let pts = ts.map((t,i) => ({
     // Mismo formato de fecha que la gráfica del portafolio: "5 Jul" en español, no "Jul 5".
-    x: _fmtDayMonthES(new Date(t * 1000)),
+    // En hora de NUEVA YORK: la barra diaria de Alpaca va a las 00:00 ET y, formateada en la
+    // hora del aparato, en Panamá/México/Colombia salía con el día ANTERIOR (17 abr → «16 Abr»).
+    // En 1D/1S la etiqueta lleva también la hora: sin ella todo el eje decía «2 Nov».
+    x: _fmtDayMonthET(t) + (_intra ? ' ' + _fmtHourET(t) : ''),
     y: cl[i]
   })).filter(p => p.y != null && isFinite(p.y));
+  if (pts.length >= 2) isPos = pts[pts.length - 1].y >= pts[0].y;   // color de la serie que se pinta
 
   // Menos de 2 cierres reales → no hay nada honesto que dibujar. Estado vacío, nunca relleno.
   if (pts.length < 2) { _chartEmptyState(true); return; }
@@ -33183,27 +33418,39 @@ function _drawResearchChart(chartData, isPos) {
           displayColors:false,
           padding:{ top:8, bottom:8, left:12, right:12 },
           callbacks:{
-            title:i=>{ const _raw = i[0]?.label || ''; const _day = _raw.replace(/\s+\d{1,2}:\d{2}$/, ''); const _v = i[0]?.raw; return `${esDate(_day)}: $${(typeof _v==='number'?_v:0).toFixed(2)}`; },
+            // Intradía: «2 Nov, 10:35: $338.20» (antes la hora se borraba y todos los puntos
+            // de la 1D decían «2 Nov»). Precios de menos de $1 con 4 decimales, como el eje.
+            title:i=>{ const _raw = i[0]?.label || ''; const _m = _raw.match(/^(.*?)\s+(\d{1,2}:\d{2})$/); const _v = i[0]?.raw;
+              return `${esDate(_m ? _m[1] + ', ' + _m[2] : _raw)}: $${_pvPxTxt(typeof _v==='number'?_v:0)}`; },
             label:()=>'',
           }
         }
       },
       scales:{
-        x:{grid:{display:false},border:{display:false},ticks:{
+        x:{grid:{display:false},border:{display:false},
+          // Intradía: marcas en horas en punto (1D) o una por sesión (1S), no donde caiga el reparto
+          // de Chart.js, que repetía «26 Oct, 26 Oct, 28 Oct…» y se saltaba días enteros.
+          afterBuildTicks: _rcIntraTicks,
+          ticks:{
           display: true,
           color:'#8A92A3',font:{size:11},maxTicksLimit:7,
           // Primera y última fecha hacia dentro: la curva empieza alineada con el texto (como Rendimiento).
           align:'inner',
           callback: function(value, index, ticks) {
-            const lbl = this.getLabelForValue(value);
-            return /\d{2}:\d{2}/.test(lbl) ? '' : lbl;
+            const lbl = String(this.getLabelForValue(value) || '');
+            const m = lbl.match(/^(.*?)\s+(\d{1,2}:\d{2})$/);
+            if (!m) return lbl;
+            return this.chart._rcModo === '1d' ? m[2] : m[1];
           }
         }},
         y:{position:'right',
            display: true,
            grid:{display: true, color:document.body.classList.contains('dark-theme') ? 'rgba(255,255,255,0.08)' : '#EEF1F6', drawBorder:false},
            border:{display:false, dash:[3,3]},
-           ticks:{display: true, color:'#8A92A3',font:{size:11},maxTicksLimit:6,padding:6,callback:v=>v>=1000?`$${(v/1000).toFixed(1)}K`:`$${v.toFixed(0)}`}}
+           // Decimales según el PASO del eje: con toFixed(0) una acción de $1.20–$1.32 rotulaba
+           // «$1 $1 $1 $1» y una de $1,000–$1,150 con paso de 25, «$1.0K $1.0K $1.1K».
+           ticks:{display: true, color:'#8A92A3',font:{size:11},maxTicksLimit:6,padding:6,
+             callback:function(v){ const t = this.ticks; const st = (t && t.length > 1) ? Math.abs(t[1].value - t[0].value) : 0; return _fmtAxisPx(v, st); }}}
       }
     }
   });
@@ -33247,7 +33494,8 @@ function _applyChartPeriodChange(chartData, rangeKey) {
   // ACTUALIZADO: cada período muestra SU PROPIO cambio. 1D = cambio canónico del DÍA
   // (idéntico al precio grande / watchlist). El resto (1W/1M/3M/6M/1A/YTD/5A) = retorno
   // del PERÍODO (primer→último punto de la serie), para que el % cambie al tocar cada pill.
-  const cl = (chartData?.closes || []).filter(c => c != null);
+  // La MISMA serie que se dibuja (ventana exacta + cierre oficial): el % cuadra con la curva.
+  const cl = chartData ? _rcSerie(chartData, rangeKey).cl : [];
   const lbl = _periodLabel[rangeKey] || rangeKey;
   if (rangeKey === '1d') {
     if (_researchCurPrice > 0 && isFinite(_researchDayChgPct)) {
@@ -33273,9 +33521,9 @@ function _applyChartPeriodChange(chartData, rangeKey) {
 // Antes solo el rango 1M se guardaba (en el snapshot). Los demás rangos volvían a
 // descargar por proxy CORS cada vez. Ahora cada rango con data REAL se guarda en
 // localStorage con TTL según su granularidad (intradía corto, largo plazo 24h).
-const _CHART_LS_KEY = 'portiv_chart_cache_v2';   // v2: purga curvas sintéticas cacheadas por período
+const _CHART_LS_KEY = 'portiv_chart_cache_v3';   // v3: purga series sin la ventana exacta del período (_pvHistWindow)
 let _chartLSCache = {};
-(function(){ try { _chartLSCache = JSON.parse(localStorage.getItem(_CHART_LS_KEY) || '{}') || {}; } catch(e){ _chartLSCache = {}; } })();
+(function(){ try { localStorage.removeItem('portiv_chart_cache_v2'); _chartLSCache = JSON.parse(localStorage.getItem(_CHART_LS_KEY) || '{}') || {}; } catch(e){ _chartLSCache = {}; } })();
 function _chartTTLfor(range){
   if (range === '1d' || range === '5d') return 15 * 60 * 1000;        // intradía → 15 min
   if (range === '5y' || range === '3y' || range === 'max' || range === '1y' || range === '2y') return 24 * 60 * 60 * 1000; // largo → 24 h
@@ -34296,17 +34544,18 @@ function _wlDayNorm(raw) {
     const c = +cl[i], t = +ts[i];
     if (!(c > 0) || !isFinite(t)) continue;
     const p = {}; fmt.formatToParts(new Date(t * 1000)).forEach(x => { p[x.type] = x.value; });
-    pts.push({ d: p.year + '-' + p.month + '-' + p.day, m: (+p.hour % 24) * 60 + (+p.minute), c });
+    pts.push({ d: p.year + '-' + p.month + '-' + p.day, m: (+p.hour % 24) * 60 + (+p.minute), c, t });
   }
   if (pts.length < 2) return null;
   const day = pts[pts.length - 1].d;
   let s = pts.filter(p => p.d === day);
-  const reg = s.filter(p => p.m >= 570 && p.m <= 960);
+  // Barras de 5 min con la hora de INICIO: la de las 16:00 ya es post-mercado (16:00–16:05).
+  const reg = s.filter(p => p.m >= 570 && p.m < 960);
   const byTime = reg.length >= 2;
   if (byTime) s = reg;
   if (s.length < 2) return null;
   return {
-    day,
+    day, t1: s[s.length - 1].t,                 // timestamp de la última barra (cierre oficial)
     x: s.map((p, i) => +(byTime ? (p.m - 570) / 390 : i / (s.length - 1)).toFixed(4)),
     c: s.map(p => Math.round(p.c * 10000) / 10000)
   };
@@ -34390,14 +34639,22 @@ function _wlSparkline(t, q) {
   }
   const pct = q ? q.pct : null, pc = q ? q.pc : 0;
   const cls = pct > 0 ? 'up' : pct < 0 ? 'dn' : 'fl';
-  let lo = Math.min.apply(null, e.c), hi = Math.max.apply(null, e.c);
+  // Sesión ya cerrada y cotización pedida después de la campana: la línea termina a las 16:00 en
+  // el cierre OFICIAL (el precio de la fila), no en el último trade de IEX de las 15:55.
+  let ex = e.x, ec = e.c;
+  try {
+    const qc = (typeof _quoteCacheGet === 'function') ? _quoteCacheGet(t) : null;
+    if (qc && e.t1 && ex[ex.length - 1] < 1 && _pvQuoteEsCierre(e.t1, qc.ts)
+        && Math.abs(qc.price / ec[ec.length - 1] - 1) < 0.03) { ex = ex.concat(1); ec = ec.concat(qc.price); }
+  } catch(err){}
+  let lo = Math.min.apply(null, ec), hi = Math.max.apply(null, ec);
   if (pc > 0) { lo = Math.min(lo, pc); hi = Math.max(hi, pc); }
   const Y = v => (hi > lo) ? 3 + (hi - v) / (hi - lo) * 26 : 16;
   const X = x => 1 + Math.max(0, Math.min(1, x)) * 96;
   let d = '';
-  for (let i = 0; i < e.c.length; i++) d += (i ? 'L' : 'M') + X(e.x[i]).toFixed(2) + ' ' + Y(e.c[i]).toFixed(2);
+  for (let i = 0; i < ec.length; i++) d += (i ? 'L' : 'M') + X(ex[i]).toFixed(2) + ' ' + Y(ec[i]).toFixed(2);
   const yb = pc > 0 ? Y(pc).toFixed(2) : null;
-  const lx = X(e.x[e.x.length - 1]), ly = Y(e.c[e.c.length - 1]);
+  const lx = X(ex[ex.length - 1]), ly = Y(ec[ec.length - 1]);
   return `<span class="pwl-spk ${cls}" data-st="ok" aria-hidden="true">`
     + `<svg viewBox="0 0 100 32" preserveAspectRatio="none" focusable="false">`
     + (yb !== null ? `<line class="pwl-pcl" x1="0" y1="${yb}" x2="100" y2="${yb}" vector-effect="non-scaling-stroke"/>` : '')
@@ -42620,7 +42877,10 @@ document.addEventListener('DOMContentLoaded', function(){
   function sync(animate){
     if (bar.classList.contains('pv-bt-dragging')) return;   // el dedo manda
     var b = active();
-    if (!b || !bar.offsetWidth) { gl.classList.remove('pv-bt-ready'); shown = null; return; }
+    // Sólo si la clase está: classList.remove reescribe el atributo aunque no cambie nada, eso
+    // vuelve a disparar el observador de abajo y, con la barra oculta (login), era un bucle
+    // infinito de microtareas que congelaba la app antes de entrar.
+    if (!b || !bar.offsetWidth) { if (gl.classList.contains('pv-bt-ready')) gl.classList.remove('pv-bt-ready'); shown = null; return; }
     var x = b.offsetLeft, w = b.offsetWidth;
     // Nada que mover (el observador también salta con las clases que pone este mismo código).
     if (b === shown && x === lastX && w === lastW && gl.classList.contains('pv-bt-ready')) return;
