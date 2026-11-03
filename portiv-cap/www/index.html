@@ -21779,6 +21779,7 @@ const PORTIV_CHART = {
       fromISO=_isoLocal(cut);
     }
     let _fromWin=fromISO;   // ventana REAL pedida (sin el clamp de la foto) → reconstrucción real
+    const _pedidoDesde=fromISO;   // inicio PEDIDO, antes de cualquier recorte a la inception
     // Broker conectado (flag persistido). Con serie real densa aplicada window._BROKER_LIVE=true.
     var _brkConn=false; try{ _brkConn = localStorage.getItem('pv_broker_connected')==='1'; }catch(e){}
     // ALL: sin límite de tiempo
@@ -21856,6 +21857,15 @@ const PORTIV_CHART = {
         var _bFirst=_bDates.length?_bDates[0]:null;
         var _lo=fromISO||_bFirst||null;
         if(_bFirst && (!_lo || _bFirst>_lo)) _lo=_bFirst;   // nunca antes del 1er dato real del broker
+        // Y nunca DENTRO del tramo que cubre el broker: sólo después de su último dato, como
+        // puente hasta hoy. La lectura de la app no es un cierre: record() la reescribe con el
+        // total del momento en cada refresco de precios (a media sesión, en sábado o domingo
+        // con los precios del viernes, y con la cartera que hubiera ENTONCES — antes de
+        // conectar el broker, otra). Intercalada entre los saldos de cierre del broker daba una
+        // curva de dientes regulares que no era la de la cuenta (captura de Rafael, 3-nov: 3M
+        // con un punto por día natural, casi todos de la app).
+        var _bLast=_bDates.length?_bDates[_bDates.length-1]:null;
+        if(_bLast && (!_lo || _bLast>=_lo)) _lo=_bLast;
         // Re-ancla: k = valor_broker / valor_app en la fecha COMÚN más reciente (banda sana 0.5–2).
         var _k=1, _common=localPts.filter(p=>p&&_bByDate[p.date]!=null && p.value>0).sort((a,b)=>a.date.localeCompare(b.date));
         if(_common.length){ var _c=_common[_common.length-1], _kk=_bByDate[_c.date]/_c.value; if(isFinite(_kk)&&_kk>0.5&&_kk<2)_k=_kk; }
@@ -21997,12 +22007,23 @@ const PORTIV_CHART = {
       }
       return null;
     }
+    // ── SÓLO DÍAS DE MERCADO ── Sábados, domingos y feriados no tienen cierre: el valor es el
+    //    del viernes repetido y, en un eje por índice, cada fin de semana era una meseta que
+    //    ocupaba 2/7 del ancho. Se quitan (salvo el primer punto, que puede ser el ancla del
+    //    inicio de la ventana). Sin duplicados de fecha: gana el último.
+    const _habil=iso=>{ try{ return this._isTradingDate(new Date(iso+'T17:00:00Z')); }catch(e){ return true; } };
+    { const _u={}; merged.forEach(p=>{ if(p&&p.date) _u[p.date]=p; });
+      merged=Object.values(_u).sort((a,b)=>a.date.localeCompare(b.date))
+        .filter((p,i)=>i===0 || p.date===today || _habil(p.date)); }
     // Asegurar que el último punto = total en vivo actual
     if(typeof calcTotals==='function'){
       const liveTotal=+calcTotals().total.toFixed(2);
       if(liveTotal>0){
         const last=merged[merged.length-1];
         if(last.date===today)last.value=liveTotal;
+        // Hoy sin mercado (finde/feriado): el total en vivo ES el último cierre; se le asigna
+        // en vez de añadir un punto de sábado con el mismo valor (otra meseta al final).
+        else if(!_habil(today) && merged.length>=2)last.value=liveTotal;
         else merged.push({date:today,value:liveTotal,label:fmtDate(today)});
       }
     }
@@ -22018,8 +22039,14 @@ const PORTIV_CHART = {
       if(_intra && _intra.values && _intra.values.length>=2) return _intra;
     }
     const vals=merged.map(p=>p.value);
-    const lbls=merged.map(p=>p.label||fmtDate(p.date));
+    // Etiquetas SIEMPRE desde la fecha y con un solo formato. Antes cada fuente traía la suya
+    // (PERF_MASTER «24 Sep», con mayúscula; fmtDate «3 oct») y el eje salía mezclado.
+    const lbls=merged.map(p=>fmtDate(p.date));
     const dates=merged.map(p=>p.date);
+    // La ventana se recortó al primer dato real (cartera más joven que el período): el cambio
+    // es «desde el 24 sep», no «en 3 meses». setPeriodData lo usa para la pastilla.
+    const _desdeInicio=!!(_pedidoDesde && dates[0] &&
+      (new Date(dates[0]+'T12:00:00') - new Date(_pedidoDesde+'T12:00:00'))/86400000 > 4);
     const first=vals[0]||0, last2=vals[vals.length-1]||0;
     let change=+(last2-first).toFixed(2);
     let changePct=+(first>0?(last2-first)/first*100:0).toFixed(2);
@@ -22061,7 +22088,7 @@ const PORTIV_CHART = {
         }
       }
     }
-    const _raw={labels:lbls,dates,values:vals,change,changePct,since:lbls[0]||''};
+    const _raw={labels:lbls,dates,values:vals,change,changePct,since:lbls[0]||'',_desdeInicio};
     // SIN MOVIMIENTO INVENTADO: se dibujan los cierres REALES conectados por líneas rectas
     // (interpolación lineal — el dataset usa tension:0). Se RETIRÓ el puente browniano determinista
     // (_densifyDaily): NUNCA se inventa micro-movimiento entre cierres que el broker (o la
@@ -24479,7 +24506,10 @@ function _renderHeaderBadge(period, ds){
   const pct = ds.changePct;
   // Rediseño de la cabecera (pvPortHeroCss): la pastilla dice de qué periodo es el cambio.
   // El color sigue al % como antes (sólo un 0.00 % exacto queda neutro).
-  pv.textContent = `${_pvphMoney(chg)} (${_pvphPct(pct, 2)}) ${_pvphPerTxt(period)}`;
+  // Cartera más joven que el período: la serie arranca en su primer dato real, así que el cambio
+  // es «desde el 24 sep» y no «en 3 meses» (3M, 6M, 1A e YTD decían lo mismo con otro nombre).
+  const _per = (ds._desdeInicio && ds.since) ? _L('desde el ' + ds.since, 'since ' + ds.since) : _pvphPerTxt(period);
+  pv.textContent = `${_pvphMoney(chg)} (${_pvphPct(pct, 2)}) ${_per}`;
   pv.className = 'stitch-badge ' + (Math.round(pct * 100) === 0 ? 'flat' : (pct > 0 ? 'pos' : 'neg'));
   _pvphTodayLine(true);
 }
