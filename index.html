@@ -44981,11 +44981,9 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     if (!b) {
       b = document.createElement('div');
       b.id = 'pvSubBanner';
-      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:12800;display:flex;'
-        + 'align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;'
-        + 'padding:11px 16px;font-size:14px;font-weight:600;line-height:1.35;'
-        + 'box-shadow:0 2px 12px rgba(0,0,0,.13);transform:translateY(-100%);'
-        + 'transition:transform .28s cubic-bezier(.22,1,.36,1);';
+      // Dónde va y cómo entra lo decide #pvSubBannerCss: arriba en escritorio, encima de la
+      // barra flotante en celular e iPad (arriba tapaba la lupa y el engranaje).
+      b.setAttribute('role', 'status');
       document.body.appendChild(b);
     }
     var C = kind === 'danger'
@@ -45004,17 +45002,19 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       a.onclick = onCta;
       b.appendChild(a);
     }
-    // El banner empuja la app hacia abajo; si no, tapa el header y se pierden controles.
+    // Su alto queda en --pv-sub-banner-h: en escritorio empuja la app hacia abajo y en
+    // celular/iPad deja ese hueco extra al final de la página para que nada quede debajo.
     requestAnimationFrame(function(){
-      b.style.transform = 'translateY(0)';
-      try { document.body.style.paddingTop = b.offsetHeight + 'px'; } catch(e){}
+      b.classList.add('pv-on');
+      try { document.documentElement.style.setProperty('--pv-sub-banner-h', b.offsetHeight + 'px'); } catch(e){}
+      document.documentElement.classList.add('pv-has-sub-banner');
     });
   }
   function _bannerHide(){
     var b = document.getElementById('pvSubBanner');
     if (!b) return;
-    b.style.transform = 'translateY(-100%)';
-    try { document.body.style.paddingTop = ''; } catch(e){}
+    b.classList.remove('pv-on');
+    document.documentElement.classList.remove('pv-has-sub-banner');
   }
 
   // ── Bloqueo duro ─────────────────────────────────────────────────────────
@@ -61600,6 +61600,45 @@ html body.dark-theme #tab-portfolio #pvphHero { border:1px solid rgba(255,255,25
   html body #tab-portfolio #pvphRow .pvph-card,
   html body #tab-portfolio #pvphRow #periodBtns .period-btn { transition:none !important; }
 }
+</style>
+<style id="pvSubBannerCss">
+/* Aviso de suscripción (cancelada, cobro fallido, sin conexión). Antes iba fijo en top:0
+   del estilo en línea y, en el iPhone, arrancaba bajo la hora y la isla: con el texto en
+   dos líneas medía ~100 px y tapaba la lupa y el engranaje de la barra de arriba (y al
+   bajar por la página, la barra pegajosa se metía debajo en cualquier pantalla). Los
+   toques caían en el aviso y "no pasaba nada" (3-nov). */
+#pvSubBanner {
+  position: fixed; z-index: 12800;
+  display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap;
+  padding: 11px 16px; font-size: 14px; font-weight: 600; line-height: 1.35;
+  box-shadow: 0 2px 12px rgba(0,0,0,.13);
+  top: 0; left: 0; right: 0;
+  transform: translateY(-100%); visibility: hidden;
+  transition: transform .28s cubic-bezier(.22,1,.36,1), visibility 0s linear .28s;
+}
+#pvSubBanner.pv-on { transform: none; visibility: visible; transition: transform .28s cubic-bezier(.22,1,.36,1); }
+html.pv-has-sub-banner body { padding-top: var(--pv-sub-banner-h, 0px); }
+/* Celular e iPad: tarjeta flotante justo encima de la cápsula de pestañas. */
+@media (max-width: 899px) {
+  #pvSubBanner {
+    top: auto; left: 16px; right: 16px; max-width: 520px; margin: 0 auto;
+    bottom: calc(max(10px, var(--pv-safe-b) - 12px) + 64px + 10px);
+    border-radius: 16px; padding: 10px 14px; font-size: 13px; text-align: center;
+    box-shadow: 0 10px 30px rgba(11,28,48,.16), 0 1px 3px rgba(11,28,48,.08);
+    transform: translateY(12px); opacity: 0;
+    transition: transform .28s cubic-bezier(.22,1,.36,1), opacity .2s ease, visibility 0s linear .28s;
+  }
+  #pvSubBanner.pv-on { transform: none; opacity: 1; transition: transform .28s cubic-bezier(.22,1,.36,1), opacity .2s ease; }
+  html.pv-has-sub-banner body { padding-top: 0; padding-bottom: calc(var(--pv-sub-banner-h, 0px) + 12px); }
+}
+html.pv-ipad #pvSubBanner { top: auto; left: 16px; right: 16px; max-width: 620px; margin: 0 auto;
+  bottom: calc(max(10px, var(--pv-safe-b) - 12px) + 66px + 12px); border-radius: 16px;
+  transform: translateY(12px); opacity: 0;
+  transition: transform .28s cubic-bezier(.22,1,.36,1), opacity .2s ease, visibility 0s linear .28s; }
+html.pv-ipad #pvSubBanner.pv-on { transform: none; opacity: 1; transition: transform .28s cubic-bezier(.22,1,.36,1), opacity .2s ease; }
+html.pv-ipad.pv-has-sub-banner body { padding-top: 0; }
+/* En el chat de Portiv IA quedaría sobre la caja de texto; con el teclado, en medio. */
+body.chat-active #pvSubBanner, body.pv-kb-open #pvSubBanner { visibility: hidden !important; opacity: 0 !important; }
 </style>
 <style id="pvTabsCss">
 /* ═══ Barra de pestañas del celular y del iPad (#pvTabs) — cápsula flotante (pedido de Rafael, 2-nov) ═══
