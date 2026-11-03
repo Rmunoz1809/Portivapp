@@ -18660,6 +18660,7 @@ async function _eventSharedGet(cacheKey){
     else if (d && d.ocurrio === false) ttl = 12*60*60*1000;
     else ttl = 30*24*60*60*1000;
     if (Date.now() - new Date(data.updated_at||0).getTime() > ttl) return null;   // vencido → regenerar
+    if (getLang() !== 'en' && _pvLooksEnglish(d)) return null;   // colada en inglés → regenerar en español
     return d;
   }catch(e){ return null; }
 }
@@ -18677,12 +18678,27 @@ const _sharedMiss = new Set();
 //    sola generación global en vez de una por usuario y por dispositivo. Lectura pública
 //    (sin auth); escritura requiere sesión (RLS). Clave prefijada (nsum:/stk:) para no
 //    colisionar con tickers, noticias (__NEWS_*) ni eventos (evt:/evb:).
+// IDIOMA DE LA NUBE: la copia compartida es SIEMPRE en español. _aiFetch obliga a la IA a
+// responder en el idioma elegido, así que lo que genera un usuario en inglés salía en inglés y,
+// como las claves no llevan idioma, se subía para TODOS: los usuarios en español veían el
+// análisis técnico de ABBV y CRSR en inglés. Ahora en inglés no se sube nada (se lee la copia
+// en español y el traductor de la página la pasa al inglés), y si alguna fila compartida está
+// en inglés se trata como inexistente → el próximo usuario en español la regenera y la pisa.
+function _pvLooksEnglish(obj){
+  try{
+    const s = (typeof obj === 'string' ? obj : JSON.stringify(obj)).replace(/"[A-Za-z_]+":/g, ' ');
+    const en = (s.match(/\b(the|and|with|for|that|its|is|are|from|this|has|was)\b/gi) || []).length;
+    const es = (s.match(/\b(el|la|los|las|de|que|con|para|una|por|más|está|sus|del)\b/gi) || []).length;
+    return en >= 8 && en > es * 1.5;
+  }catch(e){ return false; }
+}
 async function _sharedAIGet(cacheKey, ttlMs){
   try{
     const sb = window.sbClient; if(!sb) return null;
     const { data, error } = await sb.from('shared_analysis').select('data,updated_at').eq('ticker', cacheKey).maybeSingle();
     if(error || !data || !data.data) return null;
     if (ttlMs && Date.now() - new Date(data.updated_at||0).getTime() > ttlMs) return null;   // vencido → regenerar
+    if (getLang() !== 'en' && _pvLooksEnglish(data.data)) return null;   // colada en inglés → regenerar en español
     return data.data;
   }catch(e){ return null; }
 }
@@ -18693,6 +18709,9 @@ const _sharedPendingWrites = [];     // {key,data} generadas ANTES de tener sesi
 // Best-effort: si falla (sin sesión, red, rate-limit), se omite y se sigue leyendo.
 async function _sharedWrite(op, kind, key, payload, opts){
   try {
+    // En inglés no se publica contenido para todos (ver _pvLooksEnglish). El diccionario de
+    // traducción es→en (kind 'i18n') sí: es justo lo que se comparte entre usuarios en inglés.
+    if (op === 'set' && kind !== 'i18n' && getLang() === 'en') return { ok:false, reason:'idioma en: no se comparte' };
     const sb = window.sbClient; if(!sb || !sb.functions) return { ok:false };
     const body = Object.assign({ op:op, kind:kind, key:key }, opts||{});
     if (payload !== undefined) body.payload = payload;
@@ -18704,6 +18723,9 @@ async function _sharedWrite(op, kind, key, payload, opts){
 async function _sharedAISet(cacheKey, dataObj){
   try{
     if (!cacheKey || !dataObj) return false;
+    // Ni en inglés ni con contenido en inglés (p.ej. una caché local generada en inglés que se
+    // re-sube después de volver al español por los "backfill a la nube").
+    if (getLang() === 'en' || _pvLooksEnglish(dataObj)) return false;
     // Contenido inmutable (resumen de noticia, análisis de acción, brief de evento) → dedup por
     // sesión (no reescribir). Los resultados de evento (evt:) SÍ mutan (futuro→ocurrido) → nunca
     // se dedupean para que la actualización llegue a la nube.
@@ -31903,6 +31925,8 @@ async function _pvtNarrativaIA(ticker, facts){
   // ¿Sirve una lectura previa? Misma regla para la copia local y la de la nube.
   const _vale = (previa) => {
     if (!previa || !previa.texto) return null;
+    // Quien ya abrió ABBV/CRSR guardó en local la lectura que se coló en inglés.
+    if (getLang() !== 'en' && _pvLooksEnglish(previa.texto)) return null;
     const edad = Date.now() - Date.parse(previa.generated_at || 0);
     const reporto = eKey !== 'na' && previa.earningsKey && previa.earningsKey !== eKey;
     const mismaEstructura = previa.firma === firma;
