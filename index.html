@@ -22055,6 +22055,9 @@ const PORTIV_CHART = {
       try{ _intra=this.generate('1D'); }catch(e){}
       if(_intra && _intra.values && _intra.values.length>=2) return _intra;
     }
+    // Sólo cuenta lo que movió el MERCADO: aportaciones, retiros y saltos del historial del
+    // broker no son rendimiento (ver _pvSoloMercado).
+    try{ if(typeof _pvSoloMercado==='function') _pvSoloMercado(merged, today); }catch(e){}
     const vals=merged.map(p=>p.value);
     // Etiquetas SIEMPRE desde la fecha y con un solo formato. Antes cada fuente traía la suya
     // (PERF_MASTER «24 Sep», con mayúscula; fmtDate «3 oct») y el eje salía mezclado.
@@ -22558,6 +22561,126 @@ const PORTIV_HIST = {
 };
 window.PORTIV_HIST = PORTIV_HIST;
 try { PORTIV_HIST._hydrate(); } catch(e){}   // hidratar antes del primer render (Fase 2)
+
+// ══════════════════════════════════════════════════════════
+//  PORTIV_REF — referencia de MERCADO para el rendimiento (5-nov)
+//  Cierres diarios de cada posición (Alpaca) → cuánto se movió tu cartera SÓLO por precio
+//  entre dos fechas. Lo usa _pvSoloMercado() para que la gráfica de Rendimiento no cuente
+//  como ganancia o pérdida lo que no lo es: aportaciones, retiros, compras con dinero
+//  nuevo, posiciones añadidas a mano o saltos del historial del broker.
+//  Almacén propio: PORTIV_HIST._ready reabriría la reconstrucción entera de generate().
+// ══════════════════════════════════════════════════════════
+const PORTIV_REF = {
+  data: {}, _at: 0, _loading: false, _failAt: 0, _fails: 0, _LS: 'portiv_mkt_daily_v1',
+  _TTL: 6 * 3600 * 1000,
+  _tickers(){
+    try { return [...new Set((HOLDINGS || []).filter(h => h && h.ticker && +h.qty > 0 && !h.noLive && !this._fx(h))
+      .map(h => h.ticker.toUpperCase()))]; } catch(e){ return []; }
+  },
+  // Precio en otra moneda que la del cierre: la razón cierre/precio mezclaría el tipo de cambio.
+  _fx(h){ return !!(h.srcCcy && h.ccy && h.srcCcy !== h.ccy); },
+  _hydrate(){
+    if (this._hyd) return; this._hyd = true;
+    try { const o = JSON.parse(localStorage.getItem(this._LS) || 'null');
+      if (o && o.data && typeof o.data === 'object') { this.data = o.data; this._at = +o.at || 0; } } catch(e){}
+  },
+  ready(){
+    this._hydrate();
+    const tks = this._tickers();
+    return tks.length > 0 && tks.every(t => this.data[t] && Object.keys(this.data[t]).length);
+  },
+  async ensure(){
+    this._hydrate();
+    if (this._loading) return;
+    const tks = this._tickers();
+    if (!tks.length) return;
+    if (this.ready() && Date.now() - this._at < this._TTL) return;
+    const wait = this._fails ? Math.min(600000, 30000 * Math.pow(2, Math.min(4, this._fails - 1))) : 0;
+    if (Date.now() - this._failAt < wait) return;
+    if (typeof _alpacaDailyBars !== 'function') return;
+    this._loading = true;
+    const was = this.ready();
+    try {
+      const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 25);
+      const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+      const got = await _alpacaDailyBars(tks, start, 15000);
+      Object.keys(got).forEach(t => { this.data[t] = got[t]; });
+      this._at = Date.now();
+      try { localStorage.setItem(this._LS, JSON.stringify({ at: this._at, data: this.data })); } catch(e){}
+    } catch(e){}
+    this._loading = false;
+    if (this.ready()) this._fails = 0; else { this._fails++; this._failAt = Date.now(); }
+    // Repinta sólo si ahora hay referencia y antes no (mismo cortafuegos que PORTIV_HIST).
+    try { if (this.ready() && !was && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
+  },
+  // Foto de la cartera de AHORA: efectivo y, por posición, su valor en vivo y sus cierres.
+  base(){
+    const T = calcTotals();
+    const rows = [];
+    for (const h of HOLDINGS) {
+      if (!h || !(+h.qty > 0)) continue;
+      const now = +calcH(h).mktVal || 0;
+      const fija = h.noLive || this._fx(h) || !(+h.price > 0);
+      const m = fija ? null : this.data[String(h.ticker).toUpperCase()];
+      rows.push({ now, price: +h.price, fija, m, k: m ? Object.keys(m).sort() : null });
+    }
+    return { cash: (T.cash || 0) + (T.mm || 0), rows };
+  },
+  // Valor de la cartera ACTUAL a precios de `iso` (posiciones y efectivo de hoy). Hoy o después
+  // = el total en vivo. null si falta el cierre de alguna posición en o antes de esa fecha.
+  valueAt(iso, today, B){
+    let v = B.cash;
+    for (const r of B.rows) {
+      if (iso >= today || r.fija) { v += r.now; continue; }
+      if (!r.m) return null;
+      let px = r.m[iso];
+      if (px == null) {                       // último cierre ≤ iso (finde, feriado, ancla)
+        let lo = 0, hi = r.k.length - 1, j = -1;
+        while (lo <= hi) { const md = (lo + hi) >> 1; if (r.k[md] <= iso) { j = md; lo = md + 1; } else hi = md - 1; }
+        px = j >= 0 ? r.m[r.k[j]] : null;
+      }
+      if (!(px > 0)) return null;
+      v += r.now * px / r.price;
+    }
+    return v > 0 ? v : null;
+  },
+};
+window.PORTIV_REF = PORTIV_REF;
+
+// ── RENDIMIENTO SÓLO POR MERCADO ─────────────────────────────────────────────────────────
+//  Una serie de VALOR (saldo del broker, lecturas de la app, gráfica importada) sube y baja
+//  también por dinero que entra o sale, y a veces por un dato malo. Pintada tal cual, eso sale
+//  como rendimiento: el 5-nov el historial de SnapTrade bajaba −16.8 % del 3 al 5 de noviembre
+//  cuando tus posiciones, a precio de mercado, bajaron −4.0 % → 1M marcaba −24.9 % en vez de
+//  −13.8 %. Aquí cada tramo entre dos puntos se compara con lo que movió el MERCADO a tu
+//  cartera en ese mismo tramo; si la serie se aparta más de lo que explica el ruido (lectura a
+//  media sesión, pesos que cambian), ese tramo se sustituye por el del mercado. La serie se
+//  reconstruye hacia atrás desde el total EN VIVO: el último punto sigue siendo tu valor real
+//  y cada tramo sano conserva su % exacto. Sin referencia de mercado todavía, no toca nada.
+function _pvSoloMercado(pts, today){
+  if (!Array.isArray(pts) || pts.length < 2) return 0;
+  if (typeof PORTIV_REF === 'undefined') return 0;
+  if (!PORTIV_REF.ready()) { try { PORTIV_REF.ensure(); } catch(e){} return 0; }
+  try { PORTIV_REF.ensure(); } catch(e){}   // TTL: refresca los cierres en 2º plano
+  let B; try { B = PORTIV_REF.base(); } catch(e){ return 0; }
+  const mv = pts.map(p => PORTIV_REF.valueAt(p.date, today, B));
+  const r = [];
+  let n = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = +pts[i-1].value, b = +pts[i].value;
+    let rr = (a > 0 && b > 0) ? b / a : 1;
+    if (mv[i-1] > 0 && mv[i] > 0) {
+      const rm = mv[i] / mv[i-1];
+      const dias = Math.max(1, Math.round((new Date(pts[i].date+'T12:00:00') - new Date(pts[i-1].date+'T12:00:00')) / 86400000));
+      const tol = 0.02 + 0.002 * Math.min(30, dias);
+      if (!(a > 0 && b > 0) || Math.abs(rr - rm) > tol) { rr = rm; n++; }
+    }
+    r.push(rr);
+  }
+  if (!n) return 0;
+  for (let i = pts.length - 2; i >= 0; i--) pts[i].value = +(pts[i+1].value / r[i]).toFixed(2);
+  return n;
+}
 
 // ══════════════════════════════════════════════════════════
 //  HISTORIAL DIARIO AUTOMÁTICO (legacy — sigue activo para compatibilidad)
@@ -25223,6 +25346,42 @@ async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO){
         const mins = (+hhmm.slice(0,2)) * 60 + (+hhmm.slice(3,5));
         if (mins < 570 || mins > 960) continue;               // sesión regular 09:30–16:00
         m[hhmm] = b.c;
+      }
+      if (Object.keys(m).length) out[sym] = m;
+    }
+  }
+  return out;
+}
+
+// ── Cierres DIARIOS multi-símbolo (referencia de mercado de la gráfica de Rendimiento) ────────
+// Devuelve { TICKER: { 'YYYY-MM-DD': cierre } } con las sesiones ANTERIORES a hoy (ET): el
+// día en curso lo pone el precio en vivo. `start` es el día 1 de un mes → la URL (clave de
+// caché del proxy, 6 h para 1Day) es la misma para todos durante un mes. 12 símbolos por
+// petición × ~525 sesiones queda bajo el `limit` de una sola página de Alpaca.
+async function _alpacaDailyBars(tickers, startISO, timeoutMs = 12000){
+  const out = {};
+  const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean))].sort();
+  if (!syms.length || !/^\d{4}-\d{2}-\d{2}$/.test(String(startISO || ''))) return out;
+  let today = '';
+  try { today = PORTIV_CHART._todayET(); } catch(e){ return out; }
+  const CHUNK = 12;
+  for (let i = 0; i < syms.length; i += CHUNK) {
+    const grp = syms.slice(i, i + CHUNK);
+    const qs = `symbols=${encodeURIComponent(grp.join(','))}&timeframe=1Day&start=${startISO}`
+             + `&limit=10000&adjustment=split&feed=iex&sort=asc`;
+    let d = null;
+    try { d = await _alpacaFetch('/v2/stocks/bars?' + qs, timeoutMs); } catch(e){}
+    const bars = (d && d.bars && typeof d.bars === 'object') ? d.bars : null;
+    if (!bars) continue;
+    for (const sym of grp) {
+      const arr = bars[sym] || bars[sym.replace('.', '/')];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      const m = {};
+      for (const b of arr) {
+        if (!b || typeof b.c !== 'number' || !isFinite(b.c) || b.c <= 0) continue;
+        const day = String(b.t || '').slice(0, 10);          // barra 1Day = medianoche ET
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day >= today) continue;
+        m[day] = b.c;
       }
       if (Object.keys(m).length) out[sym] = m;
     }
