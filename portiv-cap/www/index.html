@@ -21859,8 +21859,11 @@ const PORTIV_CHART = {
     //   broker (evita la recta placeholder [ayer→hoy] de antes de conectar → lienzo limpio hasta que
     //   llegue la serie). Resultado: gráfica DIARIA en todos los períodos, con datos reales.
     if(!_brkConn){
-      // Usuario sin broker: el historial local ES la fuente (comportamiento original).
-      localPts.forEach(p=>{byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
+      // Usuario sin broker: el historial local ES la fuente (comportamiento original). Con una
+      // gráfica importada de foto, sólo después de su último punto: dentro de su tramo la
+      // lectura de la app es otra base y se intercalaba en dientes de sierra.
+      const _extLast=(PERF_MASTER&&PERF_MASTER.src==='ext'&&masterDates.length)?masterDates[masterDates.length-1]:null;
+      localPts.forEach(p=>{ if(_extLast&&p.date<=_extLast)return; byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)};});
     } else if(brokerPts.length || window._BROKER_LIVE){
       (function _fillDailyFromApp(){
         if(!localPts.length) return;
@@ -21903,9 +21906,10 @@ const PORTIV_CHART = {
     //    invertido!). Anteponemos un ancla en _fromWin con el valor interpolado de la serie real →
     //    la base = valor del día de inicio, como lo calcula el broker.
     if(window._BROKER_LIVE && _fromWin && merged.length && merged[0].date > _fromWin){
+      // Sólo saldos del broker: una lectura de la app en un día sin saldo (otra base) daba un
+      // primer punto ~15% por debajo y la línea arrancaba con un salto (5-nov).
       const _src={};
       brokerPts.forEach(p=>{ if(p&&p.date&&isFinite(p.value)) _src[p.date]={date:p.date,value:p.value}; });
-      this.loadDaily().forEach(p=>{ if(p&&p.date&&isFinite(p.value)) _src[p.date]={date:p.date,value:p.value}; });
       const _arr=Object.values(_src).sort((a,b)=>a.date.localeCompare(b.date));
       if(_arr.length && _arr[0].date <= _fromWin){   // necesita un punto ≤ inicio para interpolar
         let _bef=null,_aft=null;
@@ -22224,7 +22228,7 @@ window.PORTIV_BROKER = {
         const lbls = (Array.isArray(data.series.labels) && data.series.labels.length === ds.length)
           ? data.series.labels.slice()
           : ds.map(d => { try { return (typeof fmtDate === 'function') ? fmtDate(d) : d; } catch(e) { return d; } });
-        PERF_MASTER = { dates: ds, values: vs, labels: lbls };
+        PERF_MASTER = { dates: ds, values: vs, labels: lbls, src: 'ext' };
         _CHART_IMPORTED = true;                                  // dibujar FIEL, respetar cobertura
         if (typeof _buildPerfData === 'function') PERF_DATA = _buildPerfData(PERF_MASTER);
         try { if (typeof _chartYMin !== 'undefined') { _chartYMin = null; _chartYMax = null; _chartYRefit = true; } } catch(e) {}
@@ -22609,6 +22613,15 @@ function _saveDailyPoint(dateISO, value) {
   }
 }
 
+// ¿PERF_MASTER viene de fuera de la app (broker conectado o gráfica importada de una foto)?
+function _perfMasterIsExternal() {
+  try {
+    if (PERF_MASTER && PERF_MASTER.src === 'ext') return true;
+    if (window._BROKER_LIVE) return true;
+    return localStorage.getItem('pv_broker_connected') === '1';
+  } catch(e) { return false; }
+}
+
 // Extiende PERF_MASTER con el historial guardado + actualiza el último punto al total en vivo
 function _extendPerfMasterWithHistory(liveTotal) {
   const saved = _loadDailyHistory();
@@ -22619,9 +22632,18 @@ function _extendPerfMasterWithHistory(liveTotal) {
   const baseValues = PERF_MASTER.values ? [...PERF_MASTER.values] : [];
   const baseLabels = PERF_MASTER.labels ? [...PERF_MASTER.labels] : [];
 
+  // Serie de FUERA (broker o foto): las lecturas de la app NO se mezclan con ella. Antes se
+  // colaban en cada hueco: SnapTrade da un saldo cada 2 días y la app uno por día, con otra
+  // base (otra cartera, intradía, finde) → PERF_MASTER quedaba intercalado broker/app/broker/app
+  // y la gráfica salía en dientes de sierra ($8.5K ↔ $7.2K día sí, día no; captura de Rafael,
+  // 5-nov). El arreglo del 3-nov en generate() no podía verlo: lee PERF_MASTER entero como
+  // «broker». El tramo entre el último dato de fuera y hoy ya lo tiende generate() (re-anclado).
+  const ext = _perfMasterIsExternal() && baseDates.length > 0;
+
   // Fusiona historial guardado (sin duplicar fechas ya en la base)
   const existingSet = new Set(baseDates);
   for (const p of saved) {
+    if (ext) break;
     if (!existingSet.has(p.date)) {
       baseDates.push(p.date);
       baseValues.push(+p.value.toFixed(2));
@@ -22640,7 +22662,7 @@ function _extendPerfMasterWithHistory(liveTotal) {
     const todayIdx = combined.findIndex(p => p.d === today);
     if (todayIdx >= 0) {
       combined[todayIdx].v = +liveTotal.toFixed(2);
-    } else {
+    } else if (!ext) {
       combined.push({ d: today, v: +liveTotal.toFixed(2), l: _fmtDayMonthES(new Date(today + 'T12:00:00')) });
     }
   }
@@ -22650,6 +22672,7 @@ function _extendPerfMasterWithHistory(liveTotal) {
     values: combined.map(p => p.v),
     labels: combined.map(p => p.l),
   };
+  if (ext) PERF_MASTER.src = 'ext';
   PERF_DATA = _buildPerfData(PERF_MASTER);
   _chartYMin = null; // forzar recálculo de bounds
 }
@@ -22800,6 +22823,7 @@ function _applyValueChart(points, pre) {
     dates:  clean.map(p => p.date),
     values: clean.map(p => +p.value.toFixed(2)),
     labels: clean.map(p => _fmtDayMonthES(new Date(p.date + 'T00:00:00'))),
+    src:    'ext',   // de fuera: las lecturas de la app no se intercalan (ver _extendPerfMasterWithHistory)
   };
   PERF_DATA = _buildPerfData(PERF_MASTER);
   _CHART_IMPORTED = true;   // gráfica de la foto → dibujar fiel (sin ruido)
@@ -22875,6 +22899,7 @@ function _injectPeriodAnchors(periodChanges, totalVal){
       dates,
       values: dates.map(d => map[d]),
       labels: dates.map(d => _fmtDayMonthES(new Date(d + 'T00:00:00'))),
+      src:    'ext',
     };
     PERF_DATA = _buildPerfData(PERF_MASTER);
     _chartYMin = null;
@@ -23703,7 +23728,10 @@ function initPerfChart() {
   // mismo día), dibújala YA → el primer frame es la curva real, no la provisional. La
   // reconstrucción en 2º plano la reconfirma sin cambio visible.
   try {
-    const _snap = JSON.parse(localStorage.getItem('pv_perf_snap_1M') || 'null');
+    // v:2 = foto dibujada sin la serie intercalada broker/app (5-nov): las anteriores pueden
+    // traer los dientes de sierra y se descartan.
+    let _snap = JSON.parse(localStorage.getItem('pv_perf_snap_1M') || 'null');
+    if (_snap && _snap.v !== 2) _snap = null;
     const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
     if (_snap && _snap.day === _day && Array.isArray(_snap.values) && _snap.values.length > 2) d = _snap;
     // PRIMERA APERTURA DEL DÍA: la foto es de la sesión ANTERIOR, así que el gate de arriba la
@@ -24465,7 +24493,7 @@ function setPeriodData(period, ds, updMode) {
     if ((period === '1M' || period === '1D') && !ds._provisional) {
       const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
       localStorage.setItem('pv_perf_snap_' + period, JSON.stringify({
-        day: _day, labels: ds.labels, values: ds.values,
+        v: 2, day: _day, labels: ds.labels, values: ds.values,
         change: ds.change, changePct: ds.changePct, since: ds.since || '',
       }));
     }
