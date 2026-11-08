@@ -4679,7 +4679,7 @@ body.dark-theme .pv-nt { background: rgba(255,255,255,.08); color: #e6ebf2; }
         <textarea id="aiChatInput" rows="1" placeholder="Escribe tu pregunta…"
           oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();aiChatSend();}"></textarea>
-        <button id="aiChatSendBtn" class="pvia-send" type="button" onclick="aiChatSend()" aria-label="Enviar">
+        <button id="aiChatSendBtn" class="pvia-send" type="button" onmousedown="event.preventDefault()" onclick="aiChatSend()" aria-label="Enviar">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3.4 20.4 21 12 3.4 3.6 3 10l12 2-12 2 .4 6.4Z" fill="currentColor"/></svg>
         </button>
       </div>
@@ -38149,7 +38149,7 @@ function _aiChatAddMsg(role, html, sources){
   // Una respuesta más alta que el hilo se muestra desde su principio (se va escribiendo de
   // arriba abajo); lo demás, al final del hilo como siempre.
   const _top = div.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
-  wrap.scrollTop = (role !== 'user' && div.offsetHeight > wrap.clientHeight - 40) ? Math.max(0, _top - 12) : wrap.scrollHeight;
+  _pviaScrollTo(wrap, (role !== 'user' && div.offsetHeight > wrap.clientHeight - 40) ? Math.max(0, _top - 12) : wrap.scrollHeight);
   return div;
 }
 
@@ -38159,7 +38159,30 @@ function aiChatQuick(q){
   aiChatSend();
 }
 
+// Un solo envío a la vez: _chatBusy se activa DESPUÉS de await _pvAiEntitled(), así que un
+// doble toque (o Enter + botón) en ese intervalo mandaba la pregunta dos veces.
 async function aiChatSend(){
+  if(aiChatSend._on) return;
+  aiChatSend._on = true;
+  try { await _aiChatSendInner(); } finally { aiChatSend._on = false; }
+}
+// Mensaje de error legible: el de la red llega en inglés y crudo («Load failed», «Failed to
+// fetch»), y el del proxy puede traer JSON. Se queda en consola vía pvReportError.
+function _pviaErrText(e){
+  const m = String((e && e.message) || '');
+  if(/load failed|failed to fetch|network|internet|offline|timed? ?out|abort/i.test(m) || (typeof navigator!=='undefined' && navigator.onLine===false))
+    return _L('No pude conectarme. Revisa tu conexión e inténtalo de nuevo.', "I couldn't connect. Check your connection and try again.");
+  if(/\b(429|529|overloaded|rate)/i.test(m))
+    return _L('Portiv IA está muy solicitada en este momento. Inténtalo de nuevo en unos segundos.', 'Portiv IA is busy right now. Try again in a few seconds.');
+  return _L('Algo falló al preparar tu respuesta. Inténtalo de nuevo.', 'Something went wrong preparing your answer. Try again.');
+}
+// Desplaza el hilo con suavidad (los saltos de scrollTop se leían como parpadeos).
+function _pviaScrollTo(wrap, top){
+  if(!wrap) return;
+  const reduce = (()=>{ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){ return false; } })();
+  try { wrap.scrollTo({ top: top, behavior: reduce ? 'auto' : 'smooth' }); } catch(e){ wrap.scrollTop = top; }
+}
+async function _aiChatSendInner(){
   if(_chatBusy) return;
   if(Date.now()-_chatLastSent<_CHAT_COOLDOWN) return;
   if(location.protocol==='file:' && !window._aiKeyAvailable()){
@@ -38234,7 +38257,8 @@ async function aiChatSend(){
   const _typing = document.getElementById('aiChatTyping');
   if(_typing){ _typing.classList.add('show'); }
   const msgs = document.getElementById('aiChatMessages');
-  if(msgs) msgs.scrollTop = msgs.scrollHeight;
+  if(msgs) _pviaScrollTo(msgs, msgs.scrollHeight);
+  const _userBubble = msgs && _typing && _typing.previousElementSibling;
 
   try {
     // El router decide de una vez: cuánta web se permite y qué contexto merece mandarse.
@@ -38407,7 +38431,23 @@ ${ctx}`;
   } catch(e){
     pvReportError('IA · analista', e, { toast: false });
     if(_typing) _typing.classList.remove('show');
-    _aiChatAddMsg('bot','Error: '+e.message);
+    // La pregunta fallida sale del historial (si no, el reintento la mandaría duplicada) y
+    // el aviso lleva «Reintentar», que quita la burbuja y el aviso y la vuelve a enviar.
+    if(CHAT_HISTORY.length && CHAT_HISTORY[CHAT_HISTORY.length-1].role==='user' && CHAT_HISTORY[CHAT_HISTORY.length-1].content===text) CHAT_HISTORY.pop();
+    const _em = _aiChatAddMsg('bot', _pviaErrText(e));
+    try {
+      const _b = _em && _em.querySelector('.pvia-card');
+      if(_b){
+        const _r = document.createElement('button');
+        _r.type = 'button'; _r.className = 'chat-lim-cta pvia-retry'; _r.textContent = _L('Reintentar','Try again');
+        _r.addEventListener('click', function(){
+          try { if(_userBubble && _userBubble.parentNode) _userBubble.remove(); _em.remove(); } catch(_){}
+          _chatLastSent = 0;
+          aiChatQuick(text);
+        });
+        _b.appendChild(_r);
+      }
+    } catch(_){}
   } finally {
     _chatBusy = false;
     if(sendBtn) sendBtn.disabled = false;
@@ -52227,6 +52267,11 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
 (function(){
   var vv = window.visualViewport, root = document.documentElement, body = document.body;
   var locked = false;
+  // Teclado v2 (8-nov): restPad = la reserva de abajo del chat SIN teclado (la de la barra de
+  // pestañas); lastKb = alto del último teclado, para reservarlo ya en el toque (iOS avisa
+  // del alto real ~100 ms después) y que el compositor suba a la vez que el teclado.
+  var restPad = 0, lastKb = null, kbPad = null, openedAt = 0, sawKb = false;
+  var FLIP_MS = 360, FLIP_EASE = 'cubic-bezier(.2,.9,.3,1)';
 
   // Sólo con teclado virtual: con teclado físico (escritorio, iPad con Magic Keyboard) no hay
   // nada que compensar y re-anclar el chat rompería el layout.
@@ -52254,9 +52299,61 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       if(root.scrollTop) root.scrollTop = 0;
     }catch(_){}
   }
-  function toBottom(){
-    var m = document.getElementById('aiChatMessages');
-    if(m) m.scrollTop = m.scrollHeight;
+  function q(sel){ return document.querySelector('#tab-aianalyst ' + sel); }
+  function reduced(){ try{ return matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(_){ return false; } }
+  // FLIP: el nuevo alto se aplica de golpe (así iOS ya ve el campo y no desplaza el documento)
+  // y cada pieza visible del chat (hilo, bienvenida, compositor) se desliza desde donde estaba.
+  // `translate` y no `transform`: las entradas pviaIn animan transform con fill «both» y
+  // pisarían el desplazamiento.
+  function flip(mutate){
+    var main = q('.pvia-main'), th = document.getElementById('aiChatMessages');
+    var stick = !!th && (th.scrollHeight - th.scrollTop - th.clientHeight < 48);
+    var kids = main ? Array.prototype.slice.call(main.children) : [];
+    var before = kids.map(function(k){ return k.offsetParent ? k.getBoundingClientRect().top : null; });
+    kids.forEach(function(k){ k.style.transition = 'none'; k.style.translate = ''; });
+    mutate();
+    if(stick) th.scrollTop = th.scrollHeight;
+    if(!main || reduced()) return;
+    var moved = false;
+    kids.forEach(function(k, i){
+      if(before[i] === null || !k.offsetParent) return;
+      var d = before[i] - k.getBoundingClientRect().top;
+      if(Math.abs(d) < 1) return;
+      k.style.translate = '0 ' + d + 'px'; moved = true;
+    });
+    if(!moved){ kids.forEach(function(k){ k.style.transition = ''; }); return; }
+    // La bienvenida con scroll propio recortaría lo que entra desde fuera de su caja.
+    main.style.overflow = 'visible';
+    void main.offsetHeight;
+    kids.forEach(function(k){
+      if(!k.style.translate) return;
+      k.style.transition = 'translate ' + FLIP_MS + 'ms ' + FLIP_EASE;
+      k.style.translate = '';
+    });
+    clearTimeout(flip._t);
+    flip._t = setTimeout(function(){
+      main.style.overflow = '';
+      kids.forEach(function(k){ k.style.transition = ''; });
+    }, FLIP_MS + 60);
+  }
+  function setPad(px){
+    px = Math.max(0, Math.round(px));
+    if(kbPad !== null && Math.abs(px - kbPad) < 2) return;
+    kbPad = px;
+    flip(function(){ root.style.setProperty('--pv-kb-pad', px + 'px'); });
+  }
+  // Dos medidas distintas. RESERVA = lo que falta del viewport de layout en el visible: en
+  // WKWebView/Safari el layout no encoge y hay que reservar el teclado entero; cuando la
+  // ventana sí encoge (iPad, al reaparecer el teclado sin cambiar el foco) da 0 porque ya
+  // cabe todo. ¿HAY TECLADO? = el visible contra el alto COMPLETO de la ventana (el mayor
+  // visto con este ancho), que sirve en los dos casos.
+  var fullH = {};
+  function kbHeight(){ return vv ? Math.max(0, window.innerHeight - vv.height) : 0; }
+  function kbShown(){
+    if(!vv) return false;
+    var w = Math.round(window.innerWidth);
+    fullH[w] = Math.max(fullH[w] || 0, window.innerHeight);
+    return fullH[w] - vv.height > 80;
   }
   function sync(){
     // Primero devolver el documento a 0 y DESPUÉS leer el viewport: al revés, --vv-top se
@@ -52269,12 +52366,44 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       // abierto; fuera del chat se mantiene el valor real.
       root.style.setProperty('--vv-top', locked ? '0px' : ((vv.offsetTop || 0) + 'px'));
     }
+    var kb = kbHeight(), shown = kbShown();
+    // iPad: la tecla de ocultar el teclado lo cierra SIN quitar el foco (no hay focusout) y
+    // al volver a tocar el campo reaparece sin focusin. El estado sigue al teclado, no al foco.
+    if(!locked){
+      if(shown && isChatField(document.activeElement) && virtualKb()) setLocked(true);
+      return;
+    }
+    if(shown){ lastKb = kb; sawKb = true; setPad(kb); }
+    else if(sawKb) setLocked(false);
+    // Sin teclado en pantalla (teclado físico, o iOS aún no avisó): se espera un momento
+    // antes de quitar la reserva para no bajar el compositor y volver a subirlo.
+    else if(Date.now() - openedAt > 1500) setPad(kb);
   }
   function setLocked(on){
     if(locked === on){ if(on) sync(); return; }
-    locked = on;
-    body.classList.toggle('pv-kb-open', on);
-    sync();
+    if(on){
+      // La reserva actual (barra de pestañas) se lee ANTES de cambiar de capa: es el punto de
+      // partida del deslizamiento y adonde vuelve el compositor al cerrar.
+      var p = q('.ai-chat-page');
+      restPad = p ? (parseFloat(getComputedStyle(p).paddingBottom) || 0) : 0;
+      openedAt = Date.now();
+      kbPad = null; sawKb = false;
+      flip(function(){
+        locked = true;
+        var start = (lastKb !== null) ? lastKb : restPad;
+        root.style.setProperty('--pv-kb-pad', start + 'px');
+        kbPad = start;
+        body.classList.add('pv-kb-open');
+      });
+      sync();
+    } else {
+      flip(function(){
+        locked = false;
+        body.classList.remove('pv-kb-open');
+        kbPad = null;
+      });
+      sync();
+    }
   }
 
   document.addEventListener('focusin', function(e){
@@ -52282,15 +52411,27 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     setLocked(true);
     // El teclado se anima ~300 ms y iOS reajusta el scroll durante toda la animación:
     // se repite el anclaje hasta que asienta.
-    [0, 60, 150, 300, 500].forEach(function(ms){ setTimeout(function(){ pin(); sync(); }, ms); });
+    [0, 60, 150, 300, 500, 760, 1600].forEach(function(ms){ setTimeout(function(){ pin(); sync(); }, ms); });
+    // El primer teclado de la sesión puede tardar casi un segundo y su `resize` a veces llega
+    // antes de que cambie el alto (el compositor se quedaba detrás del teclado): durante 1,5 s
+    // se vigila el alto en cada fotograma y se re-sincroniza en cuanto cambia.
+    var last = -1, until = Date.now() + 1500;
+    (function watch(){
+      if(!locked || Date.now() > until) return;
+      var kb = kbHeight();
+      if(kb !== last){ last = kb; sync(); }
+      requestAnimationFrame(watch);
+    })();
     // iOS reajusta el visual viewport de forma asíncrona: un doble rAF captura el valor ya
     // asentado sin esperar al primer setTimeout.
     requestAnimationFrame(function(){ requestAnimationFrame(sync); });
   });
   // Al cerrar el teclado iOS no siempre emite un resize final → se limpia al perder el foco.
+  // Sin la espera de antes (120 ms): el compositor baja a la vez que el teclado. Si el foco
+  // vuelve a un campo del chat en el mismo gesto, focusin lo re-ancla.
   document.addEventListener('focusout', function(e){
     if(!isChatField(e.target)) return;
-    setTimeout(function(){ if(!isChatField(document.activeElement)) setLocked(false); }, 120);
+    setTimeout(function(){ if(!isChatField(document.activeElement)) setLocked(false); }, 0);
   });
   window.addEventListener('scroll', function(){ if(locked) pin(); }, { passive: true });
   if(vv){ vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); }
@@ -59488,7 +59629,38 @@ html body #tab-aianalyst #aiChatLockWrap .pvia-chips { animation: pviaIn .55s va
   html body #tab-aianalyst #aiChatLockWrap #aiChatTyping.show,
   html body #tab-aianalyst #aiChatLockWrap .pvia-hello > *, html body #tab-aianalyst #aiChatLockWrap .pvia-chips { animation: none !important; }
 }
-</style>
+
+/* ── Teclado v2 (8-nov): sin franja azul y sin saltos ──
+   Antes, con el teclado abierto el chat medía sólo el alto VISIBLE (--vvh) y debajo quedaba
+   el body, que en esta pestaña es navy: se veía una franja azul alrededor del teclado de
+   iOS 26 (esquinas redondeadas) y, mientras el teclado subía, un hueco azul entre él y el
+   compositor, que saltaba de golpe a su sitio ~100 ms después del toque.
+   Ahora la pestaña ocupa la pantalla ENTERA (fondo claro detrás del teclado) y el teclado se
+   reserva con padding-bottom (--pv-kb-pad, lo pone el script del teclado). El cambio de alto
+   se aplica de una vez y el script desliza el contenido desde donde estaba (FLIP con la
+   propiedad `translate`, que no choca con las animaciones de entrada que usan transform).
+   El doble id gana a las capas anteriores (móvil, html.pv-ipad, MOTION) sin tocarlas. */
+html:root body.chat-active.pv-kb-open { background: #eef1f8 !important; overflow: hidden !important; }
+html body.pv-kb-open #tab-aianalyst#tab-aianalyst {
+  position: fixed !important; top: 0 !important; right: 0 !important; bottom: 0 !important; left: 0 !important;
+  height: auto !important; min-height: 0 !important; z-index: 900 !important;
+  background: #eef1f8 !important; transform: none !important;
+}
+html body.pv-kb-open #tab-aianalyst#tab-aianalyst .ai-chat-page {
+  height: 100% !important; min-height: 0 !important; box-sizing: border-box !important;
+  padding-bottom: var(--pv-kb-pad, 0px) !important; transform: none !important;
+}
+/* Sin las preguntas (se ocultan con el teclado), la bienvenida se centra en el hueco que queda
+   en vez de caer pegada al compositor (iPad). */
+html body.pv-kb-open #tab-aianalyst#tab-aianalyst .pvia-hello { margin-bottom: auto; }
+/* «Reintentar» del aviso de error: navy como el botón de enviar, sin el icono de Pro. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-card .pvia-retry { display: flex; background: var(--pvia-send); color: var(--pvia-send-ink); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-card .pvia-retry::before { display: none; }
+/* Toque: el botón de enviar y las preguntas responden al dedo como el resto de la app. */
+html body #tab-aianalyst #aiChatLockWrap .pvia-send,
+html body #tab-aianalyst #aiChatLockWrap .pvia-chip { -webkit-tap-highlight-color: transparent; transition: transform .18s var(--pvia-ease), background-color .22s var(--pvia-ease), border-color .22s var(--pvia-ease), opacity .22s var(--pvia-ease); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-send:active:not(:disabled) { transform: scale(.92); }
+html body #tab-aianalyst #aiChatLockWrap .pvia-chip:active { transform: scale(.98); }
 <style id="pvSeguimientoCss">
 /* ═══ SEGUIMIENTO — rediseño aprobado de la pestaña (seguimiento.py) ═════════════════════════
    Cabecera navy compacta con curva —antetítulo «Tu lista», título y el buscador de siempre con
