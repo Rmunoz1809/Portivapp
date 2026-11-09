@@ -27183,6 +27183,10 @@ async function _refreshResearchPrice(ticker, _esReintento){
       const _ar = (typeof _activeResearchRange !== 'undefined' && _activeResearchRange) ? _activeResearchRange : '1mo';
       const _ad = (typeof researchChartCache !== 'undefined' && researchChartCache) ? researchChartCache[_ar] : null;
       _applyChartPeriodChange(_ad || {}, _ar);
+      // La curva acompaña al precio: si la serie en pantalla ya no está al día (sesión en curso
+      // con > 5 min, o le falta la última sesión), se baja la de ahora y se redibuja.
+      // También si no hay serie (falló la descarga): así la tarjeta no se queda en «Sin histórico».
+      try { if (!_rcVigente(_ad) && typeof currentResearchTicker !== 'undefined' && currentResearchTicker) _rcRevalidar(currentResearchTicker, _ar); } catch(e){}
     } else if (typeof _updateChangeDisplay === 'function') {
       _updateChangeDisplay(chg, pct, 'hoy');
     }
@@ -27237,20 +27241,10 @@ async function _fetchResearch(ticker) {
       // (se guardó cuando los proxies fallaban), NO nos quedamos pegados con ella: bajamos el
       // histórico REAL, redibujamos, persistimos y actualizamos el snapshot. Antes esto dejaba
       // la gráfica falsa hasta que el snapshot expiraba (24 h) — ese era el bug reportado.
-      const _snCl = ((_snap.chartData && _snap.chartData.closes) || []).filter(c => c != null);
-      if (!_snap.chartData || _snap.chartData._synthetic || _snCl.length < 2) {
-        (async () => {
-          const raw = await apiCall({action:'history', ticker, period:'1mo'}, 8000).catch(() => null);
-          const cl = ((raw && raw.closes) || []).filter(c => c != null);
-          if (cl.length >= 2 && currentResearchTicker === ticker && _activeResearchRange === '1mo') {
-            researchChartCache['1mo'] = raw;
-            _chartLSset(ticker, '1mo', raw);
-            _drawResearchChart(raw, cl[cl.length-1] >= cl[0]);
-            _applyChartPeriodChange(raw, '1mo');
-            _researchSnapSet(ticker, Object.assign({}, _snap, { chartData: raw, ts: Date.now() }));
-          }
-        })();
-      }
+      // 9 nov 2026: lo mismo con una curva REAL pero vieja (el snapshot dura 24 h): la curva
+      // terminaba en el cierre de ayer con el precio de hoy arriba. _rcVigente decide.
+      if (_snap.chartData && typeof _snap.chartData === 'object' && !_snap.chartData._ts) _snap.chartData._ts = _snap.ts;
+      if (!_rcVigente(_snap.chartData)) _rcRevalidar(ticker, '1mo');
       // Prefetch de los demás períodos → cambiar de fecha es instantáneo y con data real.
       try { _prefetchAllResearchPeriods(ticker, _snap.info); } catch(e){}
       // ── ACTUALIZACIÓN POR EARNINGS ────────────────────────────────────────────
@@ -33859,48 +33853,99 @@ function _chartLSget(ticker, range){
   const e = _chartLSCache[(ticker||'').toUpperCase() + '|' + range];
   if (!e) return null;
   if (Date.now() - (e.ts || 0) > _chartTTLfor(range)) return null;    // expirado
+  if (e.data && !e.data._ts) e.data._ts = e.ts;                          // hora de la descarga (ver _rcVigente)
   return e.data;
 }
 function _chartLSset(ticker, range, data){
   try {
-    _chartLSCache[(ticker||'').toUpperCase() + '|' + range] = { ts: Date.now(), data };
+    if (data && typeof data === 'object' && !data._ts) data._ts = Date.now();
+    _chartLSCache[(ticker||'').toUpperCase() + '|' + range] = { ts: (data && data._ts) || Date.now(), data };
     const ents = Object.entries(_chartLSCache);
     if (ents.length > 60) { ents.sort((a,b)=>(a[1].ts||0)-(b[1].ts||0)); while (ents.length > 60) delete _chartLSCache[ents.shift()[0]]; }
     localStorage.setItem(_CHART_LS_KEY, JSON.stringify(_chartLSCache));
   } catch(e){ /* quota — ignora */ }
 }
 
+// ── ¿La serie guardada sigue al día? (9 nov 2026) ─────────────────────────────────────────
+// Las cachés (snapshot de la acción: 24 h; localStorage: 15 min–24 h) se dibujaban tal cual al
+// reabrir una acción: MSFT abierta el 3-nov y reabierta el 9-nov terminaba la curva en $520.84
+// (3 Nov) con el precio grande en $545.18 y el % del período calculado sobre esa curva vieja.
+// Ahora la caché sólo sirve para pintar al instante; si no está al día se baja la de hoy en 2º
+// plano y se redibuja. Al día = descargada hace < 5 min, o bien (mercado cerrado) su última
+// barra es de la última sesión y se bajó después de la campana de esa sesión.
+function _rcVigente(data){
+  try {
+    if (!data || data._synthetic) return false;
+    const ts = (data.timestamps || []).filter(t => isFinite(t));
+    if (ts.length < 2) return false;
+    const age = data._ts ? Date.now() - data._ts : Infinity;
+    if (age < 5 * 60 * 1000) return true;                 // recién bajada: es lo que hay en el proveedor
+    if (PORTIV_CHART.isMarketOpenNow()) return false;     // sesión en curso: la curva envejece
+    const lastSec = +ts[ts.length - 1];
+    const p = PORTIV_CHART._nyParts(new Date(lastSec * 1000));
+    const lastDay = `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`;
+    // Barras semanales/mensuales (5A) van fechadas al inicio del período: no se comparan por día.
+    const step = lastSec - ts[ts.length - 2];
+    if (step <= 3 * 86400 && lastDay < PORTIV_CHART.sessionDay()) return false;   // falta una sesión
+    // Bajada antes del cierre de su última sesión → le falta el tramo final del día.
+    const closeMs = (lastSec + (960 - _pvNyMinOf(lastSec)) * 60) * 1000;
+    if (step <= 3 * 86400 && data._ts && data._ts < closeMs) return false;
+    return true;
+  } catch(e){ return true; }
+}
+// Baja la serie de hoy de (ticker, período), con un reintento a los 2,5 s si falla (429, red),
+// la guarda y, si es el período en pantalla de la misma acción, redibuja. Una sola descarga a la
+// vez por (ticker, período): el prefetch, la apertura y el refresco de precio comparten ésta.
+const _rcRevalVivo = {};
+async function _rcRevalidar(ticker, range){
+  const tk = (ticker || '').toUpperCase();
+  const key = tk + '|' + range;
+  if (!tk || _rcRevalVivo[key]) return _rcRevalVivo[key];
+  const misma = () => (currentResearchTicker || '').toUpperCase() === tk;
+  return (_rcRevalVivo[key] = (async () => {
+    let raw = null;
+    for (let i = 0; i < 2 && !raw; i++) {
+      if (i) await new Promise(r => setTimeout(r, 2500));
+      if (!misma()) return;
+      const r = await apiCall({ action:'history', ticker: tk, period: range }, 8000).catch(() => null);
+      if (((r && r.closes) || []).filter(c => c != null).length >= 2) raw = r;
+    }
+    if (!raw || !misma()) return;
+    raw._ts = Date.now();
+    researchChartCache[range] = raw;
+    _chartLSset(tk, range, raw);
+    if (range === '1mo') {
+      try { const s = _researchSnapCache[tk]; if (s) _researchSnapSet(tk, Object.assign({}, s, { chartData: raw })); } catch(e){}
+    }
+    if (_activeResearchRange === range) {
+      const cl = raw.closes.filter(c => c != null);
+      _drawResearchChart(raw, cl[cl.length - 1] >= cl[0]);
+      _applyChartPeriodChange(raw, range);
+    }
+  })().catch(() => {}).finally(() => { delete _rcRevalVivo[key]; }));
+}
+
 // Prefetch en background de TODOS los períodos de la gráfica de una acción. Concurrencia
 // limitada (3) para no saturar los proxies. Cachea real en memoria + localStorage. Si el
-// período recién cargado es el que el usuario está viendo, redibuja al instante.
+// período recién cargado es el que el usuario está viendo, redibuja al instante. Lo cacheado
+// que ya no está al día (_rcVigente) también se vuelve a pedir.
 const _RESEARCH_RANGES = ['1d','5d','1mo','3mo','6mo','1y','ytd','5y'];
 let _prefetchSeq = 0;
 async function _prefetchAllResearchPeriods(ticker, info){
   if (!ticker) return;
   const seq = ++_prefetchSeq;                 // si el usuario abre otra acción, cancela ésta
   const pending = _RESEARCH_RANGES.filter(range => {
-    if (researchChartCache[range] && !researchChartCache[range]._synthetic) return false;  // ya en memoria (real)
+    if (_rcVigente(researchChartCache[range])) return false;                                // ya en memoria (al día)
     const ls = _chartLSget(ticker, range);
     const lcl = ls ? (ls.closes||[]).filter(c=>c!=null) : [];
-    if (lcl.length >= 2) { researchChartCache[range] = ls; return false; }                  // ya en LS (real)
-    return true;
+    if (lcl.length >= 2 && !(researchChartCache[range] && !researchChartCache[range]._synthetic))
+      researchChartCache[range] = ls;                                                        // pinta ya; se revalida abajo si toca
+    return !_rcVigente(researchChartCache[range]);
   });
   const CONC = 3;
   const _one = async (range) => {
     if (seq !== _prefetchSeq || currentResearchTicker !== ticker) return;
-    try {
-      const raw = await apiCall({action:'history', ticker, period:range}, 6000).catch(()=>null);
-      const cl = raw?.closes?.filter(c=>c!=null) || [];
-      if (cl.length >= 2) {
-        researchChartCache[range] = raw;
-        _chartLSset(ticker, range, raw);
-        // Si el usuario está viendo justo este período (y aún la misma acción), redibuja.
-        if (_activeResearchRange === range && currentResearchTicker === ticker && seq === _prefetchSeq) {
-          _drawResearchChart(raw, cl[cl.length-1] >= cl[0]);
-          _applyChartPeriodChange(raw, range);
-        }
-      }
-    } catch(e){}
+    try { await _rcRevalidar(ticker, range); } catch(e){}
   };
   const q = pending.slice();
   const workers = Array.from({ length: Math.min(CONC, q.length) }, async () => {
@@ -33923,6 +33968,7 @@ async function setResearchPeriod(range, btn) {
     const cl = (cached.closes || []).filter(c => c != null);
     _drawResearchChart(cached, cl.length >= 2 ? cl[cl.length-1] >= cl[0] : true);
     _applyChartPeriodChange(cached, range);
+    if (!_rcVigente(cached)) _rcRevalidar(currentResearchTicker, range);   // vieja → la de hoy en 2º plano
     return;
   }
 
@@ -33934,6 +33980,7 @@ async function setResearchPeriod(range, btn) {
       researchChartCache[range] = _ls;
       _drawResearchChart(_ls, _lcl[_lcl.length-1] >= _lcl[0]);
       _applyChartPeriodChange(_ls, range);
+      if (!_rcVigente(_ls)) _rcRevalidar(currentResearchTicker, range);
       return;
     }
   }
