@@ -116,9 +116,45 @@ async function configure() {
 // App (ios/App/App/MetaEventsPlugin.swift). Sin await: nunca puede frenar el arranque.
 const MetaEvents = registerPlugin('MetaEvents');
 function _linkMetaAnonId() {
+  // RevenueCat pide esto para la integración de Meta: guarda IDFV e IP del dispositivo
+  // ($idfv, $ip; el IDFA solo si hubiera ATT, que Portiv no pide). Más datos para que
+  // Meta empareje cada compra con el anuncio que la trajo.
+  Purchases.collectDeviceIdentifiers()
+    .catch((e) => console.warn('[PortivIAP] collectDeviceIdentifiers falló', e));
   MetaEvents.getAnonymousId()
     .then(({ anonymousId }) => anonymousId && Purchases.setFBAnonymousID({ fbAnonymousID: anonymousId }))
     .catch((e) => console.warn('[PortivIAP] fbAnonId no disponible', e));
+}
+
+// Aviso de App Tracking Transparency (exigido por Apple porque instalaciones y compras se
+// comparten con Meta). Se pide con sesión iniciada —ya dentro de la app, no en la primera
+// pantalla— y con unos segundos de margen para no chocar con la animación de entrada.
+// iOS lo muestra una sola vez por instalación; las demás llamadas devuelven la respuesta
+// guardada sin mostrar nada. Si la persona acepta, se vuelven a recoger los identificadores
+// para que RevenueCat tenga el IDFA ($idfa) y el estado de ATT al mandar compras a Meta.
+// Si la app no estaba activa (iOS no muestra el aviso en segundo plano), se reintenta
+// una vez al volver a primer plano.
+let _attAsked = false;
+function _askTrackingSoon() {
+  if (_attAsked || !isNative()) return;
+  _attAsked = true;
+  const ask = async (retry) => {
+    try {
+      if (document.visibilityState !== 'visible') throw new Error('hidden');
+      const { status } = await MetaEvents.requestTracking();
+      if (status === 'authorized') await Purchases.collectDeviceIdentifiers();
+      else if (status === 'notDetermined' && retry) throw new Error('not shown');
+    } catch (e) {
+      if (!retry) return;
+      const onVisible = () => {
+        if (document.visibilityState !== 'visible') return;
+        document.removeEventListener('visibilitychange', onVisible);
+        setTimeout(() => ask(false), 1500);
+      };
+      document.addEventListener('visibilitychange', onVisible);
+    }
+  };
+  setTimeout(() => ask(true), 4000);
 }
 
 // Identidad ya vinculada (o vinculándose) con RevenueCat. index.html llama a login()
@@ -139,6 +175,7 @@ async function login(appUserId) {
     return state.isPro;
   }
   _idUid = uid;
+  _askTrackingSoon();
   _idPromise = Purchases.logIn({ appUserID: uid })
     .then(({ customerInfo }) => { _setPro(_entActive(customerInfo)); })
     // Fallo (red, SDK sin configurar): se suelta el uid para que la SIGUIENTE transición
