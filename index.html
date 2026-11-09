@@ -10801,7 +10801,14 @@ async function _aiPost(url, body){
   const _mk = async () => {
     const _t = await _pvAccessToken();
     if (!_t) return null;
-    return fetch(url, { method:'POST', headers:{ 'content-type':'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _t }, body: body });
+    // Tiempo límite hasta que lleguen las cabeceras (120 s): una conexión colgada dejaba los
+    // candados de la IA (_busy, *_Inflight) puestos y el spinner girando toda la sesión. No corta
+    // una respuesta en streaming que ya empezó. El abort lo recoge _aiFetch como un 502.
+    const _ac = (typeof AbortController === 'function') ? new AbortController() : null;
+    const _at = _ac ? setTimeout(() => { try { _ac.abort(); } catch(e){} }, 120000) : null;
+    try {
+      return await fetch(url, { method:'POST', signal: _ac ? _ac.signal : undefined, headers:{ 'content-type':'application/json', 'apikey': _AI_SB_ANON, 'Authorization': 'Bearer ' + _t }, body: body });
+    } finally { if (_at) clearTimeout(_at); }
   };
   const _refresh = async () => {
     try { window._pvTokCacheClear && window._pvTokCacheClear(); } catch(e){}
@@ -13202,9 +13209,12 @@ const EPS = {
   // Dedup EN VUELO: renderStock y el análisis cualitativo piden el MISMO ticker en el mismo
   // tick. Sin esto se disparaban 2 ráfagas idénticas a Finnhub (4 llamadas en vez de 2) y el
   // proxy compartido respondía 403 a alguna por exceso de ráfaga.
+  // Un resultado con error (red, 429) sólo vale 2 min: antes se quedaba todo el día y la
+  // tarjeta de resultados desaparecía hasta mañana por un fallo pasajero.
+  _vigente(c){ return !!c && !(c.error && (Date.now() - (c._ts || 0)) > 120000); },
   async fetch(ticker){
     ticker=(ticker||'').toUpperCase();
-    if(this._cache[ticker]) return this._cache[ticker];
+    if(this._vigente(this._cache[ticker])) return this._cache[ticker];
     if(this._pending[ticker]) return this._pending[ticker];
     const _p = this._fetchNow(ticker);
     this._pending[ticker] = _p;
@@ -13213,7 +13223,7 @@ const EPS = {
 
   async _fetchNow(ticker){
     ticker=(ticker||'').toUpperCase();
-    if(this._cache[ticker]) return this._cache[ticker];
+    if(this._vigente(this._cache[ticker])) return this._cache[ticker];
     // Un ETF no reporta EPS: se corta aquí (lista legacy + detección por ETF_DB/quoteType).
     if(this._ETF.has(ticker) || (typeof _isEtfTicker==='function' && _isEtfTicker(ticker, null)))
       return this._cache[ticker]={ hasData:false, reason:'ETF', quarters:[] };
@@ -13256,9 +13266,12 @@ const EPS = {
         .map(e=>({ d:e.date, q:e.quarter, y:e.year, e:(typeof e.epsEstimate==='number'?e.epsEstimate:null), a:(typeof e.epsActual==='number'?e.epsActual:null) }));
       const hasData=qs.some(x=>!x.future);
       // Las dos llamadas fallaron (red o proxy): es un error, no «esta empresa no tiene datos».
-      if(hist==null && cal==null) return this._cache[ticker]={ hasData:false, error:true, quarters:[], cal:[], _fetchedDate:iso };
+      if(hist==null && cal==null) return this._cache[ticker]={ hasData:false, error:true, quarters:[], cal:[], _fetchedDate:iso, _ts:Date.now() };
+      // Sólo falló el histórico de EPS: tampoco es «sin reportes». Se marca error (vale 2 min
+      // y no entra en el snapshot) pero conserva el calendario que sí llegó.
+      if(hist==null && !hasData) return this._cache[ticker]={ hasData:false, error:true, quarters:qs, cal:calRows, _fetchedDate:iso, _ts:Date.now() };
       return this._cache[ticker]={ hasData, quarters:qs, cal:calRows, _fetchedDate:iso };
-    }catch(e){ return this._cache[ticker]={ hasData:false, error:true, quarters:[], _fetchedDate:new Date().toISOString().slice(0,10) }; }
+    }catch(e){ return this._cache[ticker]={ hasData:false, error:true, quarters:[], _fetchedDate:new Date().toISOString().slice(0,10), _ts:Date.now() }; }
   },
 
   // Día en que se PUBLICÓ un trimestre ya reportado ('YYYY-MM-DD'), o null si no hay fuente fiable.
@@ -16446,7 +16459,7 @@ function usdSigned(n, dec) {
   }
   return (n>=0?'+':'') + usd(n);
 }
-function pctSigned(n) { return (n>=0?'+':'') + n.toFixed(2) + '%'; }
+function pctSigned(n) { n = +n; return isFinite(n) ? (n>=0?'+':'') + n.toFixed(2) + '%' : '—'; }
 
 // Avatar neutro de Portiv: cuadrado redondeado con la INICIAL del ticker, sin colores por
 // ticker (fondo y tinta en pvPosTablaCss, los mismos de la tabla de la pestaña Análisis).
@@ -16493,7 +16506,7 @@ function posRowHTML(h, idx, c, T) {
   // Mismo criterio que #perf-day: sin precios en vivo ni cierre previo cacheado de hoy, la
   // columna DÍA no es cero, es desconocida. Se pinta "—" y sin color, para no teñir la fila
   // de verde por un +0.00 inventado que 3 s después salta al valor real.
-  const dayKnown  = isLive || _PV_DAY_FROM_CACHE;
+  const dayKnown  = _pvDayKnown();
   const pccEff    = dayKnown ? pcc : '';
   const dayAmtTxt = dayKnown ? usdSigned(priceChg,2) : '—';
   const dayPctTxt = dayKnown ? pctSigned(dayPctEff)  : '—';
@@ -16526,7 +16539,7 @@ function posRowHTML(h, idx, c, T) {
     <td><div class="td-inner ${pccEff}" style="font-variant-numeric:tabular-nums">${dayAmtTxt}</div></td>
     <td><div class="td-inner"><span class="pvpt-pill ${pccEff}">${dayPctTxt}</span></div></td>
     <td><div class="td-inner" style="font-weight:600;font-variant-numeric:tabular-nums">${usd(round2(c.mktVal))}</div></td>
-    <td><div class="td-inner ${pcc}" style="font-variant-numeric:tabular-nums">${usdSigned(round2(c.dayChgAbs),2)}</div></td>
+    <td><div class="td-inner ${pccEff}" style="font-variant-numeric:tabular-nums">${dayKnown ? usdSigned(round2(c.dayChgAbs),2) : '—'}</div></td>
     <td><div class="td-inner"><span class="pvpt-pill ${pccEff}">${dayPctTxt}</span></div></td>
     <td><div class="td-inner pvpt-cost" style="font-variant-numeric:tabular-nums">${usd(round2(h.costBasis))}</div></td>
     <td><div class="td-inner ${gc}" style="font-weight:700;font-variant-numeric:tabular-nums">${usdSigned(round2(c.gl))}</div></td>
@@ -16565,17 +16578,19 @@ function toggleReinvest(idx){
 function groupTotalHTML(label, mkt, cost, day, gl, prevClose) {
   const dPct = (prevClose > 0) ? day/prevClose*100 : 0;
   const glPct = cost > 0 ? gl/cost*100 : 0;
-  const dc = day >= 0 ? 'pos' : 'neg';
+  const _dk = _pvDayKnown();
+  const dc = !_dk ? '' : day >= 0 ? 'pos' : 'neg';
   const gc = gl  >= 0 ? 'pos' : 'neg';
+  const dPctTxt = _dk ? pctSigned(dPct) : '—', dayTxt = _dk ? usdSigned(day,2) : '—';
   // Los % van en una pastilla «plana» (pvpt-pill flat: mismo relleno, sin fondo) para que
   // las cifras queden alineadas con las pastillas de las filas de arriba.
   return `<tr class="pos-total-row">
     <td><div class="td-inner" style="text-align:left"><strong>Total ${label}</strong></div></td>
     <td></td><td></td><td></td>
-    <td><div class="td-inner"><span class="pvpt-pill flat ${dc}">${pctSigned(dPct)}</span></div></td>
+    <td><div class="td-inner"><span class="pvpt-pill flat ${dc}">${dPctTxt}</span></div></td>
     <td><div class="td-inner" style="font-weight:700">${usd(mkt)}</div></td>
-    <td><div class="td-inner ${dc}">${usdSigned(day,2)}</div></td>
-    <td><div class="td-inner"><span class="pvpt-pill flat ${dc}">${pctSigned(dPct)}</span></div></td>
+    <td><div class="td-inner ${dc}">${dayTxt}</div></td>
+    <td><div class="td-inner"><span class="pvpt-pill flat ${dc}">${dPctTxt}</span></div></td>
     <td><div class="td-inner pvpt-cost">${usd(cost)}</div></td>
     <td><div class="td-inner ${gc}" style="font-weight:700">${usdSigned(gl)}</div></td>
     <td><div class="td-inner"><span class="pvpt-pill flat ${gc}">${pctSigned(glPct)}</span></div></td>
@@ -16727,15 +16742,17 @@ function renderTable(T, opts) {
   const dayPct   = _dc.dayPct;
   const dayAbs   = _dc.day;
   const glPct    = T.cost > 0 ? T.gl / T.cost * 100 : 0;
-  const dc = dayAbs >= 0 ? 'pos' : 'neg';
+  const _dkF = _pvDayKnown();
+  const dc = !_dkF ? '' : dayAbs >= 0 ? 'pos' : 'neg';
   const gc = T.gl  >= 0 ? 'pos' : 'neg';
+  const _fPct = _dkF ? pctSigned(dayPct) : '—', _fDay = _dkF ? usdSigned(dayAbs,2) : '—';
   $('posFoot').innerHTML = `<tr>
     <td style="text-align:left">${_L('Total posiciones', 'Total positions')}</td>
     <td></td><td></td><td></td>
-    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${dc}">${pctSigned(dayPct)}</span></td>
+    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${dc}">${_fPct}</span></td>
     <td style="font-variant-numeric:tabular-nums">${usd(totMkt)}</td>
-    <td class="${dc}" style="font-variant-numeric:tabular-nums">${usdSigned(dayAbs,2)}</td>
-    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${dc}">${pctSigned(dayPct)}</span></td>
+    <td class="${dc}" style="font-variant-numeric:tabular-nums">${_fDay}</td>
+    <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${dc}">${_fPct}</span></td>
     <td class="pvpt-cost" style="font-variant-numeric:tabular-nums">${usd(T.cost)}</td>
     <td class="${gc}" style="font-variant-numeric:tabular-nums">${usdSigned(T.gl)}</td>
     <td style="font-variant-numeric:tabular-nums"><span class="pvpt-pill flat ${gc}">${pctSigned(glPct)}</span></td>
@@ -20526,7 +20543,14 @@ const _PNX_CHEV  = '<svg class="pnx-chev" width="16" height="16" viewBox="0 0 24
 
 // % del día redondeado a lo que se pinta: un +0,004 % sale «0.00%» en gris y no cuenta como
 // «sube» (el «|| 0» quita el -0).
-function _pnxChg(h) { return (Math.round((+h.dayChgPct || 0) * 100) / 100) || 0; }
+// % del día de la posición: el MISMO de la tabla de Portafolio (calcH, desde el cierre previo).
+// Antes leía dayChgPct a pelo, que vale 0 hasta la primera cotización y cuando Finnhub no da %.
+function _pnxChg(h) {
+  let v = NaN;
+  try { v = +calcH(h).dayChgPctEff; } catch(e) {}
+  if (!isFinite(v)) v = +h.dayChgPct;
+  return (Math.round((isFinite(v) ? v : 0) * 100) / 100) || 0;
+}
 function _pnxCls(v) { return v > 0 ? 'up' : v < 0 ? 'dn' : 'fl'; }
 function _pnxPct(v) { return (v > 0 ? '+' : '') + v.toFixed(2) + '%'; }
 // Inicial del ticker para el avatar («BRK.B» → B, «^GSPC» → G).
@@ -20708,7 +20732,7 @@ function _pnxRenderList() {
         return `<div class="pnx-ai" data-tk="${tk}"><button type="button" class="pnx-row">`
           + `<span class="pnx-av pv-lg">${pvEsc(_pnxLetter(h.ticker))}${_pvLogoImg(h.ticker)}</span>`
           + `<span class="pnx-nm"><b>${tk}</b><small>${pvEsc(_pnxSub(h, tk))}</small></span>`
-          + `<span class="pnx-rt"><b class="${_pnxCls(v)}">${_pnxPct(v)}</b><small>${_pnxCount((STOCK_NEWS[h.ticker] || []).length)}</small></span>`
+          + `<span class="pnx-rt"><b class="${_pvDayKnown() ? _pnxCls(v) : 'fl'}">${_pvDayKnown() ? _pnxPct(v) : '—'}</b><small>${_pnxCount((STOCK_NEWS[h.ticker] || []).length)}</small></span>`
           + `${_PNX_CHEV}</button></div>`;
       }).join('');
   if (list._tbLastHtml !== html) {
@@ -20846,7 +20870,7 @@ function showStockNews(ticker, btn) {
   const html =
       `<div class="pnx-ph"><span class="pnx-av pv-lg">${pvEsc(_pnxLetter(ticker))}${_pvLogoImg(ticker)}</span>`
     + `<div class="pnx-pn"><h3>${tk}</h3><small>${pvEsc(_pnxSub(h, tk))}</small></div>`
-    + `<div class="pnx-px"><b>${_pvPx(h.price)}</b><span class="pnx-chg ${_pnxCls(v)}">${_pnxPct(v)} ${_L('hoy', 'today')}</span></div></div>`
+    + `<div class="pnx-px"><b>${_pvPx(h.price)}</b><span class="pnx-chg ${_pvDayKnown() ? _pnxCls(v) : 'fl'}">${_pvDayKnown() ? _pnxPct(v) : '—'} ${_L('hoy', 'today')}</span></div></div>`
     + `<div class="pnx-stats">`
     + `<div class="pnx-st"><small>${_L('Tu posición', 'Your position')}</small><b>${usd(c.mktVal)}</b></div>`
     + `<div class="pnx-st"><small>${gl < 0 ? _L('Pérdida', 'Loss') : _L('Ganancia', 'Gain')}</small>`
@@ -24681,6 +24705,14 @@ function _renderHeaderDayBadge() {
   // Rediseño de la cabecera (pvPortHeroCss): monto con su símbolo, % con el formato de la
   // cabecera y la etiqueta del periodo («hoy»). La pastilla ya ES el cambio del día, así que la
   // línea «Hoy» de debajo se oculta para no decirlo dos veces.
+  // Día aún desconocido: se queda la cifra que ya había (no se pinta un «+$0.00» inventado).
+  if (!_pvDayKnown()) {
+    if (/\d/.test(pv.textContent)) { _pvphTodayLine(false); return; }
+    pv.textContent = `— ${_pvphPerTxt('1D')}`;
+    pv.className = 'stitch-badge';
+    _pvphTodayLine(false);
+    return;
+  }
   pv.textContent = `${_pvphMoney(day)} (${_pvphPct(dayPct, 2)}) ${_pvphPerTxt('1D')}`;
   pv.className = 'stitch-badge ' + _pvphTone(day);
   _pvphTodayLine(false);
@@ -24839,7 +24871,7 @@ function _updatePerfTotals(activeP, ds) {
     // Sin precios en vivo y sin cierre previo cacheado de HOY, `day` vale 0 por falta de datos,
     // no porque la cartera no se haya movido. Pintar "+$0.00" afirma algo que no se sabe; "—"
     // dice la verdad y además no parpadea a cero cuando llegan los precios 3 s después.
-    if (!isLive && !_PV_DAY_FROM_CACHE) {
+    if (!_pvDayKnown()) {
       el('perf-day').textContent = '—';
       el('perf-day').className = 'perf-metric-val';
     } else {
@@ -25916,12 +25948,36 @@ function _pvMarketDayISO() {
 // Y solo se da por bueno si CADA posición tiene cierre previo — con una sola sin él, el total
 // sería un cambio del día incompleto presentado como si fuera completo.
 var _PV_DAY_FROM_CACHE = false;   // var, no let: _updatePerfTotals se define antes en el archivo
+// ¿Se conoce el cambio del día? Cotización en vivo, cierres previos de esta sesión o la última
+// cotización guardada de esta sesión. Una sola regla para la fila, los subtotales, el pie, la
+// pastilla de la cabecera y Noticias: antes unas celdas ponían «—» y otras «+$0.00».
+function _pvDayKnown() {
+  try { return !!(isLive || _PV_DAY_FROM_CACHE || window._PV_DAY_FROM_LASTQ); } catch(e) { return false; }
+}
+// Cierres previos de la SESIÓN que enseñan las cotizaciones, con esa sesión como fecha. Clave
+// propia: _PC_KEY guardaba los cierres de hoy bajo la fecha de AYER (la usa el respaldo sin
+// posiciones), así que la comparación de abajo no casaba nunca desde el segundo día y «Hoy»
+// salía «—» en cada arranque hasta la primera cotización (o toda la sesión si fallaba).
+const _PCS_KEY = 'portiv_prev_close_sesion_v1';   // {day, prices:{T:pc}}
+function _pvSesionDia() {
+  try { if (typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.sessionDay) return PORTIV_CHART.sessionDay(); } catch(e) {}
+  return _pvMarketDayISO();
+}
+function _pvSavePrevCloseSesion(prices) {
+  try {
+    const day = _pvSesionDia();
+    let old = null; try { old = JSON.parse(localStorage.getItem(_PCS_KEY) || 'null'); } catch(e) {}
+    const merged = Object.assign({}, (old && old.day === day && old.prices) || {}, prices);
+    localStorage.setItem(_PCS_KEY, JSON.stringify({ day, prices: merged }));
+  } catch(e) {}
+}
 function _pvHydratePrevCloseFromCache() {
   try {
     _PV_DAY_FROM_CACHE = false;
     if (!Array.isArray(HOLDINGS) || !HOLDINGS.length) return false;
-    const d = _loadPrevCloseData();
-    if (!d || d.date !== _pvMarketDayISO()) return false;
+    let d = null;
+    try { const s = JSON.parse(localStorage.getItem(_PCS_KEY) || 'null'); if (s && s.day === _pvSesionDia() && s.prices) d = s; } catch(e) {}
+    if (!d) return false;
     let hit = 0;
     HOLDINGS.forEach(h => {
       if (h._prevClose && h._prevClose > 0) { hit++; return; }
@@ -25950,13 +26006,17 @@ function _pvSaveLastQuotes() {
     let prev = {};
     try { prev = JSON.parse(localStorage.getItem(_LQ_KEY) || '{}') || {}; } catch(e) { prev = {}; }
     const map = Object.assign({}, prev);
+    const _qat = window._PV_QAT || {};
     HOLDINGS.forEach(h => {
       if (!_validPrice(h.price)) return;
+      // Sólo los símbolos que SÍ cotizaron (en esta ronda o antes en la sesión): un símbolo
+      // que falló no recibe un sello de hora nuevo con su precio viejo.
+      if (!_qat[h.ticker] && map[h.ticker]) return;
       map[h.ticker] = {
         price: h.price,
         pct: (typeof h.dayChgPct === 'number' && isFinite(h.dayChgPct)) ? h.dayChgPct : 0,
         prevClose: (h._prevClose && h._prevClose > 0) ? h._prevClose : null,
-        ts: Date.now(),
+        ts: _qat[h.ticker] || Date.now(),
       };
     });
     localStorage.setItem(_LQ_KEY, JSON.stringify(map));
@@ -25985,6 +26045,18 @@ function _pvHydrateFromLastQuotes() {
       if (!(h._prevClose > 0) && pct !== 0) h._prevClose = q.price / (1 + pct / 100);
       hit++;
     });
+    // Si TODAS las posiciones cotizables tienen su última cotización de la sesión que se
+    // enseña, el día es conocido aunque la red aún no haya respondido: se pinta ese último
+    // movimiento real en vez de «—».
+    try {
+      const sd = _pvSesionDia();
+      const fmt = _pvDTF('en-CA', { timeZone: 'America/New_York' });
+      window._PV_DAY_FROM_LASTQ = HOLDINGS.every(h => {
+        if (h.noLive) return true;
+        const q = map[h.ticker];
+        return !!(q && h._prevClose > 0 && q.ts && fmt.format(new Date(q.ts)) >= sd);
+      });
+    } catch(e) { window._PV_DAY_FROM_LASTQ = false; }
     return hit > 0;
   } catch(e) { return false; }
 }
@@ -26068,12 +26140,10 @@ async function fetchLivePrices() {
         // Capturar previousClose de la API para calcular 1D change real del portafolio
         if (typeof q.regularMarketPreviousClose === 'number' && q.regularMarketPreviousClose > 0) {
           freshPrevClose[q.symbol] = q.regularMarketPreviousClose;
-        } else if (typeof q.regularMarketPrice === 'number' && typeof q.regularMarketChangePercent === 'number') {
-          // Derivar: prevClose = price / (1 + pct/100)
-          const pct = q.regularMarketChangePercent;
-          if (Math.abs(pct) > 0.001) {
-            freshPrevClose[q.symbol] = +(px / (1 + pct / 100)).toFixed(4);
-          }
+        } else if (!q._failed && typeof px === 'number' && px > 0 && typeof q.regularMarketChangePercent === 'number') {
+          // Derivar: prevClose = price / (1 + pct/100). También con % 0 (acción plana): antes
+          // se quedaba el _prevClose de días atrás y la fila enseñaba un «hoy» viejo.
+          freshPrevClose[q.symbol] = +(px / (1 + q.regularMarketChangePercent / 100)).toFixed(4);
         }
 
         // CAPA 1+2: solo actualizar si el precio es plausible (>0, sin saltos absurdos vs el último bueno).
@@ -26092,6 +26162,9 @@ async function fetchLivePrices() {
           h._prevClose = freshPrevClose[q.symbol] || h._prevClose || null;
           if (typeof q.regularMarketChangePercent === 'number') h.dayChgPct = q.regularMarketChangePercent;
           h._stale   = false;
+          // Hora de la cotización buena de ESTE símbolo (sólo en memoria: no entra en el
+          // portafolio guardado ni en su hash de la nube).
+          (window._PV_QAT || (window._PV_QAT = {}))[h.ticker] = Date.now();
           if (typeof PORTIV_VAL !== 'undefined') PORTIV_VAL.clearStale(h.ticker);
           updated = true;
         } else if (typeof px === 'number' && px > 0) {
@@ -26105,6 +26178,7 @@ async function fetchLivePrices() {
 
     if (updated) {
       isLive = true;
+      window._pvQuotesAt = Date.now();   // última cotización buena (lo mira el regreso a la app)
       _chartYMin = null;
 
       // ── Persistir prev-close del día anterior (solo si la fecha cambió o no hay datos) ──
@@ -26129,6 +26203,7 @@ async function fetchLivePrices() {
         // Guardamos con la fecha de ayer (o la última sesión)
         const prevDate = stored && stored.date && stored.date < today ? stored.date : today;
         _savePrevCloseData(prevDate, mergedPrices, prevPortfolioClose);
+        _pvSavePrevCloseSesion(freshPrevClose);   // la copia por sesión que rehidrata el arranque
       }
 
       // ── EOD snapshot: guardar cierre del portafolio cuando el mercado acaba de cerrar ──
@@ -26140,7 +26215,9 @@ async function fetchLivePrices() {
           // días pasados quedan con el cierre del broker (no un snapshot intradía) → el % de
           // 1W/2W/1M sobre el historial acumulado coincide con el broker tras semanas de uso.
           try { if (typeof PORTIV_CHART !== 'undefined') PORTIV_CHART.saveDaily(T.total); } catch(e){}
-          // Actualizar prev-close con el cierre de hoy (para mañana)
+          // Actualizar prev-close con el cierre de hoy (para mañana). Sólo para el respaldo sin
+          // posiciones (_calcPreviousDayPortfolioClose, que lee el portfolioClose del día
+          // anterior). La rehidratación por posición ya no lee esta clave (ver _PCS_KEY).
           const closePrices = {};
           HOLDINGS.forEach(h => { if (h.price > 0) closePrices[h.ticker] = h.price; });
           _savePrevCloseData(today, closePrices, T.total);
@@ -26156,6 +26233,10 @@ async function fetchLivePrices() {
       // impacto) de un evento ya anunciado aparece apenas se mueve el mercado.
       if (typeof PORTIV_NEWS !== 'undefined' && document.getElementById('tab-noticias')?.classList.contains('active')) {
         try { PORTIV_NEWS.renderThisWeek(); } catch(e) {}
+        // «Noticias por posición» con los precios de este tick: antes su «+x.xx % hoy», precio y
+        // ganancia esperaban al repintado de noticias (hasta 30 min) y no cuadraban con Portafolio.
+        try { if (typeof _pnxRenderList === 'function') _pnxRenderList(); } catch(e) {}
+        try { if (typeof _snRepaintOpen === 'function') _snRepaintOpen(); } catch(e) {}
       }
       updateLiveBadge();
       // Recalcula la gráfica Y el % del período ACTIVO (cualquiera: 1W/2W/1M/3M/…) en cada
@@ -26173,6 +26254,16 @@ async function fetchLivePrices() {
       window._PV_QUOTES_PENDING = false;
       if (!isLive) { try { if (typeof _redrawActiveChart === 'function') _redrawActiveChart(); } catch(e2) {} }
     }
+    // Sin NINGUNA cotización buena todavía (429, sin red, proxy en pausa): reintento con espera
+    // creciente (5, 10, 15… hasta 30 s). El bucle de 30 s sólo cotiza con el mercado abierto,
+    // así que de noche o en fin de semana un primer fallo dejaba «Hoy» en «—» toda la sesión.
+    try {
+      if (!isLive && HOLDINGS.some(h => !h.noLive)) {
+        window._pvQRetry = Math.min((window._pvQRetry || 0) + 1, 6);
+        clearTimeout(window._pvQRetryT);
+        window._pvQRetryT = setTimeout(() => { if (!document.hidden && !isLive) fetchLivePrices(); }, 5000 * window._pvQRetry);
+      } else window._pvQRetry = 0;
+    } catch(e3) {}
   }
 }
 
@@ -27229,7 +27320,7 @@ async function _fetchResearch(ticker) {
     // 0) Snapshot persistente → re-entrada instantánea SIN tocar la API.
     const _snap = _researchSnapGet(ticker);
     if (_snap) {
-      if (_snap.eps && typeof EPS !== 'undefined') EPS._cache[(ticker||'').toUpperCase()] = _snap.eps;
+      if (_snap.eps && !_snap.eps.error && typeof EPS !== 'undefined') EPS._cache[(ticker||'').toUpperCase()] = _snap.eps;
       _currentResearchInfo = _pv52Vigente(_snap.info);
       researchChartCache = {};
       researchChartCache['1mo'] = _snap.chartData;
@@ -27387,7 +27478,7 @@ async function _fetchResearch(ticker) {
       // Ya hay data real → persistir snapshot para reabrir instantáneo.
       try { _researchSnapSet(ticker, {
         info, overview, chartData: _initChart, news: [],
-        eps: (typeof EPS !== 'undefined' ? EPS._cache[ticker] : null) || null,
+        eps: (e => (e && !e.error) ? e : null)(typeof EPS !== 'undefined' ? EPS._cache[ticker] : null),
         eKey: _eKey, priceTs: Date.now(),
       }); } catch(e){}
     } else {
@@ -27402,7 +27493,7 @@ async function _fetchResearch(ticker) {
         _applyChartPeriodChange(histData, '1mo');
         _researchSnapSet(ticker, {
           info, overview, chartData: histData, news: [],
-          eps: (typeof EPS !== 'undefined' ? EPS._cache[ticker] : null) || null,
+          eps: (e => (e && !e.error) ? e : null)(typeof EPS !== 'undefined' ? EPS._cache[ticker] : null),
           eKey: _eKey, priceTs: Date.now(),
         });
       }).catch(()=>{});
@@ -28365,8 +28456,11 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
         _ytdBadge.style.background = 'var(--surface2)';
         // Carga asíncrona del YTD real desde Yahoo Finance
         apiCall({action:'history', ticker, period:'ytd'}).then(d => {
-          const cl = (d?.closes || []).filter(c => c != null);
-          if (cl.length >= 2 && document.getElementById('r-ytd-badge')) {
+          // Si en el camino se abrió otra acción, este YTD no es suyo.
+          if (String(_currentResearchTicker || '').toUpperCase() !== String(ticker || '').toUpperCase()) return;
+          const cl = (d?.closes || []).filter(c => c != null && c > 0);
+          if (cl.length < 2) { _ytdBadge.style.display = 'none'; return; }   // sin serie: fuera, no «YTD: …» eterno
+          if (document.getElementById('r-ytd-badge')) {
             const pct = (cl[cl.length-1] - cl[0]) / cl[0] * 100;
             const pos = pct >= 0;
             _ytdBadge.textContent = `YTD: ${pos?'+':''}${pct.toFixed(2)}%`;
@@ -28374,7 +28468,7 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
             _ytdBadge.style.borderColor = pos ? 'var(--green-bg)' : 'var(--red-bg)';
             _ytdBadge.style.background = pos ? 'var(--green-bg)' : 'var(--red-bg)';
           }
-        }).catch(()=>{});
+        }).catch(()=>{ if (String(_currentResearchTicker || '').toUpperCase() === String(ticker || '').toUpperCase()) _ytdBadge.style.display = 'none'; });
       }
     }
   }
@@ -29389,7 +29483,7 @@ async function _peerMetric(tk){
   try {
     const met = await fhFetch(`/stock/metric?symbol=${tk}&metric=all`, 9000);
     const M = (met && met.metric) || null;
-    if (!M) return null;
+    if (!M || !Object.keys(M).length) return null;   // {} = sin datos (o limitado): no se guarda 7 días
     const row = {
       pe:   (typeof M.peTTM==='number') ? M.peTTM : null,
       revG: (typeof M.revenueGrowthTTMYoy==='number') ? M.revenueGrowthTTMYoy : null,   // ya en %
@@ -29612,7 +29706,11 @@ async function _fillPeers(ticker, selfMetrics, peerTickers){
   _peersInflight.add(ticker);
   try {
     const data = await _peersCompData(ticker, selfMetrics, peerTickers);
-    if (data && Array.isArray(data.rows) && data.rows.length > 1) _peersRowsSet(ticker, data.rows);
+    // Sólo se guarda si cada rival trae al menos una cifra: con las métricas limitadas en ese
+    // momento quedaban todos en «—» durante 7 días.
+    if (data && Array.isArray(data.rows) && data.rows.length > 1
+        && data.rows.every(r => r && (r.self || r.pe != null || r.revG != null || r.netM != null || r.roe != null)))
+      _peersRowsSet(ticker, data.rows);
     const h2 = document.getElementById('pvx-peers-host');
     if (h2 && h2.dataset.tk === ticker) _renderPeersInto(h2, ticker, data ? data.rows : null);
   } catch(e){
@@ -34778,8 +34876,13 @@ $('addStockOverlay').addEventListener('click', function(e){ if(e.target===this) 
 // ═══════════════════════════════════════════════════
 //  WATCHLIST
 // ═══════════════════════════════════════════════════
-let WATCHLIST_TICKERS = JSON.parse(localStorage.getItem('wl_tickers') || '[]');
-let WATCHLIST_CACHE   = JSON.parse(localStorage.getItem('wl_cache')   || '{}');
+// Lectura protegida: un valor corrupto (o que no sea lista/objeto) lanzaba aquí, en el nivel
+// superior del script principal, y abortaba el arranque entero; «Reintentar» recargaba con el
+// mismo almacenamiento. Ahora un valor malo cuenta como vacío y la nube lo restaura.
+let WATCHLIST_TICKERS = [];
+let WATCHLIST_CACHE   = {};
+try { const _a = JSON.parse(localStorage.getItem('wl_tickers') || '[]'); if (Array.isArray(_a)) WATCHLIST_TICKERS = _a.filter(t => typeof t === 'string' && t); } catch(e){}
+try { const _c = JSON.parse(localStorage.getItem('wl_cache') || '{}'); if (_c && typeof _c === 'object' && !Array.isArray(_c)) WATCHLIST_CACHE = _c; } catch(e){}
 // Seed UFO una sola vez (si el usuario lo borra luego, no se vuelve a agregar)
 if (!localStorage.getItem('wl_seed_ufo')) {
   if (!WATCHLIST_TICKERS.includes('UFO')) WATCHLIST_TICKERS.push('UFO');
@@ -34793,6 +34896,8 @@ function _wlSave() {
   _lsSet('wl_tickers', JSON.stringify(WATCHLIST_TICKERS));
   _lsSet('wl_cache',   JSON.stringify(WATCHLIST_CACHE));
   try { if (window.cloudPush) window.cloudPush(); } catch(e){}
+  // La watchlist vive en el bundle de cachés, no en la fila del portafolio: se agenda su subida.
+  try { if (window._pvCachesPush) window._pvCachesPush(); } catch(e){}
 }
 
 // ── Niche classifier ───────────────────────────────────────────────────────
@@ -35056,7 +35161,10 @@ function _wlInfoEnsure() {
     .then(data => {
       if (!data || !(data.regularMarketPrice > 0) || !WATCHLIST_TICKERS.includes(t)) return;
       const c = WATCHLIST_CACHE[t] || (WATCHLIST_CACHE[t] = {});
-      c.info = data; c.cachedAt = Date.now();
+      // Una info a medias (falló el perfil o las métricas) no sustituye a la buena: se perdían
+      // el nombre, el sector y el rango de 52 semanas durante 24 h.
+      if (data._parcial && c.info && !c.info._parcial) return;
+      c.info = data; c.cachedAt = data._parcial ? 0 : Date.now();
       if (!(c.price > 0)) { c.price = data.regularMarketPrice; c.dayChgPct = data.regularMarketChangePercent; }
       if (!_wlInfoSaveT) _wlInfoSaveT = setTimeout(() => { _wlInfoSaveT = null; _wlSave(); }, 1500);
       if ($('tab-watchlist')?.classList.contains('visible')) renderWatchlist();
@@ -35177,7 +35285,7 @@ async function addToWatchlist(ticker) {
       info: data,
       price: data.regularMarketPrice,
       dayChgPct: data.regularMarketChangePercent,
-      cachedAt: Date.now()
+      cachedAt: data._parcial ? 0 : Date.now()   // a medias: se vuelve a pedir en el siguiente refresco
     };
     _wlSave();
     showToast(`${ticker} agregado a tu watchlist`);
@@ -35188,6 +35296,10 @@ async function addToWatchlist(ticker) {
     if (_known) {
       console.warn('WL: API falló para ticker conocido, se conserva:', ticker, e);
       showToast(`${ticker} agregado — datos pendientes`);
+      // Se reintenta ya: precio a los 3 s y la info en el siguiente refresco (antes la fila
+      // quedaba en «—» hasta salir y volver a entrar a la pestaña, y la info 30 min).
+      delete _wlInfoTried[ticker];
+      setTimeout(() => { try { refreshWatchlistPrices(); } catch(_){} }, 3000);
       return;
     }
     WATCHLIST_TICKERS = WATCHLIST_TICKERS.filter(t => t !== ticker);
@@ -36222,6 +36334,9 @@ function _earnRead(off){
 async function _earnFetchWeek(off){
   const mon = _mondayOf(off), fri = new Date(mon); fri.setDate(mon.getDate() + 4);
   const d = await apiCall({ action:'earningsCalendar', from:_earnISO(mon), to:_earnISO(fri) }, 12000);
+  // Falló la red: no se escribe una semana vacía encima de la buena (el .catch de quien llama
+  // conserva las filas guardadas).
+  if (!d || d._failed) throw new Error('calendario no disponible');
   const held  = new Set((typeof HOLDINGS !== 'undefined' ? HOLDINGS : []).map(h => h.ticker));
   const watch = (typeof _BIGCAP_EARNINGS_WATCH !== 'undefined') ? _BIGCAP_EARNINGS_WATCH : new Set();
   const rows = ((d && d.earnings) || [])
@@ -36261,7 +36376,11 @@ function _earnEnsureFreshNow(off){
     }).catch(() => {
       _earnInflight[off] = false;
       // Fallo de red: marca el intento para no martillar la API en cada render.
-      try { _lsSet(_earnKey(off), JSON.stringify({ ts: Date.now(), rows: (c && c.rows) || [] })); } catch(e){}
+      // Con filas guardadas, el sello se pone para que el próximo intento llegue al vencer el
+      // TTL corto (no el largo): se conservan las filas sin congelarlas horas por un fallo.
+      const _r0 = (c && c.rows) || [];
+      const _ts0 = _r0.length ? Date.now() - _EARN_TTL_MS + _EARN_TTL_EMPTY_MS : Date.now();
+      try { _lsSet(_earnKey(off), JSON.stringify({ ts: _ts0, rows: _r0 })); } catch(e){}
     });
   } catch(e){}
 }
@@ -37302,7 +37421,7 @@ async function autoUpdateNews(force) {
   for (let i = 0; i < TICKERS.length; i += 4) {
     const batch = TICKERS.slice(i, i + 4);
     const batchResults = await Promise.allSettled(
-      batch.map(t => apiCall({action:'news', ticker:t}, 7000).then(d => ({ticker:t, news:d.news||[]})))
+      batch.map(t => apiCall({action:'news', ticker:t}, 7000).then(d => { if (d && d._failed) throw new Error('news'); return {ticker:t, news:(d && d.news)||[]}; }))
     );
     allResults.push(...batchResults);
     if (i + 4 < TICKERS.length) await new Promise(r => setTimeout(r, 150));
@@ -37394,7 +37513,8 @@ async function autoUpdateNews(force) {
   // Sort newest first, then take top 8 for the weekly digest
   allArticles.sort((a, b) => (b.providerPublishTime||0) - (a.providerPublishTime||0));
 
-  if (!_aiNewsUsed) WEEKLY_NEWS = allArticles.slice(0, 8).map(a => {
+  // Sin artículos (todo vino vacío) se conserva la lista anterior en vez de dejarla en blanco.
+  if (!_aiNewsUsed && allArticles.length) WEEKLY_NEWS = allArticles.slice(0, 8).map(a => {
     const held = HOLDINGS.find(h => h.ticker === a.ticker);
     const pct  = held?.dayChgPct ?? 0;
     // Sentimiento real por palabras clave; fallback al sesgo del precio
@@ -37882,12 +38002,16 @@ function _chatMarketCtx(){
       const T=calcTotals();
       const base=(T.mkt||0)-(T.day||0);
       const pct = base>0 ? (T.day/base*100) : 0;
-      if(T.mkt>0) L.push(`CARTERA HOY: ${T.day>=0?'+':''}${usd(T.day)} (${pct>=0?'+':''}${pct.toFixed(2)}%) sobre ${usd(T.mkt)} a mercado.`);
+      // Sin cotizaciones aún, el «hoy» vale 0 por falta de datos: no se le dice a la IA que la
+      // cartera está plana (lo repetía como un hecho y su respuesta quedaba en caché).
+      if(T.mkt>0) L.push(_pvDayKnown()
+        ? `CARTERA HOY: ${T.day>=0?'+':''}${usd(T.day)} (${pct>=0?'+':''}${pct.toFixed(2)}%) sobre ${usd(T.mkt)} a mercado.`
+        : `CARTERA HOY: ${usd(T.mkt)} a mercado (movimiento de hoy aún no disponible).`);
     }catch(e){}
 
     // (c) Top/bottom movers del día
     try{
-      if(Array.isArray(HOLDINGS) && HOLDINGS.length){
+      if(Array.isArray(HOLDINGS) && HOLDINGS.length && _pvDayKnown()){
         const mv=HOLDINGS.map(h=>{ const c=calcH(h); return {t:h.ticker, a:c.dayChgAbs||0, p:c.dayChgPctEff||0}; })
                          .sort((x,y)=>x.a-y.a);
         const fmt=o=>`${o.t} ${o.a>=0?'+':''}${usd(o.a)} (${o.p>=0?'+':''}${o.p.toFixed(1)}%)`;
@@ -37936,7 +38060,10 @@ function _chatSmartContext(question, kind, wantsOpinion){
     const asesor = !concept && (wantsOpinion || kind==='portfolio');
     const _s=_pvSym();
     const summary=`MONEDA DE LA CARTERA: ${_pvCcy()} (todos los importes van en esa moneda). `
-      +`Portafolio: ${_s}${T.total.toFixed(0)} total, cash ${_s}${T.cash.toFixed(0)}, invertido ${_s}${INITIAL_CAPITAL.toFixed(0)}, hoy ${T.day>=0?'+':''}${_s}${T.day.toFixed(0)}`;
+      +`Portafolio: ${_s}${T.total.toFixed(0)} total, cash ${_s}${T.cash.toFixed(0)}`
+        // INITIAL_CAPITAL vale 0 a propósito en carteras de bróker o manuales: no es «invertido $0».
+        +(INITIAL_CAPITAL > 0 ? `, invertido ${_s}${INITIAL_CAPITAL.toFixed(0)}` : (T.cost > 0 ? `, costo ${_s}${T.cost.toFixed(0)}` : ''))
+        +(_pvDayKnown() ? `, hoy ${T.day>=0?'+':''}${_s}${T.day.toFixed(0)}` : `, movimiento de hoy aún no disponible`);
     const parts=[];
     // PRIMERO de todo: fecha, estado del mercado, movimiento del día y titulares. Va arriba
     // porque _chatSmartContext tiene un `return` temprano en el branch de tickers — si se
@@ -40382,6 +40509,15 @@ async function aiPortApply(){
     }
   }
   const _allRows = _aiReadRows();
+  // Bróker: una posición que llega SIN precio (fondos monetarios, mutuos, cripto lenta) toma el
+  // último precio bueno que ya tenía. Antes el filtro de abajo la descartaba y desaparecía de la
+  // tabla —y su valor del total— hasta la siguiente sincronización.
+  if (window._BROKER_APPLYING) _allRows.forEach(p => {
+    if (p && p.ticker && !(p.price > 0)) {
+      const o = HOLDINGS.find(h => h.ticker === p.ticker);
+      if (o && _validPrice(o.price)) p.price = o.price;
+    }
+  });
   // FIX 6: qty !== 0 — las posiciones cortas (qty negativa) son reales y ya no se descartan.
   const rows = _allRows.filter(p => p.ticker && p.qty !== 0 && p.price > 0);
 
@@ -40439,6 +40575,7 @@ async function aiPortApply(){
   }
 
   const oldNames = {}; HOLDINGS.forEach(h => oldNames[h.ticker] = h.name);
+  const _oldH = {}; HOLDINGS.forEach(h => { _oldH[h.ticker] = h; });
   HOLDINGS.length = 0;
   // ── Un ticker = UNA posición ─────────────────────────────────────────────────
   // El editor manual dejaba crear dos filas del mismo símbolo (lo natural si compraste
@@ -40471,6 +40608,20 @@ async function aiPortApply(){
     if (!prev.dayChgPct && p.dayChgPct) prev.dayChgPct = p.dayChgPct;
     if (p.reinvest === false) prev.reinvest = false;
   });
+  // Lo que el bróker NO trae se conserva de la posición que ya había: el cierre previo y el %
+  // del día (el bróker manda day_change 0) y, con cotización en vivo, su precio (el del bróker
+  // puede tener hasta una hora). Antes cada sincronización —al abrir, cada 20 min y al volver—
+  // pintaba todas las filas «+$0.00 / +0.00 %», el «Hoy» en cero y el total retrocedía.
+  HOLDINGS.forEach(h => {
+    const o = _oldH[h.ticker]; if (!o) return;
+    if (!h.dayChgPct) {
+      if (o._prevClose > 0) h._prevClose = o._prevClose;
+      if (typeof o.dayChgPct === 'number' && isFinite(o.dayChgPct)) h.dayChgPct = o.dayChgPct;
+    }
+    if (window._BROKER_APPLYING && !h.noLive && isLive && !o._stale && _validPrice(o.price)
+        && Math.abs(o.price / h.price - 1) < 0.25) h.price = o.price;
+  });
+  try { if (typeof _pvHydrateFromLastQuotes === 'function') _pvHydrateFromLastQuotes(); } catch(e){}
   CHART_COLORS.length = 0;
   HOLDINGS.forEach((h, i) => CHART_COLORS.push(EXTRA_COLORS[i % EXTRA_COLORS.length]));
   // Valor total de la foto manda sobre el cálculo de posiciones (si lo fijaste)
@@ -40684,7 +40835,12 @@ function init() {
     // EOD snapshot   → se detecta automáticamente en fetchLivePrices vía _justClosed()
     // ARRANQUE: el primer frame se pinta desde caché local; recotizar precios NO debe
     // bloquear el primer paint del portafolio → se difiere tras pintar (doble rAF).
-    requestAnimationFrame(() => requestAnimationFrame(() => { try { fetchLivePrices(); } catch(e){} }));
+    // Respaldo por tiempo: si los fotogramas no corren (app lanzada en segundo plano, vista
+    // tapada), el doble rAF no llegaba nunca y no se cotizaba hasta el siguiente ciclo.
+    let _bootQ = false;
+    const _bootQuotes = () => { if (_bootQ) return; _bootQ = true; try { fetchLivePrices(); } catch(e){} };
+    requestAnimationFrame(() => requestAnimationFrame(_bootQuotes));
+    setTimeout(_bootQuotes, 1500);
     // RED DE SEGURIDAD del gate "no tirar la gráfica mientras cargan los precios": si el primer
     // fetchLivePrices nunca resuelve (red colgada, app dormida a media petición), el gate no debe
     // dejar la gráfica congelada para siempre. A los 15 s se libera y se repinta una vez.
@@ -40759,7 +40915,13 @@ function init() {
         var _idle = window.requestIdleCallback || function(fn){ return setTimeout(fn, 120); };
         _idle(() => {
         try {
-          if (isMarketOpen() || isExtendedHours()) { try { fetchLivePrices(); } catch(e){} }
+          // También con el mercado cerrado si la última cotización buena tiene más de 15 min:
+          // una pestaña oculta a las 15:50 y reabierta a las 20:30 seguía con los precios de
+          // las 15:50 toda la noche (con la pestaña oculta ningún bucle cotiza).
+          if (isMarketOpen() || isExtendedHours() || (Date.now() - (window._pvQuotesAt || 0)) > 15 * 60 * 1000) { try { fetchLivePrices(); } catch(e){} }
+          // Seguimiento abierto: sus precios también vuelven al día (antes esperaban su bucle de
+          // 5 min, o hasta salir y volver a entrar a la pestaña con el mercado cerrado).
+          try { if ($('tab-watchlist') && $('tab-watchlist').classList.contains('active') && typeof refreshWatchlistPrices === 'function') refreshWatchlistPrices(); } catch(e){}
           // El loop de 5 min se salta los ticks con la pestaña oculta, así que al volver de un
           // rato en segundo plano la reconstrucción intradía puede tener un hueco. Se pide aquí
           // (el TTL de 4 min la hace no-op si ya está fresca) y ella misma repinta 1D al llegar.
@@ -40810,9 +40972,15 @@ function init() {
           _applyChartPeriodChange(raw, rng);
         }).catch(() => {});
       };
+      let _trail = null;
       const _sessionRefresh = (why) => {
         const n = Date.now();
-        if (n - _lastRun < 20000) return;          // varias señales juntas (wake + online) = 1 carga
+        if (n - _lastRun < 20000) {               // varias señales juntas (wake + online) = 1 carga
+          // …salvo la vuelta de la red: si llega justo después de un «despertar» que corrió sin
+          // red (todo falló), se reprograma al acabar la ventana en vez de perderse.
+          if (why === 'red' && !_trail) _trail = setTimeout(() => { _trail = null; _sessionRefresh('red'); }, 20050 - (n - _lastRun));
+          return;
+        }
         _lastRun = n;
         try { window._pvDataSourcesRevive && window._pvDataSourcesRevive(); } catch(e) {}
         try { const _hd = $('hDate'); if (_hd) _hd.textContent = new Date().toLocaleDateString('es-MX',{weekday:'long',year:'numeric',month:'long',day:'numeric'}); } catch(e) {}
@@ -40830,6 +40998,7 @@ function init() {
           else if (typeof _redrawActiveChart === 'function') _redrawActiveChart();
         } catch(e) {}
         try { _refreshAnalysis(); } catch(e) {}
+        try { if ($('tab-watchlist') && $('tab-watchlist').classList.contains('active') && typeof refreshWatchlistPrices === 'function') refreshWatchlistPrices(); } catch(e) {}
         // Noticias un poco después, para no competir con las cotizaciones (igual que al arrancar).
         setTimeout(() => { try { if (typeof autoUpdateNews === 'function') autoUpdateNews(); } catch(e) {} }, 6000);
         try { console.info('[Portiv] recarga de sesión:', why); } catch(e) {}
@@ -41430,7 +41599,17 @@ if (document.readyState === 'loading') {
     return;
   }
   var sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    // Tiempo límite de 45 s para cada petición a Supabase que no traiga ya su propia señal. Una
+    // petición COLGADA (no fallida) dejaba «Cargando…» delante con el portafolio local en disco y
+    // trababa los candados del gate y de las subidas. Al abortar llega como {error}, que el gate
+    // ya maneja (revela con lo local y reintenta una vez).
+    global: { fetch: function(input, init){
+      init = init || {};
+      if (init.signal || typeof AbortController !== 'function') return fetch(input, init);
+      var c = new AbortController(), t = setTimeout(function(){ try { c.abort(); } catch(e){} }, 45000);
+      return fetch(input, Object.assign({}, init, { signal: c.signal })).finally(function(){ clearTimeout(t); });
+    } }
   });
   window.sbClient = sb;
 
@@ -42324,7 +42503,11 @@ if (document.readyState === 'loading') {
     var em = ((s.user && s.user.email) || '').toLowerCase();
     var APPLIED = '_applied_' + ((s.user && s.user.id) || ''); // marcador por usuario (evita fugas al cambiar de cuenta)
     // Limpia restos de OTRA cuenta en este navegador (no toca la nube; se restaura abajo desde su fila).
-    _wlClearLocal(); _newsClearLocal();
+    // La watchlist se limpia DESPUÉS de leer la nube con éxito (abajo): borrarla antes y fallar
+    // la lectura (sin red, lectura lenta) la dejaba vacía, y la siguiente subida de cachés
+    // escribía esa lista vacía encima de la buena en la nube. Pérdida permanente.
+    _bundleLoaded = false;
+    _newsClearLocal();
     try {
       var uname = (s.user && s.user.user_metadata && (s.user.user_metadata.username || s.user.user_metadata.full_name || s.user.user_metadata.name)) || '';
       // No existe #navAvatar en el markup: el único avatar es #navAvatarMobile, que traía
@@ -42363,6 +42546,8 @@ if (document.readyState === 'loading') {
       // una lectura fallida. (Fila ausente = r.error nulo + r.data nulo → usuario realmente nuevo.)
       if (r && r.error) {
         try { _pvLogError('cloudLoadAndGate select profiles', r.error); } catch(_){}
+        // Sin lectura buena, lo local es la única copia: la watchlist se queda y no se sube nada
+        // de las cachés hasta que una lectura salga bien (_bundleLoaded sigue en false).
         revealApp();
         if (!window._pvGateRetried) {
           window._pvGateRetried = true;
@@ -42371,6 +42556,9 @@ if (document.readyState === 'loading') {
         return;
       }
 
+      // Lecturas buenas: ahora sí se limpian los restos locales (de esta u otra cuenta) y se
+      // restauran desde la nube. Si sólo falló profile_caches, la lista local se conserva.
+      if (!(_pcRes && _pcRes.error)) _wlClearLocal();
       var cloud = r.data && r.data.portfolio;
       var cloudUpdatedAt = (r.data && r.data.updated_at) || null;
       var localRaw = localStorage.getItem(LS_KEY);
@@ -42418,6 +42606,7 @@ if (document.readyState === 'loading') {
           _lastBundleHash = _pvBundleStableHash({ __app: _bundle.__app||{}, __wl: _bundle.__wl||{} });
         }
         // else: ya se restauró __app/__wl (si había) desde el portfolio blob arriba — se deja así.
+        _bundleLoaded = true;   // la nube ya se leyó: a partir de aquí las subidas son seguras
       } catch(e){ _pvLogError('cloudLoadAndGate profile_caches', e); }
 
       if (cloud) {
@@ -42602,6 +42791,9 @@ if (document.readyState === 'loading') {
   var _lastPortHash = null;     // last portfolio blob pushed to profiles (hash estable, sin precios)
   var _lastBundleHash = null;   // last {__app,__wl} bundle pushed to profile_caches
   var _cachesTimer = null;
+  // ¿Se leyó ya la fila de profile_caches en esta sesión? Hasta entonces no se sube el bundle:
+  // subirlo sin haber leído la nube podía pisar la watchlist buena con una vacía o vieja.
+  var _bundleLoaded = false;
   // Cold path: sync AI caches + watchlist to profile_caches, slow debounce, hash-gated.
   // Núcleo (sin debounce) de la subida de cachés/watchlist. Self-gated por _lastBundleHash: no
   // reescribe si nada cambió. Reutilizable por el flush inmediato (BUG 3).
@@ -42614,6 +42806,7 @@ if (document.readyState === 'loading') {
     _cachesInflight = (async function(){
       try {
         var sb2 = window.sbClient; if(!sb2 || typeof session==='undefined' || !session || !session.user) return;
+        if (!_bundleLoaded) return;
         var bundle = { __app: _appBundleGather(), __wl: _wlGather() };
         var h = _pvBundleStableHash(bundle);
         if (h === _lastBundleHash) return;                 // nada cambió (ignorando precios) → no reescribir
@@ -42628,10 +42821,15 @@ if (document.readyState === 'loading') {
     })();
     try { return await _cachesInflight; } finally { _cachesInflight = null; }
   }
+  // Ritmo fijo, sin reiniciar: savePortfolio llama aquí en cada tick de precios (30 s) y el
+  // debounce de 45 s se reiniciaba siempre, así que con la app abierta en horario de mercado el
+  // bundle (watchlist, perfil, cachés de IA) no se subía nunca. Ahora sale como mucho cada 90 s;
+  // el hash-gate de _cachesPushCore evita escribir si nada cambió.
   function _cachesPush(){
-    clearTimeout(_cachesTimer);
-    _cachesTimer = setTimeout(_cachesPushCore, 45000);   // 45s: caches are cold; don't amplify writes
+    if (_cachesTimer) return;
+    _cachesTimer = setTimeout(function(){ _cachesTimer = null; _cachesPushCore(); }, 90000);
   }
+  window._pvCachesPush = _cachesPush;
 
   // Núcleo (sin debounce) de la subida del portafolio. Respeta el hash-gate: no sube si nada
   // cambió. BUG 2/5: marca pv_port_synced='1' tras un upsert exitoso (local ya está en la nube),
@@ -42728,7 +42926,7 @@ if (document.readyState === 'loading') {
     try {
       if (!session || !session.user) return;
       clearTimeout(pushTimer);
-      clearTimeout(_cachesTimer);
+      clearTimeout(_cachesTimer); _cachesTimer = null;
       // Red de seguridad síncrona SOLO si el portafolio tiene cambios sin subir (hash-gate). Si el
       // upsert asíncrono de abajo alcanza a completar, el on_conflict=id lo vuelve idempotente.
       if (unloading) {
@@ -42974,7 +43172,17 @@ if (document.readyState === 'loading') {
   // cierra la sesión. Un fallo de RED (getUser lanza / sin señal de borrado) NO borra nada.
   sb.auth.getSession().then(function(r){
     var s = r.data.session;
-    if (!s) { showLogin(); return; }
+    if (!s) {
+      // Sin sesión por un fallo de RED (token vencido y sin conexión para renovarlo: avión,
+      // metro) no es un cierre de sesión: se muestra el login SIN borrar nada. Al volver la red,
+      // supabase renueva el token guardado, llega SIGNED_IN y el gate sigue con lo local intacto.
+      // Antes se borraban portafolio, cotizaciones y noticias locales en cada arranque así.
+      var _re = r && r.error;
+      var _red = !!(_re && (_re.name === 'AuthRetryableFetchError' || _re.status === 0 || /fetch|network|offline/i.test(_re.message || '')))
+                 || (typeof navigator !== 'undefined' && navigator.onLine === false);
+      showLogin(_red ? 'keep' : undefined);
+      return;
+    }
     // Las lecturas del gate viajan EN PARALELO con getUser() en vez de esperar su turno:
     // se ahorra un round trip entero en CADA arranque en frío, para todos los usuarios.
     try { _gatePrefetchFor(s.user && s.user.id); } catch(e){}
@@ -43007,7 +43215,12 @@ if (document.readyState === 'loading') {
     // Solo un cierre de sesión REAL borra datos locales; los eventos transitorios
     // (TOKEN_REFRESHED fallido, etc.) únicamente muestran el login.
     if (s && !session) cloudLoadAndGate(s);
-    else if (!s) showLogin(_e === 'SIGNED_OUT' || _e === 'USER_DELETED');
+    else if (!s) {
+      // INITIAL_SESSION sin sesión lo decide getSession() de arriba (que sabe si fue la red);
+      // tratarlo aquí borraba los datos locales justo en el caso sin conexión.
+      if (_e === 'INITIAL_SESSION') return;
+      showLogin(_e === 'SIGNED_OUT' || _e === 'USER_DELETED');
+    }
     // FIX 12b — _boot() corre en DOMContentLoaded y su primer snapRefresh puede rechazar por "sin
     // sesión" cuando el login/registro ocurre en esta misma carga. No había NADA que resincronizara
     // al llegar la sesión: el usuario con broker conectado veía "Conecta tu broker" hasta recargar.
@@ -50433,7 +50646,12 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       if(!tok) throw new Error(_isOffline()
         ? 'Sin conexión a internet. Conéctate y vuelve a intentarlo.'
         : 'Inicia sesión para conectar tu broker.');
-      return fetch(FN(name), { method:'POST',
+      // Tiempo límite de 60 s: una petición colgada (app suspendida a mitad, Mac dormida)
+      // dejaba snapRefresh._busy puesto para toda la sesión y el bróker congelado hasta
+      // reabrir la app. Al abortar cae en el .catch de transporte (error «sin conexión»).
+      var _ac = (typeof AbortController === 'function') ? new AbortController() : null;
+      var _at = _ac ? setTimeout(function(){ try { _ac.abort(); } catch(e){} }, 60000) : null;
+      return fetch(FN(name), { method:'POST', signal: _ac ? _ac.signal : undefined,
         headers:{ 'content-type':'application/json', 'apikey':_anon(), 'Authorization':'Bearer '+tok },
         body: JSON.stringify(body||{}) })
       // El .catch va PEGADO al fetch y no al final de la cadena: así captura sólo
@@ -50445,6 +50663,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         throw _e;
       })
       .then(function(r){ return r.json().catch(function(){return {};}).then(function(j){
+        if (_at) clearTimeout(_at);
         // FIX 13/17 — El status HTTP viaja en el error. Sin él, quien lo captura tenía que adivinar
         // con un regex sobre el mensaje (y "status code 4"/"unauthor" matcheaban 401 de Supabase,
         // pintando "tu conexión con el broker se interrumpió" ante un simple JWT vencido).
@@ -62621,12 +62840,23 @@ html body.dark-theme .pvm-skel {
     to = +to;
     var from = op.from != null ? +op.from : (el._pvmNum != null ? el._pvmNum : NaN);
     if (el._pvmRaf) { try { cancelAnimationFrame(el._pvmRaf); } catch(e){} el._pvmRaf = 0; }
+    if (el._pvmSafe) { clearTimeout(el._pvmSafe); el._pvmSafe = 0; }
     function put(v){ var s = fmt(v); el.textContent = s; el._pvmTxt = el.textContent; }
-    function fin(){ el._pvmNum = to; try { put(to); } catch(e){} }
+    function fin(){ if (el._pvmSafe) { clearTimeout(el._pvmSafe); el._pvmSafe = 0; } el._pvmNum = to; try { put(to); } catch(e){} }
     /* Con la página oculta (app en segundo plano) no hay fotogramas: se escribe el final. */
     if (!isFinite(to) || !isFinite(from) || from === to || reduced() || document.hidden || !window.requestAnimationFrame) { fin(); return; }
     var dur = op.dur || (wide() ? 520 : 750), t0 = 0;
     try { put(from); } catch(e){ fin(); return; }
+    /* Red de seguridad: si los fotogramas se detienen a mitad (vista tapada sin marcarse como
+       oculta, WebView en pausa), la cifra se quedaba en el valor VIEJO. Al pasar la duración
+       se escribe el final igualmente, salvo que otro código ya haya reescrito el texto. */
+    el._pvmSafe = setTimeout(function(){
+      el._pvmSafe = 0;
+      if (!el._pvmRaf) return;
+      try { cancelAnimationFrame(el._pvmRaf); } catch(e){}
+      el._pvmRaf = 0;
+      if (el.textContent === el._pvmTxt) fin(); else el._pvmNum = null;
+    }, dur + 300);
     function step(ts){
       if (el.textContent !== el._pvmTxt) { el._pvmRaf = 0; el._pvmNum = null; return; }
       if (!t0) t0 = ts;
@@ -63210,11 +63440,34 @@ html body #tab-portfolio .pvmp-pre { opacity:0; }
       if (td && td.getClientRects().length) { P.flash(td.querySelector('.td-inner') || td, dir); return; }
     }
   }
+  /* Cifras de cada fila (precio, hoy $, hoy %, valor, ganancia $ y %): antes del repintado se
+     guarda su texto y, al repintar, cada una cuenta del valor viejo al nuevo —con un cambio de
+     signo se escribe ya (count devuelve false)—. Antes sólo destellaba una celda y las demás
+     saltaban; subtotales y pie, igual. */
+  function numEl(td){ return td.querySelector('.pvpt-pill') || td.querySelector('.td-inner') || td; }
+  function rowKey(tr){ var s = tr.querySelector('.sym'); return s && s.firstChild ? String(s.firstChild.textContent || '').trim() : ''; }
+  function texts(tr){ return slice.call(tr.children).map(function(td){ return numEl(td).textContent; }); }
+  function recount(tr, was){
+    if (!was) return;
+    slice.call(tr.children).forEach(function(td, i){
+      if (!i) return;                                   // la celda del activo no es una cifra
+      var el = numEl(td), now = el.textContent;
+      if (was[i] == null || was[i] === now || !/\d/.test(was[i]) || !/\d/.test(now) || !painted(el)) return;
+      count(el, was[i], now, { dur: 450 });
+    });
+  }
   function beforeTable(){
     var tb = $('posRows'); if (!tb) return null;
-    var c = { tb: tb, first: tb.firstElementChild, drawer: null };
+    var c = { tb: tb, first: tb.firstElementChild, drawer: null, txt: {}, tot: [], foot: null };
     var d = tb.querySelector('tr.trade-drawer-row.open .trade-drawer');
     if (d) { var t = d.querySelector('.drawer-ticker'); c.drawer = { el: d, tk: t ? t.textContent.trim() : '' }; }
+    try {
+      if (seen() && can()) {
+        slice.call(tb.querySelectorAll('tr.pos-row')).forEach(function(tr){ var k = rowKey(tr); if (k) c.txt[k] = texts(tr); });
+        c.tot = slice.call(tb.querySelectorAll('tr.pos-total-row')).map(texts);
+        var f = $('posFoot') && $('posFoot').firstElementChild; if (f) c.foot = texts(f);
+      }
+    } catch(e){}
     return c;
   }
   function afterTable(c){
@@ -63236,7 +63489,12 @@ html body #tab-portfolio .pvmp-pre { opacity:0; }
         if (n >= 12 || !inView(row)) return;
         if (b.qty !== a.qty) { flashCell(row, [2, 1], b.qty - a.qty); n++; }       // operó
         else if (b.px !== a.px) { flashCell(row, [3, 7, 5, 8], b.px - a.px); n++; } // tick
+        try { recount(row, c.txt && c.txt[u.h.ticker]); } catch(e){}
       });
+      try {
+        slice.call(c.tb.querySelectorAll('tr.pos-total-row')).forEach(function(tr, i){ if (inView(tr)) recount(tr, c.tot[i]); });
+        var ft = $('posFoot') && $('posFoot').firstElementChild; if (ft && inView(ft)) recount(ft, c.foot);
+      } catch(e){}
     }
     rowsRv.apply(us);
     if (c.drawer && live) ghost(c.drawer, c.tb, now);
@@ -63760,6 +64018,20 @@ html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:acti
     return isFinite(v) ? v : NaN;
   }
   function sgn(now, before){ var d = num(now) - num(before); return d > 0 ? 1 : d < 0 ? -1 : 0; }
+  /* La cifra cuenta del valor viejo al nuevo (además del destello), como en Seguimiento. Sólo
+     en textos de UNA cifra y sin cambio de signo; si no, se queda como la pinta la app. */
+  function tween(el, was){
+    if (!el || was == null) return;
+    var nowT = el.textContent, m = /\d[\d,]*(?:\.(\d+))?/.exec(nowT), a = num(was), b = num(nowT);
+    if (!m || (nowT.match(/\d[\d,]*(?:\.\d+)?/g) || []).length !== 1) return;
+    if (!isFinite(a) || !isFinite(b) || a === b || (a < 0) !== (b < 0)) return;
+    var d = (m[1] || '').length, pre = nowT.slice(0, m.index), suf = nowT.slice(m.index + m[0].length);
+    P.countTo(el, 1, function(t){
+      if (t >= 1) return nowT;
+      var v = Math.abs(a) + (Math.abs(b) - Math.abs(a)) * t;
+      return pre + v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d }) + suf;
+    }, { from: 0, dur: 450 });
+  }
 
   /* Envuelve una función global de la pestaña: `before` toma el estado anterior y `after` anima
      la diferencia. Lo que devuelve y lo que lanza la original no cambia. Las declaraciones
@@ -63887,7 +64159,7 @@ html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:acti
       if (!((r.top < h && r.bottom > 0) || (o.top < h && o.top + r.height > 0))) return;   // fuera de la vista antes y después
       if (Math.abs(dy) > 1 && !P.reduced()) anim(ai, [{ translate: '0 ' + dy + 'px' }, { translate: '0 0' }], { duration: t.dur, easing: P.ease }, '_pvnA');
       var b = ai.querySelector('.pnx-rt b');
-      if (b && o.pct && b.textContent !== o.pct) P.flash(ai.querySelector('.pnx-row'), sgn(b.textContent, o.pct));
+      if (b && o.pct && b.textContent !== o.pct) { P.flash(ai.querySelector('.pnx-row'), sgn(b.textContent, o.pct)); tween(b, o.pct); }
     });
   });
 
@@ -63921,7 +64193,7 @@ html body #tab-noticias :is(#todayNews, #posNewsCard .pnx-items) > .sn-card:acti
     }
     if (panel._pnLastHtml === s.html) return;
     var v = vals(panel);
-    if (s.v.px && v.px !== s.v.px) P.flash(panel.querySelector('.pnx-px b'), sgn(v.px, s.v.px));
+    if (s.v.px && v.px !== s.v.px) { P.flash(panel.querySelector('.pnx-px b'), sgn(v.px, s.v.px)); tween(panel.querySelector('.pnx-px b'), s.v.px); }
     qa(panel, '.pnx-st').forEach(function(st, i){          // valor y ganancia (no «Acciones»)
       if (i < 2 && s.v.st[i] != null && v.st[i] !== s.v.st[i]) P.flash(st, sgn(v.st[i], s.v.st[i]));
     });
@@ -65280,6 +65552,25 @@ html body .px-kpm.open .box > .x { animation:pvmFade var(--pvm-in) var(--pvm-eas
     return p;
   });
 
+  /* Segunda pintada de la MISMA ficha (el snapshot pintó primero y luego llegan los datos
+     frescos o un reporte nuevo): el precio cuenta desde el que había y la rejilla de métricas
+     entra con un fundido. Antes, como la vista no cambiaba, todo saltaba de golpe. */
+  wrap(window, '_renderResearch', function(orig, args){
+    var tk = String(args[0] || '').toUpperCase();
+    var same = V.view === 'stock' && V.tk === tk && ((($('r-ticker') || {}).textContent) || '') === tk;
+    var pe = $('r-price'), before = same && pe ? num(pe.textContent) : null;
+    var r = orig.apply(this, args);
+    try {
+      if (same && now() - V.enterT > 700) {
+        var e2 = $('r-price');
+        if (before && e2) count(e2, before.v);
+        var m = document.querySelector('#researchResults .ra-metrics4');
+        if (m && m.getClientRects().length) P.swap(m);
+      }
+    } catch(e){}
+    return r;
+  });
+
   /* Periodo de la gráfica: si los datos tardan (no están en caché), la gráfica queda a media
      luz hasta que llegan —Chart.js ya deforma la línea al llegar— y la pastilla del cambio del
      periodo entra al cambiar. */
@@ -65306,13 +65597,32 @@ html body .px-kpm.open .box > .x { animation:pvmFade var(--pvm-in) var(--pvm-eas
     } catch(e){}
     return p;
   });
+  /* Pastilla del cambio (#r-change). Si la pidió el usuario (tocó un periodo) entra con escala,
+     como siempre. Si es un refresco del precio (mismo valor, mismo periodo, mismo signo) las dos
+     cifras cuentan del valor viejo al nuevo, como el precio grande de al lado; antes saltaban. */
   wrap(window, '_updateChangeDisplay', function(orig, args){
+    var prev = V.chg, tk = V.tk;
     var r = orig.apply(this, args);
     try {
-      if (V.perT && now() - V.perT < 4000 && V.view === 'stock') {
-        V.perT = 0;
-        var s = document.querySelector('#r-change .ra-chg');
-        if (s) P.enter(s, { from: 'scale' });
+      var s = document.querySelector('#r-change .ra-chg');
+      var a = +args[0], p = +args[1], lb = String(args[2] || '');
+      V.chg = { abs: a, pct: p, label: lb, tk: tk };
+      if (!s || V.view !== 'stock') return r;
+      var user = !!(V.perT && now() - V.perT < 4000);
+      if (user) { V.perT = 0; P.enter(s, { from: 'scale' }); return r; }
+      if (now() - V.enterT < 600) return r;            // la ficha está entrando: ya se mueve entera
+      var same = prev && prev.tk === tk && prev.label === lb && (prev.abs >= 0) === (a >= 0)
+                 && isFinite(prev.abs) && isFinite(prev.pct) && isFinite(a) && isFinite(p);
+      if (same && (prev.abs !== a || prev.pct !== p)) {
+        var sg = a >= 0 ? '+' : '\u2212', full = s.textContent, cut = full.indexOf(')');
+        var tail = cut >= 0 ? full.slice(cut + 1) : '';
+        P.countTo(s, 1, function(t){
+          if (t >= 1) return full;
+          var x = prev.abs + (a - prev.abs) * t, y = prev.pct + (p - prev.pct) * t;
+          return sg + '$' + Math.abs(x).toFixed(2) + ' (' + sg + Math.abs(y).toFixed(2) + '%)' + tail;
+        }, { from: 0, dur: 450 });
+      } else if (prev && prev.tk === tk && !same) {
+        P.enter(s, { from: 'fade' });                  // cambió de signo o de periodo: entra, no salta
       }
     } catch(e){}
     return r;
@@ -66629,5 +66939,60 @@ body.dark-theme .pvbp-empty-b button.sec{ background:var(--bp-fill); color:var(-
 })();
 </script>
 <!-- ═══ fin ELIGE TU BROKER ═══ -->
+<script id="pvMovExtraJs">
+/* ═══ MOVIMIENTO · lo que aún aparecía de golpe (9 nov 2026) ══════════════════════════════════
+   Sobre window.PVM, sólo vigila desde fuera (MutationObserver): si algo falla, la app pinta lo
+   mismo que sin este bloque. Con movimiento reducido, PVM no anima nada.
+     · Buscadores (ficha y buscador global): cada resultado NUEVO entra; los que ya estaban no
+       se repiten al teclear la letra siguiente.
+     · Calendario «Resultados y dividendos»: cuando pasa de «Cargando…» a los meses, éstos
+       entran escalonados (antes saltaba del texto a la rejilla entera).
+     · Tarjeta del bróker en Ajustes: desconectado → sincronizando → conectado cambia con un
+       fundido corto en vez de un corte. */
+(function(){
+  'use strict';
+  var P = window.PVM;
+  if (!P || typeof MutationObserver !== 'function') return;
+  var slice = Array.prototype.slice;
+  function $(id){ return document.getElementById(id); }
+  function vis(el){ try { return !document.hidden && !!el && el.getClientRects().length > 0; } catch(e){ return false; } }
+
+  ['searchDropdown', 'navSearchResults'].forEach(function(id){
+    var dd = $(id), keys = [];
+    if (!dd) return;
+    new MutationObserver(function(){
+      try {
+        var items = slice.call(dd.querySelectorAll('.sdrop-item, .search-modal-item'));
+        var k = items.map(function(it){ return it.getAttribute('data-ticker') || it.textContent.trim().slice(0, 24); });
+        var fresh = !keys.length;
+        var add = items.filter(function(it, i){ return keys.indexOf(k[i]) < 0; });
+        keys = k;
+        if (add.length && vis(dd)) P.enter(add.slice(0, 10), fresh ? { delay: 20, step: 28, max: 6, rise: 6, dur: 280 } : { from: 'fade', step: 20, max: 6, dur: 200 });
+      } catch(e){}
+    }).observe(dd, { childList: true });
+  });
+
+  var cal = $('pvaCal');
+  if (cal) new MutationObserver(function(){
+    try {
+      var real = !!cal.querySelector('.pva-calg') && !cal.querySelector('.pv-sk-p');
+      var was = cal._pvxReal; cal._pvxReal = real;
+      if (real && !was && vis(cal)) P.enter(cal.querySelectorAll('.pva-cm'), { step: 35, max: 8, rise: 8 });
+    } catch(e){}
+  }).observe(cal, { childList: true });
+
+  var card = $('snapConnectCard');
+  if (card) {
+    var last = card.textContent;
+    new MutationObserver(function(){
+      try {
+        var t = card.textContent; if (t === last) return;
+        var first = !last; last = t;
+        if (!first && vis(card)) P.enter(card.children, { from: 'fade', step: 30, max: 4, dur: 260 });
+      } catch(e){}
+    }).observe(card, { childList: true });
+  }
+})();
+</script>
 </body>
 </html>
