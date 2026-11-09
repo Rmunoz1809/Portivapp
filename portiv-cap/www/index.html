@@ -7353,13 +7353,30 @@ function _trCollectTargets(root){
       return NodeFilter.FILTER_ACCEPT;
     }
   });
-  let n; while ((n = walker.nextNode())) targets.push({ kind:'text', node:n, src:n.nodeValue });
+  let n; while ((n = walker.nextNode())) targets.push({ kind:'text', node:n, src:n.nodeValue, priv:_trIsPrivate(n.parentElement, n.nodeValue) });
   root.querySelectorAll('[placeholder]:not([data-i18n-ph])').forEach(el => {
     if (el.closest(skipSel)) return;
     const v = el.getAttribute('placeholder');
-    if (!_trShouldSkip(v) && !window._trTranslatedNodes.has(el)) targets.push({ kind:'ph', node:el, src:v });
+    if (!_trShouldSkip(v) && !window._trTranslatedNodes.has(el)) targets.push({ kind:'ph', node:el, src:v, priv:_trIsPrivate(el, v) });
   });
   return targets;
+}
+
+// Privacidad (9 nov 2026): el diccionario de la nube (`shared_analysis.__I18N_EN__`) lo leen
+// TODOS los usuarios. Antes se subía cualquier frase traducida, incluido el texto propio del
+// usuario (su análisis de cartera, el chat, montos, notas de precio objetivo, su nombre).
+// Lo personal se sigue traduciendo y se guarda sólo en ESTE dispositivo; a la nube sube
+// únicamente el texto genérico de la interfaz y de mercado.
+const _TR_PRIVATE_SEL = '#tab-portfolio, #tab-aianalyst, #tab-settings, .ai-chat-messages, [class*="pvt-"], [data-pv-private]';
+function _trIsPrivate(el, s){
+  try {
+    if (el && el.closest && el.closest(_TR_PRIVATE_SEL)) return true;
+    const t = String(s || '');
+    if (/[$€£@]|\bUS\$/.test(t)) return true;   // montos o correos
+    const u = (localStorage.getItem('pv_username') || '').trim();
+    if (u.length >= 3 && t.toLowerCase().indexOf(u.toLowerCase()) !== -1) return true;
+  } catch(e){ return true; }
+  return false;
 }
 
 let _trRunning = false;
@@ -7440,7 +7457,7 @@ async function _translatePageToEnglish(root){
           chunk.forEach(tgt => {
             const tr = map[tgt.src];
             if (!tr) return;
-            cache2[tgt.src] = tr; fresh[tgt.src] = tr;
+            cache2[tgt.src] = tr; if (!tgt.priv) fresh[tgt.src] = tr;   // lo personal no sube a la nube
             if (tgt.kind === 'text') tgt.node.nodeValue = tr; else tgt.node.setAttribute('placeholder', tr);
             window._trTranslatedNodes.add(tgt.node);
           });
@@ -10319,11 +10336,11 @@ const _PV_AI_CONSENT = {
         '<div style="font:800 19px/1.3 inherit;color:' + cTxt + ';margin-bottom:8px" id="pvAiConsentTitle">Análisis con inteligencia artificial</div>'
       + '<div style="font:500 14px/1.65 inherit;color:' + cTxt2 + ';margin-bottom:16px">'
       +   'Para generar los análisis, el chat y los resúmenes, Portiv envía datos de tu cartera a '
-      +   '<b style="color:' + cTxt + '">un proveedor de inteligencia artificial de terceros</b>.'
+      +   '<b style="color:' + cTxt + '">proveedores de inteligencia artificial de terceros (Google Gemini y Anthropic Claude)</b>.'
       + '</div>'
       + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:12px">'
       +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ SE ENVÍA</div>'
-      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Los símbolos de tus posiciones, su peso en la cartera, el sector, la beta, el retorno esperado y el plan de rebalanceo calculado.</div>'
+      +   '<div style="font:500 13px/1.6 inherit;color:' + cTxt2 + '">Tus posiciones (símbolo, cantidad, precio, valor, peso, ganancia o pérdida), el valor total, el efectivo y el resultado del día, el sector, la beta y el retorno esperado, el plan de rebalanceo, tus respuestas del perfil de inversor, lo que escribes en el chat y los textos que se traducen al inglés. El chat puede hacer búsquedas web con Google.</div>'
       + '</div>'
       + '<div style="background:' + cCard + ';border:1px solid ' + cLine + ';border-radius:14px;padding:14px 15px;margin-bottom:16px">'
       +   '<div style="font:700 12px/1.4 inherit;color:' + cTxt + ';letter-spacing:.02em;margin-bottom:7px">QUÉ NO SE ENVÍA</div>'
@@ -12745,20 +12762,28 @@ const _INFO_TS    = {};
     const now = Date.now();
     Object.keys(raw).forEach(tk => {
       const e = raw[tk];
-      if (e && _pvInfoCompleto(e.info) && (now - (e.ts || 0)) < _INFO_TTL){ _INFO_CACHE[tk] = e.info; _INFO_TS[tk] = e.ts; }
+      // Lo vencido también se carga: sirve mientras llega lo nuevo (_pvxEnsureFundamentals lo
+      // vuelve a pedir por su fecha). Tirarlo dejaba dividendo, beta y sector en genérico toda
+      // la sesión si esa primera petición fallaba.
+      if (e && _pvInfoCompleto(e.info) && !e.info._parcial && (now - (e.ts || 0)) < 14 * 24 * 60 * 60 * 1000){ _INFO_CACHE[tk] = e.info; _INFO_TS[tk] = e.ts || 0; }
     });
   } catch(e){}
 })();
 function _infoPersist(){
   try {
     const out = {};
-    Object.keys(_INFO_CACHE).forEach(tk => { out[tk] = { info: _INFO_CACHE[tk], ts: _INFO_TS[tk] || Date.now() }; });
+    Object.keys(_INFO_CACHE).forEach(tk => { if (!_INFO_CACHE[tk]._parcial) out[tk] = { info: _INFO_CACHE[tk], ts: _INFO_TS[tk] || Date.now() }; });
     localStorage.setItem(_INFO_LS, JSON.stringify(out));
   } catch(e){}   // cuota llena: el caché en memoria sigue sirviendo esta sesión
 }
 function _cacheInfo(ticker, info){
   if (!ticker || !info) return;
   const tk = ticker.toUpperCase();
+  // Una info parcial (falló el perfil o las métricas) no pisa una completa ni se persiste.
+  if (info._parcial) {
+    if (!_INFO_CACHE[tk]) { _INFO_CACHE[tk] = info; _INFO_TS[tk] = 0; }
+    return;
+  }
   _INFO_CACHE[tk] = info;
   _INFO_TS[tk]    = Date.now();
   _infoPersist();
@@ -14275,7 +14300,7 @@ let _pvxInfoBusy = false;
 async function _pvxEnsureFundamentals(tickers){
   if (_pvxInfoBusy || typeof apiCall !== 'function') return;
   const need = Array.from(new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean)))
-    .filter(tk => !_INFO_CACHE[tk] && !_PVX_INFO_TRIED.has(tk));
+    .filter(tk => (!_INFO_CACHE[tk] || (Date.now() - (_INFO_TS[tk] || 0)) > _INFO_TTL) && !_PVX_INFO_TRIED.has(tk));
   if (!need.length) return;
   _pvxInfoBusy = true;
   need.forEach(tk => _PVX_INFO_TRIED.add(tk));
@@ -14288,7 +14313,12 @@ async function _pvxEnsureFundamentals(tickers){
         try {
           const d = await apiCall({ action: 'info', ticker: tk }, 12000);
           if (d) { _cacheInfo(tk, d); got++; }
-        } catch(e){ /* sin datos para ese ticker: el motor lo dice, no lo inventa */ }
+          if (!d || d._parcial) throw new Error('info incompleta');
+        } catch(e){
+          /* sin datos (o a medias) para ese ticker: el motor lo dice, no lo inventa. Se vuelve
+             a intentar a los 3 min en vez de quedarse así toda la sesión. */
+          setTimeout(() => { _PVX_INFO_TRIED.delete(tk); }, 3 * 60 * 1000);
+        }
       }
     };
     await Promise.all([worker(), worker(), worker()]);
@@ -25039,12 +25069,21 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
     // Backend proxy no desplegado/caído (404/5xx≠502) → márcalo muerto y prueba el siguiente.
     if ((ep.kind === 'supabase' || ep.kind === 'netlify') &&
         (res.status === 404 || (res.status >= 500 && res.status !== 502))) {
+      // Un 5xx que el proxy sólo REENVÍA de Finnhub («upstream 503») es un fallo de ESTE
+      // endpoint, no del proxy: pausar toda la capa de datos 60 s dejaba sin cotizaciones ni
+      // gráficas a la app entera por un solo símbolo. Se trata como error de la llamada.
+      if (res.status >= 500) {
+        let _b5 = '';
+        try { _b5 = await res.clone().text(); } catch(_){}
+        if (/upstream\s*\d{3}/i.test(_b5)) { clearTimeout(tid); throw new Error(`Error ${res.status}`); }
+      }
       if (ep.kind === 'supabase') _fhProxyDeadUntil = Date.now() + _FH_PAUSE_HTTP; else _fhNetlifyDead = true;
       clearTimeout(tid);
       if (_fhEndpoint(path)) return _fhFetchRaw(path, timeoutMs, _retry);
       throw new Error(`Finnhub no disponible (${res.status})`);
     }
-    clearTimeout(tid);
+    // El temporizador sigue vivo hasta LEER el cuerpo: una respuesta con cabeceras pero cuerpo
+    // colgado dejaba esta clave bloqueada en _fhInflight para todos los llamadores.
     // 429 = límite de plan; 403 = RECHAZO POR RÁFAGA del proxy compartido (cuando el
     // bloque `info` dispara 6 llamadas a la vez, el proxy rechaza alguna con 403). Ambos
     // son transitorios y se recuperan con el MISMO backoff serial: una cotización sola sí
@@ -25076,13 +25115,16 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
           const base = Math.min(1500 * Math.pow(2, _retry), 8000);
           waitMs = base * (0.8 + Math.random() * 0.4);
         }
+        clearTimeout(tid);
         await new Promise(r => setTimeout(r, waitMs));
         return _fhFetchRaw(path, timeoutMs, _retry + 1);
       }
       throw new Error('Límite de llamadas alcanzado — espera unos segundos e intenta de nuevo');
     }
     if (!res.ok) throw new Error(`Error ${res.status}`);
-    return await res.json();
+    const _json = await res.json();
+    clearTimeout(tid);
+    return _json;
   } catch(e) {
     clearTimeout(tid);
     // SOLO un fallo REAL de red/conexión (TypeError de fetch: DNS, CORS, sin internet)
@@ -25442,6 +25484,18 @@ function _quoteCachePut(ticker, price, change, pct, src){
   };
 }
 function _quoteCacheGet(ticker){ const t=(ticker||'').toUpperCase(); const q=_QUOTE_CACHE[t]; return (q && q.price>0) ? q : null; }
+// % y $ del día de una cotización de Finnhub. Cuando `dp`/`d` vienen nulos pero hay cierre
+// previo (`pc`), se derivan de él: antes el nulo se pintaba como un «+0.00 %» inventado.
+function _fhDayPct(q){
+  if (q && typeof q.dp === 'number' && isFinite(q.dp)) return q.dp;
+  if (q && q.c > 0 && typeof q.pc === 'number' && q.pc > 0) return +((q.c / q.pc - 1) * 100).toFixed(4);
+  return 0;
+}
+function _fhDayChg(q){
+  if (q && typeof q.d === 'number' && isFinite(q.d)) return q.d;
+  if (q && q.c > 0 && typeof q.pc === 'number' && q.pc > 0) return +(q.c - q.pc).toFixed(4);
+  return 0;
+}
 
 // ── Rango de 52 semanas: UNA sola fuente para toda la ficha ───────────────────────────────
 // Finnhub da el máximo y el mínimo de 52 semanas (intradía, consolidados) con su fecha, pero
@@ -25505,7 +25559,9 @@ async function apiCall(params, timeoutMs = 15000) {
   const live = _apiInflight.get(key);
   if (live) return live.then(_apiClone);
   const p = _apiCallRaw(params, timeoutMs)
-    .then(val => { _apiMemo.set(key, { ts: Date.now(), val }); return val; })
+    // Una respuesta `_failed` (la red falló y se devolvió la lista vacía) NO se memoriza:
+    // el reintento de dentro de unos segundos tiene que salir a la red, no recibir el vacío.
+    .then(val => { if (!(val && val._failed)) _apiMemo.set(key, { ts: Date.now(), val }); return val; })
     .finally(() => { _apiInflight.delete(key); });
   _apiInflight.set(key, p);
   return p.then(_apiClone);
@@ -25531,9 +25587,10 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
     const results = await Promise.all(syms.map(async sym => {
       const _bq = _batch[sym] || _batch[sym.toUpperCase()];
       if (_bq && typeof _bq.c === 'number' && _bq.c > 0) {
-        try { _quoteCachePut(sym, _bq.c, _bq.d || 0, _bq.dp || 0, 'fh'); } catch(e){}
+        const _bdp = _fhDayPct(_bq), _bd = _fhDayChg(_bq);
+        try { _quoteCachePut(sym, _bq.c, _bd, _bdp, 'fh'); } catch(e){}
         // `pc` es el cierre previo REAL de Finnhub: fetchLivePrices lo prefiere a derivarlo del %.
-        return { symbol: sym, regularMarketPrice: _bq.c, regularMarketChange: _bq.d || 0, regularMarketChangePercent: _bq.dp || 0, regularMarketPreviousClose: (typeof _bq.pc === 'number' && _bq.pc > 0) ? _bq.pc : undefined };
+        return { symbol: sym, regularMarketPrice: _bq.c, regularMarketChange: _bd, regularMarketChangePercent: _bdp, regularMarketPreviousClose: (typeof _bq.pc === 'number' && _bq.pc > 0) ? _bq.pc : undefined };
       }
       // Finnhub /quote (vía proxy propio) PRIMERO: rápido y fiable (c/d/dp = precio/cambio/%día).
       // Los proxies CORS públicos de Yahoo hoy están caídos/bloqueados (403 / cuelgues de 13-19s),
@@ -25542,14 +25599,17 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       try {
         const d = await fhFetch(`/quote?symbol=${sym}`, timeoutMs);
         if (d && typeof d.c === 'number' && d.c > 0) {
-          try { _quoteCachePut(sym, d.c, d.d || 0, d.dp || 0, 'fh'); } catch(e){}
-          return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: d.d || 0, regularMarketChangePercent: d.dp || 0, regularMarketPreviousClose: (typeof d.pc === 'number' && d.pc > 0) ? d.pc : undefined };
+          const _ddp = _fhDayPct(d), _dd = _fhDayChg(d);
+          try { _quoteCachePut(sym, d.c, _dd, _ddp, 'fh'); } catch(e){}
+          return { symbol: sym, regularMarketPrice: d.c, regularMarketChange: _dd, regularMarketChangePercent: _ddp, regularMarketPreviousClose: (typeof d.pc === 'number' && d.pc > 0) ? d.pc : undefined };
         }
       } catch(e) { /* respaldo Yahoo */ }
       // El RESPALDO Yahoo se eliminó: _yhChart es hoy un stub que devuelve null siempre (ver
       // su definición), así que este bloque solo añadía una llamada muerta al camino crítico.
       reportQuiet('Datos · cotización de '+sym+' (Finnhub falló)', new Error('sin datos'));
-      return { symbol: sym, regularMarketPrice: 0, regularMarketChange: 0, regularMarketChangePercent: 0 };
+      // `_failed`: no es una cotización, es la marca de que no la hubo. Quien la consuma debe
+      // conservar lo último bueno (el 0 de aquí NO es un precio ni un 0.00 % real).
+      return { symbol: sym, regularMarketPrice: 0, regularMarketChange: 0, regularMarketChangePercent: 0, _failed: true };
     }));
     return { quoteResponse: { result: results } };
   }
@@ -25689,6 +25749,10 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
       // resto, que es justo donde viven las métricas propias de cada sector (P/valor
       // tangible, payout, rotación de inventario, medias de 5 años, fuerza relativa...).
       __m:                 m,
+      // Perfil o métricas que FALLARON (null = la llamada no respondió; un ETF responde vacío,
+      // no null). Una `info` parcial sirve para pintar ahora, pero no se guarda en ninguna
+      // caché ni sustituye a una completa: se quedaba 12-24 h sin nombre, sector ni métricas.
+      _parcial:            (profile === null || metricsData === null) ? true : undefined,
     });
   }
 
@@ -25743,7 +25807,7 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
     }));
     const yhArr = (yhR.status==='fulfilled' && Array.isArray(yhR.value) ? yhR.value : []);
     const news = _mergeNews(fhArr, yhArr, 12);
-    return { news };
+    return fhR.status === 'fulfilled' ? { news } : { news, _failed: true };
   }
 
   if (action === 'generalNews') {
@@ -25757,7 +25821,7 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
     }));
     const yhArr = (yhR.status==='fulfilled' && Array.isArray(yhR.value) ? yhR.value : []);
     const news = _mergeNews(fhArr, yhArr, 14);
-    return { news };
+    return fhR.status === 'fulfilled' ? { news } : { news, _failed: true };
   }
 
   if (action === 'earningsCalendar') {
@@ -25767,7 +25831,7 @@ async function _apiCallRaw(params, timeoutMs = 15000) {
     try {
       const d = await fhFetch(`/calendar/earnings?from=${f}&to=${t}`, timeoutMs);
       cal = (d && Array.isArray(d.earningsCalendar)) ? d.earningsCalendar : [];
-    } catch(e) { cal = []; }
+    } catch(e) { return { earnings: [], _failed: true }; }
     return { earnings: cal };
   }
 
@@ -26993,6 +27057,7 @@ function _analysisLocalGet(ticker, eKey){
   return (e && e.earningsKey === eKey && _pvInfoCompleto(e.info)) ? e : null;
 }
 function _analysisLocalSet(ticker, info, overview, eKey){
+  if (info && info._parcial) return;   // una info a medias no se guarda (ver apiCall 'info')
   _stockAnalysisCache[(ticker||'').toUpperCase()] = { info, overview: overview || null, earningsKey: eKey, ts: Date.now() };
   try { localStorage.setItem(_STOCK_ANALYSIS_LS, JSON.stringify(_stockAnalysisCache)); } catch(e){}
 }
@@ -27016,6 +27081,7 @@ async function _analysisSharedGet(ticker, eKey){
 }
 // Publica los fundamentales para que TODOS los lean (fire-and-forget; nunca rompe el flujo).
 async function _analysisSharedSet(ticker, info, overview, eKey){
+  if (info && info._parcial) return;   // ni se comparte con los demás usuarios
   try {
     const sb = window.sbClient; if (!sb) return;
     await _sharedWrite('set','analysis', (ticker||'').toUpperCase(), { info, overview: overview || null }, { earnings_key: eKey });
@@ -27029,7 +27095,7 @@ async function _analysisSharedSet(ticker, info, overview, eKey){
 // /stock/metric (las métricas del motor sectorial). Si solo falló el consenso de analistas,
 // se conserva el de la cacheada.
 function _pvInfoFresca(vieja, nueva, ticker){
-  if (!nueva || !_pvInfoCompleto(nueva)) return null;
+  if (!nueva || nueva._parcial || !_pvInfoCompleto(nueva)) return null;
   const tk = String(ticker || '').toUpperCase();
   if (!nueva.longName || String(nueva.longName).toUpperCase() === tk) return null;
   if (vieja && _pvInfoCompleto(vieja) && Object.keys(nueva.__m).length < Object.keys(vieja.__m).length * 0.8) return null;
@@ -27053,6 +27119,7 @@ function _researchSnapGet(ticker){
   return e;
 }
 function _researchSnapSet(ticker, snap){
+  if (snap && snap.info && snap.info._parcial) return;
   _researchSnapCache[(ticker||'').toUpperCase()] = Object.assign({ ts: Date.now() }, snap);
   try { localStorage.setItem(_RESEARCH_SNAP_LS, JSON.stringify(_researchSnapCache)); }
   catch(err){
@@ -27084,14 +27151,22 @@ function _invalidateAnalysisCaches(ticker){
 // El resto del análisis queda cacheado; únicamente el precio/cambio del día se
 // actualiza en vivo cada 10 min mientras se ve la acción (y al abrir si está viejo).
 let _researchPriceTimer = null;
-async function _refreshResearchPrice(ticker){
+let _researchPriceRetry = null;
+async function _refreshResearchPrice(ticker, _esReintento){
   ticker = (ticker||'').toUpperCase();
   if (!ticker || ticker !== (_currentResearchTicker||'').toUpperCase()) return;
+  // Un fallo no deja el precio viejo hasta el siguiente ciclo: un reintento a los 15 s.
+  const _reintentar = () => {
+    if (_esReintento) return;
+    clearTimeout(_researchPriceRetry);
+    _researchPriceRetry = setTimeout(() => { if (!document.hidden) _refreshResearchPrice(ticker, true); }, 15000);
+  };
   try {
-    const q = await fhFetch(`/quote?symbol=${ticker}`, 9000);
-    if (!q || typeof q.c !== 'number' || q.c <= 0) return;
+    let q = null;
+    try { q = await fhFetch(`/quote?symbol=${ticker}`, 9000); } catch(e){ _reintentar(); return; }
+    if (!q || typeof q.c !== 'number' || q.c <= 0) { _reintentar(); return; }
     if (ticker !== (_currentResearchTicker||'').toUpperCase()) return;   // cambió de acción durante el fetch
-    const price = q.c, chg = (typeof q.d === 'number' ? q.d : 0), pct = (typeof q.dp === 'number' ? q.dp : 0);
+    const price = q.c, chg = _fhDayChg(q), pct = _fhDayPct(q);
     _researchCurPrice = price; _researchDayChg = chg; _researchDayChgPct = pct;
     try { _quoteCachePut(ticker, price, chg, pct, 'fh'); } catch(e){}
     try { if (window.PV_TARGETS) window.PV_TARGETS.renderFicha(ticker, price); } catch(e){}   // distancia a tu precio objetivo al día
@@ -27118,11 +27193,21 @@ async function _refreshResearchPrice(ticker){
 }
 function _armResearchPriceTimer(ticker){
   if (_researchPriceTimer) { clearInterval(_researchPriceTimer); _researchPriceTimer = null; }
+  // Con el mercado abierto (o en horario extendido) el precio de la ficha se refresca cada
+  // minuto, como la tabla de posiciones y Seguimiento: antes iba cada 30 min y la cifra grande
+  // se quedaba atrás de las filas. Cerrado, cada 30 min. Sólo /quote (la llamada más barata).
+  let _ult = Date.now();
   _researchPriceTimer = setInterval(() => {
     if ((_currentResearchTicker||'').toUpperCase() !== (ticker||'').toUpperCase()) { clearInterval(_researchPriceTimer); _researchPriceTimer = null; return; }
     if (document.hidden) return;
+    let _vivo = false;
+    try { _vivo = isMarketOpen() || isExtendedHours(); } catch(e){}
+    if (!_vivo && Date.now() - _ult < 30 * 60 * 1000 - 5000) return;
+    // Sólo mientras la ficha está en pantalla (en otra pestaña no se gasta la llamada).
+    try { const _pe = document.getElementById('r-price'); if (!_pe || !_pe.getClientRects().length) return; } catch(e){}
+    _ult = Date.now();
     _refreshResearchPrice(ticker);
-  }, 30 * 60 * 1000);   // 30 min — solo el precio (fhFetch /quote = la llamada más barata: c/d/dp)
+  }, 60 * 1000);
 }
 
 let _researchInflight = null;   // ticker que se está generando AHORA → evita doble generación concurrente
@@ -27260,6 +27345,10 @@ async function _fetchResearch(ticker) {
     if (!info || !info.longName) throw new Error(`Ticker "${ticker}" no encontrado. Verifica el símbolo.`);
     _pv52Vigente(info);   // si se quedó la cacheada (Finnhub no respondió), sin extremos fuera de la ventana
 
+    // Si mientras tanto el usuario abrió OTRA acción, ésta ya no se pinta: una carga lenta de A
+    // caía encima de B (cabecera y métricas de A con la gráfica de B). Las cachés de arriba
+    // ya quedaron escritas, así que al volver a A sale al instante.
+    if ((currentResearchTicker || '').toUpperCase() !== _tk) return;
     const newsObj = { news: [] };   // Noticias eliminadas del análisis (sección quitada)
     _currentResearchInfo = info;
     // ── CARGA COMPLETA ANTES DE ABRIR ──────────────────────────────────────────────
@@ -27324,6 +27413,7 @@ async function _fetchResearch(ticker) {
 
   } catch(e) {
     console.error('[Research error]', e);
+    if ((currentResearchTicker || '').toUpperCase() !== _tk) return;   // el error de A no tapa a B
     $('researchLoading').style.display = 'none';
     $('researchEmpty').style.display = 'block';
     $('researchEmpty').innerHTML = `<div class="r-empty-title" style="margin-bottom:8px">Error al cargar</div><div class="r-empty-sub">${e.message || e}</div>`;
@@ -35074,7 +35164,8 @@ async function refreshWatchlistPrices() {
     (data?.quoteResponse?.result || []).forEach(q => {
       if (!WATCHLIST_CACHE[q.symbol]) WATCHLIST_CACHE[q.symbol] = {};
       if (q.regularMarketPrice)       WATCHLIST_CACHE[q.symbol].price      = q.regularMarketPrice;
-      if (q.regularMarketChangePercent != null) WATCHLIST_CACHE[q.symbol].dayChgPct = q.regularMarketChangePercent;
+      // Sólo con cotización REAL: el relleno de un fallo (precio 0, % 0) pisaba el % bueno con «0.00 %».
+      if (q.regularMarketChangePercent != null && !q._failed && q.regularMarketPrice > 0) WATCHLIST_CACHE[q.symbol].dayChgPct = q.regularMarketChangePercent;
       if (q.regularMarketPreviousClose > 0)       WATCHLIST_CACHE[q.symbol].prevClose = q.regularMarketPreviousClose;
     });
     _wlSave();
