@@ -50380,8 +50380,14 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       // Un broker elegido en «Elige tu broker» que el servidor no reconoce (catálogo cambiado,
       // o un servidor anterior al selector): mejor el portal con su lista que un callejón sin
       // salida. El alias de IBKR sigue por su aviso de abajo.
-      if (broker && broker !== 'ibkr' && !opt.portal && /Broker no reconocido/i.test(String(_m))) {
-        return snapConnect(mode, connectionId, '', { portal: true, name: opt.name });
+      // Ya NO se cae a la lista de brokers del portal: el usuario eligió su broker en la
+      // hoja de Portiv y la pantalla de SnapTrade para elegir otra vez no debe salir nunca.
+      // Se avisa con reintento (el slug viene del catálogo del propio servidor).
+      if (broker && broker !== 'ibkr' && /Broker no reconocido/i.test(String(_m))) {
+        _m = 'No pudimos abrir la conexión con ' + (opt.name || 'tu broker') + ' en este momento. Vuelve a intentarlo en unos segundos.';
+        try{ if(window._pvConnectingError){ window._pvConnectingError(_m, _retry); return; } }catch(_){}
+        try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
+        toast(_m); return;
       }
       if (/broker_not_configured|Broker no reconocido/i.test(String(_m))) {
         try{ if(window._pvConnectingOverlay) window._pvConnectingOverlay(false); }catch(_){}
@@ -66300,8 +66306,8 @@ body.dark-theme .pvbp-empty-b button.sec{ background:var(--bp-fill); color:var(-
       res.sort(function(a, b){ return (norm(a.name).indexOf(q) === 0 ? 0 : 1) - (norm(b.name).indexOf(q) === 0 ? 0 : 1); });
       if (!res.length) {
         box.innerHTML = '<div class="pvbp-empty"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>'
-          + '<h4>Sin resultados para «' + esc(S.q.trim()) + '»</h4><p>Portiv se conecta con los brokers de esta lista. Revisa el nombre o elige tu broker en la página segura de conexión.</p>'
-          + '<div class="pvbp-empty-b"><button type="button" class="sec" data-pvbp="clear">Ver todos</button><button type="button" data-pvbp="portal">Página segura</button></div></div>';
+          + '<h4>Sin resultados para «' + esc(S.q.trim()) + '»</h4><p>Portiv se conecta con los brokers de esta lista. Revisa el nombre o mira la lista completa.</p>'
+          + '<div class="pvbp-empty-b"><button type="button" data-pvbp="clear">Ver todos</button></div></div>';
         return;
       }
       h = '<div class="pvbp-l">Resultados<small>' + res.length + '</small></div><div class="pvbp-list">' + res.map(row).join('') + '</div>';
@@ -66425,7 +66431,6 @@ body.dark-theme .pvbp-empty-b button.sec{ background:var(--bp-fill); color:var(-
     if (t.id === 'pvbpClear') { e.preventDefault(); clearQ(true); return; }
     if (t.hasAttribute('data-f')) { if (t.getAttribute('data-f') !== S.f) { setFilter(t.getAttribute('data-f')); paint(true); } return; }
     var a = t.getAttribute('data-pvbp');
-    if (a === 'portal') { var m = S.mode; close(function(){ try { window.snapConnect(m, '', '', { portal: true }); } catch(err){} }); return; }
     if (a === 'clear') { clearQ(false); return; }
     choose(t.getAttribute('data-slug'));
   });
