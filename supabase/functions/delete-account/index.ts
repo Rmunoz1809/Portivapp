@@ -97,6 +97,26 @@ Deno.serve(async (req) => {
       console.error("[delete-account] no se pudo leer snaptrade_user_id:", String(e));
     }
 
+    // 1b) Datos del usuario fuera de `profiles` (9 nov 2026, revisión legal). Varias tablas
+    //     cuelgan de auth.users con ON DELETE CASCADE, pero `profile_caches` (watchlist +
+    //     respuestas del perfil de inversor) y `ai_usage` no tienen esa garantía en las
+    //     migraciones del repo: se borran explícitamente. Best-effort tabla a tabla: una
+    //     tabla ausente o un fallo no bloquea el borrado de la cuenta.
+    //     Se CONSERVAN a propósito los registros de facturación (subscriptions/
+    //     subscription_events), por obligaciones contables y para atender reembolsos y
+    //     disputas; lo declara la Política de Privacidad.
+    for (const table of [
+      "profile_caches", "ai_usage", "user_price_targets", "push_selection_log",
+      "push_portfolio", "device_tokens", "snaptrade_account_owners", "rate_limits", "client_errors",
+    ]) {
+      try {
+        const { error } = await admin.from(table).delete().eq("user_id", userId);
+        if (error) console.warn(`[delete-account] ${table}:`, error.message);
+      } catch (e) {
+        console.warn(`[delete-account] ${table}:`, String(e));
+      }
+    }
+
     // 2) Delete the profile row (idempotent safety net; service role bypasses RLS).
     const { error: delProfErr } = await admin.from("profiles").delete().eq("id", userId);
     if (delProfErr) {
