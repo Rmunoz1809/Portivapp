@@ -25952,7 +25952,13 @@ var _PV_DAY_FROM_CACHE = false;   // var, no let: _updatePerfTotals se define an
 // cotización guardada de esta sesión. Una sola regla para la fila, los subtotales, el pie, la
 // pastilla de la cabecera y Noticias: antes unas celdas ponían «—» y otras «+$0.00».
 function _pvDayKnown() {
-  try { return !!(isLive || _PV_DAY_FROM_CACHE || window._PV_DAY_FROM_LASTQ); } catch(e) { return false; }
+  try {
+    if (isLive || _PV_DAY_FROM_CACHE) return true;
+    // La última cotización guardada vale sólo si TODAS las posiciones actuales tienen su cierre
+    // previo: si entró una posición nueva después, su día no se conoce todavía.
+    return !!(window._PV_DAY_FROM_LASTQ && Array.isArray(HOLDINGS) && HOLDINGS.length
+              && HOLDINGS.every(h => h.noLive || h._prevClose > 0));
+  } catch(e) { return false; }
 }
 // Cierres previos de la SESIÓN que enseñan las cotizaciones, con esa sesión como fecha. Clave
 // propia: _PC_KEY guardaba los cierres de hoy bajo la fecha de AYER (la usa el respaldo sin
