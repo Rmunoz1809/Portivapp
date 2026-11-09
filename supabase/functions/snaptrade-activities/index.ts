@@ -48,6 +48,7 @@ import {
   requireUser,
   loadProfile,
   requireEntitlement,
+  ownedAccounts,
 } from "../_shared/snaptrade.ts";
 
 const todayUTC = () => new Date().toISOString().slice(0, 10);
@@ -140,7 +141,8 @@ Deno.serve(async (req) => {
 
     const cached: any = body?.force ? null : await readCache();
     if (
-      cached && cached.updatedAt &&
+      // own: 1 = calculado sólo con las cuentas de este usuario (ver ownedAccounts).
+      cached && cached.own === 1 && cached.updatedAt &&
       String(cached.updatedAt).slice(0, 10) === todayUTC()
     ) {
       return jsonResponse(req, { ...cached, fromCache: true });
@@ -158,13 +160,18 @@ Deno.serve(async (req) => {
     // guardada en el perfil, para no quedarnos sin nada por un 429.
     let accountIds: string[] = [];
     let acctRows: any[] = [];
+    let acctListed = false;
     try {
       acctRows = ((await ai.listUserAccounts(sid)).data as any[]) ?? [];
+      // Fuera las cuentas de otra cuenta de Portiv (mismo login de bróker conectado en dos).
+      acctRows = (await ownedAccounts(admin, userId, acctRows, async () =>
+        ((await st.connections.listBrokerageAuthorizations(sid)).data as any[]) ?? [])).owned;
+      acctListed = true;
       accountIds = acctRows.map((a: any) => a?.id ?? a?.account_id).filter((x: any): x is string => !!x);
     } catch (e) {
       console.warn("[snaptrade-activities] listUserAccounts falló:", String(e).slice(0, 200));
     }
-    if (accountIds.length === 0 && profile.snaptrade_account_id) {
+    if (accountIds.length === 0 && !acctListed && profile.snaptrade_account_id) {
       accountIds = [profile.snaptrade_account_id];
     }
     if (accountIds.length === 0) {
@@ -351,6 +358,7 @@ Deno.serve(async (req) => {
 
     const payload = {
       updatedAt: new Date().toISOString(),
+      own: 1,
       available,
       ...(available ? {} : { reason: partial ? "unavailable" : "empty" }),
       currencies,

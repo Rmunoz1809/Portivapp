@@ -51034,7 +51034,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         // en el bloque de abajo porque ese bloque ahora CONSERVA lo que no venga en la
         // respuesta (ver allí): sin este borrado, los chips del broker y el aviso de
         // conexión dormida sobrevivirían a la desconexión.
-        try{ window._SNAP_INSTITUTIONS=null; window._SNAP_DORMANT=null; window._SNAP_STALE_CONNS=null; window._SNAP_RATES=null; }catch(e){}
+        try{ window._SNAP_INSTITUTIONS=null; window._SNAP_DORMANT=null; window._SNAP_STALE_CONNS=null; window._SNAP_RATES=null; window._SNAP_FOREIGN=0; window._SNAP_FOREIGN_ONLY=false; }catch(e){}
         // El servidor dice POR QUÉ no hay conexión. Sin esto los tres casos —nunca
         // conectó, la desconectó él, y "se la dimos de baja porque venció la
         // suscripción"— pintaban el mismo cartel de captación, y el usuario que
@@ -51063,6 +51063,10 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         if(Object.prototype.hasOwnProperty.call(j,'staleConnections'))
           window._SNAP_STALE_CONNS = (j.staleConnections && j.staleConnections.length) ? j.staleConnections : null;
         if(_has('accountsWithoutSync')) window._SNAP_NO_SYNC = j.accountsWithoutSync || 0;
+        // Cuentas del bróker que son de OTRA cuenta de Portiv (mismo login de bróker conectado
+        // en dos cuentas de Portiv). El servidor ya no las manda; aquí sólo se avisa.
+        if(_has('foreignAccounts')) window._SNAP_FOREIGN = j.foreignAccounts || 0;
+        window._SNAP_FOREIGN_ONLY = !!j.foreignOnly;
         // F5 — Quién es tu broker DE VERDAD. Hasta ahora la tarjeta enseñaba siempre los
         // mismos dos nombres de adorno, con lo que alguien conectado a Fidelity leía
         // "Charles Schwab · Interactive Brokers" en su propia tarjeta de conexión.
@@ -51790,6 +51794,14 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       // Los de arriba hablan de la calidad del MAPEO; estos tres vienen del refresh y hablan
       // de si lo que estás viendo es de AHORA y está COMPLETO. Sin ellos, una cartera con una
       // cuenta ilegible o con un broker muerto se presentaba como si estuviera al día.
+      if(window._SNAP_FOREIGN_ONLY){
+        out.push('Tu broker ahora sólo comparte con Portiv una cuenta que está conectada en <b>otra cuenta de Portiv</b>, así que aquí no la mostramos. '
+               + 'Para volver a ver la tuya, toca «Volver a elegir mi cuenta» y márcala en tu broker (puedes marcar todas: cada cuenta de Portiv ve sólo la suya).');
+      } else if(window._SNAP_FOREIGN > 0){
+        var _nf = window._SNAP_FOREIGN;
+        out.push('Ocultamos <b>'+_nf+'</b> cuenta'+(_nf>1?'s':'')+' de tu broker que '+(_nf>1?'están conectadas':'está conectada')
+               +' en otra cuenta de Portiv. Aquí sólo ves las tuyas.');
+      }
       if(window._SNAP_PARTIAL){
         out.push('No pudimos leer una de tus cuentas ahora mismo. Estás viendo tu <b>última foto completa</b>, no la de este momento.');
       }
@@ -51895,6 +51907,9 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         + _snapInstChips()
         + _snapFlowLine()
         + _snapNotes()
+        + (window._SNAP_FOREIGN_ONLY
+            ? '<div class="snap-row"><button class="snap-btn" onclick="snapConnect(\'accounts\')">Volver a elegir mi cuenta</button></div>'
+            : '')
         + _snapDormantBlock()
         +'<div class="snap-row"><button class="snap-btn" id="snapRefreshBtn2" onclick="snapRefresh({force:true})">↻ Sincronizar ahora</button></div>'
         +'<div class="snap-row" style="margin-top:8px">'

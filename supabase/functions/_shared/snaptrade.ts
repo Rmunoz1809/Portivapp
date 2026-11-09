@@ -426,3 +426,143 @@ export async function fxRatesFor(st: Snaptrade, codes: string[]): Promise<Record
   }
   return out;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DUEÑO DE CADA CUENTA DE BRÓKER (9 nov 2026)
+// ─────────────────────────────────────────────────────────────────────────────
+// Un mismo login de bróker con dos cuentas: la 1 conectada en la cuenta de Portiv A y la 2
+// en la B. Al conectar B, el bróker actualiza el permiso que SnapTrade tiene sobre ESE login
+// y la conexión de A empieza a listar también (o sólo) la cuenta 2. Como refresh/history/
+// activities enseñaban TODO lo que lista SnapTrade, al volver a A aparecían las posiciones
+// de B sin que nadie lo pidiera.
+//
+// Ahora cada cuenta de bróker tiene dueño (tabla snaptrade_account_owners): la cuenta de
+// Portiv que la tuvo primero. Una cuenta cuyo dueño es OTRO usuario no se enseña. Reglas:
+//   · sin dueño        → la reclama quien la ve (primera lectura tras conectar).
+//   · dueño = yo       → se enseña.
+//   · dueño = otro     → si mi copia en SnapTrade es claramente MÁS VIEJA que la suya, la
+//                        tuve yo primero: la recupero (corrige el dato mezclado de antes de
+//                        este arreglo, que se reclamó en el orden en que cada uno abrió la app).
+//                        Si no, se oculta. Excepción: cuando la clave no identifica la cuenta
+//                        de forma única (número enmascarado «****1234» o sin número) y la
+//                        cuenta estaba en mi conexión DESDE QUE SE CREÓ, son dos cuentas de
+//                        personas distintas que casualmente se parecen: se enseña.
+// Si la tabla no existe o la consulta falla, no se filtra nada (comportamiento de antes):
+// quedarse sin cartera por un fallo nuestro sería peor que el bug que esto arregla.
+const OWN_LATE_MS = 10 * 60 * 1000;   // aparecer >10 min después de crear la conexión = llegó después
+const OWN_EARLIER_MS = 60 * 1000;     // margen para decidir que una copia es «más vieja»
+
+const _ownNorm = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+async function _sha256(s: string): Promise<string> {
+  const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Clave estable de una cuenta de bróker, igual para todas las cuentas de Portiv que la vean.
+ * "n:" número completo (único en su bróker) · "m:" número enmascarado · "i:" sin número.
+ * Nunca guarda el número en claro.
+ */
+export async function brokerAccountKey(a: any): Promise<string | null> {
+  const inst = _ownNorm(a?.institution_name);
+  const num = _ownNorm(a?.number);
+  if (inst && num) {
+    if (/[*•#]|X{2,}/.test(num)) return "m:" + await _sha256(inst + "|" + num + "|" + _ownNorm(a?.name));
+    return "n:" + await _sha256(inst + "|" + num);
+  }
+  const id = a?.id ?? a?.account_id;
+  return id ? "i:" + await _sha256(String(id)) : null;
+}
+
+/**
+ * Separa las cuentas que SnapTrade lista para `userId` en las suyas y las de otra cuenta de
+ * Portiv. Reclama las que no tienen dueño. `loadConns` (opcional) da las conexiones con su
+ * `created_date`; sólo se llama si hace falta resolver un conflicto. Nunca lanza.
+ */
+export async function ownedAccounts(
+  admin: SupabaseClient,
+  userId: string,
+  accts: any[],
+  loadConns?: (() => Promise<any[]>) | any[] | null,
+): Promise<{ owned: any[]; foreign: any[] }> {
+  if (!Array.isArray(accts) || accts.length === 0) return { owned: Array.isArray(accts) ? accts : [], foreign: [] };
+  try {
+    const keys = await Promise.all(accts.map((a) => brokerAccountKey(a)));
+    const uniq = Array.from(new Set(keys.filter((k): k is string => !!k)));
+    if (!uniq.length) return { owned: accts, foreign: [] };
+    const { data, error } = await admin
+      .from("snaptrade_account_owners")
+      .select("account_key, user_id, account_created")
+      .in("account_key", uniq);
+    if (error) throw new Error(error.message);
+    const rows = new Map<string, any>(((data ?? []) as any[]).map((r) => [r.account_key, r]));
+
+    let conns: any[] | null = Array.isArray(loadConns) ? loadConns : null;
+    const authCreated = async (authId: unknown): Promise<number> => {
+      if (!conns && typeof loadConns === "function") {
+        try { conns = (await loadConns()) ?? []; } catch { conns = []; }
+      }
+      const c = (conns ?? []).find((x: any) => x?.id && x.id === authId);
+      return Date.parse(c?.created_date ?? "");
+    };
+
+    const owned: any[] = [], foreign: any[] = [];
+    const claims: any[] = [];
+    const steals: Array<{ key: string; created: string | null }> = [];
+    for (let i = 0; i < accts.length; i++) {
+      const a = accts[i], k = keys[i];
+      if (!k) { owned.push(a); continue; }
+      const mine = Date.parse(a?.created_date ?? "");
+      const created = Number.isFinite(mine) ? new Date(mine).toISOString() : null;
+      const r = rows.get(k);
+      if (!r) {
+        claims.push({ account_key: k, user_id: userId, account_created: created });
+        rows.set(k, { account_key: k, user_id: userId, account_created: created });
+        owned.push(a);
+        continue;
+      }
+      if (r.user_id === userId) { owned.push(a); continue; }
+      const theirs = Date.parse(r.account_created ?? "");
+      if (Number.isFinite(mine) && Number.isFinite(theirs) && mine < theirs - OWN_EARLIER_MS) {
+        steals.push({ key: k, created });
+        owned.push(a);
+        continue;
+      }
+      if (!k.startsWith("n:")) {
+        const auth = await authCreated(a?.brokerage_authorization);
+        const late = !Number.isFinite(auth) || !Number.isFinite(mine) || mine - auth > OWN_LATE_MS;
+        if (!late) { owned.push(a); continue; }
+      }
+      foreign.push(a);
+    }
+    if (claims.length) {
+      const { error: e1 } = await admin
+        .from("snaptrade_account_owners")
+        .upsert(claims, { onConflict: "account_key", ignoreDuplicates: true });
+      if (e1) console.warn("[snaptrade] no se pudo reclamar cuentas:", e1.message);
+    }
+    for (const s of steals) {
+      const { error: e2 } = await admin
+        .from("snaptrade_account_owners")
+        .update({ user_id: userId, account_created: s.created, claimed_at: new Date().toISOString() })
+        .eq("account_key", s.key);
+      if (e2) console.warn("[snaptrade] no se pudo recuperar una cuenta:", e2.message);
+    }
+    if (foreign.length) {
+      console.warn(`[snaptrade] ${foreign.length}/${accts.length} cuenta(s) de otra cuenta de Portiv ocultada(s) a ${userId}`);
+    }
+    return { owned, foreign };
+  } catch (e: any) {
+    console.warn("[snaptrade] dueños de cuentas no disponibles (¿migración sin aplicar?) → sin filtrar:",
+      String(e?.message ?? e).slice(0, 160));
+    return { owned: accts, foreign: [] };
+  }
+}
+
+/** Suelta las cuentas de `userId` (al desconectar su bróker). Nunca lanza. */
+export async function releaseOwnedAccounts(admin: SupabaseClient, userId: string): Promise<void> {
+  try {
+    const { error } = await admin.from("snaptrade_account_owners").delete().eq("user_id", userId);
+    if (error) console.warn("[snaptrade] no se pudieron soltar las cuentas:", error.message);
+  } catch (e) { console.warn("[snaptrade] releaseOwnedAccounts:", String(e).slice(0, 160)); }
+}

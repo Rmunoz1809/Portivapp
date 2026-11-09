@@ -41,6 +41,7 @@ import {
   loadProfile,
   requireEntitlement,
   fxRatesFor,
+  ownedAccounts,
 } from "../_shared/snaptrade.ts";
 
 const todayUTC = () => new Date().toISOString().slice(0, 10);
@@ -136,7 +137,9 @@ Deno.serve(async (req) => {
     // La caché guarda la curva YA convertida, así que sólo sirve si está en la misma moneda
     // que se pide ahora. Servirla a ciegas devolvía euros a quien acababa de pasar a dólares.
     const cacheCcyOk = !wantCcy || (cached?.currency ?? null) === wantCcy;
-    if (!body?.force && cacheCcyOk && cached && cached.updatedAt && String(cached.updatedAt).slice(0, 10) === todayUTC()) {
+    // `own: 1` = curva calculada sólo con las cuentas de este usuario (ver ownedAccounts). Las
+    // de antes del 9 nov 2026 pueden sumar la cuenta de otra cuenta de Portiv: se recalculan.
+    if (!body?.force && cacheCcyOk && cached && cached.own === 1 && cached.updatedAt && String(cached.updatedAt).slice(0, 10) === todayUTC()) {
       return jsonResponse(req, {
         history: cached.history ?? [],
         available: !!cached.available,
@@ -162,6 +165,7 @@ Deno.serve(async (req) => {
     // por un 429.
     let accountIds: string[] = [];
     let usableRows: any[] = [];
+    let listed = false;   // el listado respondió (aunque, filtrado, quede vacío)
     try {
       const accts = ((await st.accountInformation.listUserAccounts(sid)).data as any[]) ?? [];
       // Cuentas cerradas/archivadas fuera: pedir su curva gasta una llamada a un endpoint
@@ -173,23 +177,27 @@ Deno.serve(async (req) => {
         const s = String(a?.status ?? "").toLowerCase();
         return s !== "closed" && s !== "archived";
       });
-      const usable = openAccts.length > 0 ? openAccts : accts;
+      const usable0 = openAccts.length > 0 ? openAccts : accts;
+      // Fuera las cuentas de otra cuenta de Portiv (mismo login de bróker conectado en dos).
+      const usable = (await ownedAccounts(admin, userId, usable0, async () =>
+        ((await st.connections.listBrokerageAuthorizations(sid)).data as any[]) ?? [])).owned;
       if (usable.length < accts.length) {
         console.warn(
           `[snaptrade-history] ${accts.length - usable.length} cuenta(s) cerrada(s)/archivada(s) omitida(s)`,
         );
       }
       usableRows = usable;
+      listed = true;
       accountIds = usable.map((a) => a?.id ?? a?.account_id).filter((x): x is string => !!x);
     } catch (e) {
       console.warn("[snaptrade-history] listUserAccounts falló:", String(e).slice(0, 200));
     }
-    if (accountIds.length === 0 && profile.snaptrade_account_id) {
+    if (accountIds.length === 0 && !listed && profile.snaptrade_account_id) {
       accountIds = [profile.snaptrade_account_id];
     }
     if (accountIds.length === 0) {
       // Nothing to query yet; let the frontend show the placeholder.
-      const payload = { updatedAt: new Date().toISOString(), available: false, reason: "no_account", history: [] };
+      const payload = { updatedAt: new Date().toISOString(), own: 1, available: false, reason: "no_account", history: [] };
       await admin.from("profiles").update({ snaptrade_history: payload }).eq("id", userId);
       return jsonResponse(req, { history: [], available: false, reason: "no_account", terminal: false });
     }
@@ -326,7 +334,7 @@ Deno.serve(async (req) => {
     // se conoce en el momento de la llamada, y sin él la caché convertía un 429 de hace
     // horas en un "no insistas" permanente.
     const fxSpot = reexpresadas > 0;
-    const payload = { updatedAt: new Date().toISOString(), available, reason, terminal, partial, partialBrokers,
+    const payload = { updatedAt: new Date().toISOString(), own: 1, available, reason, terminal, partial, partialBrokers,
                       accounts: accountIds.length, currency: wantCcy, noConvertibles, fxSpot, history };
     await admin.from("profiles").update({ snaptrade_history: payload }).eq("id", userId);
 

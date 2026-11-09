@@ -28,6 +28,7 @@ import {
   isEntitled,
   resolveIbkrSlugs,
   fxRatesFor,
+  ownedAccounts,
 } from "../_shared/snaptrade.ts";
 import { verifyEntitlementWithStore, healSubscriptionRow } from "../_shared/entitlement.ts";
 
@@ -105,6 +106,16 @@ async function ratesFor(holdings: any): Promise<Record<string, number>> {
 // Días sin una sola cuenta ni un solo sync tras los que una conexión se declara dormida
 // (ver el bloque `dormantConnections`, más abajo).
 const DORMANT_DAYS = Number(Deno.env.get("SNAPTRADE_DORMANT_DAYS") ?? "7");
+
+// ── Foto guardada de ANTES del filtro de dueños ─────────────────────────────────────
+// Las fotos que se guardan desde el 9 nov 2026 llevan `account.own: 1` en cada cuenta: ya
+// pasaron por ownedAccounts (_shared/snaptrade.ts). Una foto sin la marca puede llevar
+// mezcladas las posiciones de otra cuenta de Portiv (el bug de dos cuentas de un mismo
+// bróker), así que no se sirve nunca: se vuelve a leer en vivo, ya filtrada.
+function ownCache(h: any): any[] | null {
+  if (!Array.isArray(h)) return null;
+  return h.every((e: any) => e?.account?.own === 1) ? h : null;
+}
 
 /** Best-effort extraction of the primary account id from a holdings payload. */
 function primaryAccountId(holdings: any): string | null {
@@ -220,7 +231,7 @@ Deno.serve(async (req) => {
     // `force` = el usuario pulsó el botón. Servirle la caché entonces era exactamente el
     // bug del que se quejaba: pulsar "Actualizar" no movía una sola cifra durante una hora
     // aunque su broker ya tuviera la operación.
-    if (!force && fresh && !brokenFlagged && profile.snaptrade_holdings != null) {
+    if (!force && fresh && !brokenFlagged && ownCache(profile.snaptrade_holdings) != null) {
       return jsonResponse(req, {
         connected: true,
         broken: !!profile.snaptrade_connection_broken,
@@ -317,7 +328,7 @@ Deno.serve(async (req) => {
         disabled: true,
         stale: true,
         disabledSince: conn?.disabled_date ?? null,
-        holdings: profile.snaptrade_holdings ?? null,
+        holdings: ownCache(profile.snaptrade_holdings),
         accountId: profile.snaptrade_account_id ?? null,
         lastSync: profile.snaptrade_last_refresh ?? null,
         institutions: downInstitutions,
@@ -406,6 +417,31 @@ Deno.serve(async (req) => {
         );
         accts = open;
       }
+    }
+    // ── Cuentas de OTRA cuenta de Portiv (ver ownedAccounts en _shared/snaptrade.ts) ──
+    // Mismo login de bróker conectado en dos cuentas de Portiv, cada una con su cuenta del
+    // bróker: al conectar la segunda, el bróker empieza a darle también la otra a la primera.
+    // Esas cuentas no se leen, no se suman y no se guardan aquí.
+    const own = await ownedAccounts(admin, userId, accts, conns);
+    const foreignAccounts = own.foreign.length;
+    accts = own.owned;
+    if (foreignAccounts > 0 && accts.length === 0) {
+      // TODO lo que el bróker comparte ahora con esta conexión es de la otra cuenta de Portiv:
+      // la cuenta propia ya no llega. Cartera vacía (nunca la ajena) y aviso para reconectar
+      // eligiendo su cuenta. No se guarda en caché: cada lectura vuelve a comprobarlo, así
+      // que en cuanto el bróker vuelva a dar la cuenta propia, aparece sola.
+      return jsonResponse(req, {
+        connected: true,
+        broken: false,
+        settled: true,
+        foreignOnly: true,
+        foreignAccounts,
+        holdings: [],
+        accountId: null,
+        lastSync: null,
+        brokerSlugs: await ibkrSlug(),
+        fromCache: false,
+      });
     }
     const hasAccount = Array.isArray(accts) && accts.length > 0;
 
@@ -706,7 +742,8 @@ Deno.serve(async (req) => {
       return {
         broken: !pos.ok || !bal.ok,
         entry: {
-          account: { id: accountId,
+          // own: 1 = esta foto ya pasó el filtro de dueños (ver ownCache).
+          account: { id: accountId, own: 1,
                      ...(total != null
                          ? { balance: { total, ...(typeof totalCcy === "string" && totalCcy ? { currency: totalCcy } : {}) } }
                          : {}) },
@@ -760,14 +797,15 @@ Deno.serve(async (req) => {
       console.error(
         `[snaptrade-refresh] ${brokenAccounts}/${accts.length} cuenta(s) sin responder — no se persiste la foto parcial`,
       );
-      if (profile.snaptrade_holdings != null) {
+      if (ownCache(profile.snaptrade_holdings) != null) {
         // La última foto COMPLETA conocida, marcada como vieja: mejor un dato entero de hace
         // un rato que uno de ahora al que le falta una cuenta.
         return jsonResponse(req, {
           connected: true,
           broken: !!profile.snaptrade_connection_broken,
-          holdings: profile.snaptrade_holdings,
+          holdings: ownCache(profile.snaptrade_holdings),
           accountId: profile.snaptrade_account_id ?? null,
+          foreignAccounts,
           inceptionDate,
           inceptionFloor,
           inceptionSource,
@@ -828,7 +866,7 @@ Deno.serve(async (req) => {
             broken: false,
             syncing: true,
             settled: false,
-            holdings: profile.snaptrade_holdings ?? [],
+            holdings: ownCache(profile.snaptrade_holdings) ?? [],
             accountId: profile.snaptrade_account_id ?? null,
             lastSync: profile.snaptrade_last_refresh ?? null,
             brokerSlugs: await ibkrSlug(),
@@ -886,6 +924,7 @@ Deno.serve(async (req) => {
         rates: await ratesFor(holdArr),
         accountsWithoutSync,
         closedAccounts,
+        foreignAccounts,
         syncQueued,
         syncThrottled,
         fromCache: false,
@@ -950,6 +989,7 @@ Deno.serve(async (req) => {
       rates: await ratesFor(holdings),
       accountsWithoutSync,
       closedAccounts,
+      foreignAccounts,
       syncQueued,
       syncThrottled,
       fromCache: false,

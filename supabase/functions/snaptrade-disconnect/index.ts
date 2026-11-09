@@ -14,7 +14,7 @@
 // Deploy: supabase functions deploy snaptrade-disconnect --no-verify-jwt
 
 import { preflight, jsonResponse } from "../_shared/cors.ts";
-import { snaptrade, adminClient, requireUser, isUuid } from "../_shared/snaptrade.ts";
+import { snaptrade, adminClient, requireUser, isUuid, releaseOwnedAccounts } from "../_shared/snaptrade.ts";
 import { verifyEntitlementWithStore, blocksBrokerCut, healSubscriptionRow } from "../_shared/entitlement.ts";
 
 const INTERNAL_SECRET =
@@ -178,6 +178,9 @@ Deno.serve(async (req) => {
       })
       .eq("id", userId);
     if (updErr) return jsonResponse(req, { error: updErr.message }, 500);
+    // Sin conexión ya no es dueño de ninguna cuenta de bróker: otra cuenta de Portiv que la
+    // conecte después la verá (ver ownedAccounts en _shared/snaptrade.ts).
+    await releaseOwnedAccounts(admin, userId);
 
     return jsonResponse(req, { ok: true, disconnected: true, deletedRemote, reason });
   } catch (e: any) {

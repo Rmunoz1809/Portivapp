@@ -284,8 +284,16 @@ Deno.serve(async (req) => {
       ? (scope.find((c: any) => c?.id === askedId && c?.disabled === true) ?? null)
       : (scope.find((c: any) => c?.disabled === true && c?.id) ?? null);
     const liveConn = scope.find((c: any) => c && c.disabled !== true && c.id) ?? null;
+    // mode 'accounts' = «Volver a elegir mi cuenta». El bróker le está dando a esta conexión
+    // sólo cuentas de OTRA cuenta de Portiv (mismo login de bróker conectado en dos; ver
+    // ownedAccounts en _shared/snaptrade.ts). La conexión está sana, pero hay que pasar otra
+    // vez por el bróker para marcar la cuenta propia: se abre el portal sobre ESA conexión
+    // en lugar de contestar alreadyConnected.
+    const accountsConn = mode === "accounts"
+      ? (scope.find((c: any) => c?.id && c.id === askedId && c.disabled !== true) ?? liveConn)
+      : null;
 
-    if (!disabledConn && liveConn) {
+    if (!disabledConn && liveConn && !accountsConn) {
       // Ya hay broker enlazado y sano. Mandarlo al portal no arregla nada; lo que quiere
       // es ver sus datos al día, y de eso se encarga snaptrade-refresh con force.
       await admin
@@ -298,8 +306,8 @@ Deno.serve(async (req) => {
         brokerage: liveConn?.brokerage?.name ?? liveConn?.brokerage?.slug ?? null,
       });
     }
-    const reconnectId: string | null = disabledConn?.id ?? null;
-    if (reconnectId) {
+    const reconnectId: string | null = disabledConn?.id ?? accountsConn?.id ?? null;
+    if (reconnectId && !accountsConn) {
       await admin
         .from("profiles")
         .update({ snaptrade_connection_id: reconnectId, snaptrade_connection_broken: true })
