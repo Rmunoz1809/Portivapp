@@ -4458,6 +4458,7 @@ body.dark-theme .pv-nt { background: rgba(255,255,255,.08); color: #e6ebf2; }
       <div class="ssb-title">Sincronizando con tu broker…</div>
       <div class="ssb-sub">Importando tus posiciones vía SnapTrade. Puede tardar 1–2 minutos. Esta pantalla se actualiza sola.</div>
     </div>
+    <svg class="ssb-more" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </div>
 
   <!-- ── Stitch layout (grid-areas: symmetric rows) ── -->
@@ -46514,7 +46515,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
             </ol>
 
             <div style="${S_SEC}">Tiempos de activación</div>
-            <div style="padding:12px 14px;border-radius:12px;background:var(--blue-bg,#e5eeff);border:1px solid var(--st-surface-highest,#d3e4fe);color:var(--st-on-surface,#0b1c30)">La primera vez, IBKR puede tardar hasta 48 horas en habilitar el acceso. Es una limitación de IBKR, no de Portiv.</div>
+            <div style="padding:12px 14px;border-radius:12px;background:var(--blue-bg,#e5eeff);border:1px solid var(--st-surface-highest,#d3e4fe);color:var(--st-on-surface,#0b1c30)">La primera vez, IBKR tarda entre 24 y 48 horas en habilitar el acceso. Es una limitación de IBKR, no de Portiv: al volver a Portiv te enseñamos cómo va.</div>
             <p style="margin:10px 0 0">Una vez habilitado, las posiciones se actualizan de forma periódica, no en tiempo real.</p>
 
             <div style="${S_SEC}">Qué se sincroniza</div>
@@ -50738,6 +50739,12 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       }
       if(!(j && j.redirectURI)) throw new Error('No se recibió el portal de conexión.');
       try{ localStorage.setItem('pv_snap_pending','1'); }catch(e){}
+      // Alta de IBKR: al volver, _boot abre «Trayendo tus datos» (24–48 h) en vez del aviso
+      // genérico de «1–2 minutos». Se borra cualquier marca vieja si el alta es de otro broker.
+      try{
+        if(String(broker||'').toLowerCase()==='ibkr' && !connectionId) localStorage.setItem('pv_snap_pending_ibkr', String(Date.now()));
+        else localStorage.removeItem('pv_snap_pending_ibkr');
+      }catch(e){}
       if(_nativeCap){ _snapOpenInApp(j.redirectURI); }
       else { window.location.href = j.redirectURI; }
     }).catch(function(e){
@@ -51652,7 +51659,9 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
   // conexión caída se repara en modo reconexión sin borrar nada), así que la confirmación
   // lo dice y exige escribir la palabra, igual que el borrado de cuenta.
   function snapDisconnect(){
-    if(!window.confirm('¿Eliminar la conexión con tu broker?\n\nNo hace falta para actualizar tus datos: para eso está «Sincronizar ahora». Y si la conexión falla, te avisamos y la reparas en un toque sin perder nada.\n\nSi la eliminas, Portiv deja de importar tus posiciones y, para volver, tendrás que iniciar sesión en tu broker otra vez desde cero.')) return;
+    // La baja es de TODAS las conexiones (no existe una por broker): con dos o más se dice.
+    var _nIns = 0; try{ _nIns = (window._SNAP_INSTITUTIONS||[]).length; }catch(e){}
+    if(!window.confirm((_nIns > 1 ? '¿Eliminar la conexión con tus '+_nIns+' brokers?\n\nSe desconectan todos a la vez, no sólo uno.' : '¿Eliminar la conexión con tu broker?')+'\n\nNo hace falta para actualizar tus datos: para eso está «Sincronizar ahora». Y si la conexión falla, te avisamos y la reparas en un toque sin perder nada.\n\nSi la eliminas, Portiv deja de importar tus posiciones y, para volver, tendrás que iniciar sesión en tu broker otra vez desde cero.')) return;
     var _typed = window.prompt('Para confirmar, escribe DESCONECTAR:');
     if(_typed == null) return;
     if(String(_typed).trim().toUpperCase() !== 'DESCONECTAR'){ toast('Texto incorrecto. Tu broker sigue conectado.'); return; }
@@ -51796,11 +51805,19 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
   // mode: 'connecting' (recién volvió del portal) | 'syncing' (importando posiciones).
   function _setSyncBanner(show, mode){
     var el=document.getElementById('snapSyncBanner'); if(!el) return;
+    // IBKR esperando su primera entrega: el aviso dice su plazo real y abre la hoja del detalle.
+    var _ibw = (show && mode!=='connecting') ? _ibkrWaiting() : null;
+    el.classList.toggle('pviw-tap', !!_ibw);
+    el.onclick = _ibw ? function(){ try{ window._pvIbkrWait({ since: _ibw.createdDate }); }catch(e){} } : null;
+    if(_ibw) el.setAttribute('role','button'); else el.setAttribute('role','status');
     if(show){
       var t=el.querySelector('.ssb-title'), s=el.querySelector('.ssb-sub');
       if(mode==='connecting'){
         if(t) t.textContent='Conectando con tu broker…';
         if(s) s.textContent='Estableciendo la conexión segura vía SnapTrade. Un momento…';
+      } else if(_ibw){
+        if(t) t.textContent='Trayendo tus datos de Interactive Brokers';
+        if(s) s.textContent='IBKR tarda entre 24 y 48 horas la primera vez. Tus posiciones aparecerán aquí solas. Toca para ver el detalle.';
       } else {
         if(t) t.textContent='Sincronizando con tu broker…';
         if(s) s.textContent='Importando tus posiciones vía SnapTrade. Puede tardar 1–2 minutos. Esta pantalla se actualiza sola.';
@@ -51824,6 +51841,8 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       if(state==='broken' || (state==='disconnected' && localStorage.getItem('pv_broker_lost')==='1'
            && _lastMeta.reason!=='manual' && !_isSubReason(_lastMeta.reason))) _pvBrokerLostPrompt(state);
     }catch(e){}   // FIX 12: lo lee onAuthStateChange para no re-sincronizar de más
+    // La marca local de «IBKR esperando» sobra en cuanto hay datos o ya no hay conexión.
+    try{ if(state==='connected' || state==='disconnected') localStorage.removeItem('pv_ibkr_wait_since'); }catch(e){}
     // Aviso de sincronización en el portafolio: visible solo mientras el broker importa.
     _setSyncBanner(state==='syncing');
     // Settings card
@@ -52003,6 +52022,19 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
   }
   function _snapIbkrConn(){
     try{ return (window._SNAP_INSTITUTIONS||[]).filter(_snapIsIbkr)[0] || null; }catch(e){ return null; }
+  }
+  // IBKR enlazado y todavía sin su primera entrega (las 24–48 h). Si el servidor no dice qué
+  // brokers hay (un servidor anterior no mandaba `institutions` mientras no hay cuentas), vale
+  // la marca local que se puso al volver del portal de IBKR (pv_ibkr_wait_since, 7 días).
+  function _ibkrWaiting(){
+    try{
+      var ic = _snapIbkrConn();
+      if(ic) return (!ic.accounts || !ic.lastSync) ? ic : null;
+      if(window._SNAP_INSTITUTIONS && window._SNAP_INSTITUTIONS.length) return null;
+      var t = +localStorage.getItem('pv_ibkr_wait_since');
+      if(t && Date.now() - t < 7*86400000) return { name:'Interactive Brokers', createdDate: new Date(t).toISOString(), accounts:0, lastSync:null };
+    }catch(e){}
+    return null;
   }
   function _snapHasIbkr(){ return !!_snapIbkrConn(); }
   window._snapHasIbkr = _snapHasIbkr;
@@ -52324,7 +52356,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       // ver con el horario de mercado: es que IBKR todavía no ha habilitado el acceso del
       // Third-Party Service. Prometer "unos minutos" y rendirse a los 14 deja al usuario
       // pensando que algo falló y repitiendo un proceso que hizo bien.
-      var _ib = _snapIbkrConn();
+      var _ib = _snapIbkrConn() || _ibkrWaiting();
       if(_ib){
         var _hrs = null;
         try{ var _t = Date.parse(_ib.createdDate || ''); if(isFinite(_t)) _hrs = (Date.now() - _t) / 3600000; }catch(e){}
@@ -52353,8 +52385,9 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         // ── Dentro de la ventana normal de IBKR ──
         // El apagado del poll rápido a los ~14 min NO es una anomalía con IBKR: es lo
         // esperable. Presentarlo como "está tardando más de lo normal" asusta sin motivo.
-        return '<h3>Esperando a Interactive Brokers</h3>'
-          +'<p class="snap-sub">Interactive Brokers puede tardar <b>hasta 48 horas</b> en habilitar el acceso la primera vez. Es un plazo de IBKR, no de Portiv, y no hay nada que puedas hacer para acelerarlo. En cuanto lo habilite, tus posiciones aparecen aquí solas.</p>'
+        return '<h3>Trayendo tus datos de Interactive Brokers</h3>'
+          +'<p class="snap-sub">Interactive Brokers tarda <b>entre 24 y 48 horas</b> en habilitar el acceso la primera vez. Es un plazo de IBKR, no de Portiv, y no hay nada que puedas hacer para acelerarlo. En cuanto lo habilite, tus posiciones aparecen aquí solas.</p>'
+          +'<div class="snap-row" style="margin-top:10px"><button class="snap-btn" onclick="window._pvIbkrWait({since:'+(_ib.createdDate?'\''+_escAttr(String(_ib.createdDate))+'\'':'0')+'})">Ver el estado</button></div>'
           +'<div class="snap-status"><span class="snap-dot"></span>'
           + (window._SNAP_SYNC_STALLED
               ? 'Lo comprobamos cada 20 minutos y al abrir la app'
@@ -52482,6 +52515,11 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     var url = location.search || '';
     var returned = pending || /snaptrade|success|brokerage/i.test(url);
     try{ localStorage.removeItem('pv_snap_pending'); }catch(e){}
+    // ¿Volvió del alta de Interactive Brokers? Se lee y se borra ya: la hoja «Trayendo tus
+    // datos» sale UNA vez, cuando el primer refresh confirma que la conexión existe.
+    var _ibkrAt = 0; try{ _ibkrAt = +localStorage.getItem('pv_snap_pending_ibkr') || 0; localStorage.removeItem('pv_snap_pending_ibkr'); }catch(e){}
+    if(!returned) _ibkrAt = 0;
+    var _ibkrChecked = false;
     // Volvió del portal de SnapTrade → aviso de "conectando" de inmediato, antes del 1er
     // refresh (el poll lo cambia a 'syncing' o lo oculta al resolver el estado real).
     if(returned){ try{ _setSyncBanner(true, 'connecting'); }catch(e){} }
@@ -52530,6 +52568,22 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
           // dispositivo; si ya tenía un broker y añade otro, la marca ya está puesta.
           try{ _pvMetaEvent('ConnectBroker', {}, 'pv_meta_broker'); }catch(e){}
           try{ if(typeof showTab==='function') showTab('portfolio'); }catch(e){}
+        }
+        // Alta de IBKR: si la conexión de IBKR ya existe y aún no entrega datos, se abre la hoja
+        // con su plazo real (24–48 h) en lugar del toast de «unos minutos». Si el usuario cerró
+        // el portal sin terminar, no hay conexión de IBKR y no se dice nada.
+        if(_ibkrAt && !_ibkrChecked && j && !j.unavailable){
+          _ibkrChecked = true;
+          var _ibc = _snapIbkrConn();
+          var _known = !!(window._SNAP_INSTITUTIONS && window._SNAP_INSTITUTIONS.length);
+          var _sinDatos = _ibc ? (!_ibc.accounts || !_ibc.lastSync) : (!_known && j.connected && j.syncing);
+          if(j.connected && _sinDatos){
+            var _since = (_ibc && _ibc.createdDate) || new Date(_ibkrAt).toISOString();
+            try{ localStorage.setItem('pv_ibkr_wait_since', String(Date.parse(_since) || _ibkrAt)); }catch(e){}
+            _syncToasted = true;
+            try{ _render(_state, _lastMeta); }catch(e){}   // tarjeta y aviso con el texto de IBKR
+            setTimeout(function(){ try{ window._pvIbkrWait({ since: _since }); }catch(e){} }, 450);
+          }
         }
         if(returned && j && j.connected && j.syncing && !_syncToasted){
           _syncToasted=true; toast('Conectado. Importando tus posiciones desde el broker… puede tardar unos minutos.');
@@ -66945,6 +66999,226 @@ body.dark-theme .pvbp-empty-b button.sec{ background:var(--bp-fill); color:var(-
 })();
 </script>
 <!-- ═══ fin ELIGE TU BROKER ═══ -->
+<!-- ═══ IBKR · TRAYENDO TUS DATOS (9 nov 2026) ═══════════════════════════════════════════════
+     Al volver del portal con el Query ID y el Token, IBKR tarda entre 24 y 48 horas en habilitar
+     el acceso la primera vez. Antes el usuario volvía a un portafolio vacío con el aviso genérico
+     «puede tardar 1–2 minutos» y repetía la conexión creyendo que había fallado. Esta hoja (mismo
+     esqueleto .pvts que «Elige tu broker») se abre UNA vez por conexión al volver, y después desde
+     el aviso del portafolio y la tarjeta de Ajustes. window._pvIbkrWait({ since }) la abre;
+     `since` = cuándo se enlazó (createdDate de SnapTrade o la hora del regreso). -->
+<div class="as-overlay pvts" id="pvIbkrWait" role="dialog" aria-modal="true" aria-labelledby="pviwTitle"
+     onclick="if(event.target===event.currentTarget){ try{ window._pvIbkrWaitClose(); }catch(e){} }">
+  <div class="as-card">
+    <div class="as-broker-header">
+      <div class="pvts-hd">
+        <div class="as-title" id="pviwTitle">Interactive Brokers, conectado</div>
+        <div class="pvts-sub">Ya tenemos tu token. Ahora IBKR prepara tus datos</div>
+      </div>
+      <button class="as-close-x" onclick="window._pvIbkrWaitClose()" aria-label="Cerrar">×</button>
+    </div>
+    <div class="pvts-steps" aria-hidden="true">
+      <span class="pvts-st ok"><b>✓</b>Broker</span><i class="pvts-st-sep ok"></i>
+      <span class="pvts-st ok"><b>✓</b>Token</span><i class="pvts-st-sep pviw-sep"></i>
+      <span class="pvts-st on"><b>3</b>Tus datos</span>
+    </div>
+    <div class="as-body" id="pviwBody">
+      <div class="pviw-hero">
+        <div class="pviw-link" aria-hidden="true">
+          <span class="pviw-node pviw-ib"><i class="pviw-ring"></i><i class="pviw-ring r2"></i>
+            <img src="logos/brokers/INTERACTIVE-BROKERS-FLEX.png" alt="" decoding="async" onerror="this.remove()"></span>
+          <span class="pviw-track"><i></i><i></i><i></i><i></i></span>
+          <span class="pviw-node pviw-pv"><img src="icon.png?v=2" alt="" decoding="async" onerror="this.remove()"></span>
+        </div>
+        <div class="pviw-live" role="status"><span class="pviw-dot"></span>Trayendo tus datos<span class="pviw-ell"><i>.</i><i>.</i><i>.</i></span></div>
+      </div>
+
+      <div class="pviw-eta">
+        <div class="pviw-eta-k">Tiempo estimado</div>
+        <div class="pviw-eta-v">Entre 24 y 48 horas</div>
+        <p class="pviw-eta-d">Es lo que tarda Interactive Brokers en habilitar el acceso la primera vez. Es un plazo de IBKR: no depende de Portiv ni de ti.</p>
+        <div class="pviw-bar" aria-hidden="true"><i id="pviwFill"></i></div>
+        <div class="pviw-bar-l"><span id="pviwAgo">Empezó hace un momento</span><span id="pviwBy"></span></div>
+      </div>
+
+      <div class="pvbp-sec">
+        <div class="pvbp-sec-h">Qué está pasando</div>
+        <ol class="pviw-flow">
+          <li class="ok"><b><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></b>
+            <span><span class="pviw-flow-t">Query ID y Token recibidos</span><span class="pviw-flow-d">Tu conexión con IBKR quedó guardada, de solo lectura.</span></span></li>
+          <li class="on"><b><i></i></b>
+            <span><span class="pviw-flow-t">IBKR habilita el acceso</span><span class="pviw-flow-d">Entre 24 y 48 horas. Lo comprobamos solos cada 20 minutos y cada vez que abres Portiv.</span></span></li>
+          <li><b>3</b>
+            <span><span class="pviw-flow-t">Tus posiciones llegan a Portiv</span><span class="pviw-flow-d">Aparecen solas en Portafolio, con tu efectivo en cada moneda.</span></span></li>
+        </ol>
+      </div>
+
+      <div class="pvbp-foot pviw-foot"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5.5c0 4.3-2.9 8.1-7 9.5-4.1-1.4-7-5.2-7-9.5V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M8.8 12.2l2.2 2.2 4.3-4.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>No hace falta repetir la conexión ni generar otro token. Tu conexión sigue guardada aunque cierres la app. Por esta vía IBKR entrega posiciones y efectivo, no el historial de transacciones.</span></div>
+    </div>
+    <div class="as-btns">
+      <button class="as-cancel" onclick="window._pvIbkrWaitClose(function(){ try{ window._pvShowIbkrNote({focus:'steps'}); }catch(e){} })">Ver pasos</button>
+      <button class="as-confirm" onclick="window._pvIbkrWaitClose()">Entendido</button>
+    </div>
+  </div>
+</div>
+<style id="pvIbkrWaitCss">
+html body #pvIbkrWait{ z-index:12500; }
+/* Es un aviso, no un formulario: la hoja mide lo que su contenido (con tope), no el 92 % fijo de .pvts. */
+html body #pvIbkrWait > .as-card{ height:auto !important; max-height:min(820px, calc(100dvh - 48px)) !important; }
+@media (max-width:700px){ html:not(.pv-ipad) body #pvIbkrWait > .as-card{ max-height:94% !important; } }
+#pvIbkrWait{ --bp-ink:#0b1c30; --bp-mute:#6b7789; --bp-soft:#8e99aa; --bp-line:#e6eaf1; --bp-fill:#f4f6fa; --bp-card:#fff; --bp-ok:#0f8a5f; --iw-ink:#0b1c30; --iw-mute:#6b7789; --iw-line:#e6eaf1; --iw-fill:#f4f6fa; --iw-ok:#0f8a5f; --iw-run:#2f5fe0; }
+#pvIbkrWait .pviw-sep{ position:relative; overflow:hidden; }
+#pvIbkrWait .pviw-sep::after{ content:''; position:absolute; inset:0; width:40%; border-radius:2px; background:#9fdcbf; animation:pviwSep 1.6s var(--pv-ease, ease) infinite; }
+
+/* ── Héroe: IBKR → Portiv, los datos viajan por la vía ── */
+.pviw-hero{ padding:22px 16px 18px; border:1px solid var(--iw-line); border-radius:20px; background:linear-gradient(180deg, #f7f9fd 0%, #fff 100%); text-align:center; }
+.pviw-link{ display:flex; align-items:center; justify-content:center; gap:0; }
+.pviw-node{ position:relative; flex:0 0 auto; width:64px; height:64px; border-radius:18px; background:#fff; box-shadow:0 6px 18px -8px rgba(11,28,48,.28), 0 0 0 1px rgba(11,28,48,.07); }
+.pviw-node img{ position:relative; z-index:1; display:block; width:100%; height:100%; border-radius:inherit; object-fit:cover; }
+.pviw-ring{ position:absolute; inset:0; border-radius:20px; border:2px solid rgba(47,95,224,.35); animation:pviwRing 2.4s cubic-bezier(.22,1,.36,1) infinite; }
+.pviw-ring.r2{ animation-delay:1.2s; }
+.pviw-track{ position:relative; flex:1 1 auto; max-width:170px; min-width:80px; height:4px; margin:0 12px; border-radius:4px; background:repeating-linear-gradient(90deg, #d9e0ec 0 6px, transparent 6px 11px); }
+.pviw-track i{ position:absolute; top:50%; left:0; width:8px; height:8px; margin:-4px 0 0 -4px; border-radius:50%; background:var(--iw-run); box-shadow:0 0 0 3px rgba(47,95,224,.14); opacity:0; animation:pviwFlow 2.2s cubic-bezier(.45,0,.25,1) infinite; }
+.pviw-track i:nth-child(2){ animation-delay:.55s; }
+.pviw-track i:nth-child(3){ animation-delay:1.1s; }
+.pviw-track i:nth-child(4){ animation-delay:1.65s; }
+.pviw-live{ display:inline-flex; align-items:center; gap:8px; margin-top:18px; padding:6px 12px 6px 10px; border-radius:999px; background:#eef3ff; color:#1b3566; font:700 13px var(--font, system-ui); }
+.pviw-dot{ width:8px; height:8px; border-radius:50%; background:var(--iw-run); animation:pviwPulse 1.6s ease-in-out infinite; }
+.pviw-ell{ display:inline-flex; width:14px; margin-left:-6px; }
+.pviw-ell i{ font-style:normal; animation:pviwEll 1.4s infinite; }
+.pviw-ell i:nth-child(2){ animation-delay:.2s; } .pviw-ell i:nth-child(3){ animation-delay:.4s; }
+
+/* ── Tiempo estimado + barra de la ventana de 48 h ── */
+.pviw-eta{ margin-top:16px; padding:18px; border-radius:18px; background:var(--iw-fill); }
+.pviw-eta-k{ font:700 12px var(--font, system-ui); letter-spacing:.06em; text-transform:uppercase; color:#8e99aa; }
+.pviw-eta-v{ margin-top:4px; font:800 26px/1.15 var(--font, system-ui); letter-spacing:-.025em; color:var(--iw-ink); }
+.pviw-eta-d{ margin:6px 0 0; font-size:13.5px; line-height:1.5; color:var(--iw-mute); }
+.pviw-bar{ position:relative; overflow:hidden; height:8px; margin-top:16px; border-radius:8px; background:#e2e7f0; }
+.pviw-bar i{ position:absolute; left:0; top:0; bottom:0; width:0; border-radius:inherit; background:linear-gradient(90deg, #0b1c30, #2f5fe0); transition:width 1.1s cubic-bezier(.22,1,.36,1); overflow:hidden; }
+.pviw-bar i::after{ content:''; position:absolute; inset:0; background:linear-gradient(90deg, transparent, rgba(255,255,255,.45), transparent); transform:translateX(-100%); animation:pviwShine 2s ease-in-out infinite; }
+.pviw-bar-l{ display:flex; justify-content:space-between; gap:10px; margin-top:8px; font:600 12px var(--font, system-ui); color:var(--iw-mute); font-variant-numeric:tabular-nums; }
+.pviw-bar-l span:last-child{ text-align:right; }
+
+/* ── Línea de pasos ── */
+.pviw-flow{ position:relative; margin:0; padding:0; list-style:none; }
+.pviw-flow li{ position:relative; display:flex; gap:14px; padding:0 0 16px; }
+.pviw-flow li:last-child{ padding-bottom:0; }
+.pviw-flow li::before{ content:''; position:absolute; left:13px; top:30px; bottom:2px; width:2px; border-radius:2px; background:var(--iw-line); }
+.pviw-flow li.ok::before{ background:#9fdcbf; }
+.pviw-flow li:last-child::before{ display:none; }
+.pviw-flow b{ position:relative; z-index:1; flex:0 0 28px; width:28px; height:28px; border-radius:50%; background:var(--iw-fill); color:#7a879b;
+  display:inline-flex; align-items:center; justify-content:center; font:700 12.5px var(--font, system-ui); box-shadow:inset 0 0 0 1px var(--iw-line); }
+.pviw-flow li.ok b{ background:#dcf6e9; color:var(--iw-ok); box-shadow:none; }
+.pviw-flow li.ok b svg{ width:16px; height:16px; }
+.pviw-flow li.ok b path{ stroke-dasharray:16; stroke-dashoffset:0; }
+.pviw-flow li.on b{ background:#0b1c30; box-shadow:none; }
+.pviw-flow li.on b i{ width:14px; height:14px; border-radius:50%; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; animation:pviwSpin .9s linear infinite; }
+.pviw-flow-t{ display:block; padding-top:4px; font-size:14.5px; font-weight:700; color:var(--iw-ink); letter-spacing:-.01em; }
+.pviw-flow li:not(.ok):not(.on) .pviw-flow-t{ color:#8e99aa; }
+.pviw-flow-d{ display:block; margin-top:2px; font-size:13px; line-height:1.45; color:var(--iw-mute); }
+.pviw-foot{ margin-top:22px; }
+
+/* Entrada: el check se dibuja y la línea verde baja cuando la hoja ya está arriba. */
+#pvIbkrWait.pviw-in .pviw-flow li.ok b path{ animation:pviwDraw .5s .35s cubic-bezier(.22,1,.36,1) both; }
+#pvIbkrWait.pviw-in .pviw-flow li.ok::before{ transform-origin:top; animation:pviwGrow .5s .55s cubic-bezier(.22,1,.36,1) both; }
+#pvIbkrWait.pviw-in .pviw-node{ animation:pviwPop .5s cubic-bezier(.22,1,.36,1) both; }
+#pvIbkrWait.pviw-in .pviw-pv{ animation-delay:.12s; }
+
+@keyframes pviwFlow{ 0%{ left:0; opacity:0; transform:scale(.6) } 15%{ opacity:1; transform:scale(1) } 85%{ opacity:1; transform:scale(1) } 100%{ left:100%; opacity:0; transform:scale(.6) } }
+@keyframes pviwRing{ 0%{ transform:scale(1); opacity:.9 } 100%{ transform:scale(1.55); opacity:0 } }
+@keyframes pviwPulse{ 0%,100%{ box-shadow:0 0 0 0 rgba(47,95,224,.45) } 50%{ box-shadow:0 0 0 6px rgba(47,95,224,0) } }
+@keyframes pviwEll{ 0%,20%{ opacity:0 } 50%{ opacity:1 } 100%{ opacity:0 } }
+@keyframes pviwShine{ 0%{ transform:translateX(-100%) } 60%,100%{ transform:translateX(200%) } }
+@keyframes pviwSpin{ to{ transform:rotate(360deg) } }
+@keyframes pviwSep{ 0%{ transform:translateX(-100%) } 100%{ transform:translateX(250%) } }
+@keyframes pviwDraw{ from{ stroke-dashoffset:16 } to{ stroke-dashoffset:0 } }
+@keyframes pviwGrow{ from{ transform:scaleY(0) } to{ transform:scaleY(1) } }
+@keyframes pviwPop{ from{ opacity:0; transform:scale(.7) } to{ opacity:1; transform:none } }
+
+/* Aviso del portafolio y tarjeta de Ajustes: tocables cuando hablan de IBKR. */
+#snapSyncBanner.pviw-tap{ cursor:pointer; }
+#snapSyncBanner .ssb-more{ flex:none; width:18px; height:18px; opacity:.7; display:none; }
+#snapSyncBanner.pviw-tap .ssb-more{ display:block; }
+
+@media (prefers-reduced-motion: reduce){
+  #pvIbkrWait *, #pvIbkrWait .pviw-sep::after{ animation:none !important; transition:none !important; }
+  .pviw-track i{ display:none; }
+}
+</style>
+<script id="pvIbkrWaitJs">
+(function(){
+  'use strict';
+  var H = 3600000, WIN = 48 * H;
+  var $i = function(id){ return document.getElementById(id); };
+  var since = 0, tick = null;
+
+  function ago(ms){
+    var m = Math.max(0, Math.round(ms / 60000));
+    if (m < 2) return 'Empezó hace un momento';
+    if (m < 60) return 'Empezó hace ' + m + ' min';
+    var h = Math.floor(m / 60);
+    return 'Empezó hace ' + h + (h === 1 ? ' hora' : ' horas');
+  }
+  function by(t){
+    try {
+      var d = new Date(t);
+      var dia = d.toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/\./g, '');
+      var hora = d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+      return 'Como tarde: ' + dia + ', ' + hora;
+    } catch(e){ return ''; }
+  }
+  function paint(first){
+    var el = Date.now() - since;
+    var f = $i('pviwFill'), a = $i('pviwAgo'), b = $i('pviwBy');
+    // Nunca vacía (se ve que ya empezó) y nunca llena: llena = «ya está», y eso lo dice el broker.
+    var pct = Math.max(4, Math.min(94, el / WIN * 100));
+    if (f) {
+      if (first) { f.style.width = '0'; void f.offsetWidth; requestAnimationFrame(function(){ f.style.width = pct + '%'; }); }
+      else f.style.width = pct + '%';
+    }
+    if (a) a.textContent = el > WIN ? 'Han pasado más de 48 horas' : ago(el);
+    if (b) b.textContent = el > WIN ? '' : by(since + WIN);
+  }
+
+  function open(opts){
+    var ov = $i('pvIbkrWait'); if (!ov) return false;
+    var s = opts && opts.since ? (typeof opts.since === 'number' ? opts.since : Date.parse(opts.since)) : NaN;
+    since = isFinite(s) && s <= Date.now() ? s : Date.now();
+    // Otra hoja o aviso a pantalla completa delante: ésta va encima, sin dejarlos a medias.
+    try { if (window._pvConnectingOverlay) window._pvConnectingOverlay(false); } catch(e){}
+    ov.classList.remove('closing', 'pviw-in');
+    ov.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    try { var bd = $i('pviwBody'); if (bd) bd.scrollTop = 0; } catch(e){}
+    paint(true);
+    void ov.offsetWidth; ov.classList.add('pviw-in');
+    setTimeout(function(){
+      try {
+        var nodes = ov.querySelectorAll('.pviw-live, .pviw-eta, .pvbp-sec, .pviw-flow li, .pviw-foot');
+        if (window.PVM && window.PVM.enter) window.PVM.enter(nodes, { step: 45, max: 8 });
+      } catch(e){}
+    }, 80);
+    clearInterval(tick); tick = setInterval(paint, 60000);
+    return true;
+  }
+  function close(cb){
+    clearInterval(tick); tick = null;
+    document.body.style.overflow = '';
+    var ov = $i('pvIbkrWait');
+    var done = function(){ if (ov) ov.classList.remove('pviw-in'); if (typeof cb === 'function') { try { cb(); } catch(e){} } };
+    if (typeof _asCerrar === 'function' && ov && ov.classList.contains('open')) { _asCerrar('pvIbkrWait', done); return; }
+    if (ov) ov.classList.remove('open', 'closing');
+    done();
+  }
+  window._pvIbkrWait = open;
+  window._pvIbkrWaitClose = close;
+  document.addEventListener('keydown', function(e){
+    var ov = $i('pvIbkrWait');
+    if (e.key === 'Escape' && ov && ov.classList.contains('open')) close();
+  });
+})();
+</script>
+<!-- ═══ fin IBKR · TRAYENDO TUS DATOS ═══ -->
 <script id="pvMovExtraJs">
 /* ═══ MOVIMIENTO · lo que aún aparecía de golpe (9 nov 2026) ══════════════════════════════════
    Sobre window.PVM, sólo vigila desde fuera (MutationObserver): si algo falla, la app pinta lo

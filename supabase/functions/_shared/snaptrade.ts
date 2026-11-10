@@ -451,6 +451,7 @@ export async function fxRatesFor(st: Snaptrade, codes: string[]): Promise<Record
 // quedarse sin cartera por un fallo nuestro sería peor que el bug que esto arregla.
 const OWN_LATE_MS = 10 * 60 * 1000;   // aparecer >10 min después de crear la conexión = llegó después
 const OWN_EARLIER_MS = 60 * 1000;     // margen para decidir que una copia es «más vieja»
+const OWN_FIRST_BATCH_MS = 72 * 3600 * 1000;   // IBKR entrega sus cuentas 24–48 h después de enlazar
 
 const _ownNorm = (s: unknown) => String(s ?? "").trim().toUpperCase().replace(/\s+/g, " ");
 async function _sha256(s: string): Promise<string> {
@@ -467,7 +468,11 @@ export async function brokerAccountKey(a: any): Promise<string | null> {
   const inst = _ownNorm(a?.institution_name);
   const num = _ownNorm(a?.number);
   if (inst && num) {
-    if (/[*•#]|X{2,}/.test(num)) return "m:" + await _sha256(inst + "|" + num + "|" + _ownNorm(a?.name));
+    // SnapTrade puede dar el número completo o sólo los «últimos 4». Un «1234» pelado no lleva
+    // asteriscos pero tampoco identifica la cuenta: dos personas pueden compartirlo, y con «n:»
+    // la segunda veía su cartera vacía para siempre. Menos de 6 caracteres = enmascarado.
+    const alnum = num.replace(/[^A-Z0-9]/g, "");
+    if (/[*•#]|X{2,}/.test(num) || alnum.length < 6) return "m:" + await _sha256(inst + "|" + num + "|" + _ownNorm(a?.name));
     return "n:" + await _sha256(inst + "|" + num);
   }
   const id = a?.id ?? a?.account_id;
@@ -506,6 +511,32 @@ export async function ownedAccounts(
       return Date.parse(c?.created_date ?? "");
     };
 
+    // Primera cuenta que entregó cada conexión. IBKR entrega sus cuentas 24–48 h después de
+    // enlazar: medido sólo contra la creación de la conexión, TODA cuenta de IBKR contaba como
+    // «llegada después» y podía ocultarse. Ver OWN_FIRST_BATCH_MS abajo.
+    const firstByAuth = new Map<string, number>();
+    for (const x of accts) {
+      const t = Date.parse(x?.created_date ?? "");
+      const au = String(x?.brokerage_authorization ?? "");
+      if (!au || !Number.isFinite(t)) continue;
+      const prev = firstByAuth.get(au);
+      if (prev === undefined || t < prev) firstByAuth.set(au, t);
+    }
+    // Dueño que ya no tiene bróker enlazado (perfil sin usuario de SnapTrade): su fila quedó
+    // huérfana —p. ej. la conexión se borró desde el bróker— y no puede ocultarle la cuenta a
+    // quien sí la tiene. Sólo se consulta si hay conflicto.
+    const ownerGone = new Map<string, boolean>();
+    const isOwnerGone = async (uid: string): Promise<boolean> => {
+      if (ownerGone.has(uid)) return ownerGone.get(uid)!;
+      let gone = false;
+      try {
+        const { data: p, error: pe } = await admin.from("profiles").select("snaptrade_user_id").eq("id", uid).maybeSingle();
+        gone = !pe && (!p || !(p as any).snaptrade_user_id);
+      } catch { gone = false; }
+      ownerGone.set(uid, gone);
+      return gone;
+    };
+
     const owned: any[] = [], foreign: any[] = [];
     const claims: any[] = [];
     const steals: Array<{ key: string; created: string | null }> = [];
@@ -528,9 +559,20 @@ export async function ownedAccounts(
         owned.push(a);
         continue;
       }
+      if (await isOwnerGone(String(r.user_id))) {
+        steals.push({ key: k, created });
+        owned.push(a);
+        continue;
+      }
       if (!k.startsWith("n:")) {
         const auth = await authCreated(a?.brokerage_authorization);
-        const late = !Number.isFinite(auth) || !Number.isFinite(mine) || mine - auth > OWN_LATE_MS;
+        const first = firstByAuth.get(String(a?.brokerage_authorization ?? ""));
+        let late = !Number.isFinite(auth) || !Number.isFinite(mine) || mine - auth > OWN_LATE_MS;
+        // Primera entrega de la conexión, llegada dentro de las 72 h de enlazar (el caso de
+        // IBKR): es la cuenta original, no una que el bróker añadió después. Una cuenta que
+        // otra persona conecta días más tarde sigue contando como tardía.
+        if (late && Number.isFinite(auth) && Number.isFinite(mine) && first !== undefined
+            && mine - auth < OWN_FIRST_BATCH_MS && mine - first <= OWN_LATE_MS) late = false;
         if (!late) { owned.push(a); continue; }
       }
       foreign.push(a);

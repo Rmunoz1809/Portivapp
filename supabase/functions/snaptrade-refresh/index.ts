@@ -286,6 +286,17 @@ Deno.serve(async (req) => {
     const anyLive = conns.some((c: any) => c && c.disabled !== true);
     const allDisabled = conns.length > 0 && !anyLive;
 
+    // SnapTrade acaba de decir que TODAS las conexiones están vivas: una marca de «rota» que
+    // dejó un webhook (p. ej. un corte momentáneo de otro broker que ya se recuperó) es vieja.
+    // Sin limpiarla aquí, el camino «aún sin posiciones» la devolvía como broken:true y quien
+    // espera a IBKR (24–48 h sin posiciones) veía «Reconecta tu broker» sobre una conexión sana.
+    if (!connsErr && conns.length && conns.every((c: any) => c && c.disabled !== true) && profile.snaptrade_connection_broken) {
+      try {
+        await admin.from("profiles").update({ snaptrade_connection_broken: false }).eq("id", userId);
+        (profile as any).snaptrade_connection_broken = false;
+      } catch (_) { /* se reintenta en la próxima lectura */ }
+    }
+
     // La conexión que el perfil tenía apuntada puede haber cambiado (reconexión, alta nueva,
     // webhook perdido). Se re-apunta sola: snaptrade-connect necesita este id para el modo
     // `reconnect`, y sin él la reconexión degenera en "añadir otra conexión" y no arregla nada.
@@ -869,6 +880,12 @@ Deno.serve(async (req) => {
             holdings: ownCache(profile.snaptrade_holdings) ?? [],
             accountId: profile.snaptrade_account_id ?? null,
             lastSync: profile.snaptrade_last_refresh ?? null,
+            // Quién está conectando y desde cuándo. Es EL caso de IBKR en sus primeras 24–48 h
+            // (conexión viva, cero cuentas): sin `institutions` el cliente no sabía que era
+            // IBKR y le prometía «unos minutos» en vez de su plazo real.
+            institutions,
+            dormantConnections,
+            staleConnections,
             brokerSlugs: await ibkrSlug(),
             rates: await ratesFor(profile.snaptrade_holdings),
             fromCache: false,
