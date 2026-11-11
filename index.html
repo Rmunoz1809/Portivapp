@@ -51528,7 +51528,23 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         // FIX 11 — Con la conexión ESTABLECIDA (connected, sin syncing y sin broken) un payload sin
         // posiciones ni efectivo es un dato real: cartera liquidada. Mientras syncing/broken, un
         // payload vacío solo significa "aún no llegó" y no se toca nada.
-        var _settled = !!(j.connected && !j.syncing && !j.broken);
+        // foreignOnly sin foto propia: la cartera vacía NO es una liquidación real, es que el
+        // bróker dejó de compartir la cuenta propia (se reconectó en otra cuenta de Portiv). No
+        // se borra lo que ya había (11 nov 2026: salía «$0.00 · −100 %»).
+        var _settled = !!(j.connected && !j.syncing && !j.broken && !j.foreignOnly);
+        if(j.foreignOnly){
+          // Aviso visible una vez por sesión: la nota de la tarjeta del bróker vive en Ajustes
+          // y nadie la veía. El botón abre el portal para volver a marcar su cuenta.
+          try{
+            if(!window._pvForeignWarned && typeof window._pvConnectingError==='function'){
+              window._pvForeignWarned = true;
+              window._pvConnectingError('Tu bróker se conectó en otra cuenta de Portiv y dejó de compartir tu cuenta con esta. '
+                + (data.positions.length ? 'Te mostramos tu última cartera guardada. ' : '')
+                + 'Toca «Reintentar» y vuelve a marcar tu cuenta en tu bróker.',
+                function(){ try{ snapConnect('accounts'); }catch(e){} });
+            }
+          }catch(e){}
+        }
         if(data.positions.length || data.cash_balance || _settled){
           // Bloque 4 (fix): limpia la semilla del dueño SOLO cuando YA hay datos REALES
           // del broker para reemplazarla. Nunca borra a $0.00 con un payload vacío o aún

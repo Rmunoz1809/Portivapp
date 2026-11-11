@@ -437,6 +437,26 @@ Deno.serve(async (req) => {
     const foreignAccounts = own.foreign.length;
     accts = own.owned;
     if (foreignAccounts > 0 && accts.length === 0) {
+      // 11 nov 2026: el mismo login del bróker se reconectó en OTRA cuenta de Portiv y el
+      // bróker dejó de compartir con esta conexión su cuenta propia. Responder vacío dejaba al
+      // usuario en «$0.00 · −100 %» sin saber por qué. Si hay una foto PROPIA guardada (own: 1,
+      // nunca la ajena), se sirve marcada como vieja junto al aviso para volver a elegir la cuenta.
+      const ownLast = ownCache(profile.snaptrade_holdings);
+      if (ownLast != null && ownLast.length) {
+        return jsonResponse(req, {
+          connected: true,
+          broken: false,
+          foreignOnly: true,
+          foreignAccounts,
+          holdings: ownLast,
+          accountId: profile.snaptrade_account_id ?? null,
+          lastSync: profile.snaptrade_last_refresh ?? null,
+          stale: true,
+          brokerSlugs: await ibkrSlug(),
+          rates: await ratesFor(profile.snaptrade_holdings),
+          fromCache: true,
+        });
+      }
       // TODO lo que el bróker comparte ahora con esta conexión es de la otra cuenta de Portiv:
       // la cuenta propia ya no llega. Cartera vacía (nunca la ajena) y aviso para reconectar
       // eligiendo su cuenta. No se guarda en caché: cada lectura vuelve a comprobarlo, así
