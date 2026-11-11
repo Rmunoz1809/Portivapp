@@ -25954,6 +25954,10 @@ var _PV_DAY_FROM_CACHE = false;   // var, no let: _updatePerfTotals se define an
 // pastilla de la cabecera y Noticias: antes unas celdas ponían «—» y otras «+$0.00».
 function _pvDayKnown() {
   try {
+    // Cartera vacía (sin posiciones y total en 0, p. ej. el broker devolvió la cartera vacía):
+    // no hay día que contar. Comparado con el cierre de ayer salía «−$6,563.37 (−100.00 %)»,
+    // como si se hubiera perdido todo, cuando lo único que pasó es que no hay datos.
+    if (Array.isArray(HOLDINGS) && !HOLDINGS.length && !(calcTotals().total > 0)) return false;
     if (isLive || _PV_DAY_FROM_CACHE) return true;
     // La última cotización guardada vale sólo si TODAS las posiciones actuales tienen su cierre
     // previo: si entró una posición nueva después, su día no se conoce todavía.
@@ -26115,6 +26119,8 @@ function _calcRealDayChange() {
     return { day, dayPct, prevClose };
   }
   // Respaldo: portafolio SIN posiciones (p.ej. foto de "resumen") → snapshot del cierre anterior.
+  // Sin posiciones y total en 0 = no hay cartera que comparar (nunca un −100 %).
+  if (!(T.total > 0)) return { day: 0, dayPct: 0, prevClose: 0 };
   const prevClose = _calcPreviousDayPortfolioClose();
   const day    = prevClose > 0 ? round2(T.total - prevClose) : round2(T.day || 0);
   const dayPct = prevClose > 0 ? round2(day / prevClose * 100) : 0;
