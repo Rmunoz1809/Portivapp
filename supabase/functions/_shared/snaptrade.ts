@@ -537,23 +537,6 @@ export async function ownedAccounts(
       return gone;
     };
 
-    // Cuentas de prueba de Portiv (…@portivapp.com: pro1/pro2/pro3, demos). Se usan con el
-    // bróker REAL de Rafael para capturas y pruebas, así que nunca se quedan con una cuenta:
-    // la ven sin reclamarla, y quien no es de prueba les quita la que reclamaron antes de este
-    // arreglo. 11 nov 2026: pro2 «recuperó» (copia más vieja) la cuenta real y la cartera de la
-    // cuenta principal salió en $0.00. Sólo se consulta cuando hay que reclamar o resolver.
-    const testCache = new Map<string, boolean>();
-    const isTestUser = async (uid: string): Promise<boolean> => {
-      if (testCache.has(uid)) return testCache.get(uid)!;
-      let t = false;
-      try {
-        const { data: u } = await admin.auth.admin.getUserById(uid);
-        t = /@portivapp\.com$/i.test(String(u?.user?.email ?? "").trim());
-      } catch { t = false; }
-      testCache.set(uid, t);
-      return t;
-    };
-
     const owned: any[] = [], foreign: any[] = [];
     const claims: any[] = [];
     const steals: Array<{ key: string; created: string | null }> = [];
@@ -564,19 +547,12 @@ export async function ownedAccounts(
       const created = Number.isFinite(mine) ? new Date(mine).toISOString() : null;
       const r = rows.get(k);
       if (!r) {
-        if (await isTestUser(userId)) { owned.push(a); continue; }   // la ve, no la reclama
         claims.push({ account_key: k, user_id: userId, account_created: created });
         rows.set(k, { account_key: k, user_id: userId, account_created: created });
         owned.push(a);
         continue;
       }
       if (r.user_id === userId) { owned.push(a); continue; }
-      if (await isTestUser(userId)) { owned.push(a); continue; }      // prueba: la ve sin quitarla
-      if (await isTestUser(String(r.user_id))) {                       // dueño de prueba: vuelve a la real
-        steals.push({ key: k, created });
-        owned.push(a);
-        continue;
-      }
       const theirs = Date.parse(r.account_created ?? "");
       if (Number.isFinite(mine) && Number.isFinite(theirs) && mine < theirs - OWN_EARLIER_MS) {
         steals.push({ key: k, created });
