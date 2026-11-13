@@ -112,6 +112,23 @@ Deno.serve(async (req) => {
   if (!path) return json({ error: "missing ?path" }, 400);
   if (!path.startsWith("/")) path = "/" + path;
 
+  // ── Estimados guardados (no va a Finnhub): /portiv/estimates?symbol=X ──────
+  // Lo que esperaban los analistas en cada trimestre, también de los ya reportados (Finnhub
+  // los borra del calendario al poco de reportar). Lo llena captureEstimates, más abajo.
+  if (/^\/portiv\/estimates\?/i.test(path)) {
+    const sym = (new URLSearchParams(path.split("?")[1] ?? "").get("symbol") ?? "").toUpperCase().trim();
+    if (!/^[A-Z0-9.\-]{1,12}$/.test(sym)) return json({ error: "bad symbol" }, 400);
+    try {
+      const { data, error } = await db.from("earnings_estimates")
+        .select("year, quarter, report_date, eps_estimate, revenue_estimate")
+        .eq("symbol", sym).order("year", { ascending: true }).order("quarter", { ascending: true }).limit(80);
+      if (error) return json({ estimates: [] }, 200);
+      return json({ estimates: data ?? [] }, 200);
+    } catch (_e) {
+      return json({ estimates: [] }, 200);
+    }
+  }
+
   // Hard allow-list of endpoints so the proxy can't be abused as an open relay.
   const allowed = [
     "/quote", "/stock/candle", "/company-news", "/news", "/calendar/earnings",
@@ -187,5 +204,45 @@ Deno.serve(async (req) => {
     );
   } catch (_e) { /* cache write failed → still return the fresh data */ }
 
+  // 4) Calendario de resultados: se guardan los estimados de los trimestres aún sin reportar.
+  if (/^\/calendar\/earnings/i.test(path)) {
+    const job = captureEstimates(payload).catch(() => {});
+    // deno-lint-ignore no-explicit-any
+    const rt = (globalThis as any).EdgeRuntime;
+    if (rt && typeof rt.waitUntil === "function") rt.waitUntil(job); else await job;
+  }
+
   return json(payload, 200);
 });
+
+// Guarda en public.earnings_estimates cada fila del calendario SIN resultado todavía: el
+// último estimado antes del reporte es el que queda. Una fila con resultado no se toca (su
+// estimado ya es el de antes del reporte). Una llamada del calendario semanal trae cientos
+// de empresas: van en lotes de 500 en un solo upsert cada uno.
+// deno-lint-ignore no-explicit-any
+async function captureEstimates(payload: any) {
+  const rows = Array.isArray(payload?.earningsCalendar) ? payload.earningsCalendar : [];
+  const now = new Date().toISOString();
+  const seen = new Set<string>();
+  const out: Record<string, unknown>[] = [];
+  for (const r of rows) {
+    if (!r || typeof r.symbol !== "string" || !r.year || !r.quarter) continue;
+    if (r.epsActual != null || r.revenueActual != null) continue;
+    const eps = typeof r.epsEstimate === "number" && isFinite(r.epsEstimate) ? r.epsEstimate : null;
+    const rev = typeof r.revenueEstimate === "number" && isFinite(r.revenueEstimate) && r.revenueEstimate > 0 ? r.revenueEstimate : null;
+    if (eps == null && rev == null) continue;
+    const symbol = r.symbol.toUpperCase().trim();
+    if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) continue;
+    const k = `${symbol}|${r.year}|${r.quarter}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({
+      symbol, year: +r.year, quarter: +r.quarter,
+      report_date: /^\d{4}-\d{2}-\d{2}$/.test(r.date ?? "") ? r.date : null,
+      eps_estimate: eps, revenue_estimate: rev, updated_at: now,
+    });
+  }
+  for (let i = 0; i < out.length; i += 500) {
+    await db.from("earnings_estimates").upsert(out.slice(i, i + 500), { onConflict: "symbol,year,quarter" });
+  }
+}

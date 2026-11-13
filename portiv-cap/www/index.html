@@ -30755,7 +30755,11 @@ async function _pvtvLoad(tk, stage){
       S.p1 = Promise.all([
         fhFetch(`/stock/earnings?symbol=${enc}&limit=12`, 12000).catch(() => null),
         fhFetch(`/calendar/earnings?symbol=${enc}&from=${y - 2}-01-01&to=${to}`, 12000).catch(() => null),
-      ]).then(([er, cal]) => { S.er = Array.isArray(er) ? er : []; S.cal = (cal && Array.isArray(cal.earningsCalendar)) ? cal.earningsCalendar : [];
+        // Estimados guardados antes de cada reporte (finnhub-proxy → earnings_estimates):
+        // lo que esperaban los analistas también en los trimestres que ya pasaron.
+        fhFetch(`/portiv/estimates?symbol=${enc}`, 10000).catch(() => null),
+      ]).then(([er, cal, est]) => { S.er = Array.isArray(er) ? er : []; S.cal = (cal && Array.isArray(cal.earningsCalendar)) ? cal.earningsCalendar : [];
+        S.est = (est && Array.isArray(est.estimates)) ? est.estimates : [];
         S.err1 = (er == null && cal == null); S.st = Math.max(S.st, 1); });
     }
     await S.p1;
@@ -30879,22 +30883,35 @@ function _pvtvEarnData(S){
     .sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
   const lbl = (y, q) => `T${q} '${String(y).slice(-2)}`;
   const Q = S.Q || [];
-  const qMatch = per => { const p = _pvtvD(per); return isFinite(p) ? Q.find(x => Math.abs(_pvtvD(x.end) - p) <= 20 * 864e5) : null; };
+  // Trimestre de los estados por clave fiscal (mismo año/trimestre que da Finnhub) y, si no,
+  // por fecha de cierre: /stock/earnings lleva el cierre al trimestre natural (CRM: julio → «30 sep»).
+  const qByKey = {}; Q.forEach(x => { if (x.fy && x.q) qByKey[qk(x.fy, x.q)] = x; });
+  const qMatch = (y, q, per) => { if (qByKey[qk(y, q)]) return qByKey[qk(y, q)];
+    const p = _pvtvD(per); return isFinite(p) ? Q.find(x => Math.abs(_pvtvD(x.end) - p) <= 20 * 864e5) : null; };
+  // Estimado de ingresos de un trimestre: el del calendario si aún lo trae; si no, el que se
+  // guardó antes del reporte (S.est).
+  const estBy = {}; (S.est || []).forEach(e => { if (e && e.year && e.quarter) estBy[qk(e.year, e.quarter)] = e; });
+  const revEst = (y, q) => {
+    const c = calBy[qk(y, q)];
+    if (c && typeof c.revenueEstimate === 'number' && c.revenueEstimate > 0) return c.revenueEstimate;
+    const s = estBy[qk(y, q)];
+    return (s && typeof s.revenue_estimate === 'number' && s.revenue_estimate > 0) ? s.revenue_estimate : null;
+  };
   const epsQ = er.map(r => ({ label:lbl(r.year, r.quarter), act:r.actual, est:(typeof r.estimate === 'number' ? r.estimate : null) }))
     .concat(fut.filter(c => typeof c.epsEstimate === 'number').map(c => ({ label:lbl(c.year, c.quarter), act:null, est:c.epsEstimate, fut:true })));
   // Ingresos por trimestre: estimado del calendario + reportado (calendario o 10-Q), y más
   // historia hacia atrás con los trimestres de los estados.
   const revQ = [], usedEnd = new Set();
   er.forEach(r => {
-    const c = calBy[qk(r.year, r.quarter)], m = qMatch(r.period);
+    const c = calBy[qk(r.year, r.quarter)], m = qMatch(r.year, r.quarter, r.period);
     if (m) usedEnd.add(m.end);
     const act = (c && typeof c.revenueActual === 'number' && c.revenueActual > 0) ? c.revenueActual : (m ? m.rev : null);
-    const est = (c && typeof c.revenueEstimate === 'number' && c.revenueEstimate > 0) ? c.revenueEstimate : null;
-    if (act != null || est != null) revQ.push({ end:String(r.period), label:lbl(r.year, r.quarter), act, est });
+    const est = revEst(r.year, r.quarter);
+    if (act != null || est != null) revQ.push({ end:m ? m.end : String(r.period), label:lbl(r.year, r.quarter), act, est });
   });
   const first = revQ.length ? revQ[0].end : '9999';
   Q.filter(x => x.rev != null && !usedEnd.has(x.end) && x.end < first).slice(-Math.max(0, 8 - revQ.length))
-    .forEach(x => revQ.push({ end:x.end, label:x.label, act:x.rev, est:null }));
+    .forEach(x => revQ.push({ end:x.end, label:x.label, act:x.rev, est:(x.fy && x.q) ? revEst(x.fy, x.q) : null }));
   revQ.sort((a, b) => a.end.localeCompare(b.end));
   fut.filter(c => typeof c.revenueEstimate === 'number' && c.revenueEstimate > 0)
     .forEach(c => revQ.push({ label:lbl(c.year, c.quarter), act:null, est:c.revenueEstimate, fut:true }));
@@ -30969,7 +30986,7 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'Estimado', cells:R.map(r => _pvtvBig(r.est)) },
         { n:'Sorpresa', cells:R.map(r => (!r.fut && r.est != null && r.act != null) ? (_pvtvPct(_pvtvChg(r.act, r.est)) || '—') : '—') },
       ]);
-      hint = 'Ingresos reportados frente al consenso. Los trimestres más antiguos salen de los informes trimestrales (10-Q), sin estimado; las columnas rayadas son previsiones.'
+      hint = 'La barra gris es lo que esperaban los analistas antes del reporte. Portiv guarda ese estimado desde noviembre de 2026, así que los trimestres anteriores salen sin él (las cifras reportadas vienen de los 10-Q). Las columnas rayadas son previsiones.'
            + (S.st < 2 ? ' Cargando más historia…' : '');
     } else if (aOk){
       const A = D.A.filter(x => x.rev != null);
