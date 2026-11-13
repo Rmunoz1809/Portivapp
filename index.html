@@ -30624,6 +30624,8 @@ window._pvxTab = function(btn, id){
     // lenta y cara del análisis y sólo se ve en esta pestaña.
     if (id === 'ea' && !_free && typeof _pvxFillEarnings === 'function') _pvxFillEarnings(scope);
     if (id === 'ea' && !_free && typeof _pvxFillTV === 'function') _pvxFillTV(scope);
+    // Balance y flujo de caja (10-K/10-Q): la misma descarga que «Estado de resultados».
+    if (id === 'fi' && !_free && typeof _pvxFillFN === 'function') _pvxFillFN(scope);
   } catch(e){}
 };
 
@@ -30845,7 +30847,9 @@ function _pvtvNice(span){
 // (ancho 0) se toma el de la ficha; si tampoco, 680.
 function _pvtvAncho(){
   try {
-    const c = document.querySelector('#r-analysis .pvtv-view.on .px-card') || document.querySelector('#r-analysis .px-card');
+    // Primero la pestaña visible: «Resultados» y «Finanzas» tienen cada una sus vistas, y la
+    // primera .pvtv-view.on del documento puede estar en la pestaña oculta (ancho 0).
+    const c = document.querySelector('#r-analysis .px-pane.on .pvtv-view.on .px-card') || document.querySelector('#r-analysis .pvtv-view.on .px-card') || document.querySelector('#r-analysis .px-card');
     if (c && c.clientWidth > 0){ const s = getComputedStyle(c); return c.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); }
     const r = document.getElementById('r-analysis');
     if (r && r.clientWidth > 0) return r.clientWidth - 60;
@@ -31150,6 +31154,340 @@ window._pvtvSub = function(btn, v){
   } catch(e){}
 };
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  FINANZAS — misma estructura que «Estado de resultados» (13 nov 2026)
+//  Cuatro vistas dentro de la pestaña «Finanzas»:
+//   · Balance: activos, pasivos y patrimonio por año o trimestre, y efectivo frente a deuda.
+//   · Flujo de caja: operativo, inversión en activos fijos, flujo libre y qué se hizo con él.
+//   · Salud: notas del sector, desglose por pilares, rentabilidad, crecimiento, F-Score y Z.
+//   · Valoración: múltiplos frente a sus pares, mercado, retornos y tu precio objetivo.
+//  Los datos son los mismos 10-K/10-Q que ya baja _pvtvLoad (S.fa / S.fq): nada de una
+//  segunda descarga. El balance es una foto al cierre (no se resta nada); el flujo de caja
+//  de los 10-Q es acumulado del año, así que un trimestre = acumulado − acumulado previo del
+//  mismo ejercicio con la MISMA etiqueta, y el T4 = 10-K − nueve meses. Sin estimaciones:
+//  sólo sumas y restas exactas de cifras presentadas (flujo libre = operativo − activos fijos).
+// ══════════════════════════════════════════════════════════════════════════════
+const _PVFN_UI = { bal:'A', cf:'A', view:'bal' };
+const _PVFN_BS = {
+  cash:   ['CashAndCashEquivalentsAtCarryingValue', 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'],
+  liqT:   ['CashCashEquivalentsAndShortTermInvestments'],
+  sti:    ['ShortTermInvestments', 'MarketableSecuritiesCurrent', 'AvailableForSaleSecuritiesDebtSecuritiesCurrent'],
+  curA:   ['AssetsCurrent'],
+  assets: ['Assets'],
+  curL:   ['LiabilitiesCurrent'],
+  liab:   ['Liabilities'],
+  le:     ['LiabilitiesAndStockholdersEquity'],
+  eq:     ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'],
+  eqTot:  ['StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'],
+  dCur:   ['DebtCurrent'],
+  ltdCur: ['LongTermDebtCurrent', 'LongTermDebtAndCapitalLeaseObligationsCurrent', 'ConvertibleDebtCurrent', 'ConvertibleNotesPayableCurrent'],
+  cp:     ['CommercialPaper'],
+  stb:    ['ShortTermBorrowings'],
+  ltd:    ['LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations'],
+  ltdAll: ['LongTermDebt', 'LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities'],
+};
+const _PVFN_CF = {
+  ocf:   ['NetCashProvidedByUsedInOperatingActivities', 'NetCashProvidedByUsedInOperatingActivitiesContinuingOperations'],
+  capex: ['PaymentsToAcquirePropertyPlantAndEquipment', 'PaymentsToAcquireProductiveAssets'],
+  inv:   ['NetCashProvidedByUsedInInvestingActivities', 'NetCashProvidedByUsedInInvestingActivitiesContinuingOperations'],
+  fin:   ['NetCashProvidedByUsedInFinancingActivities', 'NetCashProvidedByUsedInFinancingActivitiesContinuingOperations'],
+  div:   ['PaymentsOfDividends', 'PaymentsOfDividendsCommonStock', 'PaymentsOfOrdinaryDividends'],
+  buy:   ['PaymentsForRepurchaseOfCommonStock', 'PaymentsForRepurchaseOfEquity'],
+};
+const _PVFN_CFK = Object.keys(_PVFN_CF);
+function _pvfnIdx(list){
+  const idx = {};
+  for (const f of (Array.isArray(list) ? list : [])){
+    if (!f || typeof f.concept !== 'string') continue;
+    const k = f.concept.replace(/^[a-z-]+_/i, ''), v = Number(f.value);
+    if (isFinite(v) && !(k in idx)) idx[k] = v;
+  }
+  return idx;
+}
+// Primera etiqueta presente de cada campo; `_t` guarda cuál fue (para restar acumulados).
+function _pvfnPick(idx, map){
+  const o = {}, t = {};
+  for (const c in map){ o[c] = null; for (const k of map[c]) if (k in idx){ o[c] = idx[k]; t[c] = k; break; } }
+  Object.defineProperty(o, '_t', { value: t, enumerable: false });
+  return o;
+}
+const _pvfnSum = arr => { const v = arr.filter(x => x != null && isFinite(x)); return v.length ? v.reduce((a, b) => a + b, 0) : null; };
+function _pvfnBal(rep){
+  const bs = rep && rep.report && rep.report.bs;
+  if (!Array.isArray(bs) || !bs.length) return null;
+  const idx = _pvfnIdx(bs), p = _pvfnPick(idx, _PVFN_BS), keys = Object.keys(idx);
+  const o = { cash:p.cash, curA:p.curA, assets:p.assets, curL:p.curL, liab:p.liab, eq:p.eq, bank:('Deposits' in idx) };
+  // Efectivo + inversiones a corto plazo: la línea del balance o, si no existe, la suma exacta de las dos.
+  o.liq = p.liqT != null ? p.liqT : (p.cash != null && p.sti != null) ? p.cash + p.sti : null;
+  // Pasivos totales que no vienen en una línea propia: pasivo y patrimonio − patrimonio, sólo
+  // si no hay capital «temporal» (acciones rescatables) ni minoritarios fuera de la cifra.
+  if (o.liab == null && p.le != null && !keys.some(k => /TemporaryEquity|Redeemable/i.test(k))){
+    if (p.eqTot != null) o.liab = p.le - p.eqTot;
+    else if (p.eq != null && !keys.some(k => !/^StockholdersEquity/.test(k) && /MinorityInterest|NoncontrollingInterest/i.test(k))) o.liab = p.le - p.eq;
+  }
+  // Deuda total = préstamos, bonos y papel comercial que el balance presenta como deuda.
+  if (p.ltd != null){
+    const cur = p.dCur != null ? p.dCur : _pvfnSum([p.ltdCur, p.cp, p.stb]);
+    o.debt = p.ltd + (cur || 0);
+  } else if (p.ltdAll != null){
+    o.debt = p.ltdAll + (_pvfnSum([p.cp, p.stb]) || 0);       // esa línea ya trae la porción corriente
+  } else o.debt = null;      // sin la línea de deuda a largo plazo no se arma un total parcial
+  if (o.assets == null && o.liab == null && o.eq == null && o.curA == null) return null;
+  return o;
+}
+// Payloads de Finnhub → balance y flujo de caja, anuales y trimestrales.
+function _pvfnParse(fa, fq){
+  const by = {};
+  [fq, fa].forEach(pl => (Array.isArray(pl && pl.data) ? pl.data : []).forEach(d => {
+    if (!d || !d.report || !/^10-[QK]/i.test(String(d.form || ''))) return;
+    const e = _pvtvD(d.endDate); if (!isFinite(e)) return;
+    const k = /^10-K/i.test(d.form);
+    const r = { s:_pvtvD(d.startDate), e, start:String(d.startDate || '').slice(0, 10), end:String(d.endDate).slice(0, 10),
+      fy:d.year, fyA:d.year, k, q:k ? 4 : (+d.quarter || 0), b:_pvfnBal(d), c:_pvfnPick(_pvfnIdx(d.report.cf), _PVFN_CF) };
+    const key = r.start + '|' + r.end, old = by[key];
+    // Un 10-K/A del mismo periodo sólo sustituye al original si éste llegó sin balance.
+    if (!old || (!old.b && r.b)) by[key] = r;
+  }));
+  const rows = Object.values(by);
+  // Año fiscal de cada ejercicio: el de sus 10-Q (ver _pvtvQuarterly: CRM cierra en enero).
+  const groups = {};
+  rows.forEach(r => { if (r.start) (groups[r.start] = groups[r.start] || []).push(r); });
+  Object.values(groups).forEach(g => {
+    const gfy = (g.find(r => r.q >= 1 && r.q <= 3 && r.fy) || {}).fy;
+    g.forEach(r => { if (r.q === 4 && gfy) r.fy = gfy; });
+  });
+  const qLbl = r => `T${r.q || '?'} '${String(r.fy || r.end.slice(0, 4)).slice(-2)}`;
+  const byEnd = arr => { const m = {}; arr.forEach(x => { if (!m[x.end]) m[x.end] = x; }); return Object.values(m).sort((a, b) => a.end.localeCompare(b.end)); };
+  // Etiqueta anual = año fiscal de sus 10-Q (r.fy): Finnhub repite el `year` de los 10-K de
+  // ejercicios desfasados (CRM: los cierres de ene-2025 y ene-2026 llegan los dos como «2025»).
+  const balA = byEnd(rows.filter(r => r.k && r.b).map(r => ({ end:r.end, label:String(r.fy || r.fyA || r.end.slice(0, 4)), ...r.b })));
+  const balQ = byEnd(rows.filter(r => r.b).map(r => ({ end:r.end, label:qLbl(r), ...r.b })));
+  const cfOut = (r, c) => { const o = { end:r.end }; _PVFN_CFK.forEach(k => { o[k] = c[k]; });
+    o.fcf = (o.ocf != null && o.capex != null) ? o.ocf - o.capex : null; return o; };
+  const cfA = byEnd(rows.filter(r => r.k && isFinite(r.s) && (r.e - r.s) / 864e5 > 300 && r.c.ocf != null)
+    .map(r => ({ ...cfOut(r, r.c), label:String(r.fy || r.fyA || r.end.slice(0, 4)) })));
+  const qs = [];
+  Object.values(groups).forEach(g => {
+    g.sort((a, b) => a.e - b.e);
+    let prev = null;
+    g.forEach(r => {
+      if (!isFinite(r.s)) return;
+      const span = (r.e - r.s) / 864e5;
+      let c = null;
+      if (span <= 110) c = r.c;
+      else if (prev && (r.e - prev.e) / 864e5 >= 70 && (r.e - prev.e) / 864e5 <= 110){
+        c = {}; _PVFN_CFK.forEach(k => { c[k] = (r.c[k] != null && prev.c[k] != null && r.c._t[k] === prev.c._t[k]) ? r.c[k] - prev.c[k] : null; });
+      }
+      if (c && c.ocf != null) qs.push({ ...cfOut(r, c), label:qLbl(r) });
+      prev = r;
+    });
+  });
+  const cfQ = byEnd(qs);
+  const mx = arr => arr.reduce((m, r) => r.end > m ? r.end : m, '');
+  const ks = rows.filter(r => r.k);
+  // last*: último informe de cualquier tipo / con balance / con flujo; lastK*: sólo los 10-K
+  // (para el aviso de la vista anual).
+  return { balA, balQ, cfA, cfQ, bank:rows.some(r => r.b && r.b.bank),
+           lastAny:mx(rows), lastBal:mx(rows.filter(r => r.b)), lastCf:mx(rows.filter(r => r.c.ocf != null)),
+           lastK:mx(ks), lastKBal:mx(ks.filter(r => r.b)), lastKCf:mx(ks.filter(r => r.c.ocf != null)) };
+}
+// Lo parseado se guarda junto a la descarga (se calcula una vez por payload). Si el payload de
+// Finnhub es de otra empresa (S.fhMismatch: NU → Northeast Utilities), no hay informes.
+function _pvfnGet(S){
+  if (!S || S.st < 2 || S.fhMismatch === true) return null;
+  if (!S._fn || S._fnA !== S.fa || S._fnQ !== S.fq){ S._fn = _pvfnParse(S.fa, S.fq); S._fnA = S.fa; S._fnQ = S.fq; }
+  // Sin un solo informe en los últimos tres años no son los estados de esta empresa (Finnhub
+  // responde NU con los 10-K de Northeast Utilities, que acaban en 2014) o ya no presenta.
+  if (!S._fn.lastAny || (Date.now() - _pvtvD(S._fn.lastAny)) / 864e5 > 1100) return null;
+  return S._fn;
+}
+const _pvfnSeg = (key, cur) => _pvtvSeg(key, cur).replace(/_pvtvSet\(/g, '_pvfnSet(');
+const _pvfnX = (a, b) => (a != null && b != null && isFinite(a) && isFinite(b) && b > 0) ? (a / b).toFixed(2) + '×' : '—';
+// Cambio contra el mismo periodo de un año antes (año previo, o mismo trimestre de hace un año).
+function _pvfnPrev(full, x){
+  const e = _pvtvD(x.end);
+  return full.find(y => { const d = (e - _pvtvD(y.end)) / 864e5; return d >= 340 && d <= 390; }) || null;
+}
+function _pvfnCell(full, x, k, neg){
+  const v = x[k]; if (v == null) return '—';
+  // Si la cifra cambió de signo (un flujo que pasa de negativo a positivo) el % no dice nada.
+  const p = _pvfnPrev(full, x), ch = (p && p[k] != null && (p[k] >= 0) === (v >= 0)) ? _pvtvChg(v, p[k]) : null;
+  return `${_pvtvBig(neg ? -v : v)}${ch != null ? `<em>${_pvtvPct(ch)}</em>` : ''}`;
+}
+function _pvfnEmpty(tk, S, title){
+  const st = _pvxStitle;
+  if (!S || S.st < 2) return `<div class="px-card">${st(title, 'Cargando informes…')}<div class="pvtv-skb">${'<i></i>'.repeat(6)}</div></div>`;
+  return `<div class="px-card">${st(title, 'Sin informes')}<p class="px-empty">${(S.err2 && S.fhMismatch !== true)
+    ? 'No se pudieron cargar los informes financieros ahora mismo.</p><button class="px-retry" onclick="_pvfnRetry()">Reintentar</button>'
+    : pvEsc(tk) + ' no tiene informes 10-K o 10-Q en la SEC (las empresas extranjeras y los ETF no los presentan).</p>'}</div>`;
+}
+// Aviso cuando los informes más recientes llegaron sin ese estado a la fuente de datos.
+function _pvfnStale(top, last, what){
+  if (!top || !last || (_pvtvD(top) - _pvtvD(last)) / 864e5 < 20) return '';
+  return ` Los informes posteriores, hasta el del ${_pvtvFecha(top)}, llegaron sin ${what} a nuestra fuente de datos: el último disponible es el del ${_pvtvFecha(last)}.`;
+}
+
+// ── Vista Balance ──
+function _pvfnBalHtml(tk, S){
+  const st = _pvxStitle, F = _pvfnGet(S);
+  if (!F || (!F.balA.length && !F.balQ.length)) return _pvfnEmpty(tk, S, 'Balance general');
+  const aOk = F.balA.length > 0, qOk = F.balQ.length > 0;
+  const mode = ((_PVFN_UI.bal === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
+  const full = mode === 'A' ? F.balA : F.balQ;
+  const P = full.slice(mode === 'A' ? -6 : -8);
+  const SER = [['assets','s0','Activos totales'], ['liab','s2','Pasivos totales'], ['eq','s3','Patrimonio']]
+    .filter(([k]) => P.filter(x => x[k] != null).length >= 2);
+  const chart = SER.length ? _pvtvChart(P.map(x => ({ label:x.label, vals:SER.map(([k, c]) => ({ v:x[k], c })) })), v => _pvtvBig(v, true)) : '';
+  const useLiq = P.some(x => x.liq != null) && P.filter(x => x.liq != null).length >= P.filter(x => x.cash != null).length;
+  const base = x => useLiq ? x.liq : x.cash;
+  const rows = [
+    { n:'Efectivo e inversiones de corto plazo', cells:P.map(x => _pvfnCell(full, x, 'liq')) },
+    { n:'Efectivo y equivalentes', cells:P.map(x => _pvfnCell(full, x, 'cash')) },
+    { n:'Activo circulante', cells:P.map(x => _pvfnCell(full, x, 'curA')) },
+    { n:'Activos totales', cls:'hl', cells:P.map(x => _pvfnCell(full, x, 'assets')) },
+    { n:'Pasivo circulante', cells:P.map(x => _pvfnCell(full, x, 'curL')) },
+    { n:'Pasivos totales', cls:'hl', cells:P.map(x => _pvfnCell(full, x, 'liab')) },
+    { n:'Deuda total', cells:P.map(x => _pvfnCell(full, x, 'debt')) },
+    { n:'Patrimonio', cls:'hl', cells:P.map(x => _pvfnCell(full, x, 'eq')) },
+    { n:'Efectivo menos deuda', cells:P.map(x => (base(x) != null && x.debt != null) ? _pvtvBig(base(x) - x.debt) : '—') },
+    { n:'Liquidez corriente', cls:'mg', cells:P.map(x => _pvfnX(x.curA, x.curL)) },
+    { n:'Deuda / patrimonio', cls:'mg', cells:P.map(x => _pvfnX(x.debt, x.eq)) },
+    { n:'Pasivos / activos', cls:'mg', cells:P.map(x => (x.liab != null && x.assets > 0) ? (x.liab / x.assets * 100).toFixed(1) + '%' : '—') },
+  ].filter(r => r.cells.some(c => c !== '—'));
+  const bankTxt = F.bank ? ' Los bancos no dividen su balance en circulante y no circulante, por eso esas filas no aparecen.' : '';
+  let h = `<div class="px-card">${st('Balance general', mode === 'A' ? 'Informes anuales (10-K)' : 'Trimestres (10-Q y 10-K)', _pvfnSeg('bal', mode))}
+    ${chart}${SER.length ? _pvtvLeg(SER.map(([, c, l]) => [c, l])) : ''}
+    ${_pvtvTable(P.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), rows)}
+    <div class="px-hint">Lo que la empresa tiene (activos), lo que debe (pasivos) y lo que queda para los accionistas (patrimonio = activos − pasivos), en la fecha de cierre de cada informe. Debajo de cada cifra, el cambio contra un año antes.${bankTxt}${mode === 'A' ? _pvfnStale(F.lastK, F.lastKBal, 'balance') : _pvfnStale(F.lastAny, F.lastBal, 'balance')}</div></div>`;
+  // Efectivo frente a deuda
+  const PD = P.filter(x => base(x) != null && x.debt != null);
+  const x = PD[PD.length - 1];
+  if (x && PD.length >= 2){
+    const net = base(x) - x.debt;
+    const k = (l, v, s) => `<div class="pvtv-k"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`;
+    const bl = useLiq ? 'Efectivo e inversiones' : 'Efectivo';
+    h += `<div class="px-card">${st('Efectivo y deuda', 'Cuánta caja tiene frente a lo que debe')}
+      <div class="pvtv-kg">
+        ${k(bl, _pvtvBig(base(x)), useLiq ? 'incluye inversiones a corto plazo' : 'y equivalentes')}
+        ${k('Deuda total', _pvtvBig(x.debt), 'corto y largo plazo')}
+        ${k(net >= 0 ? 'Caja neta' : 'Deuda neta', _pvtvBig(Math.abs(net)), net >= 0 ? 'tiene más efectivo que deuda' : 'debe más de lo que tiene en caja')}
+        ${k('Liquidez corriente', _pvfnX(x.curA, x.curL), x.curA != null && x.curL > 0 ? (x.curA >= x.curL ? 'cubre lo que vence en un año' : 'lo que vence en un año supera su activo circulante') : 'no aplica')}
+      </div>
+      ${_pvtvChart(PD.map(r => ({ label:r.label, vals:[{ v:base(r), c:'s1' }, { v:r.debt, c:'r' }] })), v => _pvtvBig(v, true))}
+      ${_pvtvLeg([['s1', useLiq ? 'Efectivo e inversiones a corto plazo' : 'Efectivo y equivalentes'], ['r', 'Deuda total']])}
+      <div class="px-hint">Cifras al ${pvEsc(_pvtvFecha(x.end))}. La deuda total suma los préstamos, bonos y papel comercial que el balance presenta como deuda, de corto y largo plazo. La liquidez corriente divide el activo circulante (lo que se convierte en dinero en menos de un año) entre el pasivo circulante (lo que debe pagar en ese plazo): por encima de 1, le alcanza.</div></div>`;
+  }
+  return h;
+}
+
+// ── Vista Flujo de caja ──
+function _pvfnCfHtml(tk, S){
+  const st = _pvxStitle, F = _pvfnGet(S);
+  if (!F || (!F.cfA.length && !F.cfQ.length)) return _pvfnEmpty(tk, S, 'Flujo de caja');
+  const aOk = F.cfA.length > 0, qOk = F.cfQ.length > 0;
+  const mode = ((_PVFN_UI.cf === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
+  const full = mode === 'A' ? F.cfA : F.cfQ;
+  const P = full.slice(mode === 'A' ? -6 : -8);
+  // Ingresos del mismo periodo (los de «Estado de resultados») para el margen de flujo libre.
+  const IS = (mode === 'A' ? S.A : S.Q) || [];
+  const revOf = x => { const e = _pvtvD(x.end), m = IS.find(y => Math.abs(_pvtvD(y.end) - e) <= 5 * 864e5); return m && m.rev > 0 ? m.rev : null; };
+  const SER = [['ocf','s0','Flujo operativo', 1], ['capex','s2','Inversión en activos fijos', -1], ['fcf','s3','Flujo libre', 1]]
+    .filter(([k]) => P.filter(x => x[k] != null).length >= 2);
+  const chart = SER.length ? _pvtvChart(P.map(x => ({ label:x.label, vals:SER.map(([k, c, , sg]) => ({ v:x[k] == null ? null : sg * x[k], c })) })), v => _pvtvBig(v, true)) : '';
+  const rows = [
+    { n:'Flujo de caja operativo', cls:'hl', cells:P.map(x => _pvfnCell(full, x, 'ocf')) },
+    { n:'Inversión en activos fijos', cells:P.map(x => _pvfnCell(full, x, 'capex', true)) },
+    { n:'Flujo de caja libre', cls:'hl', cells:P.map(x => _pvfnCell(full, x, 'fcf')) },
+    { n:'Margen de flujo libre', cls:'mg', cells:P.map(x => { const r = revOf(x); return (x.fcf != null && r) ? (x.fcf / r * 100).toFixed(1) + '%' : '—'; }) },
+    { n:'Flujo de inversión', cells:P.map(x => _pvfnCell(full, x, 'inv')) },
+    { n:'Flujo de financiamiento', cells:P.map(x => _pvfnCell(full, x, 'fin')) },
+    { n:'Dividendos pagados', cells:P.map(x => _pvfnCell(full, x, 'div', true)) },
+    { n:'Recompra de acciones', cells:P.map(x => _pvfnCell(full, x, 'buy', true)) },
+  ].filter(r => r.cells.some(c => c !== '—'));
+  const bankTxt = F.bank ? ' En los bancos el flujo operativo mezcla préstamos, depósitos y operaciones de mercado: no se lee como el de una empresa industrial y no tiene flujo libre comparable.' : '';
+  let h = `<div class="px-card">${st('Flujo de caja', mode === 'A' ? 'Informes anuales (10-K)' : 'Trimestres (10-Q y 10-K)', _pvfnSeg('cf', mode))}
+    ${chart}${SER.length ? _pvtvLeg(SER.map(([, c, l]) => [c, l])) : ''}
+    ${_pvtvTable(P.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), rows)}
+    <div class="px-hint">El dinero que de verdad entró y salió. Flujo de caja libre = flujo operativo − inversión en activos fijos (calculado por Portiv con las dos cifras del informe); el margen lo divide entre los ingresos del periodo. Las salidas van con signo menos y debajo de cada cifra está el cambio contra un año antes.${mode === 'Q' ? ' Los 10-Q traen el acumulado del año: cada trimestre es la diferencia entre acumulados, y el cuarto sale del informe anual menos los nueve meses.' : ''}${bankTxt}${mode === 'A' ? _pvfnStale(F.lastK, F.lastKCf, 'flujo de caja') : _pvfnStale(F.lastAny, F.lastCf, 'flujo de caja')}</div></div>`;
+  // ¿Qué hizo con su flujo operativo? (último periodo de la vista)
+  const x = [...P].reverse().find(r => r.ocf > 0 && r.capex != null);
+  if (x && !F.bank){
+    const per = (mode === 'A' ? 'del ejercicio ' : 'del trimestre ') + x.label;
+    const parts = [['Activos fijos', x.capex, 'c2']];
+    if (x.div != null) parts.push(['Dividendos', x.div, 'c3']);
+    if (x.buy != null) parts.push(['Recompra de acciones', x.buy, 'c1']);
+    const rest = x.ocf - parts.reduce((s, p) => s + p[1], 0);
+    const ok = parts.every(p => p[1] >= 0);
+    if (ok){
+      const all = rest >= 0 ? parts.concat([['Le quedó', rest, 'c4']]) : parts;
+      const tot = rest >= 0 ? x.ocf : x.ocf - rest;     // si gastó de más, la barra mide lo gastado
+      h += `<div class="px-card">${st('¿Qué hizo con su flujo de caja?', 'Uso del flujo operativo ' + per)}
+        <div class="pvtv-stk">${all.map(p => { const w = p[1] / tot * 100; return w > 0 ? `<i class="${p[2]}" style="width:${w.toFixed(2)}%">${w >= 9 ? `<b>${Math.round(p[1] / x.ocf * 100)}%</b>` : ''}</i>` : ''; }).join('')}</div>
+        <div class="pvtv-stl">${all.map(p => `<div><i class="${p[2]}"></i><span>${pvEsc(p[0])}</span><b>${_pvtvBig(p[1])}</b><em>${(p[1] / x.ocf * 100).toFixed(1)}%</em></div>`).join('')}</div>
+        <div class="px-hint">Flujo operativo de ${_pvtvBig(x.ocf)}; cada porcentaje es sobre esa cifra. ${rest >= 0
+          ? '«Le quedó» es lo que sobra tras estos usos: puede ir a caja, a pagar deuda, a compras de empresas o a inversiones financieras.'
+          : `Gastó ${_pvtvBig(-rest)} más de lo que generó su operación en estos usos: la diferencia salió de su efectivo, de deuda nueva o de otras entradas.`}${(x.div == null || x.buy == null) ? ` El informe no trae ${x.div == null && x.buy == null ? 'dividendos ni recompras' : x.div == null ? 'dividendos pagados' : 'recompras'} con una etiqueta reconocible, así que no se incluye${x.div == null && x.buy == null ? 'n' : ''}.` : ''}</div></div>`;
+    }
+  }
+  return h;
+}
+
+function _pvfnPaint(tk){
+  const S = _PVTV_MEM[tk];
+  const hb = document.getElementById('pvx-fn-bal'), hc = document.getElementById('pvx-fn-cf');
+  if (hb && hb.dataset.tk === tk) hb.innerHTML = _pvfnBalHtml(tk, S);
+  if (hc && hc.dataset.tk === tk) hc.innerHTML = _pvfnCfHtml(tk, S);
+  _pvfnScroll(document);
+}
+// Las tablas que no caben (celular) arrancan en los periodos más recientes, a la derecha.
+function _pvfnScroll(root){
+  try { (root || document).querySelectorAll('#r-analysis .pvfn-wrap .pvtv-view.on .pvtv-tw').forEach(w => { w.scrollLeft = w.scrollWidth; }); } catch(e){}
+}
+async function _pvxFillFN(scope){
+  try {
+    const hb = document.getElementById('pvx-fn-bal');
+    if (!hb) return;
+    const tk = (hb.dataset.tk || '').toUpperCase();
+    if (!tk || hb.dataset.done === tk) return;
+    hb.dataset.done = tk;
+    const S = await _pvtvLoad(tk, 2);
+    _pvfnPaint(tk);
+    if (S.err2) hb.dataset.done = '';          // red caída: se reintenta al volver a la pestaña
+  } catch(e){}
+}
+window._pvfnSet = function(key, val){
+  _PVFN_UI[key] = val;
+  const hb = document.getElementById('pvx-fn-bal');
+  if (hb) _pvfnPaint((hb.dataset.tk || '').toUpperCase());
+};
+window._pvfnRetry = function(){
+  const hb = document.getElementById('pvx-fn-bal'); if (!hb) return;
+  const tk = (hb.dataset.tk || '').toUpperCase(); delete _PVTV_MEM[tk]; hb.dataset.done = '';
+  const he = document.getElementById('pvx-tv-earn'); if (he) he.dataset.done = '';
+  _pvxFillFN(document);
+};
+// Vistas de «Finanzas». Clases propias, no .px-pane: _pvxTab apaga todo .px-pane del análisis.
+window._pvfnSub = function(btn, v){
+  try {
+    _PVFN_UI.view = v;
+    const root = btn.closest('.pvtv-wrap'); if (!root) return;
+    root.querySelectorAll('.pvtv-subtabs button').forEach(b => b.classList.toggle('on', b === btn));
+    root.querySelectorAll('.pvtv-view').forEach(p => p.classList.toggle('on', p.dataset.v === v));
+    _pvfnScroll(root.parentNode || document);
+  } catch(e){}
+};
+let _pvfnRzT = 0, _pvfnRzW = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_pvfnRzT);
+  _pvfnRzT = setTimeout(() => {
+    try {
+      const w = window.innerWidth; if (Math.abs(w - _pvfnRzW) < 8) return; _pvfnRzW = w;
+      const hb = document.getElementById('pvx-fn-bal');
+      if (hb && hb.dataset.tk && hb.dataset.done) _pvfnPaint(hb.dataset.tk.toUpperCase());
+    } catch(e){}
+  }, 200);
+});
+
 // ── Relleno LAZY de la lectura del trimestre ─────────────────────────────────────
 // "Earnings análisis" es la llamada de IA MÁS lenta y cara del análisis (dos búsquedas
 // web + ~2.000 tokens de salida: entre 15 y 30 s) y vive en la 2ª pestaña. Antes se
@@ -31451,7 +31789,10 @@ function _renderQualAnalysis(a, el){
   //   OV* → Resumen (qué es el negocio y cuánto vale) · EA → Resultados · FI → Finanzas.
   // Se separa el Resumen en cuatro cubos solo para poder ordenarlo sin mover código:
   // primero el negocio (a), luego cuánto vale (v), luego el juicio (p), luego el mercado (z).
-  let OVa = '', OVv = '', OVp = '', OVz = '', EA = '', FI = '', NW = '', EN = '';
+  let OVa = '', OVv = '', OVp = '', OVz = '', EA = '', NW = '', EN = '';
+  // «Finanzas» va en cuatro vistas (ver _pvfnBalHtml): Balance y Flujo de caja se llenan LAZY;
+  // las tarjetas de aquí se reparten entre Salud (FIs, FIb) y Valoración (FIv, FIm, FIo).
+  let FIs = '', FIb = '', FIv = '', FIm = '', FIo = '';
 
   // 1b) PUNTOS CLAVE — la empresa en cinco líneas, cada una con el número que la sostiene
   //     detrás del chevron. Va lo primero de "Resumen", justo debajo de la NOTA, porque es
@@ -31504,7 +31845,7 @@ function _renderQualAnalysis(a, el){
     // Tabla «Métrica · Valor · Mediana de pares · Lectura». Sin múltiplos, no hay tarjeta.
     if (datos.length) {
       const _tv = _pvxTablaValor(datos);
-      FI += `<div class="px-card">${stitle(a.tituloDatos || 'Datos financieros', _pvxEbMediana(_tv.origen))}
+      FIv += `<div class="px-card">${stitle(a.tituloDatos || 'Datos financieros', _pvxEbMediana(_tv.origen))}
       ${_tv.html}
       <div class="px-hint">Cada fila es una métrica de valoración propia de este sector, comparada con la mediana de sus pares directos. En estos múltiplos, más bajo que sus pares es mejor: pagas menos por cada dólar de ganancia, de caja o de ventas.</div></div>`;
     }
@@ -31523,7 +31864,7 @@ function _renderQualAnalysis(a, el){
     // Una columna por dimensión (nombre y nota, barra, qué mide) y, debajo, las cifras que las
     // producen. Sin dimensiones ni cifras, no hay tarjeta.
     const hc = v => v>=6.5 ? 'var(--px-green)' : v>=4 ? 'var(--px-amber)' : 'var(--px-red)';
-    if (hd || hh) FI += `<div class="px-card">${stitle(a.tituloSalud || 'Salud financiera', hd ? 'Nota del 1 al 10' : 'Frente a sus pares')}
+    if (hd || hh) FIs += `<div class="px-card">${stitle(a.tituloSalud || 'Salud financiera', hd ? 'Nota del 1 al 10' : 'Frente a sus pares')}
       ${hd ? `<div class="px-hd" style="--n:${hd.length}">${hd.map(x=>{const c=hc(x.v);
         return `<div class="px-hdc"><div class="hdt"><span>${esc(x.n)}</span><b style="color:${c}">${x.v.toFixed(1)}</b></div><span class="px-track"><i style="width:${Math.round(x.v*10)}%;background:${c}"></i></span>${x.m ? `<div class="hdm">${esc(x.m)}</div>` : ''}<p>${esc(x.d)}</p></div>`;}).join('')}</div>` : ''}
       ${hd && hh ? `<div class="px-hsub">${a.health_sector && a.health_sector.length ? 'Solidez del balance frente a sus pares' : 'Las cifras del negocio'}</div>` : ''}
@@ -31538,9 +31879,11 @@ function _renderQualAnalysis(a, el){
   if (a.bloques_sector) {
     for (const b of a.bloques_sector) {
       const _tb = _pvxTablaValor(b.filas);
-      FI += `<div class="px-card">${stitle(b.titulo, _pvxEbMediana(_tb.origen))}
+      // Rentabilidad y crecimiento van a «Salud»; el bloque de mercado, a «Valoración».
+      const _bh = `<div class="px-card">${stitle(b.titulo, _pvxEbMediana(_tb.origen))}
         ${_tb.html}
         <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero. Van de la más importante a la menos, con el dato actual antes que su media de varios años; las marcadas «No entra en la nota» se ven, pero el modelo del sector no las puntúa.</div></div>`;
+      if (b.id === 'merc') FIm += _bh; else FIb += _bh;
     }
   }
 
@@ -31548,7 +31891,7 @@ function _renderQualAnalysis(a, el){
   //     sector NO puntúa. Se enseña con su mediana para no esconder nada; se dice explícitamente
   //     que no mueve la nota, porque quién decide qué la mueve es el modelo del sector.
   if (a.otros_sector) {
-    FI += `<div class="px-card"><details class="px-otros">
+    FIo += `<div class="px-card"><details class="px-otros">
       <summary>${stitle('Otros datos publicados', `No entran en la nota · ${a.otros_sector.length} métricas`)}</summary>
       <p class="px-intro">Lo demás que el proveedor publica de esta empresa, con la mediana de sus pares al lado. Ordenado por lo que más se separa del sector.</p>
       <div style="margin-top:14px">${_pvxTablaValor(a.otros_sector, { sinMarca: true }).html}</div>
@@ -31562,10 +31905,29 @@ function _renderQualAnalysis(a, el){
   //     de insertar el panel (ver más abajo, tras `el.innerHTML = h`); mientras estén vacías,
   //     .pv-fin-card:empty las oculta. Mismos ids de siempre para que _refreshResearchPrice
   //     y los repintados de PV_TARGETS sigan encontrándolas.
-  FI += `<div id="r-pilares" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
-    <div id="r-fscore" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
-    <div id="r-retornos" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>
-    <div id="r-mi-objetivo" class="px-card pv-fin-card" data-tk="${esc(a.ticker)}"></div>`;
+  //     Desde el 13 nov 2026 viven en las vistas «Salud» (pilares, F-Score) y «Valoración»
+  //     (retornos, tu precio objetivo) de la pestaña.
+  let FI = '';
+  {
+    const _tkE = esc(a.ticker || '');
+    // Primero los veredictos (notas, pilares, F-Score y Z) y después las tablas de detalle.
+    const _sal = FIs + `<div id="r-pilares" class="px-card pv-fin-card" data-tk="${_tkE}"></div>`
+               + `<div id="r-fscore" class="px-card pv-fin-card" data-tk="${_tkE}"></div>` + FIb;
+    const _val = FIv + FIm + `<div id="r-retornos" class="px-card pv-fin-card" data-tk="${_tkE}"></div>
+      <div id="r-mi-objetivo" class="px-card pv-fin-card" data-tk="${_tkE}"></div>` + FIo;
+    // Un ETF no presenta 10-K/10-Q ni tiene notas del sector: una sola vista, sin barra.
+    const _S0 = (typeof _PVTV_MEM === 'object') ? _PVTV_MEM[String(a.ticker || '').toUpperCase()] || null : null;
+    const V = a.isEtf ? [['val', 'Valoración', _val + _sal]] : [
+      ['bal', 'Balance',       `<div id="pvx-fn-bal" data-tk="${_tkE}">${_pvfnBalHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>`],
+      ['cf',  'Flujo de caja', `<div id="pvx-fn-cf" data-tk="${_tkE}">${_pvfnCfHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>`],
+      ['sal', 'Salud',         _sal],
+      ['val', 'Valoración',    _val],
+    ];
+    const _v = V.some(x => x[0] === _PVFN_UI.view) ? _PVFN_UI.view : V[0][0];
+    FI = `<div class="pvtv-wrap pvfn-wrap">${V.length > 1 ? `<div class="pvtv-subtabs" role="tablist">${V.map(([k, l]) =>
+        `<button type="button" class="${k === _v ? 'on' : ''}" onclick="_pvfnSub(this,'${k}')">${l}</button>`).join('')}</div>` : ''}
+      ${V.map(([k, , c]) => `<div class="pvtv-view${k === _v ? ' on' : ''}" data-v="${k}">${c}</div>`).join('')}</div>`;
+  }
 
   // 7a) CRECIMIENTO RECIENTE — EPS reportado por trimestre + beat/miss + YoY real (datos reales).
   {
@@ -31799,7 +32161,7 @@ function _renderQualAnalysis(a, el){
     const _freePanes = (typeof _pvLocked === 'function') && _pvLocked() && typeof _pvLockOverlay === 'function';
     const _PANE_LOCK = {
       ea: 'Los <b>resultados trimestrales</b> y lo que esperan los analistas',
-      fi: 'Las <b>finanzas</b> de la empresa: solidez, retornos y tu precio objetivo',
+      fi: 'Las <b>finanzas</b> de la empresa: balance, flujo de caja, solidez y valoración',
       nw: 'Las <b>noticias</b> de la acción y por qué la mueven',
       en: 'El <b>análisis técnico</b>: velas, zona de entrada e indicadores'
     };
@@ -62941,6 +63303,14 @@ html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:
   #researchResults .pvtv-ft { font-size:10px; }
 }
 @media (prefers-reduced-motion: reduce) { #researchResults .pvtv-skb i { animation:none; } }
+/* Finanzas (balance y flujo de caja, ver _pvfnBalHtml): sin el margen negativo de la tabla, la
+   columna fija tapa del todo las cifras que pasan por debajo al deslizar en el celular. */
+#researchResults .pvfn-wrap .pvtv-tw { margin:0; padding:0; }
+@media (max-width: 760px) {
+  /* Nombres largos («Efectivo e inversiones de corto plazo») en dos líneas: la columna fija no
+     puede comerse el ancho de la última cifra. */
+  #researchResults .pvfn-wrap .pvtv-t td.m { white-space:normal; min-width:104px; max-width:128px; line-height:1.3; }
+}
 </style>
 <style id="pvPortHeroCss">
 /* ═══ PORTAFOLIO — cabecera navy, Rendimiento y Distribución (rediseño aprobado, port.py) ═════
