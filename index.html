@@ -30622,10 +30622,14 @@ function _pvtvFields(rep){
     const k = f.concept.replace(/^[a-z-]+_/i, ''), v = Number(f.value);
     if (isFinite(v) && !(k in idx)) idx[k] = v;
   }
-  const pick = c => { for (const t of _PVTV_IC[c]) if (t in idx) return idx[t]; return null; };
+  // `tags` dice de qué etiqueta salió cada campo: al restar acumulados de dos informes, sólo
+  // se resta si los dos usan la misma (si no, saldría un «trimestre» mezclando conceptos).
+  const tags = {};
+  const pick = c => { for (const t of _PVTV_IC[c]) if (t in idx) { tags[c] = t; return idx[t]; } return null; };
   const o = { rev:pick('rev'), cost:pick('cost'), gross:pick('gross'), op:pick('op'), net:pick('net'), eps:pick('eps') };
-  if (o.gross == null && o.rev != null && o.cost != null) o.gross = o.rev - o.cost;     // identidad
-  if (o.cost == null && o.rev != null && o.gross != null) o.cost = o.rev - o.gross;
+  if (o.gross == null && o.rev != null && o.cost != null) { o.gross = o.rev - o.cost; tags.gross = 'id:' + tags.rev + '-' + tags.cost; }  // identidad
+  if (o.cost == null && o.rev != null && o.gross != null) { o.cost = o.rev - o.gross; tags.cost = 'id:' + tags.rev + '-' + tags.gross; }
+  Object.defineProperty(o, '_t', { value: tags, enumerable: false });
   // Finnhub trae redondeado a entero el EPS de los 10-K viejos (META 2021: 13 por 13.77). Si
   // utilidad neta ÷ acciones diluidas redondea a ese mismo entero, vale la cifra con decimales.
   const sh = idx.WeightedAverageNumberOfDilutedSharesOutstanding;
@@ -30670,7 +30674,7 @@ function _pvtvQuarterly(qPay, aPay){
       let f = null;
       if (span <= 110) { f = Object.assign({}, r.f); }
       else if (prev && (r.e - prev.e) / 864e5 >= 70 && (r.e - prev.e) / 864e5 <= 110) {
-        f = {}; K.forEach(k => { f[k] = (r.f[k] != null && prev.f[k] != null) ? r.f[k] - prev.f[k] : null; });
+        f = {}; K.forEach(k => { f[k] = (r.f[k] != null && prev.f[k] != null && r.f._t[k] === prev.f._t[k]) ? r.f[k] - prev.f[k] : null; });
         f.eps = null;     // el EPS no se resta: cambia el número de acciones
       }
       if (f && (f.rev != null || f.net != null)) out.push({ end:r.end, fy:r.fy, q:r.q || 0, ...f });
@@ -30736,7 +30740,10 @@ function _pvtvNice(span){
 // cols: [{ label, fut, vals:[{v, c:'s0'..'s3'|'g'|'r'|'e', h:bool}] }]
 function _pvtvChart(cols, fmtAx){
   if (!cols.length) return '';
-  const W = 680, H = 236, L = 6, R = 70, T = 14, B = 30;
+  // En el celular el lienzo es más angosto: el SVG se escala al ancho de la tarjeta y con
+  // 680 de ancho las etiquetas quedaban en ~6 px.
+  const narrow = (window.innerWidth || 1000) < 640;
+  const W = narrow ? 400 : 680, H = narrow ? 250 : 236, L = 4, R = narrow ? 62 : 70, T = 14, B = 30;
   const all = []; cols.forEach(c => c.vals.forEach(x => { if (x && x.v != null && isFinite(x.v)) all.push(x.v); }));
   if (!all.length) return '';
   let mx = Math.max(0, ...all), mn = Math.min(0, ...all);
@@ -30764,7 +30771,7 @@ function _pvtvChart(cols, fmtAx){
       const y1 = y(Math.max(0, x.v)), y2 = y(Math.min(0, x.v)), hh = Math.max(1.5, y2 - y1);
       g += `<rect x="${(x0 + k * (bw + gap)).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="${Math.min(4, bw / 3).toFixed(1)}" class="pvtv-b ${x.c || 's0'}"${x.h ? ` style="fill:url(#${id})"` : ''}><title>${pvEsc(c.label)}</title></rect>`;
     });
-    g += `<text x="${(L + slot * i + slot / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" class="pvtv-xl">${pvEsc(c.label)}</text>`;
+    g += `<text x="${(L + slot * i + slot / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" class="pvtv-xl"${narrow && cols.length > 6 ? ' style="font-size:9.5px"' : ''}>${pvEsc(c.label)}</text>`;
   });
   return `<svg class="pvtv-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">${g}</svg>`;
 }
@@ -30964,6 +30971,8 @@ function _pvtvPaint(tk){
     }
   }
   if (hi && hi.dataset.tk === tk) hi.innerHTML = _pvtvIncHtml(tk, S);
+  // Las tablas que no caben (celular) arrancan en los periodos más recientes, a la derecha.
+  try { document.querySelectorAll('#r-analysis .pvtv-tw').forEach(w => { w.scrollLeft = w.scrollWidth; }); } catch(e){}
 }
 async function _pvxFillTV(scope){
   try {
@@ -62779,8 +62788,8 @@ html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:
   #researchResults .pvtv-stl { grid-template-columns:1fr; }
   #researchResults .pvtv-t th, #researchResults .pvtv-t td { padding:10px 9px; }
   #researchResults .pvtv-t .m { min-width:112px; }
-  #researchResults .pvtv-ax, #researchResults .pvtv-xl { font-size:15px; }
-  #researchResults .pvtv-ft { font-size:13px; }
+  #researchResults .pvtv-ax, #researchResults .pvtv-xl { font-size:12.5px; }
+  #researchResults .pvtv-ft { font-size:10px; }
 }
 @media (prefers-reduced-motion: reduce) { #researchResults .pvtv-skb i { animation:none; } }
 </style>
