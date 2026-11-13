@@ -145,7 +145,7 @@ async function buildIncome(symbol: string): Promise<unknown> {
   const payload = cik == null
     ? { symbol, cik: null, entity: "", annual: [], quarterly: [] }
     : { symbol, ...(await secIncome(cik, secGet)) };
-  await cachePut("sec:income:" + symbol, payload);
+  await cachePut("sec:income2:" + symbol, payload);
   return payload;
 }
 
@@ -157,7 +157,7 @@ Deno.serve(async (req) => {
   if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) return json({ error: "bad symbol" }, 400);
 
   const income = url.searchParams.get("kind") === "income";
-  const ckey = (income ? "sec:income:" : "sec:interest:") + symbol;
+  const ckey = (income ? "sec:income2:" : "sec:interest:") + symbol;
   const fkey = (income ? "income:" : "") + symbol;
 
   // 1) Caché compartida: N usuarios con el mismo símbolo → UNA consulta a la SEC por semana.

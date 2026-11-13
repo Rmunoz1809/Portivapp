@@ -30767,8 +30767,17 @@ function _pvtvFromSec(rows, anual){
     // mal etiquetadas antes de la salida a bolsa (NU 2019 traía 1,137,931 «USD por acción»).
     if (eps != null && r.net && eps !== 0 && Math.abs(r.net / eps) < 1e6) eps = null;
     const fy = r.fy || +String(r.end).slice(0, 4);
-    return { end:r.end, fy, q:anual ? 0 : (r.q || 0), rev:r.rev, cost:r.cost, gross:r.gross, op:r.op, net:r.net, eps,
+    const n = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+    const o = { end:r.end, fy, q:anual ? 0 : (r.q || 0), rev:n(r.rev), cost:n(r.cost), gross:n(r.gross), op:n(r.op), net:n(r.net), eps,
+      pretax:n(r.pretax), tax:n(r.tax), nii:n(r.nii), nonii:n(r.nonii), prov:n(r.prov), nonie:n(r.nonie),
       label: anual ? String(fy) : `T${r.q || '?'} '${String(fy).slice(-2)}` };
+    // Banco sin línea de reservas (BAC desde 2025): identidad exacta de su estado de resultados,
+    // utilidad antes de impuestos = ingresos − reservas − gastos.
+    if (o.prov == null && o.nonie != null && o.rev != null && o.pretax != null && o.gross == null) {
+      const p = o.rev - o.nonie - o.pretax;
+      if (p >= 0) o.prov = p;
+    }
+    return o;
   });
 }
 async function _pvtvLoad(tk, stage){
@@ -31062,8 +31071,14 @@ function _pvtvIncHtml(tk, S){
   const mode = ((_PVTV_UI.inc === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
   const full = mode === 'A' ? S.A : S.Q;
   const P = full.slice(mode === 'A' ? -6 : -8);
-  const SER = [['rev','s0','Ingresos'], ['gross','s1','Utilidad bruta'], ['op','s2','Utilidad operativa'], ['net','s3','Utilidad neta']]
-    .filter(([k]) => P.filter(x => x[k] != null).length >= 2);
+  // Banco: sin utilidad bruta ni operativa, con margen financiero o gastos no financieros. Su
+  // estado de resultados tiene otras líneas (BAC, JPM, WFC…), no «datos que faltan».
+  const has = k => P.filter(x => x[k] != null).length >= 2;
+  const banco = !has('gross') && !has('op') && (has('nii') || has('nonie'));
+  const SER = (banco
+      ? [['rev','s0','Ingresos'], ['nii','s1','Margen financiero'], ['pretax','s2','Utilidad antes de impuestos'], ['net','s3','Utilidad neta']]
+      : [['rev','s0','Ingresos'], ['gross','s1','Utilidad bruta'], ['op','s2','Utilidad operativa'], ['net','s3','Utilidad neta']])
+    .filter(([k]) => has(k));
   const chart = _pvtvChart(P.map(x => ({ label:x.label, vals:SER.map(([k, c]) => ({ v:x[k], c })) })), v => _pvtvBig(v, true));
   // Cambio contra el mismo periodo del año anterior (año previo o mismo trimestre de hace un año).
   const prevOf = x => { const e = _pvtvD(x.end);
@@ -31074,12 +31089,27 @@ function _pvtvIncHtml(tk, S){
     return `${money ? _pvtvBig(v) : _pvtvEps(v)}${ch != null ? `<em>${_pvtvPct(ch)}</em>` : ''}`;
   };
   const marg = (x, k) => (x[k] != null && x.rev) ? (x[k] / x.rev * 100).toFixed(1) + '%' : '—';
-  const rows = [
+  const neg = (x, k) => x[k] != null ? (x[k] > 0 ? '−' : '') + _pvtvBig(Math.abs(x[k])) : '—';
+  const rows = banco ? [
+    { n:'Ingresos totales', cls:'hl', cells:P.map(x => cell(x, 'rev', true)) },
+    { n:'Margen financiero', cells:P.map(x => cell(x, 'nii', true)) },
+    { n:'Comisiones y otros ingresos', cells:P.map(x => cell(x, 'nonii', true)) },
+    { n:'Reservas para créditos', cells:P.map(x => neg(x, 'prov')) },
+    { n:'Gastos', cells:P.map(x => neg(x, 'nonie')) },
+    { n:'Utilidad antes de impuestos', cls:'hl', cells:P.map(x => cell(x, 'pretax', true)) },
+    { n:'Impuestos', cells:P.map(x => neg(x, 'tax')) },
+    { n:'Utilidad neta', cls:'hl', cells:P.map(x => cell(x, 'net', true)) },
+    { n:'Eficiencia (gastos ÷ ingresos)', cls:'mg', cells:P.map(x => marg(x, 'nonie')) },
+    { n:'Margen antes de impuestos', cls:'mg', cells:P.map(x => marg(x, 'pretax')) },
+    { n:'Margen neto', cls:'mg', cells:P.map(x => marg(x, 'net')) },
+  ] : [
     { n:'Ingresos totales', cls:'hl', cells:P.map(x => cell(x, 'rev', true)) },
     { n:'Costo de ventas', cells:P.map(x => x.cost != null ? (x.cost > 0 ? '−' : '') + _pvtvBig(Math.abs(x.cost)) : '—') },
     { n:'Utilidad bruta', cls:'hl', cells:P.map(x => cell(x, 'gross', true)) },
     { n:'Gastos operativos', cells:P.map(x => (x.gross != null && x.op != null) ? (x.gross - x.op > 0 ? '−' : '') + _pvtvBig(Math.abs(x.gross - x.op)) : '—') },
     { n:'Utilidad operativa', cls:'hl', cells:P.map(x => cell(x, 'op', true)) },
+    { n:'Utilidad antes de impuestos', cells:P.map(x => cell(x, 'pretax', true)) },
+    { n:'Impuestos', cells:P.map(x => neg(x, 'tax')) },
     { n:'Utilidad neta', cls:'hl', cells:P.map(x => cell(x, 'net', true)) },
     { n:'Margen bruto', cls:'mg', cells:P.map(x => marg(x, 'gross')) },
     { n:'Margen operativo', cls:'mg', cells:P.map(x => marg(x, 'op')) },
@@ -31092,15 +31122,19 @@ function _pvtvIncHtml(tk, S){
     ${_pvtvTable(P.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), rowsOk)}
     <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
   // ¿A dónde va cada dólar de ingresos? (último periodo de la vista)
-  const x = [...P].reverse().find(r => r.rev > 0 && r.cost != null && r.op != null && r.net != null && r.gross != null);
+  const x = banco
+    ? [...P].reverse().find(r => r.rev > 0 && r.prov != null && r.nonie != null && r.tax != null && r.net != null)
+    : [...P].reverse().find(r => r.rev > 0 && r.cost != null && r.op != null && r.net != null && r.gross != null);
   if (x){
-    const parts = [['Costo de ventas', x.cost, 'c1'], ['Gastos operativos', x.gross - x.op, 'c2'], ['Impuestos, intereses y otros', x.op - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']];
+    const parts = banco
+      ? [['Reservas para créditos', x.prov, 'c1'], ['Gastos', x.nonie, 'c2'], ['Impuestos y otros', x.rev - x.prov - x.nonie - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']]
+      : [['Costo de ventas', x.cost, 'c1'], ['Gastos operativos', x.gross - x.op, 'c2'], ['Impuestos, intereses y otros', x.op - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']];
     if (parts.every(p => p[1] >= 0)){
       const per = mode === 'A' ? 'el ejercicio ' + x.label : 'el trimestre ' + x.label;
       h += `<div class="px-card">${st('¿A dónde va cada dólar?', 'De cada $1 de ingresos en ' + per)}
         <div class="pvtv-stk">${parts.map(p => { const w = p[1] / x.rev * 100; return w > 0 ? `<i class="${p[2]}" style="width:${w.toFixed(2)}%">${w >= 9 ? `<b>${Math.round(w)}¢</b>` : ''}</i>` : ''; }).join('')}</div>
         <div class="pvtv-stl">${parts.map(p => `<div><i class="${p[2]}"></i><span>${pvEsc(p[0])}</span><b>${_pvtvBig(p[1])}</b><em>${(p[1] / x.rev * 100).toFixed(1)}%</em></div>`).join('')}</div>
-        <div class="px-hint">Ingresos de ${_pvtvBig(x.rev)}. «Impuestos, intereses y otros» es la diferencia entre la utilidad operativa y la neta.</div></div>`;
+        <div class="px-hint">Ingresos de ${_pvtvBig(x.rev)}. ${banco ? '«Impuestos y otros» es lo que queda entre los ingresos y la utilidad neta después de reservas y gastos.' : '«Impuestos, intereses y otros» es la diferencia entre la utilidad operativa y la neta.'}</div></div>`;
     }
   }
   return h;

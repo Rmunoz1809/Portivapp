@@ -107,6 +107,17 @@ export const INCOME_TAGS: Record<string, string[]> = {
   net: ["us-gaap:NetIncomeLoss", "us-gaap:ProfitLoss", "ifrs-full:ProfitLossAttributableToOwnersOfParent", "ifrs-full:ProfitLoss"],
   eps: ["us-gaap:EarningsPerShareDiluted", "us-gaap:EarningsPerShareBasicAndDiluted",
     "ifrs-full:DilutedEarningsLossPerShare", "ifrs-full:BasicAndDilutedEarningsLossPerShare"],
+  // Antes de impuestos e impuestos (todas las empresas).
+  pretax: ["us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
+    "us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments",
+    "ifrs-full:ProfitLossBeforeTax"],
+  tax: ["us-gaap:IncomeTaxExpenseBenefit", "ifrs-full:IncomeTaxExpenseContinuingOperations"],
+  // Bancos: no tienen costo de ventas, utilidad bruta ni operativa; su estado de resultados es
+  // margen financiero + comisiones − reservas para créditos − gastos (BAC, JPM, NU).
+  nii: ["us-gaap:InterestIncomeExpenseNet", "ifrs-full:InterestRevenueExpense"],
+  nonii: ["us-gaap:NoninterestIncome"],
+  prov: ["us-gaap:ProvisionForLoanLeaseAndOtherLosses", "us-gaap:ProvisionForLoanAndLeaseLosses", "us-gaap:ProvisionForLoanLossesExpensed"],
+  nonie: ["us-gaap:NoninterestExpense"],
 };
 const ANNUAL_FORM = /^(10-K|20-F|40-F)/i;
 const PERIOD_FORM = /^(10-K|10-Q|20-F|40-F)/i;
@@ -114,6 +125,7 @@ type F = { start: string; end: string; val: number; filed: string; fy: number | 
 export type IncomeRow = {
   end: string; start: string; fy: number | null; q: number;
   rev: number | null; cost: number | null; gross: number | null; op: number | null; net: number | null; eps: number | null;
+  pretax: number | null; tax: number | null; nii: number | null; nonii: number | null; prov: number | null; nonie: number | null;
   tags: Record<string, string>;
 };
 const days = (s: string, e: string) => (Date.parse(e) - Date.parse(s)) / DAY_MS;
@@ -149,7 +161,11 @@ export function incomeFromFacts(facts: any, maxA = 8, maxQ = 16): { annual: Inco
   const A = new Map<string, IncomeRow>(), Q = new Map<string, IncomeRow>();
   const row = (map: Map<string, IncomeRow>, end: string, start: string, fy: number | null, q: number) => {
     let r = map.get(end);
-    if (!r) { r = { end, start, fy, q, rev: null, cost: null, gross: null, op: null, net: null, eps: null, tags: {} }; map.set(end, r); }
+    if (!r) {
+      r = { end, start, fy, q, rev: null, cost: null, gross: null, op: null, net: null, eps: null,
+        pretax: null, tax: null, nii: null, nonii: null, prov: null, nonie: null, tags: {} };
+      map.set(end, r);
+    }
     return r;
   };
   for (const [field, keys] of Object.entries(INCOME_TAGS)) {
