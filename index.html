@@ -30720,6 +30720,11 @@ function _pvtvQuarterly(qPay, aPay){
   const out = [];
   Object.values(groups).forEach(g => {
     g.sort((a, b) => a.e - b.e);
+    // Año fiscal del grupo: el de sus 10-Q. Finnhub le pone al 10-K otro `year` cuando el
+    // ejercicio no es el calendario (CRM cierra en enero: 10-Q «2026», 10-K «2025»), y el T4
+    // salía «T4 '25» entre «T3 '26» y «T1 '27».
+    const gfy = (g.find(r => r.q >= 1 && r.q <= 3 && r.fy) || {}).fy;
+    g.forEach(r => { if (r.q === 4 && gfy) r.fy = gfy; });
     let prev = null;
     g.forEach(r => {
       const span = (r.e - r.s) / 864e5;
