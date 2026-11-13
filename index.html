@@ -30912,7 +30912,7 @@ function _pvtvChart(cols, fmtAx){
     c.vals.forEach((x, k) => {
       if (!x || x.v == null || !isFinite(x.v)) return;
       const y1 = y(Math.max(0, x.v)), y2 = y(Math.min(0, x.v)), hh = Math.max(1.5, y2 - y1);
-      g += `<rect x="${(x0 + k * (bw + gap)).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="${Math.min(4, bw / 3).toFixed(1)}" class="pvtv-b ${x.c || 's0'}"${x.h ? ` style="fill:url(#${id})"` : ''}><title>${pvEsc(c.label)}</title></rect>`;
+      g += `<rect x="${(x0 + k * (bw + gap)).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="${Math.min(4, bw / 3).toFixed(1)}" class="pvtv-b ${x.c || 's0'}${x.v < 0 ? ' ng' : ''}" style="animation-delay:${(i * 35 + k * 12)}ms${x.h ? `;fill:url(#${id})` : ''}"><title>${pvEsc(c.label)}</title></rect>`;
     });
     g += `<text x="${(L + slot * i + slot / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" class="pvtv-xl"${narrow && cols.length > 6 ? ' style="font-size:9.5px"' : ''}>${pvEsc(c.label)}</text>`;
   });
@@ -31140,6 +31140,14 @@ function _pvtvIncHtml(tk, S){
   return h;
 }
 
+// Pinta un bloque y reproduce su entrada (tarjetas que suben, barras que crecen) sólo si el
+// contenido cambió: la segunda pasada de carga o un repintado idéntico no la repiten.
+function _pvtvPut(el, html){
+  if (!el || el._pvH === html) return;
+  el._pvH = html;
+  el.innerHTML = html;
+  el.classList.remove('pvtv-in'); void el.offsetWidth; el.classList.add('pvtv-in');
+}
 function _pvtvPaint(tk){
   const S = _PVTV_MEM[tk]; if (!S) return;
   const he = document.getElementById('pvx-tv-earn'), hi = document.getElementById('pvx-tv-inc');
@@ -31147,11 +31155,11 @@ function _pvtvPaint(tk){
     const html = _pvtvEarnHtml(tk, S, _pvxLiveA(tk));
     // Sin datos nuevos se queda lo que ya había (la tarjeta de crecimiento reciente).
     if (html){
-      he.innerHTML = html;
+      _pvtvPut(he, html);
       const em = document.querySelector('#r-analysis .pvx-ea-empty'); if (em) em.remove();
     }
   }
-  if (hi && hi.dataset.tk === tk) hi.innerHTML = _pvtvIncHtml(tk, S);
+  if (hi && hi.dataset.tk === tk) _pvtvPut(hi, _pvtvIncHtml(tk, S));
   // Las tablas que no caben (celular) arrancan en los periodos más recientes, a la derecha.
   try { document.querySelectorAll('#r-analysis .pvtv-tw').forEach(w => { w.scrollLeft = w.scrollWidth; }); } catch(e){}
 }
@@ -31546,9 +31554,9 @@ function _pvfnRentHtml(tk, S){
 function _pvfnPaint(tk){
   const S = _PVTV_MEM[tk];
   const hb = document.getElementById('pvx-fn-bal'), hc = document.getElementById('pvx-fn-cf'), hr = document.getElementById('pvx-fn-rent');
-  if (hb && hb.dataset.tk === tk) hb.innerHTML = _pvfnBalHtml(tk, S);
-  if (hc && hc.dataset.tk === tk) hc.innerHTML = _pvfnCfHtml(tk, S);
-  if (hr && hr.dataset.tk === tk) hr.innerHTML = _pvfnRentHtml(tk, S);
+  if (hb && hb.dataset.tk === tk) _pvtvPut(hb, _pvfnBalHtml(tk, S));
+  if (hc && hc.dataset.tk === tk) _pvtvPut(hc, _pvfnCfHtml(tk, S));
+  if (hr && hr.dataset.tk === tk) _pvtvPut(hr, _pvfnRentHtml(tk, S));
   _pvfnScroll(document);
 }
 // Las tablas que no caben (celular) arrancan en los periodos más recientes, a la derecha.
@@ -63420,6 +63428,50 @@ html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:
   #researchResults .pvtv-ft { font-size:10px; }
 }
 @media (prefers-reduced-motion: reduce) { #researchResults .pvtv-skb i { animation:none; } }
+/* ── Tablas (14 nov 2026): en el iPhone asomaban cifras a la izquierda de la columna fija. El
+   contenedor tenía 4 px de relleno sin nada que los tapara y las celdas de las filas normales
+   eran transparentes. Ahora sin relleno, celdas opacas y una línea fina que separa la columna
+   fija de lo que se desliza por detrás. ── */
+#researchResults .pvtv-tw, #researchResults .pvfn-wrap .pvtv-tw { margin:0 !important; padding:0 !important; }
+#researchResults .pvtv-t td, #researchResults .pvtv-t th { background:var(--pac-card,#fff); }
+#researchResults .pvtv-t tr.hl td { background:var(--pac-wash,#f4f6fa); }
+#researchResults .pvtv-t .m { z-index:2; box-shadow:1px 0 0 var(--pac-line,#e2e7f0); }
+#researchResults .pvtv-t tr.hl td.m { box-shadow:inset 3px 0 0 var(--tv-s0), 1px 0 0 var(--pac-line,#e2e7f0); }
+@media (max-width: 760px) {
+  /* Celular: columna de nombres que parte en dos líneas y columnas de cifras del mismo ancho,
+     para que quepan dos periodos completos y la tabla se vea pareja. */
+  #researchResults .pvtv-t th, #researchResults .pvtv-t td { padding:9px 8px; }
+  #researchResults .pvtv-t th.m, #researchResults .pvtv-t td.m { white-space:normal; width:104px; min-width:104px !important; max-width:104px !important; line-height:1.3; }
+  #researchResults .pvtv-t th:not(.m), #researchResults .pvtv-t td:not(.m) { min-width:94px; }
+  #researchResults .pvtv-t td { font-size:13px; }
+  #researchResults .pvtv-t td em { font-size:11px; }
+  #researchResults .pvtv-t thead th { font-size:12.5px; }
+  #researchResults .pvtv-t tr.mg td { font-size:12.5px; }
+}
+/* ── Entrada de los datos (Motion v7: misma curva --pv-ease-out). Las tarjetas suben y aparecen
+   escalonadas, las barras crecen desde el eje columna por columna, la barra «a dónde va cada
+   dólar» se llena de izquierda a derecha y cambiar de vista funde el contenido. ── */
+@keyframes pvtvIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+@keyframes pvtvGrow { from { transform:scaleY(0); } to { transform:scaleY(1); } }
+@keyframes pvtvGrowX { from { transform:scaleX(0); } to { transform:scaleX(1); } }
+@keyframes pvtvFade { from { opacity:0; } to { opacity:1; } }
+#researchResults .pvtv-in > .px-card { animation:pvtvIn .38s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+#researchResults .pvtv-in > .px-card:nth-child(2) { animation-delay:.06s; }
+#researchResults .pvtv-in > .px-card:nth-child(3) { animation-delay:.12s; }
+#researchResults .pvtv-in > .px-card:nth-child(n+4) { animation-delay:.18s; }
+#researchResults .pvtv-in .pvtv-b { transform-box:fill-box; transform-origin:50% 100%; animation:pvtvGrow .6s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+#researchResults .pvtv-in .pvtv-b.ng { transform-origin:50% 0; }
+#researchResults .pvtv-in .pvtv-stk { transform-origin:0 50%; animation:pvtvGrowX .7s .15s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+#researchResults .pvtv-in .pvtv-kg .pvtv-k { animation:pvtvIn .34s var(--pv-ease-out,cubic-bezier(.22,1,.36,1)) both; }
+#researchResults .pvtv-in .pvtv-kg .pvtv-k:nth-child(2) { animation-delay:.05s; }
+#researchResults .pvtv-in .pvtv-kg .pvtv-k:nth-child(3) { animation-delay:.1s; }
+#researchResults .pvtv-in .pvtv-kg .pvtv-k:nth-child(4) { animation-delay:.15s; }
+#researchResults .pvtv-view.on { animation:pvtvFade .24s var(--pv-ease,cubic-bezier(.33,1,.68,1)) both; }
+#researchResults .pvtv-subtabs button, #researchResults .pvtv-seg button { transition:background .2s var(--pv-ease,cubic-bezier(.33,1,.68,1)), color .2s, box-shadow .2s; }
+@media (prefers-reduced-motion: reduce) {
+  #researchResults .pvtv-in > .px-card, #researchResults .pvtv-in .pvtv-b, #researchResults .pvtv-in .pvtv-stk,
+  #researchResults .pvtv-in .pvtv-kg .pvtv-k, #researchResults .pvtv-view.on { animation:none !important; }
+}
 /* Finanzas (balance y flujo de caja, ver _pvfnBalHtml): sin el margen negativo de la tabla, la
    columna fija tapa del todo las cifras que pasan por debajo al deslizar en el celular. */
 #researchResults .pvfn-wrap .pvtv-tw { margin:0; padding:0; }
