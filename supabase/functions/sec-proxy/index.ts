@@ -26,7 +26,7 @@
 // La lógica de la SEC vive en sec.ts (pura, se prueba en Node con datos reales).
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { cikFor, secInterest, tickerMap } from "./sec.ts";
+import { cikFor, secIncome, secInterest, tickerMap } from "./sec.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -139,6 +139,15 @@ async function build(symbol: string): Promise<unknown> {
   await cachePut("sec:interest:" + symbol, payload);
   return payload;
 }
+// ?kind=income → estado de resultados anual y trimestral de companyfacts (ver secIncome).
+async function buildIncome(symbol: string): Promise<unknown> {
+  const cik = cikFor(await tickers(), symbol);
+  const payload = cik == null
+    ? { symbol, cik: null, entity: "", annual: [], quarterly: [] }
+    : { symbol, ...(await secIncome(cik, secGet)) };
+  await cachePut("sec:income:" + symbol, payload);
+  return payload;
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -147,19 +156,24 @@ Deno.serve(async (req) => {
   const symbol = (url.searchParams.get("symbol") ?? "").toUpperCase().trim();
   if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) return json({ error: "bad symbol" }, 400);
 
+  const income = url.searchParams.get("kind") === "income";
+  const ckey = (income ? "sec:income:" : "sec:interest:") + symbol;
+  const fkey = (income ? "income:" : "") + symbol;
+
   // 1) Caché compartida: N usuarios con el mismo símbolo → UNA consulta a la SEC por semana.
-  const hit = await cacheGet("sec:interest:" + symbol);
-  if (hit && hit.age < TTL_S) return json(hit.data, 200);
+  const hit = await cacheGet(ckey);
+  // El estado de resultados cambia con cada 10-Q: 3 días; el gasto por intereses (10-K), 7.
+  if (hit && hit.age < (income ? 3 * 86400 : TTL_S)) return json(hit.data, 200);
 
   // 2) Miss o vencida → SEC, dentro del presupuesto de la IP.
-  if (!inflight.has(symbol) && !missBudgetOk(clientIp(req))) {
+  if (!inflight.has(fkey) && !missBudgetOk(clientIp(req))) {
     if (hit) return json(hit.data, 200);
     return json({ error: "rate limited" }, 429);
   }
-  let p = inflight.get(symbol);
+  let p = inflight.get(fkey);
   if (!p) {
-    p = build(symbol).finally(() => inflight.delete(symbol));
-    inflight.set(symbol, p);
+    p = (income ? buildIncome(symbol) : build(symbol)).finally(() => inflight.delete(fkey));
+    inflight.set(fkey, p);
   }
   try {
     return json(await p, 200);

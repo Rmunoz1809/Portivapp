@@ -30743,6 +30743,32 @@ function _pvtvQuarterly(qPay, aPay){
   return Object.values(byEnd).sort((a, b) => a.end.localeCompare(b.end))
     .map(x => ({ ...x, label:`T${x.q || '?'} '${String(x.fy || x.end.slice(0, 4)).slice(-2)}` }));
 }
+// Estado de resultados de la SEC (sec-proxy ?kind=income): { cik, entity, annual:[…], quarterly:[…] }
+// con filas { end, start, fy, q, rev, cost, gross, op, net, eps }. null si no responde.
+async function _pvtvSec(tk){
+  try {
+    if (typeof SEC_PROXY !== 'string' || !FH_PROXY_ANON) return null;
+    const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 25000);
+    try {
+      const r = await fetch(`${SEC_PROXY}?symbol=${encodeURIComponent(tk)}&kind=income`, { signal: ctrl.signal,
+        headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + FH_PROXY_ANON } });
+      if (!r.ok) return null;
+      const j = await r.json();
+      return (j && Array.isArray(j.annual)) ? j : null;
+    } finally { clearTimeout(tid); }
+  } catch(e){ return null; }
+}
+function _pvtvFromSec(rows, anual){
+  return rows.filter(r => r && r.end).map(r => {
+    let eps = (typeof r.eps === 'number' && isFinite(r.eps)) ? r.eps : null;
+    // EPS absurdo (acciones implícitas = utilidad ÷ EPS por debajo de un millón): unidades
+    // mal etiquetadas antes de la salida a bolsa (NU 2019 traía 1,137,931 «USD por acción»).
+    if (eps != null && r.net && eps !== 0 && Math.abs(r.net / eps) < 1e6) eps = null;
+    const fy = r.fy || +String(r.end).slice(0, 4);
+    return { end:r.end, fy, q:anual ? 0 : (r.q || 0), rev:r.rev, cost:r.cost, gross:r.gross, op:r.op, net:r.net, eps,
+      label: anual ? String(fy) : `T${r.q || '?'} '${String(fy).slice(-2)}` };
+  });
+}
 async function _pvtvLoad(tk, stage){
   const now = Date.now();
   let S = _PVTV_MEM[tk];
@@ -30768,7 +30794,25 @@ async function _pvtvLoad(tk, stage){
     if (!S.p2) S.p2 = Promise.all([
         fhFetch(`/stock/financials-reported?symbol=${enc}&freq=annual`, 25000).catch(() => null),
         fhFetch(`/stock/financials-reported?symbol=${enc}&freq=quarterly`, 25000).catch(() => null),
-      ]).then(([fa, fq]) => { S.A = _pvtvAnnual(fa); S.Q = _pvtvQuarterly(fq, fa); S.err2 = (fa == null && fq == null); S.st = 2; });
+        _pvtvSec(tk),
+      ]).then(([fa, fq, sec]) => {
+        S.fa = fa; S.fq = fq; S.sec = sec;
+        // Fuente principal: la SEC (companyfacts, vía sec-proxy). Tiene a los emisores
+        // extranjeros (20-F) y el EPS con decimales. Finnhub queda de respaldo, salvo que su
+        // informe sea de OTRA empresa: con «NU» trae a Northeast Utilities (CIK 315256), que
+        // usaba ese ticker hasta 2015, y no a Nu Holdings (CIK 1691493).
+        const fhCik = fa && fa.cik != null ? +fa.cik : null;
+        S.fhMismatch = !!(sec && sec.cik && fhCik && +sec.cik !== fhCik);
+        const fhOk = !S.fhMismatch;
+        let A = (sec && sec.annual && sec.annual.length) ? _pvtvFromSec(sec.annual, true) : (fhOk ? _pvtvAnnual(fa) : []);
+        let Q = (sec && sec.quarterly && sec.quarterly.length) ? _pvtvFromSec(sec.quarterly, false) : (fhOk ? _pvtvQuarterly(fq, fa) : []);
+        // Informes viejos (último anual de hace más de 3 años) = empresa que ya no reporta con
+        // ese ticker: mejor nada que datos de otra época.
+        const viejo = arr => arr.length && (Date.now() - _pvtvD(arr[arr.length - 1].end)) > 3 * 366 * 864e5;
+        if (viejo(A)) { A = []; Q = []; }
+        S.A = A; S.Q = Q; S.src = (sec && sec.annual && sec.annual.length) ? 'sec' : 'fh';
+        S.err2 = (fa == null && fq == null && !sec); S.st = 2;
+      });
     await S.p2;
   }
   return S;
@@ -30964,7 +31008,7 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'EPS diluido', cls:'hl', cells:A.map(x => _pvtvEps(x.eps)) },
         { n:'Cambio anual', cells:A.map((x, i) => (i ? _pvtvPct(_pvtvChg(x.eps, A[i - 1].eps)) : '') || '—') },
       ]);
-      hint = 'EPS diluido de cada informe anual (10-K), con criterios contables (GAAP): puede diferir del EPS ajustado de los trimestres.';
+      hint = 'EPS diluido de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras), con criterios contables: puede diferir del EPS ajustado de los trimestres.';
     } else if (S.st < 2) {
       chart = '<div class="pvtv-skb">' + '<i></i>'.repeat(6) + '</div>';
     }
@@ -30996,7 +31040,7 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'Ingresos', cls:'hl', cells:A.map(x => _pvtvBig(x.rev)) },
         { n:'Cambio anual', cells:A.map((x, i) => (i ? _pvtvPct(_pvtvChg(x.rev, A[i - 1].rev)) : '') || '—') },
       ]);
-      hint = 'Ingresos de cada informe anual (10-K).';
+      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras).';
     }
     if (chart) h += `<div class="px-card">${st('Ingresos', 'Ventas totales', _pvtvSeg('rev', mode))}${chart}${leg}${table}<div class="px-hint">${hint}</div></div>`;
   }
@@ -31010,7 +31054,7 @@ function _pvtvIncHtml(tk, S){
   const aOk = (S.A || []).length > 0, qOk = (S.Q || []).length > 0;
   if (!aOk && !qOk) return `<div class="px-card">${st('Estado de resultados', 'Sin informes')}<p class="px-empty">${S.err2
     ? 'No se pudieron cargar los informes financieros ahora mismo.</p><button class="px-retry" onclick="_pvtvRetry()">Reintentar</button>'
-    : pvEsc(tk) + ' no tiene informes 10-K o 10-Q en la SEC (las empresas extranjeras y los ETF no los presentan).</p>'}</div>`;
+    : pvEsc(tk) + ' no tiene estados financieros en la SEC (los ETF y algunas empresas extranjeras no los presentan).</p>'}</div>`;
   const mode = ((_PVTV_UI.inc === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
   const full = mode === 'A' ? S.A : S.Q;
   const P = full.slice(mode === 'A' ? -6 : -8);
@@ -31039,10 +31083,10 @@ function _pvtvIncHtml(tk, S){
   ];
   if (mode === 'A') rows.push({ n:'EPS diluido', cells:P.map(x => cell(x, 'eps', false)) });
   const rowsOk = rows.filter(r => r.cells.some(c => c !== '—'));
-  let h = `<div class="px-card">${st('Estado de resultados', mode === 'A' ? 'Informes anuales (10-K)' : 'Trimestres (10-Q y 10-K)', _pvtvSeg('inc', mode))}
+  let h = `<div class="px-card">${st('Estado de resultados', mode === 'A' ? 'Informes anuales a la SEC' : 'Trimestres reportados a la SEC', _pvtvSeg('inc', mode))}
     ${chart}${_pvtvLeg(SER.map(([, c, l]) => [c, l]))}
     ${_pvtvTable(P.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), rowsOk)}
-    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'Q' ? ' Los 10-Q traen el acumulado del año: cada trimestre es la diferencia entre acumulados, y el cuarto sale del informe anual menos los nueve meses.' : ''}</div></div>`;
+    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
   // ¿A dónde va cada dólar de ingresos? (último periodo de la vista)
   const x = [...P].reverse().find(r => r.rev > 0 && r.cost != null && r.op != null && r.net != null && r.gross != null);
   if (x){
