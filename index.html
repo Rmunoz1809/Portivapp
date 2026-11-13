@@ -30788,14 +30788,39 @@ function _pvtvNice(span){
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
 }
 
+// Ancho útil de una tarjeta de la pestaña (sin su relleno). Si la pestaña está oculta
+// (ancho 0) se toma el de la ficha; si tampoco, 680.
+function _pvtvAncho(){
+  try {
+    const c = document.querySelector('#r-analysis .pvtv-view.on .px-card') || document.querySelector('#r-analysis .px-card');
+    if (c && c.clientWidth > 0){ const s = getComputedStyle(c); return c.clientWidth - parseFloat(s.paddingLeft) - parseFloat(s.paddingRight); }
+    const r = document.getElementById('r-analysis');
+    if (r && r.clientWidth > 0) return r.clientWidth - 60;
+  } catch(e){}
+  return 680;
+}
+// Al cambiar el ancho de la ventana (girar el iPad, redimensionar en la Mac) se redibuja.
+let _pvtvRzT = 0, _pvtvRzW = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(_pvtvRzT);
+  _pvtvRzT = setTimeout(() => {
+    try {
+      const w = window.innerWidth; if (Math.abs(w - _pvtvRzW) < 8) return; _pvtvRzW = w;
+      const he = document.getElementById('pvx-tv-earn');
+      if (he && he.dataset.tk && he.dataset.done) _pvtvPaint(he.dataset.tk.toUpperCase());
+    } catch(e){}
+  }, 200);
+});
 // ── Gráfica de barras agrupadas (SVG): eje a la derecha como TradingView ──
 // cols: [{ label, fut, vals:[{v, c:'s0'..'s3'|'g'|'r'|'e', h:bool}] }]
 function _pvtvChart(cols, fmtAx){
   if (!cols.length) return '';
-  // En el celular el lienzo es más angosto: el SVG se escala al ancho de la tarjeta y con
-  // 680 de ancho las etiquetas quedaban en ~6 px.
-  const narrow = (window.innerWidth || 1000) < 640;
-  const W = narrow ? 400 : 680, H = narrow ? 250 : 236, L = 4, R = narrow ? 62 : 70, T = 14, B = 30;
+  // Escala 1:1: el lienzo mide lo mismo que la tarjeta, así que letras y barras salen a su
+  // tamaño real y la altura es fija. Con un ancho fijo el SVG se estiraba: en una pantalla
+  // ancha la gráfica crecía hasta media pantalla (y en el celular las letras quedaban en ~6 px).
+  const W = Math.round(Math.max(300, Math.min(1400, _pvtvAncho())));
+  const narrow = W < 560;
+  const H = narrow ? 210 : 230, L = 4, R = narrow ? 58 : 70, T = 14, B = 30;
   const all = []; cols.forEach(c => c.vals.forEach(x => { if (x && x.v != null && isFinite(x.v)) all.push(x.v); }));
   if (!all.length) return '';
   let mx = Math.max(0, ...all), mn = Math.min(0, ...all);
