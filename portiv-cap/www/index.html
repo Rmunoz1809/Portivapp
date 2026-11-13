@@ -10041,6 +10041,41 @@ function _pvxSaneInfo(o){
       }
     }
   } catch(e){}
+  return _pvCordura(o);
+}
+// ── Cordura del precio contra las cifras por acción ──────────────────────────────
+// Ninguna ficha puede enseñar un rango de 52 semanas que no contenga el precio de hoy ni un BPA
+// mayor que el precio. Pasa cuando el proveedor mezcla clases de acción (BRK-B a $593 con el
+// máximo de 52 semanas de la clase A, $884.835) o cuando una caché vieja trae cifras de otra
+// escala. Con cualquier fuente y cualquier ticker: si no cuadra, esas cifras se quitan —mejor
+// «—» que un dato imposible— y el resto de la ficha se queda.
+//   · mínimo de 52 semanas > 1,5 × precio  → imposible (el mínimo incluye la sesión de hoy)
+//   · máximo de 52 semanas > 100 × precio  → no es una caída, es otra escala
+//   · BPA > 2 × precio (P/E < 0,5)          → otra escala
+function _pvCorduraMala(o){
+  try {
+    const px = +(o && o.regularMarketPrice);
+    if (!(px > 0)) return false;
+    const m = (o.__m && typeof o.__m === 'object') ? o.__m : {};
+    const pos = a => a.map(Number).filter(v => v > 0);
+    const lo = pos([m['52WeekLow'], o.fiftyTwoWeekLow]);
+    const hi = pos([m['52WeekHigh'], o.fiftyTwoWeekHigh]);
+    // Sólo BPA positivo: una pérdida grande frente al precio sí existe (acción hundida).
+    const eps = pos([+o.trailingEps, +m.epsTTM]);
+    return lo.some(v => v > px * 1.5) || hi.some(v => v > px * 100) || eps.some(v => v > px * 2);
+  } catch(e){ return false; }
+}
+function _pvCordura(o){
+  try {
+    if (!o || !_pvCorduraMala(o)) return o;
+    o.fiftyTwoWeekHigh = null; o.fiftyTwoWeekLow = null; o.trailingEps = null;
+    const m = o.__m;
+    if (m && typeof m === 'object') Object.keys(m).forEach(f => {
+      if (/^(52Week|13Week|26Week)(High|Low)$/.test(f)
+          || ((/^eps/.test(f) || /PerShare/.test(f)) && !/Growth|Yoy|Cagr|Return/.test(f))) m[f] = null;
+    });
+    try { reportQuiet && reportQuiet('Datos · cifras por acción incoherentes con el precio', new Error(String(o.symbol || o.longName || ''))); } catch(_){}
+  } catch(e){}
   return o;
 }
 </script>
@@ -12763,12 +12798,7 @@ function _canonicalSector(ticker){
 // acción de BRK.B en clase A (mínimo de 52 semanas 698.000 $ con la B a 592 $). El mínimo de
 // 52 semanas nunca puede estar muy por ENCIMA del precio de hoy; si lo está, las cifras son de
 // otra clase y esa caché (local o de la nube, escrita antes de _pvShareClassFix) se descarta.
-window._pvInfoClaseMezclada = function(info){
-  try {
-    const px = +(info && info.regularMarketPrice), lo = +(info && info.__m && info.__m['52WeekLow']);
-    return px > 0 && lo > 0 && lo > px * 3;
-  } catch(e){ return false; }
-};
+window._pvInfoClaseMezclada = function(info){ return _pvCorduraMala(info); };
 window._pvInfoCompleto = function(info){ return !!(info && info.__m && typeof info.__m === 'object') && !window._pvInfoClaseMezclada(info); };
 const _INFO_LS  = 'portiv_info_cache_v2';   // v2: los v1 se guardaron sin __m (el objeto de métricas crudo de Finnhub que lee el motor sectorial); sin él el análisis cae a las ~20 métricas normalizadas y vuelve a parecer el genérico
 const _INFO_TTL = 12 * 60 * 60 * 1000;
@@ -25275,7 +25305,28 @@ const ALPACA_PROXY = 'https://zblhifszlhdgkhnymwjh.supabase.co/functions/v1/alpa
 // el app, aunque el fallo fuera pasajero o un error de Alpaca reenviado por el proxy.
 let _alpacaDeadUntil = 0;
 
+// Clases de acción: la lista de seguimiento guarda «BRK-B» (y los brókers mandan «BRK B» o
+// «BRK/B»), pero Alpaca sólo reconoce «BRK.B». Con el guion la gráfica salía vacía («Sin
+// histórico de precios»). Se traduce el símbolo al pedir y la respuesta se devuelve también
+// con la clave original, así que ningún llamador tiene que saberlo.
+function _pvAlpacaSym(s){ return String(s || '').toUpperCase().replace(/^([A-Z]{1,5})[-\/ ]([A-Z])$/, '$1.$2'); }
 async function _alpacaFetch(path, timeoutMs = 12000){
+  const _alias = {};
+  path = String(path || '').replace(/([?&]symbols=)([^&]*)/, (all, k, v) => {
+    let raw = v; try { raw = decodeURIComponent(v); } catch(e){}
+    const out = raw.split(',').map(x => { const y = _pvAlpacaSym(x.trim()); if (y !== x.trim().toUpperCase() || y !== x.trim()) _alias[y] = x.trim(); return y; });
+    return k + encodeURIComponent(out.join(','));
+  });
+  const _d = await _alpacaFetchRaw(path, timeoutMs);
+  try {
+    if (_d && _d.bars && typeof _d.bars === 'object') Object.keys(_alias).forEach(y => {
+      const o = _alias[y];
+      if (o !== y && _d.bars[y] && !_d.bars[o]) _d.bars[o] = _d.bars[y];
+    });
+  } catch(e){}
+  return _d;
+}
+async function _alpacaFetchRaw(path, timeoutMs = 12000){
   if (Date.now() < _alpacaDeadUntil || !_fhSupabaseOn()) return null;
   // Credencial: JWT del usuario si hay sesión, si no la anon key.
   let _tok = null;
@@ -25631,7 +25682,7 @@ function _pv52Vigente(info){
     if (m && _pv52Vencido(m['52WeekHighDate'])) info.fiftyTwoWeekHigh = null;
     if (m && _pv52Vencido(m['52WeekLowDate']))  info.fiftyTwoWeekLow  = null;
   } catch(e){}
-  return info;
+  return _pvCordura(info);
 }
 
 // ── Coalescing de apiCall (sólo lecturas lentas) ──────────────────────────────
@@ -28562,6 +28613,7 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   $('r-mktcap').textContent = `Market Cap: ${mcStr}`;
   // 4 metricas destacadas (estilo Portiv) - mismos datos de Yahoo Finance
   {
+    _pvCordura(info);   // última barrera: venga de donde venga la `info`, nada de rangos imposibles
     const _peF  = info.trailingPE;
     const _divF = info.dividendYield || info.trailingAnnualDividendYield;
     const _hiF  = info.fiftyTwoWeekHigh, _loF = info.fiftyTwoWeekLow;
@@ -35424,6 +35476,9 @@ let WATCHLIST_TICKERS = [];
 let WATCHLIST_CACHE   = {};
 try { const _a = JSON.parse(localStorage.getItem('wl_tickers') || '[]'); if (Array.isArray(_a)) WATCHLIST_TICKERS = _a.filter(t => typeof t === 'string' && t); } catch(e){}
 try { const _c = JSON.parse(localStorage.getItem('wl_cache') || '{}'); if (_c && typeof _c === 'object' && !Array.isArray(_c)) WATCHLIST_CACHE = _c; } catch(e){}
+// Fichas guardadas con cifras por acción que no cuadran con su precio (BRK-B con las de la clase A
+// antes del 13 nov 2026): se limpian y se marcan vencidas para que _wlInfoEnsure las vuelva a pedir.
+try { Object.keys(WATCHLIST_CACHE).forEach(t => { const c = WATCHLIST_CACHE[t]; if (c && c.info && typeof _pvCorduraMala === 'function' && _pvCorduraMala(c.info)) { _pvCordura(c.info); c.cachedAt = 0; } }); } catch(e){}
 // Seed UFO una sola vez (si el usuario lo borra luego, no se vuelve a agregar)
 if (!localStorage.getItem('wl_seed_ufo')) {
   if (!WATCHLIST_TICKERS.includes('UFO')) WATCHLIST_TICKERS.push('UFO');
@@ -35718,7 +35773,10 @@ function _wlUsd(v) { return '$' + (+v).toLocaleString('en-US', { minimumFraction
 function _wlPctTxt(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2) + '%'; }
 function _wlRange(info, price) {
   const lo = +(info && info.fiftyTwoWeekLow), hi = +(info && info.fiftyTwoWeekHigh);
-  if (!(lo > 0 && hi > lo)) {
+  // Un rango que no puede contener el precio de hoy es de otra escala (p. ej. la clase A de
+  // Berkshire en la fila de BRK-B): se enseña «—», nunca el dato imposible.
+  const _malo = price > 0 && (lo > price * 1.5 || hi > price * 100);
+  if (!(lo > 0 && hi > lo) || _malo) {
     return '<span class="pwl-rng pwl-rng-na"><span class="pwl-trk"></span><span class="pwl-rl"><span>—</span><span>—</span></span></span>';
   }
   const knob = price > 0 ? `<i style="left:${Math.max(0, Math.min(100, (price - lo) / (hi - lo) * 100)).toFixed(1)}%"></i>` : '';
