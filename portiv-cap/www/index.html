@@ -31201,7 +31201,7 @@ window._pvtvSub = function(btn, v){
 //  mismo ejercicio con la MISMA etiqueta, y el T4 = 10-K − nueve meses. Sin estimaciones:
 //  sólo sumas y restas exactas de cifras presentadas (flujo libre = operativo − activos fijos).
 // ══════════════════════════════════════════════════════════════════════════════
-const _PVFN_UI = { bal:'A', cf:'A', view:'bal' };
+const _PVFN_UI = { bal:'A', cf:'A', rent:'A', view:'val' };   // Valoración es la vista principal
 const _PVFN_BS = {
   cash:   ['CashAndCashEquivalentsAtCarryingValue', 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'],
   liqT:   ['CashCashEquivalentsAndShortTermInvestments'],
@@ -31466,11 +31466,89 @@ function _pvfnCfHtml(tk, S){
   return h;
 }
 
+// ── Vista Rentabilidad (13 nov 2026) ──
+// Lo esencial y nada más: cuánto le queda de cada venta (márgenes) y si vende y gana más que
+// un año antes (crecimiento), con tres o cuatro cifras grandes y una gráfica por tarjeta. Sale
+// del estado de resultados de la SEC que ya cargó «Resultados» (S.A / S.Q); las tablas contra
+// el sector van debajo, plegadas.
+function _pvfnRentHtml(tk, S){
+  const st = _pvxStitle;
+  if (!S || S.st < 2) return `<div class="px-card">${st('Márgenes', 'Cargando informes…')}<div class="pvtv-skb">${'<i></i>'.repeat(6)}</div></div>`;
+  const aOk = (S.A || []).length > 1, qOk = (S.Q || []).length > 1;
+  if (!aOk && !qOk) return `<div class="px-card">${st('Rentabilidad', 'Sin informes')}<p class="px-empty">${pvEsc(tk)} no tiene estados financieros en la SEC con los que calcular márgenes y crecimiento.</p></div>`;
+  const mode = ((_PVFN_UI.rent === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
+  const full = mode === 'A' ? S.A : S.Q;
+  const P = full.slice(mode === 'A' ? -6 : -8).filter(x => x.rev > 0);
+  const has = k => P.filter(x => x[k] != null).length >= 2;
+  const banco = !has('gross') && !has('op') && (has('nii') || has('nonie'));
+  const pct = (a, b) => (a != null && b) ? a / b * 100 : null;
+  const prevOf = x => _pvfnPrev(full, x);
+  const k = (l, v, s) => `<div class="pvtv-k"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`;
+  const pts = (a, b) => (a == null || b == null) ? 'sin dato del año anterior'
+    : `<span class="${a - b >= 0 ? 'up' : 'dn'}">${a - b >= 0 ? '+' : '−'}${Math.abs(a - b).toFixed(1)} pts</span> vs. un año antes`;
+  const last = P[P.length - 1];
+  const perTxt = mode === 'A' ? 'ejercicio ' + (last ? last.label : '') : 'trimestre ' + (last ? last.label : '');
+  let h = '';
+
+  // 1) Márgenes
+  const M = (banco
+      ? [['pretax', 's1', 'Margen antes de impuestos'], ['net', 's3', 'Margen neto']]
+      : [['gross', 's1', 'Margen bruto'], ['op', 's2', 'Margen operativo'], ['net', 's3', 'Margen neto']])
+    .filter(([key]) => P.filter(x => pct(x[key], x.rev) != null).length >= 2);
+  if (M.length && last){
+    const pv = prevOf(last);
+    const tiles = M.map(([key, , l]) => { const v = pct(last[key], last.rev), p = pv ? pct(pv[key], pv.rev) : null;
+      return k(l, v == null ? '—' : v.toFixed(1) + '%', pts(v, p)); });
+    if (banco && last.nonie != null){
+      const v = pct(last.nonie, last.rev), p = pv ? pct(pv.nonie, pv.rev) : null;
+      tiles.unshift(k('Eficiencia', v.toFixed(1) + '%', p == null ? 'gastos ÷ ingresos (menos es mejor)'
+        : `<span class="${v - p <= 0 ? 'up' : 'dn'}">${v - p >= 0 ? '+' : '−'}${Math.abs(v - p).toFixed(1)} pts</span> · menos es mejor`));
+    }
+    const chart = _pvtvChart(P.map(x => ({ label:x.label, vals:M.map(([key, c]) => ({ v:pct(x[key], x.rev), c })) })), v => v.toFixed(0) + '%');
+    h += `<div class="px-card">${st('Márgenes', 'De cada $100 que vende, cuánto le queda · ' + perTxt, _pvfnSeg('rent', mode))}
+      <div class="pvtv-kg n${tiles.length}">${tiles.join('')}</div>
+      ${chart}${_pvtvLeg(M.map(([, c, l]) => [c, l]))}
+      <div class="px-hint">${banco
+        ? 'Un banco no tiene costo de ventas: lo que importa es cuánto gasta para generar cada dólar (eficiencia) y cuánto le queda antes y después de impuestos.'
+        : 'Bruto: lo que queda después de pagar lo que cuesta producir. Operativo: después de además pagar sueldos, investigación y ventas. Neto: después de intereses e impuestos.'} Más alto y estable es mejor.</div></div>`;
+  }
+
+  // 2) Crecimiento
+  const gr = (x, key) => { const p = prevOf(x); if (!p || x[key] == null || p[key] == null || p[key] <= 0) return null; return _pvtvChg(x[key], p[key]); };
+  const PG = P.filter(x => prevOf(x));
+  if (PG.length && last){
+    const tiles = [];
+    const gRev = gr(last, 'rev'), gNet = gr(last, 'net'), gEps = gr(last, 'eps');
+    const fmt = v => v == null ? '—' : `<span class="${v >= 0 ? 'up' : 'dn'}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%</span>`;
+    tiles.push(k('Ingresos', fmt(gRev), 'vs. el mismo periodo de un año antes'));
+    tiles.push(k('Utilidad neta', fmt(gNet), gNet == null && last.net != null ? 'venía de pérdidas: el % no aplica' : 'vs. el mismo periodo de un año antes'));
+    if (gEps != null) tiles.push(k('Ganancia por acción', fmt(gEps), 'EPS diluido'));
+    if (mode === 'A'){
+      const e = _pvtvD(last.end), x3 = full.find(y => { const d = (e - _pvtvD(y.end)) / 864e5; return d >= 1060 && d <= 1130; });
+      if (x3 && x3.rev > 0){ const c = (Math.pow(last.rev / x3.rev, 1 / 3) - 1) * 100;
+        tiles.push(k('Ingresos, 3 años', fmt(c) , 'crecimiento promedio por año')); }
+    }
+    const cl = v => v == null ? null : Math.max(-100, Math.min(100, v));
+    const chart = _pvtvChart(PG.map(x => ({ label:x.label, vals:[{ v:cl(gr(x, 'rev')), c:'s0' }, { v:cl(gr(x, 'net')), c:'s3' }] })), v => (v > 0 ? '+' : '') + v.toFixed(0) + '%');
+    const cut = PG.some(x => [gr(x, 'rev'), gr(x, 'net')].some(v => v != null && Math.abs(v) > 100));
+    const row = key => PG.map(x => _pvtvPct(gr(x, key)) || '—');
+    const rows = [{ n:'Ingresos', cls:'hl', cells:row('rev') }, { n:'Utilidad neta', cells:row('net') }];
+    if (PG.some(x => gr(x, 'eps') != null)) rows.push({ n:'EPS diluido', cells:row('eps') });
+    h += `<div class="px-card">${st('Crecimiento', 'Contra el mismo periodo del año anterior · ' + perTxt)}
+      <div class="pvtv-kg n${tiles.length}">${tiles.join('')}</div>
+      ${chart}${_pvtvLeg([['s0', 'Ingresos'], ['s3', 'Utilidad neta']])}
+      ${_pvtvTable(PG.map(x => ({ l:x.label })), rows)}
+      <div class="px-hint">Cuánto subieron (o bajaron) sus ventas y sus ganancias frente al mismo periodo del año anterior.${cut ? ' Las barras se cortan en ±100% para que un salto puntual no aplaste la gráfica; la cifra exacta está en la tabla.' : ''} Si un año venía de pérdidas, el % no se calcula.</div></div>`;
+  }
+  return h || `<div class="px-card">${st('Rentabilidad', 'Sin datos suficientes')}<p class="px-empty">Faltan cifras de ingresos para calcular márgenes y crecimiento de ${pvEsc(tk)}.</p></div>`;
+}
+
 function _pvfnPaint(tk){
   const S = _PVTV_MEM[tk];
-  const hb = document.getElementById('pvx-fn-bal'), hc = document.getElementById('pvx-fn-cf');
+  const hb = document.getElementById('pvx-fn-bal'), hc = document.getElementById('pvx-fn-cf'), hr = document.getElementById('pvx-fn-rent');
   if (hb && hb.dataset.tk === tk) hb.innerHTML = _pvfnBalHtml(tk, S);
   if (hc && hc.dataset.tk === tk) hc.innerHTML = _pvfnCfHtml(tk, S);
+  if (hr && hr.dataset.tk === tk) hr.innerHTML = _pvfnRentHtml(tk, S);
   _pvfnScroll(document);
 }
 // Las tablas que no caben (celular) arrancan en los periodos más recientes, a la derecha.
@@ -31914,10 +31992,12 @@ function _renderQualAnalysis(a, el){
     for (const b of a.bloques_sector) {
       const _tb = _pvxTablaValor(b.filas);
       // Rentabilidad y crecimiento van a «Salud»; el bloque de mercado, a «Valoración».
-      const _bh = `<div class="px-card">${stitle(b.titulo, _pvxEbMediana(_tb.origen))}
-        ${_tb.html}
-        <div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero. Van de la más importante a la menos, con el dato actual antes que su media de varios años; las marcadas «No entra en la nota» se ven, pero el modelo del sector no las puntúa.</div></div>`;
-      if (b.id === 'merc') FIm += _bh; else FIb += _bh;
+      const _hintB = `<div class="px-hint">Cada fila se compara con la mediana de las empresas de ${esc((a.scores && a.scores.perfil) || 'su sector')}, no con el mercado entero. Van de la más importante a la menos, con el dato actual antes que su media de varios años; las marcadas «No entra en la nota» se ven, pero el modelo del sector no las puntúa.</div>`;
+      // Mercado → «Valoración», tal cual. Rentabilidad y crecimiento → su propia vista, debajo
+      // de las gráficas y PLEGADAS: son el detalle contra el sector, no lo primero que se lee.
+      if (b.id === 'merc') FIm += `<div class="px-card">${stitle(b.titulo, _pvxEbMediana(_tb.origen))}${_tb.html}${_hintB}</div>`;
+      else FIb += `<div class="px-card"><details class="px-otros"><summary>${stitle(b.titulo + ' frente a su sector', (_pvxEbMediana(_tb.origen) || 'Detalle') + ' · toca para ver')}</summary>
+        <div style="margin-top:14px">${_tb.html}</div>${_hintB}</details></div>`;
     }
   }
 
@@ -31946,16 +32026,19 @@ function _renderQualAnalysis(a, el){
     const _tkE = esc(a.ticker || '');
     // Primero los veredictos (notas, pilares, F-Score y Z) y después las tablas de detalle.
     const _sal = FIs + `<div id="r-pilares" class="px-card pv-fin-card" data-tk="${_tkE}"></div>`
-               + `<div id="r-fscore" class="px-card pv-fin-card" data-tk="${_tkE}"></div>` + FIb;
+               + `<div id="r-fscore" class="px-card pv-fin-card" data-tk="${_tkE}"></div>`;
     const _val = FIv + FIm + `<div id="r-retornos" class="px-card pv-fin-card" data-tk="${_tkE}"></div>
       <div id="r-mi-objetivo" class="px-card pv-fin-card" data-tk="${_tkE}"></div>` + FIo;
     // Un ETF no presenta 10-K/10-Q ni tiene notas del sector: una sola vista, sin barra.
     const _S0 = (typeof _PVTV_MEM === 'object') ? _PVTV_MEM[String(a.ticker || '').toUpperCase()] || null : null;
+    // Orden pedido el 13 nov 2026: Valoración primero (es lo que más se consulta), luego
+    // Rentabilidad (márgenes + crecimiento) y después los estados y la salud.
     const V = a.isEtf ? [['val', 'Valoración', _val + _sal]] : [
-      ['bal', 'Balance',       `<div id="pvx-fn-bal" data-tk="${_tkE}">${_pvfnBalHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>`],
-      ['cf',  'Flujo de caja', `<div id="pvx-fn-cf" data-tk="${_tkE}">${_pvfnCfHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>`],
-      ['sal', 'Salud',         _sal],
-      ['val', 'Valoración',    _val],
+      ['val',  'Valoración',    _val],
+      ['rent', 'Rentabilidad',  `<div id="pvx-fn-rent" data-tk="${_tkE}">${_pvfnRentHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>` + FIb],
+      ['bal',  'Balance',       `<div id="pvx-fn-bal" data-tk="${_tkE}">${_pvfnBalHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>`],
+      ['cf',   'Flujo de caja', `<div id="pvx-fn-cf" data-tk="${_tkE}">${_pvfnCfHtml(String(a.ticker || '').toUpperCase(), _S0)}</div>`],
+      ['sal',  'Salud',         _sal],
     ];
     const _v = V.some(x => x[0] === _PVFN_UI.view) ? _PVFN_UI.view : V[0][0];
     FI = `<div class="pvtv-wrap pvfn-wrap">${V.length > 1 ? `<div class="pvtv-subtabs" role="tablist">${V.map(([k, l]) =>
@@ -63340,6 +63423,21 @@ html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:
 /* Finanzas (balance y flujo de caja, ver _pvfnBalHtml): sin el margen negativo de la tabla, la
    columna fija tapa del todo las cifras que pasan por debajo al deslizar en el celular. */
 #researchResults .pvfn-wrap .pvtv-tw { margin:0; padding:0; }
+/* Rentabilidad: 2–4 cifras grandes por tarjeta, a todo el ancho, con aire antes de la gráfica. */
+#researchResults .pvfn-wrap .pvtv-kg.n1 { grid-template-columns:minmax(0,1fr); }
+#researchResults .pvfn-wrap .pvtv-kg.n2 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+#researchResults .pvfn-wrap .pvtv-kg.n3 { grid-template-columns:repeat(3,minmax(0,1fr)); }
+#researchResults .pvfn-wrap .pvtv-kg + .pvtv-svg { margin-top:22px; }
+#researchResults .pvfn-wrap .pvtv-k .v span { font-weight:800; }
+#researchResults .pvfn-wrap .pvtv-k .s span { font-weight:700; }
+@media (max-width: 760px) {
+  #researchResults .pvfn-wrap .pvtv-kg.n4 { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #researchResults .pvfn-wrap .pvtv-kg.n3 { grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+  #researchResults .pvfn-wrap .pvtv-kg.n3 .pvtv-k { padding:12px 10px; }
+  #researchResults .pvfn-wrap .pvtv-kg.n3 .pvtv-k .l { font-size:12px; line-height:1.25; }
+  #researchResults .pvfn-wrap .pvtv-kg.n3 .pvtv-k .v { font-size:18px; }
+  #researchResults .pvfn-wrap .pvtv-kg.n3 .pvtv-k .s { font-size:11px; line-height:1.3; }
+}
 @media (max-width: 760px) {
   /* Nombres largos («Efectivo e inversiones de corto plazo») en dos líneas: la columna fija no
      puede comerse el ancho de la última cifra. */
