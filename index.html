@@ -12759,7 +12759,17 @@ function _canonicalSector(ticker){
 // sin __m: se ignora y se vuelve a pedir. El fetch actual siempre escribe __m como objeto
 // (`metricsData?.metric || {}`), así que un ETF sin métricas pasa el filtro con {} y no entra
 // en bucle de refetch.
-window._pvInfoCompleto = function(info){ return !!(info && info.__m && typeof info.__m === 'object'); };
+// Tampoco sirve un `info` que mezcla dos clases de acción: Finnhub entrega las cifras por
+// acción de BRK.B en clase A (mínimo de 52 semanas 698.000 $ con la B a 592 $). El mínimo de
+// 52 semanas nunca puede estar muy por ENCIMA del precio de hoy; si lo está, las cifras son de
+// otra clase y esa caché (local o de la nube, escrita antes de _pvShareClassFix) se descarta.
+window._pvInfoClaseMezclada = function(info){
+  try {
+    const px = +(info && info.regularMarketPrice), lo = +(info && info.__m && info.__m['52WeekLow']);
+    return px > 0 && lo > 0 && lo > px * 3;
+  } catch(e){ return false; }
+};
+window._pvInfoCompleto = function(info){ return !!(info && info.__m && typeof info.__m === 'object') && !window._pvInfoClaseMezclada(info); };
 const _INFO_LS  = 'portiv_info_cache_v2';   // v2: los v1 se guardaron sin __m (el objeto de métricas crudo de Finnhub que lee el motor sectorial); sin él el análisis cae a las ~20 métricas normalizadas y vuelve a parecer el genérico
 const _INFO_TTL = 12 * 60 * 60 * 1000;
 const _INFO_CACHE = {};
@@ -18760,6 +18770,9 @@ async function _sharedAIGet(cacheKey, ttlMs){
     if(error || !data || !data.data) return null;
     if (ttlMs && Date.now() - new Date(data.updated_at||0).getTime() > ttlMs) return null;   // vencido → regenerar
     if (getLang() !== 'en' && _pvLooksEnglish(data.data)) return null;   // colada en inglés → regenerar en español
+    // Análisis de BRK.B escritos antes de _pvShareClassFix: se hicieron con las cifras por
+    // acción de la clase A junto al precio de la B. Se regeneran.
+    if (/(^|[^A-Z])BRK\.B([^A-Z]|$)/.test(String(cacheKey)) && new Date(data.updated_at||0).getTime() < Date.parse('2026-11-13T19:00:00Z')) return null;
     return data.data;
   }catch(e){ return null; }
 }
@@ -25073,6 +25086,65 @@ function _fhCloneVal(v){
   try { return (typeof structuredClone === 'function') ? structuredClone(v) : JSON.parse(JSON.stringify(v)); }
   catch(e){ return v; }
 }
+// ── Clases de acción que Finnhub confunde ────────────────────────────────────────
+// Para BRK.B, Finnhub responde /quote con el precio REAL de la clase B (~$590), pero perfil,
+// métricas, resultados, calendario y precio objetivo los da de la clase A (`symbol: "BRK.A"`):
+// máximo de 52 semanas $884.835, BPA $59.668, valor contable por acción $497.171 y sólo 1,43 M
+// de acciones. Mezclados con el precio de la B, la ficha enseñaba un rango de 52 semanas
+// imposible y unos resultados trimestrales 1.500 veces mayores. Una acción A equivale a 1.500 B
+// (fijado en los estatutos de Berkshire desde 2010): todo lo POR ACCIÓN se divide entre 1.500 y
+// el número de acciones se multiplica. Los múltiplos (P/E, P/B, P/S) y los porcentajes ya son
+// iguales en las dos clases y no se tocan.
+const _PV_SHARE_CLASS = { 'BRK.B': { base: 'BRK.A', per: 1500 } };
+function _pvShareClassOf(path){
+  try {
+    const m = /[?&]symbol=([^&]+)/.exec(String(path || ''));
+    if (!m) return null;
+    const s = decodeURIComponent(m[1]).toUpperCase().replace(/[-\/ ]/g, '.');
+    const c = _PV_SHARE_CLASS[s];
+    return c ? Object.assign({ sym: s }, c) : null;
+  } catch(e){ return null; }
+}
+function _pvShareClassFix(path, j){
+  const c = _pvShareClassOf(path);
+  if (!c || !j || typeof j !== 'object') return j;
+  const k = 1 / c.per;
+  const div = (o, keys) => { if (o) keys.forEach(f => { if (typeof o[f] === 'number' && isFinite(o[f])) o[f] = o[f] * k; }); };
+  const relabel = o => { if (o && o.symbol === c.base) o.symbol = c.sym; };
+  const p = String(path).split('?')[0];
+  try {
+    if (p === '/stock/metric') {
+      const m = j.metric;
+      if (m) Object.keys(m).forEach(f => {
+        if (typeof m[f] !== 'number' || !isFinite(m[f])) return;
+        // Por acción: precios de 52/13 semanas, BPA y todo «…PerShare…». Fuera: fechas,
+        // crecimientos y rendimientos (porcentajes) y los múltiplos.
+        const perShare = /^(52Week|13Week|26Week)(High|Low)$/.test(f)
+          || ((/^eps/.test(f) || /PerShare/.test(f)) && !/Growth|Yoy|Cagr|Return/.test(f));
+        if (perShare) m[f] = m[f] * k;
+      });
+      const se = j.series;
+      if (se) ['annual', 'quarterly'].forEach(fr => {
+        const s = se[fr]; if (!s) return;
+        ['eps', 'salesPerShare', 'ebitPerShare', 'fcfPerShareTTM'].forEach(f => {
+          if (Array.isArray(s[f])) s[f].forEach(r => div(r, ['v']));
+        });
+      });
+    } else if (p === '/stock/profile2') {
+      if (j.ticker === c.base) j.ticker = c.sym;
+      if (typeof j.shareOutstanding === 'number') j.shareOutstanding = j.shareOutstanding * c.per;
+    } else if (p === '/stock/earnings') {
+      if (Array.isArray(j)) j.forEach(r => { relabel(r); div(r, ['actual', 'estimate', 'surprise']); });
+    } else if (p === '/calendar/earnings') {
+      (j.earningsCalendar || []).forEach(r => { relabel(r); div(r, ['epsEstimate', 'epsActual']); });
+    } else if (p === '/stock/price-target') {
+      relabel(j); div(j, ['targetHigh', 'targetLow', 'targetMean', 'targetMedian']);
+    } else if (p === '/stock/recommendation') {
+      if (Array.isArray(j)) j.forEach(relabel);
+    }
+  } catch(e){}
+  return j;
+}
 async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
   if (_retry) return _fhFetchRaw(path, timeoutMs, _retry);   // reintento interno: sin capa
   const key = String(path || '');
@@ -25160,7 +25232,7 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const _json = await res.json();
     clearTimeout(tid);
-    return _json;
+    return _pvShareClassFix(path, _json);
   } catch(e) {
     clearTimeout(tid);
     // SOLO un fallo REAL de red/conexión (TypeError de fetch: DNS, CORS, sin internet)
@@ -30499,6 +30571,7 @@ window._pvxTab = function(btn, id){
     // La lectura del trimestre se pide AQUÍ, no al abrir la acción: es la llamada de IA más
     // lenta y cara del análisis y sólo se ve en esta pestaña.
     if (id === 'ea' && !_free && typeof _pvxFillEarnings === 'function') _pvxFillEarnings(scope);
+    if (id === 'ea' && !_free && typeof _pvxFillTV === 'function') _pvxFillTV(scope);
   } catch(e){}
 };
 
@@ -30516,6 +30589,414 @@ function _pvxRepaint(a, el){
     } catch(e){}
   }
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  RESULTADOS — estructura tomada de la ficha «Financials» de TradingView (13 nov 2026)
+//  Dos vistas dentro de la pestaña «Resultados»:
+//   · Earnings: próximo reporte (fecha, periodo, EPS e ingresos esperados), EPS e ingresos
+//     reportado vs. estimado en barras (las previsiones rayadas) con su tabla de sorpresa.
+//   · Estado de resultados: ingresos, utilidad bruta, operativa y neta por año o trimestre,
+//     a dónde va cada dólar de ingresos, y la tabla con el cambio contra el año anterior.
+//  Fuentes (las de siempre, por el proxy): /stock/earnings + /calendar/earnings (estimados) y
+//  /stock/financials-reported anual y trimestral (10-K/10-Q). Cero estimaciones propias: los
+//  10-Q traen cifras acumuladas del año, así que un trimestre = acumulado − acumulado previo
+//  del mismo ejercicio, y el T4 = 10-K − acumulado a 9 meses (identidades exactas). Si falta
+//  una pieza, ese trimestre no se pinta.
+// ══════════════════════════════════════════════════════════════════════════════
+const _PVTV_MEM = {};            // TICKER → { ts, er, cal, A, Q, st }
+const _PVTV_UI  = { eps:'Q', rev:'Q', inc:'A', view:'earn' };
+let _pvtvSvgN = 0;
+const _PVTV_IC = {
+  rev:   ['Revenues','RevenueFromContractWithCustomerExcludingAssessedTax','SalesRevenueNet','RevenueFromContractWithCustomerIncludingAssessedTax','RevenuesNetOfInterestExpense'],
+  cost:  ['CostOfRevenue','CostOfGoodsAndServicesSold','CostOfGoodsSold','CostOfServices'],
+  gross: ['GrossProfit'],
+  op:    ['OperatingIncomeLoss'],
+  net:   ['NetIncomeLoss','ProfitLoss','NetIncomeLossAvailableToCommonStockholdersBasic'],
+  eps:   ['EarningsPerShareDiluted','EarningsPerShareBasicAndDiluted','EarningsPerShareBasic'],
+};
+function _pvtvFields(rep){
+  const ic = (rep && rep.report && Array.isArray(rep.report.ic)) ? rep.report.ic : [];
+  const idx = {};
+  for (const f of ic){
+    if (!f || typeof f.concept !== 'string') continue;
+    const k = f.concept.replace(/^[a-z-]+_/i, ''), v = Number(f.value);
+    if (isFinite(v) && !(k in idx)) idx[k] = v;
+  }
+  const pick = c => { for (const t of _PVTV_IC[c]) if (t in idx) return idx[t]; return null; };
+  const o = { rev:pick('rev'), cost:pick('cost'), gross:pick('gross'), op:pick('op'), net:pick('net'), eps:pick('eps') };
+  if (o.gross == null && o.rev != null && o.cost != null) o.gross = o.rev - o.cost;     // identidad
+  if (o.cost == null && o.rev != null && o.gross != null) o.cost = o.rev - o.gross;
+  // Finnhub trae redondeado a entero el EPS de los 10-K viejos (META 2021: 13 por 13.77). Si
+  // utilidad neta ÷ acciones diluidas redondea a ese mismo entero, vale la cifra con decimales.
+  const sh = idx.WeightedAverageNumberOfDilutedSharesOutstanding;
+  if (o.eps != null && Number.isInteger(o.eps) && o.net != null && sh > 0){
+    const c = o.net / sh;
+    if (Math.abs(c - o.eps) < 1) o.eps = Math.round(c * 100) / 100;
+  }
+  return o;
+}
+const _pvtvD = s => Date.parse(String(s || '').slice(0, 10));
+// 10-K → serie anual (la más reciente al final). Un 10-K/A del mismo cierre no duplica.
+function _pvtvAnnual(payload){
+  const data = Array.isArray(payload && payload.data) ? payload.data : [];
+  const by = {};
+  data.filter(d => d && /^10-K/i.test(String(d.form || '')) && isFinite(_pvtvD(d.endDate)))
+    .forEach(d => { const e = String(d.endDate).slice(0, 10); const f = _pvtvFields(d);
+      if (f.rev == null && f.net == null) return;
+      if (!by[e] || (by[e].f.rev == null && f.rev != null)) by[e] = { end:e, fy:d.year, f }; });
+  return Object.values(by).sort((a, b) => a.end.localeCompare(b.end))
+    .map(x => ({ end:x.end, label:String(x.fy || x.end.slice(0, 4)), ...x.f }));
+}
+// 10-Q (acumulados) + 10-K → trimestres sueltos.
+function _pvtvQuarterly(qPay, aPay){
+  const rows = [];
+  [qPay, aPay].forEach(p => (Array.isArray(p && p.data) ? p.data : []).forEach(d => {
+    if (!d || !/^10-[QK]/i.test(String(d.form || ''))) return;
+    const s = _pvtvD(d.startDate), e = _pvtvD(d.endDate);
+    if (!isFinite(s) || !isFinite(e)) return;
+    rows.push({ s, e, start:String(d.startDate).slice(0, 10), end:String(d.endDate).slice(0, 10), fy:d.year,
+      q:/^10-K/i.test(d.form) ? 4 : (+d.quarter || 0), f:_pvtvFields(d) });
+  }));
+  const seen = new Set(), uniq = rows.filter(r => { const k = r.start + '|' + r.end; if (seen.has(k)) return false; seen.add(k); return true; });
+  const groups = {};
+  uniq.forEach(r => { (groups[r.start] = groups[r.start] || []).push(r); });
+  const K = ['rev','cost','gross','op','net'];
+  const out = [];
+  Object.values(groups).forEach(g => {
+    g.sort((a, b) => a.e - b.e);
+    let prev = null;
+    g.forEach(r => {
+      const span = (r.e - r.s) / 864e5;
+      let f = null;
+      if (span <= 110) { f = Object.assign({}, r.f); }
+      else if (prev && (r.e - prev.e) / 864e5 >= 70 && (r.e - prev.e) / 864e5 <= 110) {
+        f = {}; K.forEach(k => { f[k] = (r.f[k] != null && prev.f[k] != null) ? r.f[k] - prev.f[k] : null; });
+        f.eps = null;     // el EPS no se resta: cambia el número de acciones
+      }
+      if (f && (f.rev != null || f.net != null)) out.push({ end:r.end, fy:r.fy, q:r.q || 0, ...f });
+      prev = r;
+    });
+  });
+  const byEnd = {};
+  out.forEach(x => { if (!byEnd[x.end]) byEnd[x.end] = x; });
+  return Object.values(byEnd).sort((a, b) => a.end.localeCompare(b.end))
+    .map(x => ({ ...x, label:`T${x.q || '?'} '${String(x.fy || x.end.slice(0, 4)).slice(-2)}` }));
+}
+async function _pvtvLoad(tk, stage){
+  const now = Date.now();
+  let S = _PVTV_MEM[tk];
+  if (!S || now - S.ts > 30 * 60e3) S = _PVTV_MEM[tk] = { ts:now, st:0 };
+  const enc = encodeURIComponent(tk);
+  if (S.st < 1){
+    if (!S.p1){
+      const y = new Date().getUTCFullYear();
+      const to = new Date(now + 540 * 864e5).toISOString().slice(0, 10);
+      S.p1 = Promise.all([
+        fhFetch(`/stock/earnings?symbol=${enc}&limit=12`, 12000).catch(() => null),
+        fhFetch(`/calendar/earnings?symbol=${enc}&from=${y - 2}-01-01&to=${to}`, 12000).catch(() => null),
+      ]).then(([er, cal]) => { S.er = Array.isArray(er) ? er : []; S.cal = (cal && Array.isArray(cal.earningsCalendar)) ? cal.earningsCalendar : [];
+        S.err1 = (er == null && cal == null); S.st = Math.max(S.st, 1); });
+    }
+    await S.p1;
+  }
+  if (stage >= 2 && S.st < 2){
+    if (!S.p2) S.p2 = Promise.all([
+        fhFetch(`/stock/financials-reported?symbol=${enc}&freq=annual`, 25000).catch(() => null),
+        fhFetch(`/stock/financials-reported?symbol=${enc}&freq=quarterly`, 25000).catch(() => null),
+      ]).then(([fa, fq]) => { S.A = _pvtvAnnual(fa); S.Q = _pvtvQuarterly(fq, fa); S.err2 = (fa == null && fq == null); S.st = 2; });
+    await S.p2;
+  }
+  return S;
+}
+
+// ── Formatos ──
+function _pvtvBig(v, noSign){
+  if (v == null || !isFinite(v)) return '—';
+  const a = Math.abs(v), s = v < 0 ? '−' : '', d = noSign ? '' : '$';
+  if (a >= 1e9)  return s + d + (a / 1e9).toLocaleString('en-US', { maximumFractionDigits: a >= 1e12 ? 1 : 2 }) + ' mil M';
+  if (a >= 1e6)  return s + d + (a / 1e6).toLocaleString('en-US', { maximumFractionDigits: a >= 1e8 ? 0 : 1 }) + ' M';
+  if (a >= 1e3)  return s + d + (a / 1e3).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' mil';
+  return s + d + a.toFixed(0);
+}
+const _pvtvEps = v => (v == null || !isFinite(v)) ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(2);
+const _pvtvPct = v => (v == null || !isFinite(v)) ? '' : `<span class="${v >= 0 ? 'up' : 'dn'}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}%</span>`;
+const _pvtvChg = (a, b) => (a != null && b != null && isFinite(a) && isFinite(b) && Math.abs(b) > 1e-9) ? ((a - b) / Math.abs(b)) * 100 : null;
+function _pvtvFecha(iso){
+  const d = new Date(String(iso || '').slice(0, 10) + 'T12:00:00');
+  if (isNaN(d)) return '';
+  return d.toLocaleDateString('es-MX', { day:'numeric', month:'short', year:'numeric' });
+}
+function _pvtvNice(span){
+  if (!(span > 0)) return 1;
+  const raw = span / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / p;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * p;
+}
+
+// ── Gráfica de barras agrupadas (SVG): eje a la derecha como TradingView ──
+// cols: [{ label, fut, vals:[{v, c:'s0'..'s3'|'g'|'r'|'e', h:bool}] }]
+function _pvtvChart(cols, fmtAx){
+  if (!cols.length) return '';
+  const W = 680, H = 236, L = 6, R = 70, T = 14, B = 30;
+  const all = []; cols.forEach(c => c.vals.forEach(x => { if (x && x.v != null && isFinite(x.v)) all.push(x.v); }));
+  if (!all.length) return '';
+  let mx = Math.max(0, ...all), mn = Math.min(0, ...all);
+  // Aire arriba para que «PREVISIÓN» no quede encima de las barras más altas.
+  if (cols.some(c => c.fut) && mx > 0) mx *= 1.14;
+  const st = _pvtvNice(mx - mn || Math.abs(mx) || 1);
+  mx = Math.ceil(mx / st) * st; mn = Math.floor(mn / st) * st;
+  if (mx === mn) mx = mn + st;
+  const pw = W - L - R, ph = H - T - B, y = v => T + (mx - v) / (mx - mn) * ph;
+  const id = 'pvtvh' + (++_pvtvSvgN);
+  let g = `<defs><pattern id="${id}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="6" height="6" fill="#eef1f8"/><line x1="0" y1="0" x2="0" y2="6" stroke="#a7b2c4" stroke-width="2.2"/></pattern></defs>`;
+  for (let v = mn; v <= mx + st / 2; v += st){
+    const z = Math.abs(v) < st / 1e6, yy = y(v).toFixed(1);
+    g += `<line x1="${L}" x2="${W - R + 6}" y1="${yy}" y2="${yy}" class="pvtv-grid${z ? ' z' : ''}"/>`
+       + `<text x="${W - 2}" y="${(+yy + 4).toFixed(1)}" text-anchor="end" class="pvtv-ax">${fmtAx(z ? 0 : v)}</text>`;
+  }
+  const slot = pw / cols.length, fi = cols.findIndex(c => c.fut);
+  if (fi >= 0) g += `<rect x="${(L + slot * fi).toFixed(1)}" y="${T}" width="${(slot * (cols.length - fi)).toFixed(1)}" height="${ph}" class="pvtv-fz"/>`
+                 + `<text x="${(L + slot * fi + 6).toFixed(1)}" y="${T + 12}" class="pvtv-ft">PREVISIÓN</text>`;
+  cols.forEach((c, i) => {
+    const n = c.vals.length, gw = Math.min(slot * 0.74, n * 26), gap = n > 1 ? Math.min(4, gw * 0.08) : 0;
+    const bw = (gw - gap * (n - 1)) / n, x0 = L + slot * i + (slot - gw) / 2;
+    c.vals.forEach((x, k) => {
+      if (!x || x.v == null || !isFinite(x.v)) return;
+      const y1 = y(Math.max(0, x.v)), y2 = y(Math.min(0, x.v)), hh = Math.max(1.5, y2 - y1);
+      g += `<rect x="${(x0 + k * (bw + gap)).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="${Math.min(4, bw / 3).toFixed(1)}" class="pvtv-b ${x.c || 's0'}"${x.h ? ` style="fill:url(#${id})"` : ''}><title>${pvEsc(c.label)}</title></rect>`;
+    });
+    g += `<text x="${(L + slot * i + slot / 2).toFixed(1)}" y="${H - 9}" text-anchor="middle" class="pvtv-xl">${pvEsc(c.label)}</text>`;
+  });
+  return `<svg class="pvtv-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img">${g}</svg>`;
+}
+const _pvtvLeg = items => `<div class="pvtv-leg">${items.map(([c, t]) => `<span><i class="${c}"></i>${pvEsc(t)}</span>`).join('')}</div>`;
+const _pvtvSeg = (key, cur) => `<div class="pvtv-seg" role="tablist">${[['A','Anual'],['Q','Trimestral']].map(([k, l]) =>
+  `<button type="button" class="${cur === k ? 'on' : ''}" onclick="_pvtvSet('${key}','${k}')">${l}</button>`).join('')}</div>`;
+// Tabla métricas × periodos (primera columna fija). rows: [{ n, cls, cells:[html] }]
+function _pvtvTable(heads, rows){
+  return `<div class="pvtv-tw"><table class="pvtv-t"><thead><tr><th class="m">Métrica<span>USD</span></th>${heads.map(h =>
+      `<th class="${h.fut ? 'fut' : ''}">${pvEsc(h.l)}${h.s ? `<span>${pvEsc(h.s)}</span>` : ''}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr class="${r.cls || ''}"><td class="m">${pvEsc(r.n)}</td>${r.cells.map((c, i) =>
+      `<td class="${heads[i] && heads[i].fut ? 'fut' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+}
+
+// ── Datos de la vista Earnings ──
+function _pvtvEarnData(S){
+  const hoy = new Date().toISOString().slice(0, 10);
+  const er = (S.er || []).filter(r => r && typeof r.actual === 'number').sort((a, b) => String(a.period).localeCompare(String(b.period)));
+  const qk = (y, q) => y + '-' + q;
+  const done = new Set(er.map(r => qk(r.year, r.quarter)));
+  const calBy = {}; (S.cal || []).forEach(c => { if (c && c.year && c.quarter) calBy[qk(c.year, c.quarter)] = c; });
+  const fut = (S.cal || []).filter(c => c && c.date && c.date >= hoy && c.epsActual == null && !done.has(qk(c.year, c.quarter)))
+    .sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3);
+  const lbl = (y, q) => `T${q} '${String(y).slice(-2)}`;
+  const Q = S.Q || [];
+  const qMatch = per => { const p = _pvtvD(per); return isFinite(p) ? Q.find(x => Math.abs(_pvtvD(x.end) - p) <= 20 * 864e5) : null; };
+  const epsQ = er.map(r => ({ label:lbl(r.year, r.quarter), act:r.actual, est:(typeof r.estimate === 'number' ? r.estimate : null) }))
+    .concat(fut.filter(c => typeof c.epsEstimate === 'number').map(c => ({ label:lbl(c.year, c.quarter), act:null, est:c.epsEstimate, fut:true })));
+  // Ingresos por trimestre: estimado del calendario + reportado (calendario o 10-Q), y más
+  // historia hacia atrás con los trimestres de los estados.
+  const revQ = [], usedEnd = new Set();
+  er.forEach(r => {
+    const c = calBy[qk(r.year, r.quarter)], m = qMatch(r.period);
+    if (m) usedEnd.add(m.end);
+    const act = (c && typeof c.revenueActual === 'number' && c.revenueActual > 0) ? c.revenueActual : (m ? m.rev : null);
+    const est = (c && typeof c.revenueEstimate === 'number' && c.revenueEstimate > 0) ? c.revenueEstimate : null;
+    if (act != null || est != null) revQ.push({ end:String(r.period), label:lbl(r.year, r.quarter), act, est });
+  });
+  const first = revQ.length ? revQ[0].end : '9999';
+  Q.filter(x => x.rev != null && !usedEnd.has(x.end) && x.end < first).slice(-Math.max(0, 8 - revQ.length))
+    .forEach(x => revQ.push({ end:x.end, label:x.label, act:x.rev, est:null }));
+  revQ.sort((a, b) => a.end.localeCompare(b.end));
+  fut.filter(c => typeof c.revenueEstimate === 'number' && c.revenueEstimate > 0)
+    .forEach(c => revQ.push({ label:lbl(c.year, c.quarter), act:null, est:c.revenueEstimate, fut:true }));
+  return { er, fut, next:fut[0] || null, epsQ, revQ, A:(S.A || []).slice(-6) };
+}
+
+function _pvtvEarnHtml(tk, S, a){
+  const esc = pvEsc, st = (t, eb, x) => _pvxStitle(t, eb, x);
+  const D = _pvtvEarnData(S);
+  if (!D.er.length && !D.fut.length && !D.A.length) return '';
+  let h = '';
+  // 1) Próximo reporte
+  const nx = D.next;
+  if (nx){
+    const hr = nx.hour === 'amc' ? 'después del cierre' : nx.hour === 'bmo' ? 'antes de la apertura' : 'fecha estimada';
+    const k = (l, v, s) => `<div class="pvtv-k"><div class="l">${l}</div><div class="v">${v}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`;
+    const rg = (a && a.recentGrowth && Array.isArray(a.recentGrowth.kpis)) ? a.recentGrowth.kpis.filter(x => !x.est && x.val != null && isFinite(x.val)) : [];
+    const _l = s => String(s || '').replace(/\s*\(TTM\)/, ' (12 meses)').replace(/\s+—\s+último trimestre/, ' · último trimestre');
+    h += `<div class="px-card">${st('Próximo reporte', 'Resultados de ' + tk)}
+      <div class="pvtv-kg">
+        ${k('Fecha', '≈ ' + esc(_pvtvFecha(nx.date)), hr)}
+        ${k('Periodo', esc(`T${nx.quarter} ${nx.year}`), 'trimestre fiscal')}
+        ${k('EPS esperado', typeof nx.epsEstimate === 'number' ? _pvtvEps(nx.epsEstimate) : '—', 'consenso')}
+        ${k('Ingresos esperados', typeof nx.revenueEstimate === 'number' && nx.revenueEstimate > 0 ? _pvtvBig(nx.revenueEstimate) : '—', 'consenso')}
+      </div>
+      ${rg.length ? `<div class="pvtv-chips">${rg.map(x => `<span>${esc(_l(x.label))} <b class="${x.val >= 0 ? 'up' : 'dn'}">${x.val >= 0 ? '+' : '−'}${Math.abs(x.val).toFixed(1)}%</b></span>`).join('')}</div>` : ''}
+    </div>`;
+  }
+  // 2) EPS
+  {
+    const aOk = D.A.some(x => x.eps != null);
+    const mode = (_PVTV_UI.eps === 'A' && aOk) || !D.epsQ.length ? 'A' : 'Q';
+    let chart = '', table = '', leg = '', hint = '';
+    if (mode === 'Q'){
+      const cols = D.epsQ.map(r => ({ label:r.label, fut:!!r.fut, vals:[
+        r.fut ? null : { v:r.act, c:(r.est == null || r.act >= r.est) ? 'g' : 'r' }, { v:r.est, c:'e', h:!!r.fut }] }));
+      chart = _pvtvChart(cols, v => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2));
+      leg = _pvtvLeg([['g', 'Reportado (superó)'], ['r', 'Reportado (falló)'], ['e', 'Estimado']]);
+      table = _pvtvTable(D.epsQ.map(r => ({ l:r.label, fut:r.fut })), [
+        { n:'Reportado', cls:'hl', cells:D.epsQ.map(r => r.fut ? '—' : _pvtvEps(r.act)) },
+        { n:'Estimado', cells:D.epsQ.map(r => _pvtvEps(r.est)) },
+        { n:'Sorpresa', cells:D.epsQ.map(r => (!r.fut && r.est != null) ? (_pvtvPct(_pvtvChg(r.act, r.est)) || '—') : '—') },
+      ]);
+      hint = 'EPS ajustado que reporta la empresa frente al consenso de los analistas. Las columnas rayadas son previsiones, no resultados.';
+    } else if (aOk){
+      const A = D.A.filter(x => x.eps != null);
+      chart = _pvtvChart(A.map(x => ({ label:x.label, vals:[{ v:x.eps, c:'s0' }] })), v => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2));
+      leg = _pvtvLeg([['s0', 'EPS diluido reportado']]);
+      table = _pvtvTable(A.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), [
+        { n:'EPS diluido', cls:'hl', cells:A.map(x => _pvtvEps(x.eps)) },
+        { n:'Cambio anual', cells:A.map((x, i) => (i ? _pvtvPct(_pvtvChg(x.eps, A[i - 1].eps)) : '') || '—') },
+      ]);
+      hint = 'EPS diluido de cada informe anual (10-K), con criterios contables (GAAP): puede diferir del EPS ajustado de los trimestres.';
+    } else if (S.st < 2) {
+      chart = '<div class="pvtv-skb">' + '<i></i>'.repeat(6) + '</div>';
+    }
+    if (chart) h += `<div class="px-card">${st('EPS', 'Ganancia por acción', _pvtvSeg('eps', mode))}${chart}${leg}${table}${hint ? `<div class="px-hint">${hint}</div>` : ''}</div>`;
+  }
+  // 3) Ingresos
+  {
+    const qOk = D.revQ.length > 0, aOk = D.A.some(x => x.rev != null);
+    const mode = (_PVTV_UI.rev === 'A' && aOk) || !qOk ? 'A' : 'Q';
+    let chart = '', table = '', leg = '', hint = '';
+    if (mode === 'Q'){
+      const R = D.revQ;
+      chart = _pvtvChart(R.map(r => ({ label:r.label, fut:!!r.fut, vals:[
+        r.fut ? null : { v:r.act, c:(r.est == null || r.act >= r.est) ? 's0' : 'r' },
+        (r.est == null && !r.fut) ? null : { v:r.est, c:'e', h:!!r.fut }] })), v => _pvtvBig(v, true));
+      leg = _pvtvLeg([['s0', 'Reportado'], ['r', 'Bajo lo esperado'], ['e', 'Estimado']]);
+      table = _pvtvTable(R.map(r => ({ l:r.label, fut:r.fut })), [
+        { n:'Reportado', cls:'hl', cells:R.map(r => r.fut ? '—' : _pvtvBig(r.act)) },
+        { n:'Estimado', cells:R.map(r => _pvtvBig(r.est)) },
+        { n:'Sorpresa', cells:R.map(r => (!r.fut && r.est != null && r.act != null) ? (_pvtvPct(_pvtvChg(r.act, r.est)) || '—') : '—') },
+      ]);
+      hint = 'Ingresos reportados frente al consenso. Los trimestres más antiguos salen de los informes trimestrales (10-Q), sin estimado; las columnas rayadas son previsiones.'
+           + (S.st < 2 ? ' Cargando más historia…' : '');
+    } else if (aOk){
+      const A = D.A.filter(x => x.rev != null);
+      chart = _pvtvChart(A.map(x => ({ label:x.label, vals:[{ v:x.rev, c:'s0' }] })), v => _pvtvBig(v, true));
+      leg = _pvtvLeg([['s0', 'Ingresos reportados']]);
+      table = _pvtvTable(A.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), [
+        { n:'Ingresos', cls:'hl', cells:A.map(x => _pvtvBig(x.rev)) },
+        { n:'Cambio anual', cells:A.map((x, i) => (i ? _pvtvPct(_pvtvChg(x.rev, A[i - 1].rev)) : '') || '—') },
+      ]);
+      hint = 'Ingresos de cada informe anual (10-K).';
+    }
+    if (chart) h += `<div class="px-card">${st('Ingresos', 'Ventas totales', _pvtvSeg('rev', mode))}${chart}${leg}${table}<div class="px-hint">${hint}</div></div>`;
+  }
+  return h;
+}
+
+// ── Vista Estado de resultados ──
+function _pvtvIncHtml(tk, S){
+  const st = (t, eb, x) => _pvxStitle(t, eb, x);
+  if (S.st < 2) return `<div class="px-card">${st('Estado de resultados', 'Cargando informes…')}<div class="pvtv-skb">${'<i></i>'.repeat(6)}</div></div>`;
+  const aOk = (S.A || []).length > 0, qOk = (S.Q || []).length > 0;
+  if (!aOk && !qOk) return `<div class="px-card">${st('Estado de resultados', 'Sin informes')}<p class="px-empty">${S.err2
+    ? 'No se pudieron cargar los informes financieros ahora mismo.</p><button class="px-retry" onclick="_pvtvRetry()">Reintentar</button>'
+    : pvEsc(tk) + ' no tiene informes 10-K o 10-Q en la SEC (las empresas extranjeras y los ETF no los presentan).</p>'}</div>`;
+  const mode = ((_PVTV_UI.inc === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
+  const full = mode === 'A' ? S.A : S.Q;
+  const P = full.slice(mode === 'A' ? -6 : -8);
+  const SER = [['rev','s0','Ingresos'], ['gross','s1','Utilidad bruta'], ['op','s2','Utilidad operativa'], ['net','s3','Utilidad neta']]
+    .filter(([k]) => P.filter(x => x[k] != null).length >= 2);
+  const chart = _pvtvChart(P.map(x => ({ label:x.label, vals:SER.map(([k, c]) => ({ v:x[k], c })) })), v => _pvtvBig(v, true));
+  // Cambio contra el mismo periodo del año anterior (año previo o mismo trimestre de hace un año).
+  const prevOf = x => { const e = _pvtvD(x.end);
+    return full.find(y => { const d = (e - _pvtvD(y.end)) / 864e5; return d >= 340 && d <= 390; }) || null; };
+  const cell = (x, k, money) => {
+    const v = x[k]; if (v == null) return '—';
+    const p = prevOf(x), ch = p ? _pvtvChg(v, p[k]) : null;
+    return `${money ? _pvtvBig(v) : _pvtvEps(v)}${ch != null ? `<em>${_pvtvPct(ch)}</em>` : ''}`;
+  };
+  const marg = (x, k) => (x[k] != null && x.rev) ? (x[k] / x.rev * 100).toFixed(1) + '%' : '—';
+  const rows = [
+    { n:'Ingresos totales', cls:'hl', cells:P.map(x => cell(x, 'rev', true)) },
+    { n:'Costo de ventas', cells:P.map(x => x.cost != null ? (x.cost > 0 ? '−' : '') + _pvtvBig(Math.abs(x.cost)) : '—') },
+    { n:'Utilidad bruta', cls:'hl', cells:P.map(x => cell(x, 'gross', true)) },
+    { n:'Gastos operativos', cells:P.map(x => (x.gross != null && x.op != null) ? (x.gross - x.op > 0 ? '−' : '') + _pvtvBig(Math.abs(x.gross - x.op)) : '—') },
+    { n:'Utilidad operativa', cls:'hl', cells:P.map(x => cell(x, 'op', true)) },
+    { n:'Utilidad neta', cls:'hl', cells:P.map(x => cell(x, 'net', true)) },
+    { n:'Margen bruto', cls:'mg', cells:P.map(x => marg(x, 'gross')) },
+    { n:'Margen operativo', cls:'mg', cells:P.map(x => marg(x, 'op')) },
+    { n:'Margen neto', cls:'mg', cells:P.map(x => marg(x, 'net')) },
+  ];
+  if (mode === 'A') rows.push({ n:'EPS diluido', cells:P.map(x => cell(x, 'eps', false)) });
+  const rowsOk = rows.filter(r => r.cells.some(c => c !== '—'));
+  let h = `<div class="px-card">${st('Estado de resultados', mode === 'A' ? 'Informes anuales (10-K)' : 'Trimestres (10-Q y 10-K)', _pvtvSeg('inc', mode))}
+    ${chart}${_pvtvLeg(SER.map(([, c, l]) => [c, l]))}
+    ${_pvtvTable(P.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), rowsOk)}
+    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'Q' ? ' Los 10-Q traen el acumulado del año: cada trimestre es la diferencia entre acumulados, y el cuarto sale del informe anual menos los nueve meses.' : ''}</div></div>`;
+  // ¿A dónde va cada dólar de ingresos? (último periodo de la vista)
+  const x = [...P].reverse().find(r => r.rev > 0 && r.cost != null && r.op != null && r.net != null && r.gross != null);
+  if (x){
+    const parts = [['Costo de ventas', x.cost, 'c1'], ['Gastos operativos', x.gross - x.op, 'c2'], ['Impuestos, intereses y otros', x.op - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']];
+    if (parts.every(p => p[1] >= 0)){
+      const per = mode === 'A' ? 'el ejercicio ' + x.label : 'el trimestre ' + x.label;
+      h += `<div class="px-card">${st('¿A dónde va cada dólar?', 'De cada $1 de ingresos en ' + per)}
+        <div class="pvtv-stk">${parts.map(p => { const w = p[1] / x.rev * 100; return w > 0 ? `<i class="${p[2]}" style="width:${w.toFixed(2)}%">${w >= 9 ? `<b>${Math.round(w)}¢</b>` : ''}</i>` : ''; }).join('')}</div>
+        <div class="pvtv-stl">${parts.map(p => `<div><i class="${p[2]}"></i><span>${pvEsc(p[0])}</span><b>${_pvtvBig(p[1])}</b><em>${(p[1] / x.rev * 100).toFixed(1)}%</em></div>`).join('')}</div>
+        <div class="px-hint">Ingresos de ${_pvtvBig(x.rev)}. «Impuestos, intereses y otros» es la diferencia entre la utilidad operativa y la neta.</div></div>`;
+    }
+  }
+  return h;
+}
+
+function _pvtvPaint(tk){
+  const S = _PVTV_MEM[tk]; if (!S) return;
+  const he = document.getElementById('pvx-tv-earn'), hi = document.getElementById('pvx-tv-inc');
+  if (he && he.dataset.tk === tk && S.st >= 1){
+    const html = _pvtvEarnHtml(tk, S, _pvxLiveA(tk));
+    // Sin datos nuevos se queda lo que ya había (la tarjeta de crecimiento reciente).
+    if (html){
+      he.innerHTML = html;
+      const em = document.querySelector('#r-analysis .pvx-ea-empty'); if (em) em.remove();
+    }
+  }
+  if (hi && hi.dataset.tk === tk) hi.innerHTML = _pvtvIncHtml(tk, S);
+}
+async function _pvxFillTV(scope){
+  try {
+    const he = (scope && scope.querySelector && scope.querySelector('#pvx-tv-earn')) || document.getElementById('pvx-tv-earn');
+    if (!he) return;
+    const tk = (he.dataset.tk || '').toUpperCase();
+    if (!tk || he.dataset.done === tk) return;
+    he.dataset.done = tk;
+    const S = await _pvtvLoad(tk, 1);
+    _pvtvPaint(tk);
+    if (S.err1) he.dataset.done = '';          // red caída: se reintenta al volver a la pestaña
+    await _pvtvLoad(tk, 2);
+    _pvtvPaint(tk);
+  } catch(e){}
+}
+window._pvtvSet = function(key, val){
+  _PVTV_UI[key] = val;
+  const he = document.getElementById('pvx-tv-earn');
+  if (he) _pvtvPaint((he.dataset.tk || '').toUpperCase());
+};
+window._pvtvRetry = function(){
+  const he = document.getElementById('pvx-tv-earn'); if (!he) return;
+  const tk = (he.dataset.tk || '').toUpperCase(); delete _PVTV_MEM[tk]; he.dataset.done = '';
+  _pvxFillTV(document);
+};
+window._pvtvSub = function(btn, v){
+  try {
+    _PVTV_UI.view = v;
+    const root = btn.closest('.pvtv-wrap'); if (!root) return;
+    root.querySelectorAll('.pvtv-subtabs button').forEach(b => b.classList.toggle('on', b === btn));
+    root.querySelectorAll('.pvtv-view').forEach(p => p.classList.toggle('on', p.dataset.v === v));
+  } catch(e){}
+};
 
 // ── Relleno LAZY de la lectura del trimestre ─────────────────────────────────────
 // "Earnings análisis" es la llamada de IA MÁS lenta y cara del análisis (dos búsquedas
@@ -30955,9 +31436,13 @@ function _renderQualAnalysis(a, el){
         <div class="px-eps-l">${rg.quarters.map(q=>`<div><span>${esc(q.label)}${q.y?` '${String(q.y).slice(-2)}`:''}</span>${q.est ? '<em class="px-lp n">Previsión</em>' : (q.beat ? '<em class="px-lp g">Superó</em>' : '<em class="px-lp r">Falló</em>')}</div>`).join('')}</div></div>`;
     }
     // Sin trimestres ni cifras de crecimiento, no hay tarjeta.
-    if (lista || barras) EA += `<div class="px-card">${stitle('Crecimiento reciente')}
+    // Desde el 13 nov 2026 esta tarjeta es sólo el contenido INICIAL del host de la vista
+    // «Earnings» (estructura TradingView, ver _pvxFillTV): se ve detrás del candado del plan
+    // gratuito y mientras cargan los datos, y la sustituyen las gráficas en cuanto llegan.
+    const _rgCard = (lista || barras) ? `<div class="px-card">${stitle('Crecimiento reciente')}
       <div class="${lista && barras ? 'px-rg' : ''}">${lista}${barras}</div>
-      ${rg.note ? `<div class="px-hint">${esc(rg.note)}</div>` : ''}</div>`;
+      ${rg.note ? `<div class="px-hint">${esc(rg.note)}</div>` : ''}</div>` : '';
+    EA += `<div id="pvx-tv-earn" data-tk="${esc(a.ticker||'')}">${_rgCard}</div>`;
   }
 
   // 7c) REACCIÓN AL ÚLTIMO REPORTE (IA, 1× global por earnings). La tarjeta se arma en
@@ -31119,8 +31604,19 @@ function _renderQualAnalysis(a, el){
   {
     const PANES = [
       ['ov', 'Resumen',    OVa + OVv + OVp + OVz],
-      ['ea', 'Resultados', EA + ((/px-card/.test(EA) || _pvxEqrMotivo(a.ticker || '') !== 'sinreporte') ? ''
-        : `<div class="px-card">${stitle('Resultados trimestrales', 'Todavía sin datos')}<p class="px-empty">${esc(a.ticker || 'Esta empresa')} todavía no tiene resultados trimestrales publicados con estimado de los analistas. Aparecerán aquí con su próximo reporte.</p></div>`)],
+      // Dos vistas como en TradingView: «Earnings» (EPS e ingresos vs. estimado, lectura del
+      // trimestre y consenso) y «Estado de resultados» (10-K/10-Q). Las vistas usan clases
+      // propias (.pvtv-view), no .px-pane: _pvxTab apaga todo .px-pane del análisis.
+      ['ea', 'Resultados', (() => {
+        const _empty = (/px-card/.test(EA) || _pvxEqrMotivo(a.ticker || '') !== 'sinreporte') ? ''
+          : `<div class="px-card pvx-ea-empty">${stitle('Resultados trimestrales', 'Todavía sin datos')}<p class="px-empty">${esc(a.ticker || 'Esta empresa')} todavía no tiene resultados trimestrales publicados con estimado de los analistas. Aparecerán aquí con su próximo reporte.</p></div>`;
+        const _v = (typeof _PVTV_UI === 'object' && _PVTV_UI.view === 'inc') ? 'inc' : 'earn';
+        return `<div class="pvtv-wrap"><div class="pvtv-subtabs" role="tablist">
+            <button type="button" class="${_v === 'earn' ? 'on' : ''}" onclick="_pvtvSub(this,'earn')">Earnings</button>
+            <button type="button" class="${_v === 'inc' ? 'on' : ''}" onclick="_pvtvSub(this,'inc')">Estado de resultados</button></div>
+          <div class="pvtv-view${_v === 'earn' ? ' on' : ''}" data-v="earn">${EA}${_empty}</div>
+          <div class="pvtv-view${_v === 'inc' ? ' on' : ''}" data-v="inc"><div id="pvx-tv-inc" data-tk="${esc(a.ticker||'')}">${_pvtvIncHtml(a.ticker || '', { st:0 })}</div></div></div>`;
+      })()],
       ['fi', 'Finanzas',   FI],
       ['nw', 'Noticias',   NW + `<div id="pvx-news-host" data-tk="${esc(a.ticker)}"></div>`],
       ['en', 'Análisis técnico', EN],
@@ -33326,6 +33822,29 @@ const _QUAL_TTL = 24 * 60 * 60 * 1000;   // 24 h (además de la invalidación po
 const _ANALISIS_VIVOS = ['portiv_qual_analysis_v13','portiv_stock_narrative_v4','portiv_tec_narr_v1','portiv_stock_analysis_v2',
                          'portiv_research_snapshot_v4','portiv_earnings_reaction_v3','portiv_peers_rows_v2',
                          'portiv_info_cache_v2','portiv_peer_metric_v1'];
+// Una sola vez por dispositivo: fuera las entradas de BRK.B de las cachés de análisis. Se
+// calcularon con las cifras por acción de la clase A junto al precio de la B (ver
+// _pvShareClassFix); el resto de empresas no se toca.
+(function _pvPurgaClaseB(){
+  try {
+    if (localStorage.getItem('pv_brkb_fix_v1') === '1') return;
+    const es = k => /(^|[^A-Z])BRK[.\-\/ ]B([^A-Z]|$)/.test(String(k).toUpperCase());
+    _ANALISIS_VIVOS.forEach(function(lk){
+      try {
+        const raw = localStorage.getItem(lk); if (!raw || raw.indexOf('BRK') < 0) return;
+        const o = JSON.parse(raw); if (!o || typeof o !== 'object' || Array.isArray(o)) return;
+        let cambio = false;
+        Object.keys(o).forEach(function(k){ if (es(k)) { delete o[k]; cambio = true; } });
+        if (cambio) localStorage.setItem(lk, JSON.stringify(o));
+      } catch(_){}
+    });
+    const fuera = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && es(k)) fuera.push(k); }
+    fuera.forEach(function(k){ try { localStorage.removeItem(k); } catch(_){} });
+    try { if (typeof _stockAnalysisCache === 'object' && _stockAnalysisCache) Object.keys(_stockAnalysisCache).forEach(function(k){ if (es(k)) delete _stockAnalysisCache[k]; }); } catch(_){}
+    localStorage.setItem('pv_brkb_fix_v1', '1');
+  } catch(e){}
+})();
 (function _pvPurgaAnalisisViejo(){
   try {
     const vivos = new Set(_ANALISIS_VIVOS);
@@ -62178,6 +62697,92 @@ html body #r-fscore .pvsc-foot { margin:16px 0 0; font-size:12.5px; line-height:
   html body #tab-analizar #researchResults .ra-head-actions .ra-btn { transition:none !important; }
   html body #tab-analizar #researchResults .ra-head-actions .ra-btn:active { transform:none; }
 }
+</style>
+<style id="pvResultadosTvCss">
+/* ═══ RESULTADOS estilo TradingView (13 nov 2026) — ver _pvxFillTV ═══════════════════════════ */
+#researchResults .pvtv-wrap { --tv-s0:var(--pac-ink,#0b1c30); --tv-s1:#3f7fd9; --tv-s2:var(--pac-amber-bar,#d68a2e); --tv-s3:var(--pac-green,#0f8a5f);
+  --tv-g:var(--pac-green,#0f8a5f); --tv-r:var(--pac-red,#c62828); --tv-e:#c9d1de; }
+#researchResults .pvtv-subtabs { display:inline-flex; gap:2px; padding:4px; margin:0 0 18px; background:var(--pac-track,#eef1f8); border-radius:999px; max-width:100%; overflow-x:auto; scrollbar-width:none; }
+#researchResults .pvtv-subtabs::-webkit-scrollbar { display:none; }
+#researchResults .pvtv-subtabs button { flex:0 0 auto; border:0; background:transparent; cursor:pointer; padding:9px 18px; border-radius:999px;
+  font-size:14px; font-weight:700; color:var(--pac-slate,#33475f); white-space:nowrap; }
+#researchResults .pvtv-subtabs button.on { background:var(--pac-card,#fff); color:var(--pac-ink,#0b1c30); font-weight:800; box-shadow:0 1px 3px rgba(11,28,48,.12); }
+#researchResults .pvtv-view { display:none; }
+#researchResults .pvtv-view.on { display:block; }
+/* Selector Anual / Trimestral junto al título */
+#researchResults .pvtv-seg { flex:0 0 auto; display:inline-flex; padding:3px; border:1px solid var(--pac-line,#e2e7f0); border-radius:12px; background:var(--pac-card,#fff); }
+#researchResults .pvtv-seg button { border:0; background:transparent; cursor:pointer; padding:7px 14px; border-radius:9px; font-size:13.5px; font-weight:700; color:var(--pac-muted,#7a879b); }
+#researchResults .pvtv-seg button.on { background:var(--pac-track,#eef1f8); color:var(--pac-ink,#0b1c30); }
+/* Próximo reporte */
+#researchResults .pvtv-kg { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+#researchResults .pvtv-k { min-width:0; padding:14px 16px; border-radius:16px; background:var(--pac-wash,#f4f6fa); }
+#researchResults .pvtv-k .l { font-size:13px; font-weight:700; color:var(--pac-muted,#7a879b); }
+#researchResults .pvtv-k .v { margin-top:4px; font-size:22px; font-weight:800; letter-spacing:-.02em; color:var(--pac-ink,#0b1c30); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#researchResults .pvtv-k .s { margin-top:2px; font-size:12px; color:var(--pac-muted,#7a879b); }
+#researchResults .pvtv-chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+#researchResults .pvtv-chips span { padding:6px 12px; border-radius:999px; border:1px solid var(--pac-line,#e2e7f0); font-size:13px; font-weight:600; color:var(--pac-slate,#33475f); }
+#researchResults .pvtv-chips b, #researchResults .pvtv-t .up, #researchResults .pvtv-t .dn { font-weight:800; }
+#researchResults .pvtv-wrap .up { color:var(--tv-g); }
+#researchResults .pvtv-wrap .dn { color:var(--tv-r); }
+/* Gráfica */
+#researchResults .pvtv-svg { display:block; width:100%; height:auto; margin:4px 0 6px; overflow:visible; }
+#researchResults .pvtv-grid { stroke:var(--pac-line,#e2e7f0); stroke-width:1; }
+#researchResults .pvtv-grid.z { stroke:var(--pac-line-hi,#cfd7e3); stroke-width:1.4; }
+#researchResults .pvtv-ax { font-size:12px; font-weight:600; fill:var(--pac-muted,#7a879b); font-variant-numeric:tabular-nums; }
+#researchResults .pvtv-xl { font-size:12.5px; font-weight:700; fill:var(--pac-slate,#33475f); }
+#researchResults .pvtv-fz { fill:var(--pac-wash,#f4f6fa); }
+#researchResults .pvtv-ft { font-size:10.5px; font-weight:800; letter-spacing:.08em; fill:var(--pac-muted,#7a879b); }
+#researchResults .pvtv-b.s0 { fill:var(--tv-s0); } #researchResults .pvtv-b.s1 { fill:var(--tv-s1); }
+#researchResults .pvtv-b.s2 { fill:var(--tv-s2); } #researchResults .pvtv-b.s3 { fill:var(--tv-s3); }
+#researchResults .pvtv-b.g { fill:var(--tv-g); } #researchResults .pvtv-b.r { fill:var(--tv-r); } #researchResults .pvtv-b.e { fill:var(--tv-e); }
+#researchResults .pvtv-leg { display:flex; flex-wrap:wrap; justify-content:center; gap:6px 18px; margin:2px 0 16px; font-size:13px; font-weight:600; color:var(--pac-slate,#33475f); }
+#researchResults .pvtv-leg span { display:inline-flex; align-items:center; gap:7px; }
+#researchResults .pvtv-leg i { width:10px; height:10px; border-radius:50%; background:var(--tv-s0); }
+#researchResults .pvtv-leg i.s1 { background:var(--tv-s1); } #researchResults .pvtv-leg i.s2 { background:var(--tv-s2); } #researchResults .pvtv-leg i.s3 { background:var(--tv-s3); }
+#researchResults .pvtv-leg i.g { background:var(--tv-g); } #researchResults .pvtv-leg i.r { background:var(--tv-r); } #researchResults .pvtv-leg i.e { background:var(--tv-e); }
+/* Tabla métricas × periodos */
+#researchResults .pvtv-tw { overflow-x:auto; margin:0 -4px; padding:0 4px; -webkit-overflow-scrolling:touch; scrollbar-width:thin; }
+#researchResults .pvtv-t { width:100%; border-collapse:separate; border-spacing:0; font-variant-numeric:tabular-nums; }
+#researchResults .pvtv-t th, #researchResults .pvtv-t td { padding:11px 12px; text-align:right; white-space:nowrap; border-top:1px solid var(--pac-line,#e2e7f0); vertical-align:top; }
+#researchResults .pvtv-t thead th { text-transform:none !important; letter-spacing:0 !important; border-top:0; font-size:13.5px; font-weight:800; color:var(--pac-ink,#0b1c30); }
+#researchResults .pvtv-t thead th span { display:block; margin-top:2px; font-size:11.5px; font-weight:600; color:var(--pac-muted,#7a879b); }
+#researchResults .pvtv-t td { font-size:14.5px; font-weight:600; color:var(--pac-ink,#0b1c30); }
+#researchResults .pvtv-t td em { display:block; margin-top:2px; font-style:normal; font-size:12px; }
+#researchResults .pvtv-t .m { position:sticky; left:0; z-index:1; text-align:left; background:var(--pac-card,#fff); min-width:130px; font-weight:700; color:var(--pac-slate,#33475f); }
+#researchResults .pvtv-t tr.hl td { background:var(--pac-wash,#f4f6fa); }
+#researchResults .pvtv-t tr.hl td.m { background:var(--pac-wash,#f4f6fa); box-shadow:inset 3px 0 0 var(--tv-s0); color:var(--pac-ink,#0b1c30); }
+#researchResults .pvtv-t tr.mg td { font-size:13.5px; color:var(--pac-slate,#33475f); }
+#researchResults .pvtv-t .fut { color:var(--pac-muted,#7a879b); }
+/* ¿A dónde va cada dólar? */
+#researchResults .pvtv-stk { display:flex; height:44px; border-radius:12px; overflow:hidden; background:var(--pac-track,#eef1f8); }
+#researchResults .pvtv-stk i { display:flex; align-items:center; justify-content:center; min-width:2px; font-style:normal; }
+#researchResults .pvtv-wrap i, #researchResults .pvtv-wrap em { font-style:normal; }
+#researchResults .pvtv-stk i + i { box-shadow:inset 2px 0 0 var(--pac-card,#fff); }
+#researchResults .pvtv-stk b { font-size:13px; font-weight:800; color:#fff; }
+#researchResults .pvtv-wrap .c1 { background:#9aa7bb; } #researchResults .pvtv-wrap .c2 { background:var(--tv-s2); }
+#researchResults .pvtv-wrap .c3 { background:var(--tv-s1); } #researchResults .pvtv-wrap .c4 { background:var(--tv-g); }
+#researchResults .pvtv-stl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 28px; margin-top:16px; }
+#researchResults .pvtv-stl div { display:grid; grid-template-columns:auto 1fr auto auto; align-items:center; gap:10px; padding:10px 0; border-top:1px solid var(--pac-line,#e2e7f0); }
+#researchResults .pvtv-stl i { width:10px; height:10px; border-radius:3px; }
+#researchResults .pvtv-stl span { font-size:14px; font-weight:600; color:var(--pac-slate,#33475f); min-width:0; }
+#researchResults .pvtv-stl b { font-size:14.5px; font-weight:800; color:var(--pac-ink,#0b1c30); font-variant-numeric:tabular-nums; }
+#researchResults .pvtv-stl em { font-style:normal; font-size:13px; font-weight:700; color:var(--pac-muted,#7a879b); min-width:46px; text-align:right; }
+/* Esqueleto mientras cargan los informes */
+#researchResults .pvtv-skb { display:flex; align-items:flex-end; gap:5%; height:150px; padding:10px 4%; }
+#researchResults .pvtv-skb i { flex:1; border-radius:6px; background:var(--pac-track,#eef1f8); animation:pvtvSk 1.4s ease-in-out infinite; }
+#researchResults .pvtv-skb i:nth-child(1){height:40%} #researchResults .pvtv-skb i:nth-child(2){height:55%} #researchResults .pvtv-skb i:nth-child(3){height:48%}
+#researchResults .pvtv-skb i:nth-child(4){height:70%} #researchResults .pvtv-skb i:nth-child(5){height:62%} #researchResults .pvtv-skb i:nth-child(6){height:85%}
+@keyframes pvtvSk { 50% { opacity:.55; } }
+@media (max-width: 760px) {
+  #researchResults .pvtv-kg { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  #researchResults .pvtv-k .v { font-size:19px; }
+  #researchResults .pvtv-stl { grid-template-columns:1fr; }
+  #researchResults .pvtv-t th, #researchResults .pvtv-t td { padding:10px 9px; }
+  #researchResults .pvtv-t .m { min-width:112px; }
+  #researchResults .pvtv-ax, #researchResults .pvtv-xl { font-size:15px; }
+  #researchResults .pvtv-ft { font-size:13px; }
+}
+@media (prefers-reduced-motion: reduce) { #researchResults .pvtv-skb i { animation:none; } }
 </style>
 <style id="pvPortHeroCss">
 /* ═══ PORTAFOLIO — cabecera navy, Rendimiento y Distribución (rediseño aprobado, port.py) ═════
