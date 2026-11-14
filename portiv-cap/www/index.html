@@ -6,6 +6,35 @@
 <html lang="es" class="app-locked pv-free">
 <head>
 <meta charset="UTF-8">
+<!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
+     el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
+     vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
+<meta name="pv-build" content="20261114-1530">
+<script>
+(function(){
+  var h = location.hostname;
+  if (h !== 'portivapp.com' && h !== 'www.portivapp.com') return;   // sólo la web (la app nativa trae su copia)
+  var me = document.querySelector('meta[name="pv-build"]'); me = me && me.content;
+  if (!me || !window.fetch) return;
+  var hiddenAt = 0;
+  function chk(){
+    fetch('/?pvb=' + Date.now(), { cache:'no-store', headers:{ Range:'bytes=0-2047' } })
+      .then(function(r){ return r.ok ? r.text() : ''; })
+      .then(function(t){
+        var m = /name="pv-build" content="([^"]+)"/.exec(t || '');
+        if (!m || !(m[1] > me)) return;
+        var k = 'pv_build_reload_' + m[1];
+        try { if (sessionStorage.getItem(k)) return; sessionStorage.setItem(k, '1'); } catch(e){ return; }
+        location.replace(location.origin + location.pathname + '?v=' + encodeURIComponent(m[1]) + (location.hash || ''));
+      }).catch(function(){});
+  }
+  chk();
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden) { hiddenAt = Date.now(); return; }
+    if (hiddenAt && Date.now() - hiddenAt > 5 * 60 * 1000) chk();
+  });
+})();
+</script>
 <!-- Handshake TCP+TLS adelantado al único origen externo que el arranque SIEMPRE toca
      (Supabase para auth/gate). Va aquí arriba, antes de cualquier <style>, para que el
      navegador lo vea en el primer trozo del HTML. El preconnect a jsdelivr se eliminó
