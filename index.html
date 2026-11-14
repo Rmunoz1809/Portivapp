@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261114-1530">
+<meta name="pv-build" content="20261114-1610">
 <script>
 (function(){
   var h = location.hostname;
@@ -53941,6 +53941,22 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         wrap.appendChild(sk);
       }
       sk.style.display='flex';
+      // La serie puede llegar por otro camino (estado guardado, foto del broker) sin que nadie
+      // repinte: antes la curva intradía tapaba el hueco; ahora se mira cada 2 s y, en cuanto el
+      // período activo tiene cierres reales, se dibuja (tope ~5 min).
+      if(!window._pvSkPoll){
+        var _n=0;
+        window._pvSkPoll=setInterval(function(){
+          var el=document.getElementById('perfChartSkeleton');
+          if(!el || el.style.display==='none' || ++_n>150){ clearInterval(window._pvSkPoll); window._pvSkPoll=null; return; }
+          if(document.hidden) return;
+          try{
+            var p=(typeof activePeriod!=='undefined' && activePeriod) ? activePeriod : '1M';
+            var d=(typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART.generate(p) : null;
+            if(d && d.values && d.values.length>=2 && typeof _redrawActiveChart==='function') _redrawActiveChart();
+          }catch(e){}
+        }, 2000);
+      }
     } else if(sk){ sk.style.display='none'; }
   };
 })();
@@ -63033,17 +63049,17 @@ html body #tab-analizar #researchResults .pvx .px-eqr-note .kk {
 }
 html body #tab-analizar #researchResults .pvx .px-eqr-note .vv { font-size:14.5px !important; line-height:1.6; color:var(--pac-slate) !important; }
 
-/* Último reporte, diseño de Resultados: lectura a todo el ancho y paneles lavados para bien / mal. */
+/* Último reporte, diseño de Resultados: lectura a todo el ancho y bien / mal en dos columnas, todo en blanco. */
 html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-p { max-width:none; margin:0; font-size:16px; line-height:1.7; }
-html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-p + .px-pr { margin-top:20px; padding-top:0; border-top:0; }
-html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr { gap:12px !important; }
-html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr > div { min-width:0; padding:16px 18px 6px; border-radius:16px; background:var(--pac-wash,#f4f6fa); }
+html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-p + .px-pr { margin-top:26px; padding-top:0; border-top:0; }
+html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr { gap:40px !important; }
+html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr > div { min-width:0; padding:0; background:transparent; }
 html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr h4 { margin:0 0 6px !important; font-size:13px !important; font-weight:700 !important; letter-spacing:0 !important; text-transform:none !important; }
 html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr li { font-size:14.5px !important; line-height:1.6 !important; }
-html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-notes { margin-top:12px !important; }
-html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-note { border-radius:16px !important; }
+html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-notes { margin-top:22px !important; gap:40px !important; }
+html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-note { background:transparent !important; padding:0 !important; border-radius:0 !important; }
 @media (max-width:760px){
-  html body #tab-analizar #researchResults .pvx .px-eqr2 .px-pr { grid-template-columns:minmax(0,1fr); }
+  html body #tab-analizar #researchResults .pvx .px-eqr2 :is(.px-pr, .px-eqr-notes) { grid-template-columns:minmax(0,1fr); gap:22px !important; }
   html body #tab-analizar #researchResults .pvx .px-eqr2 .px-eqr-p { font-size:15px; }
 }
 
