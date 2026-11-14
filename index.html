@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261114-1610">
+<meta name="pv-build" content="20261114-1700">
 <script>
 (function(){
   var h = location.hostname;
@@ -22041,6 +22041,13 @@ const PORTIV_CHART = {
           byDate[p.date]={date:p.date,value:+(p.value*_k).toFixed(2),label:fmtDate(p.date)};
         });
       })();
+    } else if(window._BROKER_HIST_NONE){
+      // Broker conectado que NO entrega historial (SnapTrade responde «no_account», «terminal» o
+      // se agotaron los reintentos). No hay serie del broker con la que mezclar, así que los
+      // cierres diarios que la app grabó con tus posiciones son la única curva real. Antes se
+      // quedaba en «Cargando el rendimiento real de tu broker…» ~5 min (y lo tapaba la sesión
+      // intradía pintada como 2W/1M).
+      localPts.forEach(p=>{ if(p&&p.date&&isFinite(p.value)&&p.value>0&&p.date<=today) byDate[p.date]={date:p.date,value:p.value,label:fmtDate(p.date)}; });
     }
     // else (broker conectado sin serie real aún): lienzo limpio — no mezclar placeholders.
     let merged=Object.values(byDate).sort((a,b)=>a.date.localeCompare(b.date));
@@ -52937,7 +52944,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     return stCall('snaptrade-history', _hb).then(function(j){
       var pts = (j && Array.isArray(j.history)) ? j.history : [];
       if(j && j.available && pts.length>1 && typeof _applyValueChart==='function'){
-        try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
+        try{ window._BROKER_HISTORY_PENDING=false; window._BROKER_HIST_NONE=false; }catch(e){}
         _snapHistoryTries = 0;
         try{
           window._BROKER_LIVE = true;
@@ -52981,7 +52988,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         // `profiles` por sesión, para 14 veces la misma respuesta. Con la suma multi-cuenta
         // serían 14 × (nº de cuentas). Se para en seco.
         _snapHistoryTries = _SNAP_HIST_MAX;
-        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; }catch(e){}
+        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; window._BROKER_HIST_NONE=true; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
         try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
         _perfNote(j.reason==='not_connected'
@@ -52990,14 +52997,25 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       } else if(_snapHistoryTries < _SNAP_HIST_MAX){
         // Aún no disponible → reintenta con force; MANTÉN pending + skeleton (nunca reconstrucción).
         _snapHistoryTries++;
-        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=true; }catch(e){}
-        try{ if(window._pvChartLoading) window._pvChartLoading(true); }catch(e){}
+        // «no_account»: SnapTrade no ve ninguna cuenta para este usuario (p. ej. el login del
+        // broker está enlazado a otra cuenta de Portiv). Reintentar no cambia nada a corto plazo:
+        // se dibuja YA la curva con los cierres diarios de la app y se sigue reintentando en
+        // silencio, sin skeleton. Si el historial llega después, lo sustituye.
+        if(j && j.reason==='no_account'){
+          var _wasNone = !!window._BROKER_HIST_NONE;
+          try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; window._BROKER_HIST_NONE=true; }catch(e){}
+          try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
+          if(!_wasNone){ try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){} }
+        } else {
+          try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=true; }catch(e){}
+          try{ if(window._pvChartLoading) window._pvChartLoading(true); }catch(e){}
+        }
         _snapHistoryForced=false;                       // fuerza serie fresca en el reintento
         setTimeout(snapHistory, _snapHistDelay());
       } else {
         // Reintentos agotados: el historial realmente no está disponible aún. Libera pending (última
         // red de seguridad) y avisa; sin bucle infinito.
-        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; }catch(e){}
+        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; window._BROKER_HIST_NONE=true; }catch(e){}
         try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
         try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
         _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
