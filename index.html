@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261114-1730">
+<meta name="pv-build" content="20261114-1800">
 <script>
 (function(){
   var h = location.hostname;
@@ -53013,24 +53013,38 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       } else {
         // Reintentos agotados: el historial realmente no está disponible aún. Libera pending (última
         // red de seguridad) y avisa; sin bucle infinito.
-        try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; window._BROKER_HIST_NONE=true; }catch(e){}
-        try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
-        try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
-        _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
+        _histSinBroker();
       }
     }).catch(function(){
       if(_snapHistoryTries < _SNAP_HIST_MAX){
         _snapHistoryTries++;
-        try{ window._BROKER_HISTORY_PENDING=true; }catch(e){}
-        try{ if(window._pvChartLoading) window._pvChartLoading(true); }catch(e){}
+        // Con la curva ya dibujada desde los cierres de la app («no_account»), un fallo de red en
+        // un reintento silencioso no vuelve a tapar la gráfica con el skeleton.
+        if(!window._BROKER_HIST_NONE){
+          try{ window._BROKER_HISTORY_PENDING=true; }catch(e){}
+          try{ if(window._pvChartLoading) window._pvChartLoading(true); }catch(e){}
+        }
         _snapHistoryForced=false;
         setTimeout(snapHistory, _snapHistDelay());
       } else {
-        try{ window._BROKER_HISTORY_PENDING=false; }catch(e){}
-        try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
-        _perfNote('El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
+        _histSinBroker();
       }
     });
+  }
+  // Reintentos agotados sin historial del broker: la gráfica sale de los cierres diarios de la app.
+  // El aviso «aún se está sincronizando» sólo tiene sentido si NO hay nada que dibujar; con la curva
+  // ya en pantalla contradecía lo que se ve (captura del 14-nov) y se quita.
+  function _histSinBroker(){
+    try{ window._BROKER_LIVE=false; window._BROKER_HISTORY_PENDING=false; window._BROKER_HIST_NONE=true; }catch(e){}
+    try{ if(window._pvChartLoading) window._pvChartLoading(false); }catch(e){}
+    try{ if(typeof _redrawActiveChart==='function') _redrawActiveChart(); }catch(e){}
+    var _hay=false;
+    try{
+      var _p=(typeof activePeriod!=='undefined' && activePeriod) ? activePeriod : '1M';
+      var _d=(typeof PORTIV_CHART!=='undefined') ? PORTIV_CHART.generate(_p==='1D'?'1M':_p) : null;
+      _hay=!!(_d && _d.values && _d.values.length>=2);
+    }catch(e){}
+    _perfNote(_hay ? '' : 'El historial de rendimiento de tu broker aún se está sincronizando. Puede tardar unos minutos.');
   }
 
   // _setPerfMode() eliminada: sin un solo call-site, y su #snapPerfToggle nunca se inyecta
