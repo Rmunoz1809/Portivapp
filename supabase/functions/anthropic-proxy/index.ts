@@ -18,9 +18,12 @@ const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 
 // Aliases sin fecha → familia, para reintentar con un id válido si el pedido falla.
+// 14 nov 2026: el respaldo de Sonnet era claude-sonnet-4-6 ($3/$15 por millón), un 50 % MÁS
+// caro que el modelo principal (claude-sonnet-5-5, $2/$10). Ahora cae a claude-sonnet-5, que
+// cuesta lo mismo. Haiku 5.5 cuesta $0.10/$0.50 frente a $1/$5 de Haiku 4.5.
 const MODEL_FALLBACK: Record<string, string> = {
-  sonnet: "claude-sonnet-4-6",
-  haiku: "claude-haiku-4-5",
+  sonnet: "claude-sonnet-5",
+  haiku: "claude-haiku-5-5",
 };
 
 // Sólo lo que usa la app (AI_MODELS.narrative = Sonnet; Haiku en extracción). Opus no.

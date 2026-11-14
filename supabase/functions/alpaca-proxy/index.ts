@@ -50,6 +50,22 @@ function ttlFor(path: string): number {
   return 900;
 }
 
+// Recorte (14 nov 2026): index.html lee t/o/h/l/c/v de cada barra; `n` (nº de operaciones) y
+// `vw` (VWAP) sobraban: ~20 % menos de egress y de fh_cache. Idempotente: también se aplica
+// a las filas ya guardadas.
+// deno-lint-ignore no-explicit-any
+function shrinkBars(payload: any): any {
+  try {
+    const b = payload && payload.bars;
+    if (!b || typeof b !== "object") return payload;
+    // deno-lint-ignore no-explicit-any
+    const slim = (x: any) => (x && typeof x === "object") ? { t: x.t, o: x.o, h: x.h, l: x.l, c: x.c, v: x.v } : x;
+    const bars = Array.isArray(b) ? b.map(slim)
+      : Object.fromEntries(Object.entries(b).map(([k, v]) => [k, Array.isArray(v) ? v.map(slim) : v]));
+    return { ...payload, bars };
+  } catch (_e) { return payload; }
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -173,7 +189,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (row && row.fetched_at) {
       const age = (now - new Date(row.fetched_at).getTime()) / 1000;
-      if (age < ttl) return json(row.data, 200);
+      if (age < ttl) return json(shrinkBars(row.data), 200);
     }
   } catch (_e) { /* fallo de caché → seguimos a upstream */ }
 
@@ -182,7 +198,7 @@ Deno.serve(async (req) => {
   if (tier === "anon" && !anonBudgetOk(clientIp(req))) {
     try {
       const { data: row } = await db.from("fh_cache").select("data").eq("key", cacheKey).maybeSingle();
-      if (row) return json(row.data, 200);               // caché vencida antes que romper la gráfica
+      if (row) return json(shrinkBars(row.data), 200);   // caché vencida antes que romper la gráfica
     } catch (_e) { /* ignore */ }
     return json({ error: "rate limited" }, 429);
   }
@@ -213,8 +229,9 @@ Deno.serve(async (req) => {
     return json({ error: `upstream ${res.status}`, detail: body.slice(0, 300) }, res.status);
   }
 
-  const payload = await res.json().catch(() => null);
-  if (payload === null) return json({ error: "bad upstream json" }, 502);
+  const raw = await res.json().catch(() => null);
+  if (raw === null) return json({ error: "bad upstream json" }, 502);
+  const payload = shrinkBars(raw);
 
   // 3) Write-through para los siguientes en esta ventana de TTL.
   try {

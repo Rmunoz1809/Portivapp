@@ -7283,9 +7283,21 @@ window._trTranslatedNodes = window._trTranslatedNodes || new WeakSet();
 const _TR_CLOUD_KEY = '__I18N_EN__';
 let _trCloudLoaded = false;
 let _trCloudLoading = null;
+// EGRESS (14 nov 2026): el mapa de la nube pesa ~200 KB y se bajaba ENTERO al abrir la app en
+// inglés y otra vez en cada subida de frases nuevas (read-merge-write). El plan gratis de
+// Supabase trae 5 GB de egress al mes. Ahora: como mucho una lectura cada 12 h al arrancar
+// (lo bajado ya vive en el caché local) y, al subir, se reusa la copia leída hace <10 min.
+const _TR_CLOUD_TS = 'portiv_i18n_cloud_ts';
+const _TR_CLOUD_TTL = 12 * 60 * 60 * 1000;
+const _TR_REMOTE_TTL = 10 * 60 * 1000;
+let _trRemote = null, _trRemoteAt = 0;
 async function _trCloudLoad(){
   if (_trCloudLoaded) return;
   if (_trCloudLoading) return _trCloudLoading;
+  try {
+    const _ts = +(localStorage.getItem(_TR_CLOUD_TS) || 0);
+    if (_ts && (Date.now() - _ts) < _TR_CLOUD_TTL && Object.keys(_trCacheGet() || {}).length) { _trCloudLoaded = true; return; }
+  } catch(e){}
   _trCloudLoading = (async () => {
     try {
       const sb = window.sbClient; if (!sb) return;
@@ -7294,6 +7306,8 @@ async function _trCloudLoad(){
         // La nube manda: fusiona el mapa remoto sobre el local (remoto pisa local en colisión).
         const local = _trCacheGet();
         _trCacheSet(Object.assign({}, local, data.data));
+        _trRemote = data.data; _trRemoteAt = Date.now();
+        try { localStorage.setItem(_TR_CLOUD_TS, String(Date.now())); } catch(e){}
       }
       _trCloudLoaded = true;
     } catch(e){}
@@ -7316,10 +7330,14 @@ async function _trCloudFlush(){
   try {
     const sb = window.sbClient;
     if (!sb || !window._pvAuthReady) return;   // sin sesión no se puede escribir (RLS) → queda solo en localStorage
-    const { data } = await sb.from('shared_analysis').select('data').eq('ticker', _TR_CLOUD_KEY).maybeSingle();
-    const remote = (data && data.data && typeof data.data === 'object') ? data.data : {};
+    let remote = (_trRemote && (Date.now() - _trRemoteAt) < _TR_REMOTE_TTL) ? _trRemote : null;
+    if (!remote) {
+      const { data } = await sb.from('shared_analysis').select('data').eq('ticker', _TR_CLOUD_KEY).maybeSingle();
+      remote = (data && data.data && typeof data.data === 'object') ? data.data : {};
+    }
     const merged = Object.assign({}, remote, toSend);
     await _sharedWrite('set','i18n', _TR_CLOUD_KEY, merged);
+    _trRemote = merged; _trRemoteAt = Date.now();
     // Refresca el caché local con la fusión completa (incluye lo que subieron otros).
     _trCacheSet(Object.assign({}, _trCacheGet(), merged));
   } catch(e){}

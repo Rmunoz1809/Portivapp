@@ -95,11 +95,64 @@ async function quoteBatch(syms: string[]) {
   return json({ quotes: out }, 200);
 }
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...CORS, "content-type": "application/json" },
-  });
+function json(body: unknown, status = 200, maxAge = 0) {
+  const h: Record<string, string> = { ...CORS, "content-type": "application/json" };
+  // Caché del navegador / WKWebView (privada: la petición lleva Authorization). Repetir la
+  // misma ficha dentro de la ventana ya no cuesta invocación ni egress.
+  if (status === 200 && maxAge > 0) h["cache-control"] = `private, max-age=${maxAge}`;
+  return new Response(JSON.stringify(body), { status, headers: h });
+}
+
+// ── Recorte del payload (14 nov 2026) ─────────────────────────────────────────
+// El plan gratis de Supabase incluye 5 GB de egress al mes. Finnhub devuelve mucho más de
+// lo que lee index.html, así que se guarda y se sirve SOLO lo que la app usa. Se aplica al
+// escribir en fh_cache y también al servir filas viejas (idempotente), así el ahorro es
+// inmediato. Medido con AAPL, comprimido en el cable:
+//   /stock/metric              70 KB → ~2 KB   (`series` = 98 % del peso; la app no lo lee)
+//   /company-news (14 días)    60 KB → ~6 KB   (la app usa 14 noticias y 6 campos)
+//   /stock/financials-reported 36/84 KB → ~1/3 (la app lee concept+value; muestra 6 años / 8 trim.)
+// Si index.html empieza a leer un campo nuevo, añádelo aquí.
+const NEWS_KEEP = 20;          // la app usa 14 (por acción) / 16 (generales)
+const FIN_ANNUAL_KEEP = 10;    // la app muestra 6 años y compara con el anterior
+const FIN_QUARTER_KEEP = 24;   // la app muestra 8 trimestres; T4 = 10-K − 9 meses
+// deno-lint-ignore no-explicit-any
+function shrink(path: string, payload: any): any {
+  if (!payload || typeof payload !== "object") return payload;
+  const p = path.toLowerCase();
+  try {
+    if (p.startsWith("/stock/metric")) {
+      if (!("series" in payload)) return payload;
+      const { series: _drop, ...rest } = payload;
+      return rest;
+    }
+    if (p.startsWith("/company-news") || p.startsWith("/news")) {
+      if (!Array.isArray(payload)) return payload;
+      // deno-lint-ignore no-explicit-any
+      return payload.slice(0, NEWS_KEEP).map((a: any) => ({
+        id: a?.id, category: a?.category, datetime: a?.datetime, headline: a?.headline,
+        image: a?.image, related: a?.related, source: a?.source, summary: a?.summary, url: a?.url,
+      }));
+    }
+    if (p.startsWith("/stock/financials-reported") && Array.isArray(payload.data)) {
+      const keep = /freq=quarterly/.test(p) ? FIN_QUARTER_KEEP : FIN_ANNUAL_KEEP;
+      // deno-lint-ignore no-explicit-any
+      const fin = (d: any) => Date.parse(String(d?.endDate || "").slice(0, 10)) || 0;
+      // deno-lint-ignore no-explicit-any
+      const lines = (arr: any) => Array.isArray(arr)
+        // deno-lint-ignore no-explicit-any
+        ? arr.map((f: any) => ({ concept: f?.concept, value: f?.value }))
+        : arr;
+      const data = payload.data.slice().sort((a: unknown, b: unknown) => fin(b) - fin(a)).slice(0, keep)
+        // deno-lint-ignore no-explicit-any
+        .map((d: any) => ({
+          year: d.year, quarter: d.quarter, form: d.form, startDate: d.startDate, endDate: d.endDate,
+          filedDate: d.filedDate,
+          report: d.report ? { bs: lines(d.report.bs), ic: lines(d.report.ic), cf: lines(d.report.cf) } : d.report,
+        }));
+      return { cik: payload.cik, symbol: payload.symbol, data };
+    }
+  } catch (_e) { /* ante la duda, el original */ }
+  return payload;
 }
 
 Deno.serve(async (req) => {
@@ -168,7 +221,7 @@ Deno.serve(async (req) => {
     if (row && row.fetched_at) {
       const age = (now - new Date(row.fetched_at).getTime()) / 1000;
       if (age < ttl) {
-        return json(row.data, 200);
+        return json(shrink(path, row.data), 200, Math.max(1, Math.round(Math.min(ttl - age, ttl))));
       }
     }
   } catch (_e) { /* cache read failed → fall through to upstream */ }
@@ -187,14 +240,16 @@ Deno.serve(async (req) => {
     // Upstream rate-limited: serve stale cache if we have any, else surface 429.
     try {
       const { data: row } = await db.from("fh_cache").select("data").eq("key", cacheKey).maybeSingle();
-      if (row) return json(row.data, 200);
+      if (row) return json(shrink(path, row.data), 200);
     } catch (_e) { /* ignore */ }
     return json({ error: "rate limited" }, 429);
   }
   if (!fhRes.ok) return json({ error: `upstream ${fhRes.status}` }, fhRes.status);
 
-  const payload = await fhRes.json().catch(() => null);
-  if (payload === null) return json({ error: "bad upstream json" }, 502);
+  const raw = await fhRes.json().catch(() => null);
+  if (raw === null) return json({ error: "bad upstream json" }, 502);
+  // El calendario guarda sus estimados con el payload completo; lo demás se recorta ya.
+  const payload = shrink(path, raw);
 
   // 3) Write-through cache for the next callers in this TTL window.
   try {
@@ -212,7 +267,7 @@ Deno.serve(async (req) => {
     if (rt && typeof rt.waitUntil === "function") rt.waitUntil(job); else await job;
   }
 
-  return json(payload, 200);
+  return json(payload, 200, ttl);
 });
 
 // Guarda en public.earnings_estimates cada fila del calendario SIN resultado todavía: el
