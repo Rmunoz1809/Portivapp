@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261114-2100">
+<meta name="pv-build" content="20261114-2110">
 <script>
 (function(){
   var h = location.hostname;
@@ -6826,6 +6826,126 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
     <p class="set-page-sub" data-i18n="set.subtitle">Gestiona tu cuenta y las preferencias de la aplicación.</p>
   </div>
 
+  <!-- ════ AJUSTES (rediseño nov 2026) ════
+       Secciones en orden: Cuenta → Broker → Preferencias → Soporte y legal → Sesión.
+       Una columna en el celular; dos en iPad/escritorio (≥900 px). Los IDs y onclick
+       que usa el JS se conservan tal cual; los estilos viven en el bloque «pv-set2»
+       al final del archivo, con clases propias (sx-*) para no heredar las capas
+       antiguas de .prof-card / .set-legal-item. -->
+  <div class="sx-grid">
+    <div class="sx-col">
+
+      <!-- ── CUENTA ── -->
+      <section class="sx-card" aria-labelledby="sxTitAcct">
+        <h2 class="sx-title" id="sxTitAcct">Cuenta</h2>
+        <div class="sx-ident">
+          <div class="sx-avatar" id="profAvatar" aria-hidden="true">A</div>
+          <div class="sx-ident-info">
+            <div class="sx-name" id="profDisplayName">Tu perfil</div>
+            <div class="sx-email" id="profEmailDisplay"></div>
+          </div>
+          <!-- La insignia la decide el CSS con la clase pv-pro / pv-free de <html>. -->
+          <span class="sx-plan"><span class="prof-plan-pro">Portiv Pro</span><span class="prof-plan-free">Plan gratuito</span></span>
+        </div>
+        <div class="sx-fields">
+          <label class="sx-field">
+            <span class="sx-lbl">Nombre de usuario</span>
+            <input id="profUsername" class="sx-input" type="text" placeholder="@tu_usuario" autocomplete="username" oninput="profUpdateAvatar()" />
+            <span class="sx-hint">Visible en tu perfil público</span>
+          </label>
+          <label class="sx-field">
+            <span class="sx-lbl">Nombre completo</span>
+            <input id="profFullName" class="sx-input" type="text" placeholder="Tu nombre" autocomplete="name"
+              oninput="document.getElementById('profDisplayName').textContent=this.value;profUpdateAvatar()" />
+          </label>
+        </div>
+        <div class="sx-actions">
+          <button type="button" class="sx-btn sx-btn-primary" onclick="profSave()">Guardar cambios</button>
+        </div>
+      </section>
+
+      <!-- ── BROKER ── (contenido escrito por el módulo de SnapTrade) -->
+      <div id="snapConnectCard" class="snap-card"></div>
+
+    </div>
+    <div class="sx-col">
+
+      <!-- ── PREFERENCIAS ── -->
+      <section class="sx-card" aria-labelledby="sxTitPref">
+        <h2 class="sx-title" id="sxTitPref" data-i18n="set.preferences">Preferencias</h2>
+        <div class="sx-list">
+          <div class="sx-row sx-row-static">
+            <span class="sx-row-txt"><b data-i18n="set.language">Idioma</b><i>Idioma de la interfaz</i></span>
+            <select id="setLanguage" class="sx-select" onchange="changeLanguage(this.value)" aria-label="Idioma">
+              <option value="es">Español</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+          <!-- Consentimiento de IA de terceros (Guideline 5.1.2(i)): interruptor para revocarlo o
+               volver a darlo. El subtítulo lo escribe renderSettings() con el estado real. -->
+          <button type="button" class="sx-row" id="setAiConsent" onclick="_pvAiConsentToggle()">
+            <span class="sx-row-txt"><b>Análisis con inteligencia artificial</b><i id="setAiConsentSub">Compartir datos de tu cartera con un proveedor de IA de terceros.</i></span>
+            <span class="sx-chev" aria-hidden="true"></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ── SOPORTE Y LEGAL ──
+           Se abren con _pvOpenExternal → en iOS salen en SFSafariViewController y con ?app=ios
+           (oculta la compra web, Guideline 3.1.1). "Planes y precios" sólo se muestra en web. -->
+      <section class="sx-card" aria-labelledby="sxTitLegal">
+        <h2 class="sx-title" id="sxTitLegal">Soporte y legal</h2>
+        <div class="sx-list">
+          <button type="button" class="sx-row" onclick="_acctHelp()">
+            <span class="sx-row-txt"><b>Soporte y contacto</b><i>Ayuda, preguntas frecuentes y cómo escribirnos.</i></span>
+            <span class="sx-chev" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="sx-row" onclick="_acctLegal('terminos.html')">
+            <span class="sx-row-txt"><b>Términos de Servicio (EULA)</b><i>Las condiciones del contrato de licencia de uso.</i></span>
+            <span class="sx-chev" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="sx-row" onclick="_acctLegal('privacidad.html')">
+            <span class="sx-row-txt"><b>Política de Privacidad</b><i>Qué datos recogemos, para qué y cómo se guardan.</i></span>
+            <span class="sx-chev" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="sx-row" onclick="_acctLegal('reembolsos.html')">
+            <span class="sx-row-txt"><b>Política de Reembolsos</b><i>Cancelaciones y devoluciones de la suscripción.</i></span>
+            <span class="sx-chev" aria-hidden="true"></span>
+          </button>
+          <button type="button" class="sx-row" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
+            <span class="sx-row-txt"><b>Planes y precios</b><i>Qué incluye Portiv Pro.</i></span>
+            <span class="sx-chev" aria-hidden="true"></span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ── SESIÓN ── (cerrar sesión vuelve a la pantalla de login) -->
+      <section class="sx-card" aria-labelledby="sxTitSes">
+        <h2 class="sx-title" id="sxTitSes">Sesión</h2>
+        <label class="sx-field sx-field-ro">
+          <span class="sx-lbl">Sesión activa</span>
+          <input id="setSessionEmail" class="sx-input sx-input-ro" type="email" readonly value="—">
+        </label>
+        <button type="button" class="sx-btn sx-btn-secondary" id="setLogoutBtn2" onclick="_authLogout()">Cerrar sesión</button>
+        <!-- Apple 5.1.1(v): borrado de cuenta accesible desde la UI. Reusa _acctDeleteAccount()
+             (doble confirmación + desconexión del broker + delete-account server-side). -->
+        <div class="sx-danger">
+          <div class="sx-danger-t">Eliminar mi cuenta</div>
+          <div class="sx-danger-s">Borra de forma permanente tu cuenta, tu portafolio y la conexión con tu broker. No se puede deshacer.</div>
+          <button type="button" class="sx-btn sx-btn-danger" id="setDeleteAcctBtn" onclick="_acctDeleteAccount()" aria-label="Eliminar mi cuenta de forma permanente">Eliminar mi cuenta</button>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <div class="sx-foot">
+    <span id="setLegalVer">Portiv</span> · Los datos de mercado son informativos y pueden retrasarse.
+    Portiv no es un asesor de inversión: nada de lo que muestra la app es una recomendación
+    personalizada de compra o venta.
+  </div>
+
+  <!-- ── Bloques ocultos que el JS sigue usando (no visibles) ── -->
   <!-- ── A) CUENTA ── (ocultada a pedido: logout sigue disponible en el menú "Mi cuenta") -->
   <div class="prof-card" style="order:3;display:none">
     <div class="prof-card-title" data-i18n="set.account">Cuenta</div>
@@ -6865,100 +6985,12 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
 
   </div>
 
-
-  <!-- ── SESIÓN (visible: email actual + cerrar sesión → vuelve a la pantalla de login) ── -->
-  <div class="prof-card" style="order:4">
-    <div class="prof-card-title">Sesión</div>
-    <div class="set-row" style="margin-bottom:14px">
-      <label>Sesión activa</label>
-      <input id="setSessionEmail" class="set-input" type="email" readonly value="—">
-    </div>
-    <button class="set-btn-logout" id="setLogoutBtn2" onclick="_authLogout()" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:46px;border-radius:12px;border:1px solid var(--border,#e0e3ea);background:transparent;color:var(--st-primary,#0F1D35);font:600 14px var(--font,system-ui);cursor:pointer;transition:background .15s">
-      <span class="material-symbols-outlined" style="font-size:18px">logout</span>
-      <span>Cerrar sesión</span>
-    </button>
-
-    <!-- Apple 5.1.1(v): borrado de cuenta accesible desde la UI. Reusa _acctDeleteAccount()
-         (doble confirmacion + desconexion del broker + delete-account server-side). -->
-    <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border,#e0e3ea)">
-      <div style="font:600 13px var(--font,system-ui);color:var(--st-primary,#0F1D35);margin-bottom:4px">Eliminar mi cuenta</div>
-      <div style="font:400 12px var(--font,system-ui);color:#8a93a3;line-height:1.5;margin-bottom:10px">Borra de forma permanente tu cuenta, tu portafolio y la conexión con tu broker. No se puede deshacer.</div>
-      <button class="set-btn-danger" id="setDeleteAcctBtn" onclick="_acctDeleteAccount()" aria-label="Eliminar mi cuenta de forma permanente" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:46px;border-radius:12px;border:1px solid #dc2626;background:transparent;color:#dc2626;font:600 14px var(--font,system-ui);cursor:pointer;transition:background .15s">
-        <span class="material-symbols-outlined" style="font-size:18px" aria-hidden="true">warning_amber</span>
-        <span>Eliminar mi cuenta</span>
-      </button>
-    </div>
-  </div>
-
-  <!-- ── B) PREFERENCIAS ── -->
-  <div class="prof-card" style="order:2">
-    <div class="prof-card-title" data-i18n="set.preferences">Preferencias de la Interfaz</div>
-
-    <div class="set-row" style="margin-bottom:0">
-      <label data-i18n="set.language">Idioma</label>
-      <select id="setLanguage" class="set-select" onchange="changeLanguage(this.value)">
-        <option value="es">Español</option>
-        <option value="en">English</option>
-      </select>
-    </div>
-  </div>
-
-
-
-  <!-- ════ Perfil + Operaciones de Portafolio (fusionado desde Profile) ════ -->
-<!-- ── 1. PERFIL DE USUARIO ── -->
-  <div class="prof-card" style="order:1">
-    <div class="prof-card-title">Configuración General</div>
-    <div style="font-size:28px;font-weight:800;color:var(--st-primary);font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;margin-bottom:20px;">Perfil y Operaciones de Portafolio</div>
-
-    <div class="prof-identity">
-      <div class="prof-avatar" id="profAvatar">A</div>
-      <div class="prof-identity-info">
-        <div class="prof-name" id="profDisplayName">Tu perfil</div>
-        <div class="prof-email" id="profEmailDisplay"></div>
-        <!-- La insignia estaba escrita a mano como "PRO MEMBER": un usuario del plan
-             gratuito veía "PRO MEMBER" en su perfil mientras el resto de la app le
-             cerraba Portiv IA con el candado de Pro. Ahora la escribe el CSS a partir
-             de la clase que ya mantiene _pvApplyProClass en <html> (pv-pro / pv-free),
-             así que no hay un segundo sitio que actualizar ni repintado que disparar. -->
-        <div class="prof-plan-badge">
-          <span class="material-symbols-outlined" style="font-size:13px">hub</span>
-          <span class="prof-plan-pro">PRO MEMBER</span>
-          <span class="prof-plan-free">PLAN GRATUITO</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="prof-field-row">
-      <div class="prof-field">
-        <label>Nombre de usuario</label>
-        <input id="profUsername" type="text" placeholder="@tu_usuario"
-          oninput="profUpdateAvatar()" />
-        <span class="prof-field-hint">Visible en tu perfil público</span>
-      </div>
-      <div class="prof-field">
-        <label>Nombre completo</label>
-        <input id="profFullName" type="text" placeholder="Tu nombre"
-          oninput="document.getElementById('profDisplayName').textContent=this.value;profUpdateAvatar()" />
-      </div>
-    </div>
-    <div style="margin-top:20px">
-      <button onclick="profSave()" style="display:inline-flex;align-items:center;gap:8px;padding:11px 24px;background:var(--navy);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;transition:background .15s;"
-        onmouseover="this.style.background='var(--navy-md)'" onmouseout="this.style.background='var(--navy)'">
-        <span class="material-symbols-outlined" style="font-size:17px">save</span>
-        Guardar cambios
-      </button>
-    </div>
-  </div>
-
   <!-- strategy section hidden — kept for JS compat -->
   <div id="strategyGrid" style="display:none">
     <div class="strategy-option sel" data-strategy="crecimiento" onclick="profSelectStrategy(this,'crecimiento')"></div>
   </div>
   <div style="display:none" id="stratLabel"></div>
   <div style="display:none" id="stratDesc"></div>
-
-  <div id="snapConnectCard" class="snap-card"></div>
 
   <!-- ── 4. EDITOR DEL PORTAFOLIO ── RETIRADO de la interfaz a pedido.
        No se borra el markup: la sincronización con el broker (SnapTrade) escribe sus
@@ -7061,57 +7093,6 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
     </div>
   </div>
 
-  <!-- ── 5. LEGAL Y DOCUMENTOS ──
-       Todos los documentos de la app en un solo sitio dentro de Ajustes. Hasta ahora sólo
-       vivían en el menú del avatar (Términos/Privacidad) y en pies de página que un usuario
-       ya logueado casi nunca ve. Reembolsos y Soporte no tenían ninguna ruta desde dentro.
-       Se abren con _pvOpenExternal → en iOS salen en SFSafariViewController (el usuario no
-       sale de la app) y con ?app=ios, que oculta en esas páginas todo lo referido a la
-       compra web por Paddle (Guideline 3.1.1). "Planes y precios" sólo se muestra en web:
-       en el build nativo hablar de otro método de pago es justo lo prohibido. -->
-  <div class="prof-card" style="order:6">
-    <div class="prof-card-title">Legal y documentos</div>
-    <div style="font-size:15px;font-weight:700;color:var(--st-primary);font-family:system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif;margin-bottom:6px;">Términos, privacidad y políticas</div>
-    <div style="font-size:13px;color:var(--text3);margin-bottom:16px;line-height:1.5;">Los documentos que rigen tu uso de Portiv. Se abren dentro de la app.</div>
-
-    <div class="set-legal-list">
-      <button class="set-legal-item" onclick="_acctLegal('terminos.html')">
-        <span class="sl-txt"><b>Términos de Servicio (EULA)</b><i>Las condiciones del contrato de licencia de uso.</i></span>
-        <span class="sl-arrow" aria-hidden="true"></span>
-      </button>
-      <button class="set-legal-item" onclick="_acctLegal('privacidad.html')">
-        <span class="sl-txt"><b>Política de Privacidad</b><i>Qué datos recogemos, para qué y cómo se guardan.</i></span>
-        <span class="sl-arrow" aria-hidden="true"></span>
-      </button>
-      <button class="set-legal-item" onclick="_acctLegal('reembolsos.html')">
-        <span class="sl-txt"><b>Política de Reembolsos</b><i>Cancelaciones y devoluciones de la suscripción.</i></span>
-        <span class="sl-arrow" aria-hidden="true"></span>
-      </button>
-      <button class="set-legal-item" onclick="_acctHelp()">
-        <span class="sl-txt"><b>Soporte y contacto</b><i>Ayuda, preguntas frecuentes y cómo escribirnos.</i></span>
-        <span class="sl-arrow" aria-hidden="true"></span>
-      </button>
-      <!-- Consentimiento de IA de terceros (Guideline 5.1.2(i)). El permiso se pide en la
-           primera llamada de IA; esto es el interruptor para revocarlo o volver a darlo,
-           que la guideline exige que exista y sea accesible. El subtítulo lo escribe
-           renderSettings() con el estado real. -->
-      <button class="set-legal-item" id="setAiConsent" onclick="_pvAiConsentToggle()">
-        <span class="sl-txt"><b>Análisis con inteligencia artificial</b><i id="setAiConsentSub">Compartir datos de tu cartera con un proveedor de IA de terceros.</i></span>
-        <span class="sl-arrow" aria-hidden="true"></span>
-      </button>
-      <button class="set-legal-item" id="setLegalPricing" style="display:none" onclick="_acctLegal('precios.html')">
-        <span class="sl-txt"><b>Planes y precios</b><i>Qué incluye Portiv Pro.</i></span>
-        <span class="sl-arrow" aria-hidden="true"></span>
-      </button>
-    </div>
-
-    <div class="set-legal-foot">
-      <span id="setLegalVer">Portiv</span> · Los datos de mercado son informativos y pueden retrasarse.
-      Portiv no es un asesor de inversión: nada de lo que muestra la app es una recomendación
-      personalizada de compra o venta.
-    </div>
-  </div>
-
 </div><!-- /set-wrap -->
 </div>
 
@@ -7149,7 +7130,7 @@ const translations = {
     'set.newPasswordHint':'Mínimo 6 caracteres. Déjalo vacío si no quieres cambiarla.',
     'set.saveAccount':'Guardar Cambios de Cuenta',
     'set.logout':'Cerrar sesión',
-    'set.preferences':'Preferencias de la Interfaz',
+    'set.preferences':'Preferencias',
     'set.theme':'Tema (Ajuste de Luz)',
     'set.lightMode':'Modo Claro','set.darkMode':'Modo Oscuro',
     'set.language':'Idioma',
@@ -7188,7 +7169,7 @@ const translations = {
     'set.newPasswordHint':'Minimum 6 characters. Leave empty to keep your current password.',
     'set.saveAccount':'Save Account Changes',
     'set.logout':'Log out',
-    'set.preferences':'Interface Preferences',
+    'set.preferences':'Preferences',
     'set.theme':'Theme (Light Setting)',
     'set.lightMode':'Light Mode','set.darkMode':'Dark Mode',
     'set.language':'Language',
@@ -53790,7 +53771,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         // teniendo ya otro broker sano, y hasta ahora ese camino no pasaba por ningún sitio
         // que explicara el Query ID ni el Token.
         + _snapIbkrLink()
-        +'<div class="snap-note">🔒 Tu broker sincroniza solo una vez al día. Si acabas de operar, pulsa “Sincronizar ahora”.</div>';
+        +'<div class="snap-note">Tu broker sincroniza solo una vez al día. Si acabas de operar, pulsa “Sincronizar ahora”.</div>';
     }
     // F11 — Salida del estado 'unknown'. Sin esto, agotados los reintentos del arranque (sin red,
     // 5xx persistente, supabase-js bloqueado por el CDN), la tarjeta se quedaba en "Comprobando el
@@ -53921,12 +53902,12 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
         return '<h3>Tu suscripción terminó</h3>'
           +'<p class="snap-sub">Tu broker <b>sigue enlazado</b>: reactiva la suscripción y tus posiciones vuelven al instante, sin volver a conectarlo.</p>'
           +'<button class="snap-btn" data-snap-resub>Reactivar suscripción</button>'
-          +'<div class="snap-note">🔒 Si no la reactivas, cerraremos el enlace al final del ciclo para no cobrarte su mantenimiento.</div>';
+          +'<div class="snap-note">Si no la reactivas, cerraremos el enlace al final del ciclo para no cobrarte su mantenimiento.</div>';
       }
       return '<h3>Tu broker se desconectó</h3>'
         +'<p class="snap-sub">Cerramos la conexión con tu broker porque tu suscripción terminó. Tus datos siguen guardados: al reactivar, vuelves a enlazarlo en un toque.</p>'
         +'<button class="snap-btn" data-snap-resub>Reactivar suscripción</button>'
-        +'<div class="snap-note">🔒 Cerramos la conexión para no cobrarte el mantenimiento del enlace mientras no usas Portiv.</div>';
+        +'<div class="snap-note">Cerramos la conexión para no cobrarte el mantenimiento del enlace mientras no usas Portiv.</div>';
     }
     // disconnected / unknown
     return '<h3>Conecta tu broker</h3><p class="snap-sub">Enlaza tu cuenta y Portiv importa tus posiciones, valor y rendimiento automáticamente. Sin fotos ni CSVs. Solo lectura.</p>'
@@ -53938,7 +53919,7 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       // completar. El botón abre la guía primero (ver _pvIbkrConnect).
       +'<div class="snap-row" style="margin-top:8px"><button class="snap-btn secondary" onclick="window._pvIbkrConnect()">Conectar Interactive Brokers</button></div>'
       + _snapIbkrLink()
-      +'<div class="snap-note">🔒 Conexión de solo lectura vía SnapTrade. Nunca vemos tus credenciales.</div>';
+      +'<div class="snap-note">Conexión de solo lectura vía SnapTrade. Nunca vemos tus credenciales.</div>';
   }
   function _bindConnectButtons(){ Array.prototype.forEach.call(document.querySelectorAll('[data-snap-connect]'),function(btn){
       if(btn._snapBound) return; btn._snapBound=true; btn.dataset.snapLabel=btn.dataset.snapLabel||btn.textContent;
@@ -68918,5 +68899,166 @@ html body #pvIbkrWait > .as-card{ height:auto !important; max-height:min(820px, 
   }
 })();
 </script>
+<!-- ═══ AJUSTES v2 (nov 2026): tarjetas agrupadas con el lenguaje de Resultados/Finanzas.
+     Va al final del archivo para ganar a las capas antiguas de Ajustes; usa clases sx-*
+     propias, así que sólo pisa con !important lo heredado de #snapConnectCard. ═══ -->
+<style id="pv-set2">
+  html body #tab-settings .sx-grid {
+    --sx-ink:#0b1c30; --sx-ink2:#3a4658; --sx-mut:#7a879b; --sx-line:#e2e7f0; --sx-card:#fff;
+    --sx-soft:#f5f7fb; --sx-hover:#f7f9fc; --sx-accent:#1f6b48; --sx-red:#c0392b; --sx-red-soft:#fdf1f0;
+    display:grid; grid-template-columns:minmax(0,1fr); gap:16px; align-items:start;
+    font-family:var(--font); color:var(--sx-ink);
+  }
+  html body #tab-settings .sx-col { display:flex; flex-direction:column; gap:16px; min-width:0; }
+  @media (min-width:900px){
+    html body #tab-settings .sx-grid { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:20px; }
+    html body #tab-settings .sx-col { gap:20px; }
+  }
+
+  /* Tarjeta */
+  html body #tab-settings .sx-card,
+  html body #tab-settings #snapConnectCard {
+    background:var(--sx-card) !important; border:1px solid var(--sx-line) !important; border-radius:18px !important;
+    box-shadow:0 1px 3px rgba(15,30,55,.04), 0 8px 24px rgba(15,30,55,.035) !important;
+    padding:22px 24px !important; margin:0 !important; box-sizing:border-box; min-width:0;
+  }
+  html body #tab-settings #snapConnectCard:empty { display:none !important; }
+  html body #tab-settings #snapConnectCard.snap-card-locked { padding:0 !important; overflow:hidden; }
+  html body #tab-settings #snapConnectCard.snap-card-locked > .pv-lock { padding:22px 24px !important; }
+
+  /* Título de sección: misma pieza que px-sec-title (barra + texto) */
+  html body #tab-settings .sx-title,
+  html body #tab-settings #snapConnectCard h3 {
+    display:flex; align-items:center; gap:10px; margin:0 0 16px; padding:0;
+    font:700 17px/1.3 var(--font) !important; letter-spacing:-.1px; color:var(--sx-ink) !important; text-transform:none;
+  }
+  html body #tab-settings .sx-title::before,
+  html body #tab-settings #snapConnectCard h3::before {
+    content:""; width:4px; height:18px; border-radius:3px; background:var(--sx-accent); flex:0 0 auto;
+  }
+  html body #tab-settings #snapConnectCard h3 { margin-bottom:6px; }
+  html body #tab-settings #snapConnectCard p.snap-sub { margin:0 0 4px; font:400 13.5px/1.55 var(--font) !important; color:var(--sx-mut) !important; }
+  html body #tab-settings #snapConnectCard .snap-brokers { margin:12px 0 16px; }
+  html body #tab-settings #snapConnectCard .snap-chip { font:600 12px var(--font) !important; color:var(--sx-ink2); background:var(--sx-soft); border:1px solid var(--sx-line); padding:5px 11px; }
+  html body #tab-settings #snapConnectCard .snap-status { font:600 13px var(--font) !important; color:var(--sx-ink2); }
+  html body #tab-settings #snapConnectCard .snap-btn { min-height:46px; border-radius:12px; font:600 14.5px var(--font) !important; box-sizing:border-box; }
+  html body #tab-settings #snapConnectCard .snap-btn:not(.secondary) { background:var(--sx-ink); }
+  html body #tab-settings #snapConnectCard .snap-btn.secondary { border:1px solid var(--sx-line); color:var(--sx-ink); background:transparent; }
+  html body #tab-settings #snapConnectCard .snap-row + .snap-row,
+  html body #tab-settings #snapConnectCard .snap-btn + .snap-btn { margin-top:10px; }
+  html body #tab-settings #snapConnectCard .snap-note { font:400 12.5px/1.5 var(--font) !important; color:var(--sx-mut); margin-top:14px; padding-top:14px; border-top:1px solid var(--sx-line); }
+
+  /* Identidad */
+  html body #tab-settings .sx-ident { display:flex; align-items:center; gap:14px; padding-bottom:18px; margin-bottom:18px; border-bottom:1px solid var(--sx-line); }
+  html body #tab-settings .sx-avatar {
+    width:52px; height:52px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+    background:var(--sx-ink); color:#fff; font:700 18px var(--font); letter-spacing:.3px;
+  }
+  html body #tab-settings .sx-ident-info { flex:1 1 auto; min-width:0; }
+  html body #tab-settings .sx-name { font:700 17px/1.3 var(--font); color:var(--sx-ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  html body #tab-settings .sx-email { font:500 13px/1.4 var(--font); color:var(--sx-mut); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
+  html body #tab-settings .sx-plan {
+    flex:0 0 auto; align-self:center; font:700 11px/1 var(--font); letter-spacing:.5px; text-transform:uppercase;
+    padding:7px 10px; border-radius:999px; color:var(--sx-accent); background:#e7f2ec; border:1px solid #cfe5d8; white-space:nowrap;
+  }
+  html.pv-free body #tab-settings .sx-plan { color:var(--sx-ink2); background:var(--sx-soft); border-color:var(--sx-line); }
+  html:not(.pv-pro):not(.pv-free) body #tab-settings .sx-plan { display:none; }
+
+  /* Campos */
+  html body #tab-settings .sx-fields { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:14px 16px; }
+  html body #tab-settings .sx-field { display:flex; flex-direction:column; gap:7px; min-width:0; margin:0; }
+  html body #tab-settings .sx-lbl { font:700 11.5px/1.2 var(--font); letter-spacing:.6px; text-transform:uppercase; color:var(--sx-mut); }
+  html body #tab-settings .sx-hint { font:500 12px/1.4 var(--font); color:var(--sx-mut); }
+  html body #tab-settings .sx-input,
+  html body #tab-settings .sx-select {
+    width:100%; box-sizing:border-box; height:46px; padding:0 14px; margin:0;
+    border:1px solid var(--sx-line); border-radius:12px; background:#fff; color:var(--sx-ink);
+    font:600 15px var(--font); outline:none; transition:border-color .15s, box-shadow .15s; -webkit-appearance:none; appearance:none;
+  }
+  html body #tab-settings .sx-input::placeholder { color:#a6b0bf; font-weight:500; }
+  html body #tab-settings .sx-input:focus,
+  html body #tab-settings .sx-select:focus { border-color:#9fb1c9; box-shadow:0 0 0 3px rgba(11,28,48,.07); }
+  html body #tab-settings .sx-input-ro { background:var(--sx-soft); color:var(--sx-ink2); cursor:default; }
+  html body #tab-settings .sx-input-ro:focus { border-color:var(--sx-line); box-shadow:none; }
+  html body #tab-settings .sx-field-ro { margin-bottom:14px; }
+  html body #tab-settings .sx-select {
+    width:auto; min-width:136px; height:40px; padding:0 34px 0 12px; font-size:14px; flex:0 0 auto; cursor:pointer;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%237a879b' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 12px center;
+  }
+
+  /* Botones */
+  html body #tab-settings .sx-actions { margin-top:18px; display:flex; }
+  html body #tab-settings .sx-btn {
+    display:flex; align-items:center; justify-content:center; gap:8px; width:100%; min-height:46px; padding:0 18px; box-sizing:border-box;
+    border-radius:12px; font:600 14.5px var(--font); cursor:pointer; transition:background .15s, border-color .15s, opacity .15s; margin:0;
+  }
+  html body #tab-settings .sx-btn-primary { background:var(--sx-ink); color:#fff; border:1px solid var(--sx-ink); }
+  html body #tab-settings .sx-btn-primary:hover { opacity:.92; }
+  html body #tab-settings .sx-btn-secondary { background:#fff; color:var(--sx-ink); border:1px solid var(--sx-line); }
+  html body #tab-settings .sx-btn-secondary:hover { background:var(--sx-hover); }
+  html body #tab-settings .sx-btn-danger { background:#fff; color:var(--sx-red); border:1px solid #efc4bf; }
+  html body #tab-settings .sx-btn-danger:hover { background:var(--sx-red-soft); }
+  html body #tab-settings .sx-btn:active { transform:scale(.985); }
+
+  /* Listas (preferencias, legal) */
+  html body #tab-settings .sx-list { display:flex; flex-direction:column; margin:0 -24px -22px; border-top:1px solid var(--sx-line); }
+  html body #tab-settings .sx-row {
+    display:flex; align-items:center; gap:14px; width:100%; min-height:62px; padding:12px 24px; box-sizing:border-box; margin:0;
+    background:transparent; border:0; border-bottom:1px solid var(--sx-line); border-radius:0; text-align:left; cursor:pointer;
+    font-family:var(--font); color:var(--sx-ink); transition:background .15s;
+  }
+  html body #tab-settings .sx-list > .sx-row:last-child { border-bottom:0; border-radius:0 0 17px 17px; }
+  html body #tab-settings .sx-row:hover { background:var(--sx-hover); }
+  html body #tab-settings .sx-row.sx-row-static { cursor:default; }
+  html body #tab-settings .sx-row.sx-row-static:hover { background:transparent; }
+  html body #tab-settings .sx-row-txt { display:flex; flex-direction:column; gap:3px; flex:1 1 auto; min-width:0; }
+  html body #tab-settings .sx-row-txt b { font:700 14.5px/1.35 var(--font); color:var(--sx-ink); }
+  html body #tab-settings .sx-row-txt i { font:500 12.5px/1.45 var(--font); font-style:normal; color:var(--sx-mut); }
+  html body #tab-settings .sx-chev { flex:0 0 auto; width:8px; height:8px; margin-right:3px; border-right:2px solid #a6b0bf; border-top:2px solid #a6b0bf; transform:rotate(45deg); }
+
+  /* Zona de borrado */
+  html body #tab-settings .sx-danger { margin-top:20px; padding-top:18px; border-top:1px solid var(--sx-line); }
+  html body #tab-settings .sx-danger-t { font:700 14.5px/1.3 var(--font); color:var(--sx-ink); margin-bottom:4px; }
+  html body #tab-settings .sx-danger-s { font:500 12.5px/1.5 var(--font); color:var(--sx-mut); margin-bottom:12px; }
+
+  /* Pie */
+  html body #tab-settings .set-wrap > .sx-foot {
+    font:500 12px/1.6 var(--font) !important; color:#7a879b !important; text-align:center; box-sizing:border-box;
+    width:100% !important; max-width:620px !important; margin:0 auto !important; align-self:center !important; padding:4px 16px 12px !important;
+  }
+  body.dark-theme #tab-settings .set-wrap > .sx-foot { color:#8a96a3 !important; }
+  /* Celular e iPad: la barra de pestañas flota encima del final de la página. */
+  @media (max-width:899px){ html body #tab-settings .set-wrap > .sx-foot { padding-bottom:calc(112px + env(safe-area-inset-bottom, 0px)) !important; } }
+  html.pv-ipad body #tab-settings .set-wrap > .sx-foot { padding-bottom:120px !important; }
+
+  /* Celular */
+  @media (max-width:599px){
+    html body #tab-settings .sx-card,
+    html body #tab-settings #snapConnectCard { padding:20px 18px !important; border-radius:16px !important; }
+    html body #tab-settings #snapConnectCard.snap-card-locked { padding:0 !important; }
+    html body #tab-settings #snapConnectCard.snap-card-locked > .pv-lock { padding:20px 18px !important; }
+    html body #tab-settings .sx-list { margin:0 -18px -20px; }
+    html body #tab-settings .sx-row { padding:12px 18px; }
+    html body #tab-settings .sx-list > .sx-row:last-child { border-radius:0 0 15px 15px; }
+  }
+
+  /* Tema oscuro */
+  body.dark-theme #tab-settings .sx-grid {
+    --sx-ink:#e8edf7; --sx-ink2:#b8c2d0; --sx-mut:#8a96a3; --sx-line:rgba(138,150,163,.18); --sx-card:#121b2b;
+    --sx-soft:#0c131f; --sx-hover:rgba(255,255,255,.04); --sx-accent:#4cb383; --sx-red:#f87171; --sx-red-soft:rgba(248,113,113,.08);
+  }
+  body.dark-theme #tab-settings .sx-card,
+  body.dark-theme #tab-settings #snapConnectCard { box-shadow:0 12px 34px -14px rgba(0,0,0,.55) !important; }
+  body.dark-theme #tab-settings .sx-avatar { background:#2a3a55; color:#fff; }
+  body.dark-theme #tab-settings .sx-plan { background:rgba(76,179,131,.12); border-color:rgba(76,179,131,.3); }
+  body.dark-theme #tab-settings .sx-input,
+  body.dark-theme #tab-settings .sx-select,
+  body.dark-theme #tab-settings .sx-btn-secondary,
+  body.dark-theme #tab-settings .sx-btn-danger { background-color:#0c131f; }
+  body.dark-theme #tab-settings .sx-btn-primary { background:#e8edf7; color:#0b1c30; border-color:#e8edf7; }
+  body.dark-theme #tab-settings .sx-btn-danger { border-color:rgba(248,113,113,.4); }
+  body.dark-theme #tab-settings #snapConnectCard .snap-btn:not(.secondary) { background:#e8edf7; color:#0b1c30; }
+</style>
 </body>
 </html>
