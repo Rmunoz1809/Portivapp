@@ -22103,6 +22103,11 @@ const PORTIV_CHART = {
     // "flash" de línea plana / ALL +0.00% al entrar). Se deja el lienzo limpio hasta que llegue la
     // serie real densa (snapHistory) o la reconstrucción Yahoo real — solo datos reales, sin placeholder.
     var _brkConnNoLive = _brkConn && !window._BROKER_LIVE;
+    // La sesión de HOY sólo sustituye a 1W/2W/1M/… cuando la cartera es de hoy de verdad. Con el
+    // broker conectado y su historial aún en camino (arranque), merged sale vacío un momento y
+    // antes se devolvía la curva intradía: 2W y 1M enseñaban la sesión del día («−$24.51 en
+    // 2 semanas», sin fechas en el eje) en vez de su período. Sin cierres aún → skeleton.
+    const _intraOK = () => !window._BROKER_HISTORY_PENDING && !_brkConnNoLive && (!_earliest || _earliest >= today);
     // La ventana de la red se recorta a la inception: rellenar un hueco es legítimo, inventar
     // días anteriores a tu primer dato no lo es. Si al recortar no queda ni un día (cartera
     // creada hoy), no se fabrica NADA — más abajo se cae a la sesión intradía, que es real.
@@ -22137,7 +22142,7 @@ const PORTIV_CHART = {
       // Sin un solo cierre diario guardado (primer arranque) la ventana queda vacía y antes se
       // devolvía null: el lienzo se quedaba con lo que hubiera pintado antes — en una cartera
       // nueva, un punto suelto. La sesión de hoy sí es un dato real y ya tiene dos extremos.
-      if(period!=='1D'){
+      if(period!=='1D' && _intraOK()){
         let _i=null; try{ _i=this.generate('1D'); }catch(e){}
         if(_i && _i.values && _i.values.length>=2) return _i;
       }
@@ -22169,7 +22174,7 @@ const PORTIV_CHART = {
     //    vacío (medido: labels=1). Inventar un día anterior sería mentir, pero la sesión
     //    de HOY sí es un dato real y ya tiene dos extremos (apertura → ahora): se dibuja
     //    esa. La cartera es de hoy, la gráfica muestra hoy.
-    if(merged.length<2 && period!=='1D'){
+    if(merged.length<2 && period!=='1D' && _intraOK()){
       let _intra=null;
       try{ _intra=this.generate('1D'); }catch(e){}
       if(_intra && _intra.values && _intra.values.length>=2) return _intra;
@@ -23973,7 +23978,7 @@ function initPerfChart() {
     // v:2 = foto dibujada sin la serie intercalada broker/app (5-nov): las anteriores pueden
     // traer los dientes de sierra y se descartan.
     let _snap = JSON.parse(localStorage.getItem('pv_perf_snap_1M') || 'null');
-    if (_snap && _snap.v !== 2) _snap = null;
+    if (_snap && _snap.v !== 3) _snap = null;   // v3 (14-nov): las v2 pudieron guardar la sesión intradía como «1M»
     const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
     if (_snap && _snap.day === _day && Array.isArray(_snap.values) && _snap.values.length > 2) d = _snap;
     // PRIMERA APERTURA DEL DÍA: la foto es de la sesión ANTERIOR, así que el gate de arriba la
@@ -24732,10 +24737,12 @@ function setPeriodData(period, ds, updMode) {
   // real; al reabrir el app se hidrata al instante (initPerfChart) → ya NO se ve primero la
   // versión provisional de 1M y luego la real. El live-anchor corrige el último punto igual.
   try {
-    if ((period === '1M' || period === '1D') && !ds._provisional) {
+    // Una serie intradía (etiquetas HH:MM) nunca se guarda como foto de 1M.
+    const _hhmm = Array.isArray(ds.labels) && /^\d{1,2}:\d{2}$/.test(String(ds.labels[0] || ''));
+    if ((period === '1M' || period === '1D') && !ds._provisional && !(period === '1M' && _hhmm)) {
       const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
       localStorage.setItem('pv_perf_snap_' + period, JSON.stringify({
-        v: 2, day: _day, labels: ds.labels, values: ds.values,
+        v: period === '1M' ? 3 : 2, day: _day, labels: ds.labels, values: ds.values,
         change: ds.change, changePct: ds.changePct, since: ds.since || '',
       }));
     }
