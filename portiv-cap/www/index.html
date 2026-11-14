@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261114-1900">
+<meta name="pv-build" content="20261114-2000">
 <script>
 (function(){
   var h = location.hostname;
@@ -50022,7 +50022,14 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
   box-shadow:0 1.6em 2.4em -1em rgba(11,28,48,.45), inset 0 .12em 0 rgba(255,255,255,.9); }
 #pvSlidesOv .pvd-mac .pvd-base i{ position:absolute; left:50%; top:0; width:17em; height:1.25em; transform:translateX(-50%);
   border-radius:0 0 1.4em 1.4em; background:linear-gradient(180deg,#a8acb2,#c8cbd0); display:block; }
-@media (prefers-reduced-motion:reduce){ #pvSlidesOv .pvd{ animation:none; } }
+#pvSlidesOv .pvd-vp{ position:absolute; left:0; top:0; transform-origin:0 0; overflow:hidden; background:#f4f6fa; }
+#pvSlidesOv .pvd-cw{ position:absolute; left:0; right:0; overflow:hidden; }
+#pvSlidesOv .pvd-c{ display:block; width:100%; will-change:transform; }
+#pvSlidesOv .pvd-top{ position:absolute; left:0; top:0; width:100%; display:block; }
+#pvSlidesOv .pvd-bar{ position:absolute; display:block; }
+#pvSlidesOv .pvd-mac .pvd-area{ position:relative; flex:1; min-height:0; overflow:hidden; }
+#pvSlidesOv .pvd-mac .pvd-area > .pvd-img{ height:100%; }
+@media (prefers-reduced-motion:reduce){ #pvSlidesOv .pvd{ animation:none; } #pvSlidesOv .pvd-c{ animation:none !important; } }
 </style>
     <div class="pvs-stage" id="pvsStage"></div>
   </div>
@@ -51699,13 +51706,30 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
       <path d="M29.5 3.2a11.4 11.4 0 0 1 8.1 3.3l1.4-1.4A13.4 13.4 0 0 0 29.5 1.2 13.4 13.4 0 0 0 20 5.1l1.4 1.4a11.4 11.4 0 0 1 8.1-3.3zm0 4a7.4 7.4 0 0 1 5.3 2.2l1.4-1.4a9.4 9.4 0 0 0-13.4 0l1.4 1.4a7.4 7.4 0 0 1 5.3-2.2zm0 4a3.4 3.4 0 0 1 2.4 1l-2.4 2.4-2.4-2.4a3.4 3.4 0 0 1 2.4-1z"/>
       <rect x="47" y="1.5" width="25" height="11.5" rx="3.4" fill="none" stroke="currentColor" stroke-opacity=".45" stroke-width="1.1"/>
       <rect x="49" y="3.5" width="21" height="7.5" rx="2"/><path d="M73.6 5.4v4a2.2 2.2 0 0 0 0-4z" fill-opacity=".5"/></g></svg>`;
+  // Pantallas que se DESPLAZAN (la app usada de verdad): contenido alto unido por franjas
+  // (intro/<aparato>-<pantalla>-c.jpg), barra superior fija (-t.jpg) y barra de pestañas flotante
+  // (-b.png, transparente). Medidas en px CSS de la captura: [T barra superior, alto del contenido,
+  // y la caja de la barra de pestañas x,y,w,h]. El visor se maqueta a W × vh y se escala al marco.
+  const _PVD_SC = {"iphone":{"W":440,"vh":956,"s":{"1-portafolio":[116,2959,10,860,420,82],"2-noticias":[116,3400,10,860,420,82],"3-analisis":[116,3400,10,860,420,82],"4-accion":[116,3400,10,860,420,82]}},"ipad":{"W":1032,"vh":1376,"s":{"1-portafolio":[92,2321,200,1284,632,84],"2-noticias":[92,3600,200,1284,632,84],"3-analisis":[92,3600,200,1284,632,84],"4-accion":[92,3600,200,1284,632,84]}},"mac":{"W":1440,"vh":872,"s":{"1-portafolio":[84,1795],"2-noticias":[84,2600],"3-analisis":[84,2600],"4-accion":[84,2600]}}};
+  function _screenHtml(k, s){
+    const M = _PVD_SC[k], m = M && M.s[s.img];
+    const base = 'intro/' + k + '-' + s.img;
+    if (!m) return `<img class="pvd-img" src="${base}.jpg" alt="" decoding="async" draggable="false">`;
+    const T = m[0], h = m[1], sc = Math.max(0, h - (M.vh - T)), largo = sc > 1200;
+    const dur = largo ? `--dur:${Math.max(11, Math.round(sc / 300))}s;` : '';
+    return `<div class="pvd-vp" style="width:${M.W}px;height:${M.vh}px">
+        <div class="pvd-cw" style="top:${T}px;height:${M.vh - T}px"><img class="pvd-c pvs-scroll${largo ? ' long' : ''}" src="${base}-c.jpg" alt="" decoding="async" draggable="false" style="height:${h}px;--sc:${sc}px;${dur}"></div>
+        <img class="pvd-top" src="${base}-t.jpg" alt="" draggable="false" style="height:${T}px">
+        ${m.length > 2 ? `<img class="pvd-bar" src="${base}-b.png" alt="" draggable="false" style="left:${m[2]}px;top:${m[3]}px;width:${m[4]}px;height:${m[5]}px">` : ''}
+      </div>`;
+  }
   function _device(s){
-    const k = _kind(), src = 'intro/' + k + '-' + s.img + '.jpg';
-    const img = `<img class="pvd-img" src="${src}" alt="" decoding="async" draggable="false">`;
+    const k = _kind();
+    const img = _screenHtml(k, s);
     if (k === 'mac') return `<div class="pvd pvd-mac" data-k="mac"><div class="pvd-lid"><div class="pvd-scr">
         <div class="pvd-menu"><span class="pvd-ml"><svg viewBox="0 0 14 17" aria-hidden="true"><path fill="currentColor" d="M11.6 9c0-2.2 1.8-3.2 1.9-3.3-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.6.8-3.3.8-.7 0-1.7-.8-2.8-.8C2.8 4 1.4 4.9.7 6.3c-1.5 2.6-.4 6.5 1.1 8.6.7 1 1.5 2.2 2.6 2.1 1-.1 1.4-.7 2.7-.7s1.6.7 2.7.7c1.1 0 1.8-1 2.5-2.1.8-1.2 1.1-2.3 1.1-2.4 0 0-2.3-.9-2.3-3.5zM9.5 2.6c.6-.7 1-1.7.9-2.6-.8 0-1.9.6-2.5 1.3-.5.6-1 1.6-.9 2.5.9.1 1.9-.5 2.5-1.2z"/></svg><b>Portiv</b><span>Archivo</span><span>Edición</span><span>Visualización</span><span>Ventana</span><span>Ayuda</span></span>
         <span class="pvd-mr"><span>vie 14 nov</span><span>9:41</span></span></div>
-        ${img}<i class="pvd-notch"></i></div></div><div class="pvd-base"><i></i></div></div>`;
+        <div class="pvd-area">${img}</div><i class="pvd-notch"></i></div></div><div class="pvd-base"><i></i></div></div>`;
     if (k === 'ipad') return `<div class="pvd pvd-ipad" data-k="ipad"><i class="pvd-btn pvd-pw"></i><i class="pvd-btn pvd-v1"></i><i class="pvd-btn pvd-v2"></i>
         <div class="pvd-body"><i class="pvd-cam"></i><div class="pvd-scr">${img}
         <div class="pvd-sb"><span class="pvd-t">9:41&nbsp;&nbsp;vie 14 nov</span>${_SB_IC}</div><i class="pvd-home"></i></div></div></div>`;
@@ -51738,6 +51762,10 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     w = Math.floor(w);
     d.style.width = w + 'px'; d.style.fontSize = (w / (k === 'mac' ? 116 : 100)) + 'px';
     d.classList.toggle('pvd-bleed', bleed);
+    // El visor desplazable (px de la captura) se escala al ancho real de su pantalla.
+    const vp = d.querySelector('.pvd-vp');
+    if (vp){ const box = vp.parentElement; const z = box.clientWidth / (parseFloat(vp.style.width) || 1);
+      if (z > 0) vp.style.transform = 'scale(' + z.toFixed(5) + ')'; }
   }
 
   function _render(){
