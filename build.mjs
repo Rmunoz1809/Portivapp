@@ -197,6 +197,10 @@ async function build() {
   try {
     await fs.cp(path.join(ROOT, 'logos'), path.join(ROOT, 'dist', 'logos'), { recursive: true });
   } catch (e) { console.warn('  ! no se pudo copiar logos/:', e.message); }
+  // Y las capturas de los aparatos de las diapositivas (intro/<aparato>-<pantalla>.jpg, ver _device).
+  try {
+    await fs.cp(path.join(ROOT, 'intro'), path.join(ROOT, 'dist', 'intro'), { recursive: true });
+  } catch (e) { console.warn('  ! no se pudo copiar intro/:', e.message); }
 
   const outBytes = Buffer.byteLength(out);
   const [gzSrc, gzOut] = await Promise.all([gzip(src), gzip(out)]);
