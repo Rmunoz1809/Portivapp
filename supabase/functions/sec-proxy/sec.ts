@@ -235,11 +235,116 @@ function relabel(annual: IncomeRow[], quarterly: IncomeRow[]) {
   }
 }
 
-export async function secIncome(cik: number, get: Get) {
+// ═══ Informe anual leído directamente del expediente (15 nov 2026) ═════════════════════════
+// companyfacts a veces no recoge el último informe anual aunque esté presentado con XBRL: el
+// 20-F de 2025 de Nu Holdings (8 abr 2026, taxonomía IFRS 2024) seguía fuera en noviembre y la
+// tabla se quedaba en 2024. Si el último ejercicio de companyfacts tiene más de 420 días, se
+// busca en submissions el último 10-K/20-F/40-F con XBRL y se lee su instancia (el .xml que la
+// SEC extrae del iXBRL: <documento>_htm.xml). Solo hechos SIN dimensiones (los totales) y solo
+// de los tags de INCOME_TAGS; se convierten al formato de companyfacts y se suman a sus hechos,
+// así byPeriod aplica las mismas reglas (el presentado más tarde gana).
+const STALE_DAYS = 420;
+const TAG_RE = "<(?:[\\w-]+:)?";
+
+// Instancia XBRL → { "us-gaap"|"ifrs-full": { Tag: { units: { USD|USD/shares: [hechos] } } } }
+export function factsFromInstance(xml: string, form: string, filed: string): any {
+  const ns: Record<string, string> = {};
+  for (const m of xml.matchAll(/xmlns:([\w-]+)="([^"]+)"/g)) {
+    if (/fasb\.org\/us-gaap\//.test(m[2])) ns[m[1]] = "us-gaap";
+    else if (/xbrl\.ifrs\.org\/taxonomy\/[^/]+\/ifrs-full/.test(m[2])) ns[m[1]] = "ifrs-full";
+  }
+  const want = new Set(Object.values(INCOME_TAGS).flat());
+  const ctx = new Map<string, { start: string; end: string }>();
+  for (const m of xml.matchAll(new RegExp(TAG_RE + 'context\\b[^>]*\\bid="([^"]+)"[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?context>', "g"))) {
+    const b = m[2];
+    if (new RegExp(TAG_RE + "(segment|scenario)\\b").test(b)) continue;   // con dimensiones: no es el total
+    const s = new RegExp(TAG_RE + "startDate>\\s*([^<\\s]+)").exec(b);
+    const e = new RegExp(TAG_RE + "endDate>\\s*([^<\\s]+)").exec(b);
+    if (s && e) ctx.set(m[1], { start: s[1], end: e[1] });
+  }
+  const unit = new Map<string, string>();
+  for (const m of xml.matchAll(new RegExp(TAG_RE + 'unit\\b[^>]*\\bid="([^"]+)"[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?unit>', "g"))) {
+    const ms = [...m[2].matchAll(new RegExp(TAG_RE + "measure>\\s*([^<\\s]+)", "g"))].map((x) => x[1].split(":").pop());
+    unit.set(m[1], ms.join(/divide/.test(m[2]) ? "/" : "*"));
+  }
+  const out: any = {};
+  for (const m of xml.matchAll(/<([\w-]+):([A-Za-z0-9_]+)\b([^>]*?)>([^<]*)<\/\1:\2>/g)) {
+    const tx = ns[m[1]];
+    if (!tx || !want.has(tx + ":" + m[2])) continue;
+    const c = ctx.get(/contextRef="([^"]+)"/.exec(m[3])?.[1] ?? "");
+    const u = unit.get(/unitRef="([^"]+)"/.exec(m[3])?.[1] ?? "");
+    const val = Number(m[4].trim());
+    if (!c || !u || m[4].trim() === "" || !isFinite(val)) continue;
+    const d = days(c.start, c.end);
+    const units = ((out[tx] ??= {})[m[2]] ??= { units: {} }).units;
+    (units[u] ??= []).push({ start: c.start, end: c.end, val, form, filed, fy: null, fp: d >= 350 && d <= 380 ? "FY" : "" });
+  }
+  return out;
+}
+
+export function mergeFacts(base: any, extra: any): any {
+  const out: any = { ...(base ?? {}) };
+  for (const [tx, tags] of Object.entries<any>(extra ?? {})) {
+    out[tx] = { ...(out[tx] ?? {}) };
+    for (const [tag, v] of Object.entries<any>(tags)) {
+      const units = { ...(out[tx][tag]?.units ?? {}) };
+      for (const [u, arr] of Object.entries<any>(v.units)) units[u] = [...(units[u] ?? []), ...arr];
+      out[tx][tag] = { ...(out[tx][tag] ?? {}), units };
+    }
+  }
+  return out;
+}
+
+// Último informe anual con XBRL más nuevo que `after` (fecha de cierre). null si no hay.
+export async function latestAnnualFacts(cik: number, after: string | null, get: Get): Promise<{ facts: any; form: string; filed: string; accn: string } | null> {
+  const pad = String(cik).padStart(10, "0");
+  const r = await get(`https://data.sec.gov/submissions/CIK${pad}.json`);
+  if (!r.ok) { await r.body?.cancel(); throw new Error(`sec ${r.status} submissions`); }
+  const rec = (await r.json())?.filings?.recent ?? {};
+  const n = Array.isArray(rec.form) ? rec.form.length : 0;
+  let i = -1;
+  for (let k = 0; k < n; k++) {
+    if (!/^(10-K|20-F|40-F)$/i.test(String(rec.form[k])) || !rec.isXBRL?.[k]) continue;
+    const rep = String(rec.reportDate?.[k] ?? "");
+    if (after && !(rep > after)) return null;          // el más reciente ya está en companyfacts
+    i = k; break;
+  }
+  if (i < 0) return null;
+  const form = String(rec.form[i]), filed = String(rec.filingDate[i] ?? ""), accn = String(rec.accessionNumber[i]);
+  const dir = `https://www.sec.gov/Archives/edgar/data/${cik}/${accn.replace(/-/g, "")}`;
+  let name = String(rec.primaryDocument?.[i] ?? "").replace(/\.html?$/i, "_htm.xml");
+  let x = name.endsWith("_htm.xml") ? await get(`${dir}/${name}`) : null;
+  if (!x?.ok) {                                        // sin iXBRL: buscar la instancia en el índice
+    await x?.body?.cancel();
+    const ix = await get(`${dir}/index.json`);
+    if (!ix.ok) { await ix.body?.cancel(); throw new Error(`sec ${ix.status} index`); }
+    const items: any[] = (await ix.json())?.directory?.item ?? [];
+    name = items.map((it) => String(it?.name ?? ""))
+      .find((f) => /_htm\.xml$/i.test(f) || (/\.xml$/i.test(f) && !/(_cal|_def|_lab|_pre)\.xml$|FilingSummary/i.test(f))) ?? "";
+    if (!name) return null;
+    x = await get(`${dir}/${name}`);
+    if (!x.ok) { await x.body?.cancel(); throw new Error(`sec ${x.status} instance`); }
+  }
+  return { facts: factsFromInstance(await x.text(), form, filed), form, filed, accn };
+}
+
+export async function secIncome(cik: number, get: Get, today = new Date().toISOString().slice(0, 10)) {
   const pad = String(cik).padStart(10, "0");
   const r = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${pad}.json`);
   if (r.status === 404) { await r.body?.cancel(); return { cik, entity: "", annual: [], quarterly: [] }; }
   if (!r.ok) { await r.body?.cancel(); throw new Error(`sec ${r.status} companyfacts`); }
   const j = await r.json();
-  return { cik, entity: String(j?.entityName ?? ""), ...incomeFromFacts(j?.facts) };
+  let facts = j?.facts;
+  let res: any = incomeFromFacts(facts);
+  const last: string | null = res.annual.length ? res.annual[res.annual.length - 1].end : null;
+  if (!last || days(last, today) > STALE_DAYS) {
+    try {
+      const extra = await latestAnnualFacts(cik, last, get);
+      if (extra) {
+        facts = mergeFacts(facts, extra.facts);
+        res = { ...incomeFromFacts(facts), filing: { form: extra.form, filed: extra.filed, accn: extra.accn } };
+      }
+    } catch (_e) { /* sin el expediente queda lo de companyfacts */ }
+  }
+  return { cik, entity: String(j?.entityName ?? ""), ...res };
 }
