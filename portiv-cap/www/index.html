@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1026">
+<meta name="pv-build" content="20261119-1042">
 <script>
 (function(){
   var h = location.hostname;
@@ -30822,6 +30822,40 @@ function _pvtvFromSec(rows, anual){
     return o;
   });
 }
+// Columna del año en curso (19 nov 2026): el informe anual de 2026 de las empresas que cierran
+// en diciembre no sale hasta febrero, así que la vista anual se quedaba en 2025. Si ya hay
+// trimestres reportados después del último ejercicio, se añade la suma de los ÚLTIMOS 12 MESES
+// (4 trimestres seguidos) con el año en que cierran («2026») y su cambio contra los 12 meses
+// anteriores (los 4 trimestres de un año antes): interanual de verdad, no contra el ejercicio.
+const _PVTV_SUM = ['rev','cost','gross','op','net','pretax','tax','nii','nonii','prov','nonie'];
+function _pvtvTtmAt(Q, i){
+  if (i < 3) return null;
+  const g = Q.slice(i - 3, i + 1);
+  for (let k = 1; k < 4; k++){ const d = (_pvtvD(g[k].end) - _pvtvD(g[k - 1].end)) / 864e5; if (d < 70 || d > 125) return null; }
+  const span = (_pvtvD(g[3].end) - _pvtvD(g[0].end)) / 864e5;
+  if (span < 250 || span > 300) return null;
+  const o = { end:g[3].end, fy:g[3].fy, q:0, _ttm:true };
+  _PVTV_SUM.forEach(k => { o[k] = g.every(x => x[k] != null) ? g.reduce((s, x) => s + x[k], 0) : null; });
+  o.eps = g.every(x => x.eps != null) ? Math.round(g.reduce((s, x) => s + x.eps, 0) * 100) / 100 : null;
+  return (o.rev != null || o.net != null) ? o : null;
+}
+// Serie anual de la vista: los últimos `n` ejercicios y, si procede, la columna de 12 meses al
+// último trimestre (sustituye al ejercicio más viejo para no ensanchar la tabla).
+function _pvtvAnualVista(S, n){
+  const A = S.A || [], Q = S.Q || [];
+  if (!A.length || Q.length < 4) return A.slice(-n);
+  const lastA = A[A.length - 1], i = Q.length - 1;
+  if (_pvtvD(Q[i].end) - _pvtvD(lastA.end) < 45 * 864e5) return A.slice(-n);
+  const t = _pvtvTtmAt(Q, i);
+  if (!t) return A.slice(-n);
+  const j = Q.findIndex(x => { const d = (_pvtvD(t.end) - _pvtvD(x.end)) / 864e5; return d >= 340 && d <= 390; });
+  t._prev = j >= 0 ? _pvtvTtmAt(Q, j) : null;
+  const yr = String(new Date(t.end + 'T12:00:00Z').getUTCFullYear());
+  const usado = A.some(x => x.label === yr);
+  t.label = usado ? 'Últ. 12 m' : yr;
+  t.sub = '12 meses al ' + _pvtvFecha(t.end);
+  return A.slice(-(n - 1)).concat([t]);
+}
 async function _pvtvLoad(tk, stage){
   const now = Date.now();
   let S = _PVTV_MEM[tk];
@@ -31014,7 +31048,7 @@ function _pvtvEarnData(S){
   revQ.sort((a, b) => a.end.localeCompare(b.end));
   fut.filter(c => typeof c.revenueEstimate === 'number' && c.revenueEstimate > 0)
     .forEach(c => revQ.push({ label:lbl(c.year, c.quarter), act:null, est:c.revenueEstimate, fut:true }));
-  return { er, fut, next:fut[0] || null, epsQ, revQ, A:(S.A || []).slice(-6) };
+  return { er, fut, next:fut[0] || null, epsQ, revQ, A:_pvtvAnualVista(S, 6) };
 }
 
 function _pvtvEarnHtml(tk, S, a){
@@ -31059,9 +31093,9 @@ function _pvtvEarnHtml(tk, S, a){
       const A = D.A.filter(x => x.eps != null);
       chart = _pvtvChart(A.map(x => ({ label:x.label, vals:[{ v:x.eps, c:'s0' }] })), v => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2));
       leg = _pvtvLeg([['s0', 'EPS diluido reportado']]);
-      table = _pvtvTable(A.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), [
+      table = _pvtvTable(A.map(x => ({ l:x.label, s:x.sub || _pvtvFecha(x.end) })), [
         { n:'EPS diluido', cls:'hl', cells:A.map(x => _pvtvEps(x.eps)) },
-        { n:'Cambio anual', cells:A.map((x, i) => (i ? _pvtvPct(_pvtvChg(x.eps, A[i - 1].eps)) : '') || '—') },
+        { n:'Cambio anual', cells:A.map((x, i) => (x._ttm ? (x._prev ? _pvtvPct(_pvtvChg(x.eps, x._prev.eps)) : '') : i ? _pvtvPct(_pvtvChg(x.eps, A[i - 1].eps)) : '') || '—') },
       ]);
       hint = 'EPS diluido de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras), con criterios contables: puede diferir del EPS ajustado de los trimestres.';
     } else if (S.st < 2) {
@@ -31091,11 +31125,12 @@ function _pvtvEarnHtml(tk, S, a){
       const A = D.A.filter(x => x.rev != null);
       chart = _pvtvChart(A.map(x => ({ label:x.label, vals:[{ v:x.rev, c:'s0' }] })), v => _pvtvBig(v, true));
       leg = _pvtvLeg([['s0', 'Ingresos reportados']]);
-      table = _pvtvTable(A.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), [
+      table = _pvtvTable(A.map(x => ({ l:x.label, s:x.sub || _pvtvFecha(x.end) })), [
         { n:'Ingresos', cls:'hl', cells:A.map(x => _pvtvBig(x.rev)) },
-        { n:'Cambio anual', cells:A.map((x, i) => (i ? _pvtvPct(_pvtvChg(x.rev, A[i - 1].rev)) : '') || '—') },
+        { n:'Cambio anual', cells:A.map((x, i) => (x._ttm ? (x._prev ? _pvtvPct(_pvtvChg(x.rev, x._prev.rev)) : '') : i ? _pvtvPct(_pvtvChg(x.rev, A[i - 1].rev)) : '') || '—') },
       ]);
-      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras).';
+      const t = A.find(x => x._ttm);
+      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras).' + (t ? ` ${t.label}: suma de los últimos cuatro trimestres (${t.sub}), comparada con los 12 meses anteriores.` : '');
     }
     if (chart) h += `<div class="px-card">${st('Ingresos', 'Ventas totales', _pvtvSeg('rev', mode))}${chart}${leg}${table}<div class="px-hint">${hint}</div></div>`;
   }
@@ -31112,7 +31147,7 @@ function _pvtvIncHtml(tk, S){
     : pvEsc(tk) + ' no tiene estados financieros en la SEC (los ETF y algunas empresas extranjeras no los presentan).</p>'}</div>`;
   const mode = ((_PVTV_UI.inc === 'Q' && qOk) || !aOk) ? 'Q' : 'A';
   const full = mode === 'A' ? S.A : S.Q;
-  const P = full.slice(mode === 'A' ? -6 : -8);
+  const P = mode === 'A' ? _pvtvAnualVista(S, 6) : full.slice(-8);
   // Banco: sin utilidad bruta ni operativa, con margen financiero o gastos no financieros. Su
   // estado de resultados tiene otras líneas (BAC, JPM, WFC…), no «datos que faltan».
   const has = k => P.filter(x => x[k] != null).length >= 2;
@@ -31123,7 +31158,7 @@ function _pvtvIncHtml(tk, S){
     .filter(([k]) => has(k));
   const chart = _pvtvChart(P.map(x => ({ label:x.label, vals:SER.map(([k, c]) => ({ v:x[k], c })) })), v => _pvtvBig(v, true));
   // Cambio contra el mismo periodo del año anterior (año previo o mismo trimestre de hace un año).
-  const prevOf = x => { const e = _pvtvD(x.end);
+  const prevOf = x => { if (x._ttm) return x._prev || null; const e = _pvtvD(x.end);
     return full.find(y => { const d = (e - _pvtvD(y.end)) / 864e5; return d >= 340 && d <= 390; }) || null; };
   const cell = (x, k, money) => {
     const v = x[k]; if (v == null) return '—';
@@ -31161,8 +31196,8 @@ function _pvtvIncHtml(tk, S){
   const rowsOk = rows.filter(r => r.cells.some(c => c !== '—'));
   let h = `<div class="px-card">${st('Estado de resultados', mode === 'A' ? 'Informes anuales a la SEC' : 'Trimestres reportados a la SEC', _pvtvSeg('inc', mode))}
     ${chart}${_pvtvLeg(SER.map(([, c, l]) => [c, l]))}
-    ${_pvtvTable(P.map(x => ({ l:x.label, s:_pvtvFecha(x.end) })), rowsOk)}
-    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
+    ${_pvtvTable(P.map(x => ({ l:x.label, s:x.sub || _pvtvFecha(x.end) })), rowsOk)}
+    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'A' && P.some(x => x._ttm) ? ` La columna ${pvEsc(P[P.length - 1].label)} suma los últimos cuatro trimestres reportados (${pvEsc(P[P.length - 1].sub)}), porque el informe anual del ejercicio en curso aún no sale; su cambio es contra los 12 meses anteriores.` : ''}${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
   // ¿A dónde va cada dólar de ingresos? (último periodo de la vista)
   const x = banco
     ? [...P].reverse().find(r => r.rev > 0 && r.prov != null && r.nonie != null && r.tax != null && r.net != null)
@@ -31172,7 +31207,7 @@ function _pvtvIncHtml(tk, S){
       ? [['Reservas para créditos', x.prov, 'c1'], ['Gastos', x.nonie, 'c2'], ['Impuestos y otros', x.rev - x.prov - x.nonie - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']]
       : [['Costo de ventas', x.cost, 'c1'], ['Gastos operativos', x.gross - x.op, 'c2'], ['Impuestos, intereses y otros', x.op - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']];
     if (parts.every(p => p[1] >= 0)){
-      const per = mode === 'A' ? 'el ejercicio ' + x.label : 'el trimestre ' + x.label;
+      const per = x._ttm ? 'los ' + x.sub : mode === 'A' ? 'el ejercicio ' + x.label : 'el trimestre ' + x.label;
       h += `<div class="px-card">${st('¿A dónde va cada dólar?', 'De cada $1 de ingresos en ' + per)}
         <div class="pvtv-stk">${parts.map(p => { const w = p[1] / x.rev * 100; return w > 0 ? `<i class="${p[2]}" style="width:${w.toFixed(2)}%">${w >= 9 ? `<b>${Math.round(w)}¢</b>` : ''}</i>` : ''; }).join('')}</div>
         <div class="pvtv-stl">${parts.map(p => `<div><i class="${p[2]}"></i><span>${pvEsc(p[0])}</span><b>${_pvtvBig(p[1])}</b><em>${(p[1] / x.rev * 100).toFixed(1)}%</em></div>`).join('')}</div>

@@ -145,7 +145,7 @@ async function buildIncome(symbol: string): Promise<unknown> {
   const payload = cik == null
     ? { symbol, cik: null, entity: "", annual: [], quarterly: [] }
     : { symbol, ...(await secIncome(cik, secGet)) };
-  await cachePut("sec:income3:" + symbol, payload);
+  await cachePut("sec:income4:" + symbol, payload);
   return payload;
 }
 
@@ -157,13 +157,15 @@ Deno.serve(async (req) => {
   if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) return json({ error: "bad symbol" }, 400);
 
   const income = url.searchParams.get("kind") === "income";
-  const ckey = (income ? "sec:income3:" : "sec:interest:") + symbol;
+  const ckey = (income ? "sec:income4:" : "sec:interest:") + symbol;
   const fkey = (income ? "income:" : "") + symbol;
 
   // 1) Caché compartida: N usuarios con el mismo símbolo → UNA consulta a la SEC por semana.
   const hit = await cacheGet(ckey);
-  // El estado de resultados cambia con cada 10-Q: 3 días; el gasto por intereses (10-K), 7.
-  if (hit && hit.age < (income ? 3 * 86400 : TTL_S)) return json(hit.data, 200);
+    // 19 nov 2026: un día (no tres) para que un 10-Q nuevo salga al día siguiente; y si la
+  // lectura del último informe anual falló (filingError), solo una hora.
+  const incTtl = hit?.data?.filingError ? 3600 : 86400;
+  if (hit && hit.age < (income ? incTtl : TTL_S)) return json(hit.data, 200);
 
   // 2) Miss o vencida → SEC, dentro del presupuesto de la IP.
   if (!inflight.has(fkey) && !missBudgetOk(clientIp(req))) {

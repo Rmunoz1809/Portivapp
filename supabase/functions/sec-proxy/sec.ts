@@ -191,8 +191,10 @@ export function incomeFromFacts(facts: any, maxA = 8, maxQ = 16): { annual: Inco
         if ((r as any)[field] == null) { (r as any)[field] = p.val; r.tags[field] = key; }
       }
       // T4 = ejercicio − acumulado a 9 meses (mismo inicio, mismo tag). El EPS no se resta.
+      // 245–290 días: COST cierra trimestres de 12-12-12-16 semanas y su acumulado a 9 meses
+      // dura 36 semanas (252 días); con 255 su T4 no salía nunca.
       if (!isEps) for (const a of annual.values()) {
-        const ytd = [...per.values()].find((p) => p.start === a.start && days(p.start, p.end) >= 255 && days(p.start, p.end) <= 285);
+        const ytd = [...per.values()].find((p) => p.start === a.start && days(p.start, p.end) >= 245 && days(p.start, p.end) <= 290);
         if (!ytd) continue;
         const r = row(Q, a.end, ytd.end, a.fy, 4);
         if ((r as any)[field] == null) { (r as any)[field] = a.val - ytd.val; r.tags[field] = key + " (anual − 9M)"; }
@@ -344,7 +346,11 @@ export async function secIncome(cik: number, get: Get, today = new Date().toISOS
         facts = mergeFacts(facts, extra.facts);
         res = { ...incomeFromFacts(facts), filing: { form: extra.form, filed: extra.filed, accn: extra.accn } };
       }
-    } catch (_e) { /* sin el expediente queda lo de companyfacts */ }
+    } catch (e) {
+      // Sin el expediente queda lo de companyfacts, pero marcado: index.ts lo guarda solo una
+      // hora (NU se quedó 3 días en 2024 por un fallo pasajero al leer su 20-F).
+      res = { ...res, filingError: String((e as Error)?.message || e).slice(0, 160) };
+    }
   }
   return { cik, entity: String(j?.entityName ?? ""), ...res };
 }
