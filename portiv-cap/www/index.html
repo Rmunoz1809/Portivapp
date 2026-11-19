@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1138">
+<meta name="pv-build" content="20261119-1419">
 <script>
 (function(){
   var h = location.hostname;
@@ -24256,6 +24256,9 @@ function initPerfChart() {
   // la serie que se va a dibujar (d.values). Así el config ya lleva min/max finitos y el
   // primer paint del constructor NO autoescala (elimina el "resize" al cargar).
   try { _calcGlobalYBounds(d && d.values ? d.values : null); } catch(e) {}
+  // Primer arranque sin foto: si lo único que hay es la serie plana provisional, el esqueleto
+  // tapa el lienzo desde el primer frame (la gráfica se crea debajo y la curva real la sustituye).
+  try { if (d && typeof _pvPrimeraCurvaGate === 'function') _pvPrimeraCurvaGate(d); } catch(e) {}
   // Única instancia de Chart.js que no se destruía: cada recreación dejaba viva la anterior
   // (listeners de resize + el canvas retenido). Se destruye antes de reemplazarla.
   if (perfChart) { try { perfChart.destroy(); } catch(e){} perfChart = null; }
@@ -24992,10 +24995,36 @@ function _pvAutoRedraw(fn){
 
 // Permite que PORTIV_CHART inyecte un dataset directamente (sin pasar por setPeriod).
 // `updMode`: modo de update de Chart.js. 'skip' = no pintar (lo hace el zoom por frames).
+// ── PRIMER ARRANQUE: NUNCA LA LÍNEA RECTA (19 nov 2026) ───────────────────────────────────
+// Sin foto guardada (primera vez en el aparato, o caché borrada) la única serie disponible al
+// abrir es la provisional: 2 puntos con el mismo total → una recta plana en +0.00% que luego
+// saltaba a la curva real. Mientras no se haya pintado ninguna curva real, una serie plana o
+// provisional NO se dibuja: se ve el esqueleto «Cargando tu gráfica…» y la curva entra de una
+// en cuanto llega (el sondeo del esqueleto la repinta cada 2 s). Tope 15 s: una cartera de hoy
+// sin movimiento sí es plana de verdad y entonces se dibuja.
+const _PV_BOOT_T = Date.now();
+function _pvSerieEsPlana(ds){
+  try { return !!ds._provisional || new Set((ds.values || []).map(v => Math.round(+v * 100))).size < 2; } catch(e){ return false; }
+}
+function _pvPrimeraCurvaGate(ds){
+  if (window._pvRealPainted) return false;
+  const plana = _pvSerieEsPlana(ds);
+  const conPos = (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS) && HOLDINGS.length > 0);
+  if (plana && conPos && (Date.now() - _PV_BOOT_T) < 15000) {
+    window._pvFirstWait = true;
+    try { if (typeof window._pvChartLoading === 'function') window._pvChartLoading(true, _L('Cargando tu gráfica…', 'Loading your chart…')); } catch(e){}
+    return true;
+  }
+  window._pvRealPainted = !plana || (Date.now() - _PV_BOOT_T) >= 15000 || !conPos;
+  if (window._pvFirstWait) { window._pvFirstWait = false; try { if (!window._BROKER_HISTORY_PENDING || window._BROKER_LIVE) window._pvChartLoading(false); } catch(e){} }
+  return false;
+}
 function setPeriodData(period, ds, updMode) {
   if (!perfChart || !ds || !ds.values || !ds.values.length) return;
   // Cotizaciones del día aún en vuelo → se conserva la curva ya dibujada (ver bloque de arriba).
   if (_pvHoldChartWhileLoading(updMode)) return;
+  // Primer arranque sin curva real todavía → esqueleto, nunca la recta provisional.
+  if (_pvPrimeraCurvaGate(ds)) return;
   // Largo de la serie pintada AHORA (antes de reemplazarla): decide si la transición
   // animada de Chart.js es segura. Ver el update() del final.
   const _prevLen = (perfChart.data && perfChart.data.datasets && perfChart.data.datasets[0]
@@ -25524,6 +25553,15 @@ function _fhEndpoint(path) {
 // respondido. Se marcan una vez por sesión y a partir de ahí ni se piden.
 const _fhPlanBlocked = new Set();
 function _fhPathKey(path){ return String(path || '').split('?')[0]; }
+// 19 nov 2026: el 403 del upstream también llega por SÍMBOLO en endpoints que sí están en el
+// plan (/quote, /stock/profile2, /stock/metric… de una acción OTC o extranjera). Antes eso
+// marcaba el endpoint entero para toda la sesión: abrir un ADR OTC dejaba la app sin una sola
+// cotización. Endpoints del plan (conocidos o que ya respondieron 200) → sólo se bloquea ese
+// símbolo; el resto (p. ej. /stock/price-target) sigue bloqueándose entero.
+const _fhPlanOk = new Set(['/quote', '/stock/profile2', '/stock/metric', '/stock/recommendation', '/stock/earnings',
+  '/company-news', '/news', '/search', '/calendar/earnings', '/stock/financials-reported', '/stock/peers']);
+function _fhSymOf(path){ const m = /[?&]symbols?=([^&]*)/.exec(String(path || '')); let s = m ? m[1] : ''; try { s = decodeURIComponent(s); } catch(e){} return s.toUpperCase(); }
+function _fhBlockKey(path){ const k = _fhPathKey(path); return _fhPlanOk.has(k) ? k + '|' + _fhSymOf(path) : k; }
 
 // ── Coalescing de fhFetch — un choke point para TODA la API de datos ──────────────
 // Varios bloques piden el mismo endpoint del mismo símbolo casi a la vez: medido con 5
@@ -25648,7 +25686,7 @@ async function fhFetch(path, timeoutMs = 15000, _retry = 0) {
 }
 
 async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
-  if (_fhPlanBlocked.has(_fhPathKey(path))) throw new Error('Endpoint no incluido en el plan de datos');
+  if (_fhPlanBlocked.has(_fhPathKey(path)) || _fhPlanBlocked.has(_fhBlockKey(path))) throw new Error('Endpoint no incluido en el plan de datos');
   const ep = _fhEndpoint(path);
   if (!ep) throw new Error('Sin API Key — configúrala primero');
   const ctrl = new AbortController();
@@ -25685,7 +25723,7 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
       let _b403 = '';
       try { _b403 = await res.clone().text(); } catch(_){}
       if (/upstream\s*403/i.test(_b403)) {
-        _fhPlanBlocked.add(_fhPathKey(path));
+        _fhPlanBlocked.add(_fhBlockKey(path));
         throw new Error('Endpoint no incluido en el plan de datos');
       }
     }
@@ -25713,6 +25751,7 @@ async function _fhFetchRaw(path, timeoutMs = 15000, _retry = 0) {
     if (!res.ok) throw new Error(`Error ${res.status}`);
     const _json = await res.json();
     clearTimeout(tid);
+    _fhPlanOk.add(_fhPathKey(path));   // respondió 200 → está en el plan: futuros 403 serán por símbolo
     return _pvShareClassFix(path, _json);
   } catch(e) {
     clearTimeout(tid);
@@ -25760,6 +25799,7 @@ let _alpacaDeadUntil = 0;
 // «BRK/B»), pero Alpaca sólo reconoce «BRK.B». Con el guion la gráfica salía vacía («Sin
 // histórico de precios»). Se traduce el símbolo al pedir y la respuesta se devuelve también
 // con la clave original, así que ningún llamador tiene que saberlo.
+function _pvAlpacaOk(s){ return /^[A-Z]{1,5}([.\-\/ ][A-Z])?$/.test(String(s || '').toUpperCase().trim()); }
 function _pvAlpacaSym(s){ return String(s || '').toUpperCase().replace(/^([A-Z]{1,5})[-\/ ]([A-Z])$/, '$1.$2'); }
 async function _alpacaFetch(path, timeoutMs = 12000){
   const _alias = {};
@@ -26074,7 +26114,10 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
 // campana devolvía CERO barras → la 1D caía al plan B y se dibujaba una diagonal inventada.
 async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO, extOut){
   const out = {};
-  const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean))].sort();
+  // Sólo símbolos que Alpaca acepta (acciones/ETF de EE. UU., «BRK-B»). Uno inválido —«2222.SR»,
+  // «BTC-USD», un fondo con dígitos— hacía que Alpaca rechazara (400) el lote ENTERO y la 1D o la
+  // referencia de mercado se quedaban sin ninguna posición.
+  const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase().trim()).filter(t => _pvAlpacaOk(t)))].sort();
   if (!syms.length) return out;
   // La ventana arranca en la fecha de HOY (ET) en vez de "hace 6 días". Además de bajar mucho
   // menos dato, mantiene la URL —y por tanto la clave de caché del proxy— IDÉNTICA durante
@@ -26137,7 +26180,10 @@ async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO, extOut){
 // petición × ~525 sesiones queda bajo el `limit` de una sola página de Alpaca.
 async function _alpacaDailyBars(tickers, startISO, timeoutMs = 12000){
   const out = {};
-  const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean))].sort();
+  // Sólo símbolos que Alpaca acepta (acciones/ETF de EE. UU., «BRK-B»). Uno inválido —«2222.SR»,
+  // «BTC-USD», un fondo con dígitos— hacía que Alpaca rechazara (400) el lote ENTERO y la 1D o la
+  // referencia de mercado se quedaban sin ninguna posición.
+  const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase().trim()).filter(t => _pvAlpacaOk(t)))].sort();
   if (!syms.length || !/^\d{4}-\d{2}-\d{2}$/.test(String(startISO || ''))) return out;
   let today = '';
   try { today = PORTIV_CHART._todayET(); } catch(e){ return out; }
@@ -27009,27 +27055,27 @@ const STOCK_DB = [
   ['VOO','Vanguard S&P 500 ETF','ETF'],
   // ── Globales — Japón ──
   ['MITSY','Mitsui & Co Ltd','Materiales'],['SMFG','Sumitomo Mitsui Financial Group','Banco'],
-  ['TOELY','Tokyo Electron Ltd','Semis'],['FANUY','Fanuc Corp','Industrial'],
-  ['CAJ','Canon Inc','Tech'],['FRCOY','Fast Retailing (Uniqlo)','Consumer'],
+  ['FANUY','Fanuc Corp','Industrial'],
+  ['FRCOY','Fast Retailing (Uniqlo)','Consumer'],
   ['SVNDY','Seven & I Holdings','Retail'],['TAK','Takeda Pharmaceutical','Salud'],
   ['NTTYY','Nippon Telegraph & Telephone','Telecom'],['KMTUY','Komatsu Ltd','Industrial'],
   ['HMC','Honda Motor Co','Auto'],['SZKMY','Suzuki Motor Corp','Auto'],
   // ── Globales — Corea del Sur ──
-  ['HYMTF','Hyundai Motor Co','Auto'],['KIMTF','Kia Corp','Auto'],
-  ['PKX','POSCO Holdings','Materiales'],['LGEAF','LG Energy Solution','Auto/Tech'],['LGCLF','LG Chem Ltd','Materiales'],
+  
+  ['PKX','POSCO Holdings','Materiales'],
   // ── Globales — Taiwán ──
-  ['MDTKF','MediaTek Inc','Semis'],['HNHPF','Hon Hai Precision (Foxconn)','Tech'],
-  ['DTTEY','Delta Electronics','Industrial'],['CHT','Chunghwa Telecom','Telecom'],
-  ['WTCOF','Wistron Corp','Tech'],['ADVENTF','Advantech Co','Tech'],
+  ['HNHPF','Hon Hai Precision (Foxconn)','Tech'],
+  ['CHT','Chunghwa Telecom','Telecom'],
+  
   // ── Globales — India (adicionales) ──
   ['SUNPF','Sun Pharmaceutical Industries','Salud'],['IBN','ICICI Bank Ltd','Banco'],
-  ['SBKFF','State Bank of India','Banco'],['AXBKY','Axis Bank Ltd','Banco'],
-  ['BJFLY','Bajaj Finance Ltd','Financiero'],['MAHMF','Mahindra & Mahindra','Auto'],
-  ['MARUY','Maruti Suzuki India','Auto'],['HNLFY','Hindustan Unilever','Consumer'],
-  ['AIPNY','Asian Paints Ltd','Materiales'],['ULTCF','UltraTech Cement','Industrial'],
-  ['WIT','Wipro Ltd','Tech'],['TCMHF','Tech Mahindra','Tech'],
-  ['RDY','Dr. Reddy\'s Laboratories','Salud'],['TTM','Tata Motors Ltd','Auto'],
-  ['ADPRF','Adani Ports & SEZ','Industrial'],['CCOIF','Coal India Ltd','Energía'],['NPTCF','NTPC Ltd','Energía'],
+  ['SBKFF','State Bank of India','Banco'],
+  ['MAHMF','Mahindra & Mahindra','Auto'],
+  ['MARUY','Maruti Suzuki India','Auto'],
+  
+  ['WIT','Wipro Ltd','Tech'],
+  ['RDY','Dr. Reddy\'s Laboratories','Salud'],
+  
   // ── Globales — Vietnam / SE Asia ──
   ['VFS','VinFast Auto','Auto'],
   // ── Globales — Singapur ──
@@ -27039,16 +27085,16 @@ const STOCK_DB = [
   // ── Globales — Hong Kong ──
   ['CKHUY','CK Hutchison Holdings','Industrial'],['HKXCY','Hong Kong Exchanges & Clearing','Financiero'],
   // ── Globales — China (adicionales) ──
-  ['LNVGY','Lenovo Group Ltd','Tech'],['GELYY','Geely Automobile Holdings','Auto'],
+  ['LNVGY','Lenovo Group Ltd','Tech'],
   ['ZTO','ZTO Express','Industrial'],['BEKE','KE Holdings (Beike)','Tech China'],
-  ['CIHKY','China Merchants Bank','Banco'],['IDBKF','Industrial Bank Co','Banco'],
-  ['HRELF','Haier Smart Home','Consumer'],['MDEAF','Midea Group','Industrial'],
-  ['GRELF','Gree Electric Appliances','Industrial'],['ZIJMY','Zijin Mining Group','Materiales'],
+  ['CIHKY','China Merchants Bank','Banco'],
+  
+  ['ZIJMY','Zijin Mining Group','Materiales'],
   ['CRCCY','CRRC Corporation','Industrial'],['CRWOF','China Railway Group','Industrial'],
-  ['SNP','Sinopec China Petroleum','Energía'],['CICOY','COSCO Shipping Holdings','Industrial'],
-  ['BAOSF','Baoshan Iron & Steel','Materiales'],
+  ['CICOY','COSCO Shipping Holdings','Industrial'],
+  
   // ── Globales — UK (adicionales) ──
-  ['LNSTY','London Stock Exchange Group','Financiero'],
+  
   // ── Globales — Canadá (adicionales) ──
   ['RIOCF','RioCan REIT','REIT'],['GOLD','Barrick Gold Corp','Materiales'],
   ['FNV','Franco-Nevada Corp','Materiales'],['WPM','Wheaton Precious Metals','Materiales'],
@@ -27062,8 +27108,8 @@ const STOCK_DB = [
   ['PHG','Philips NV','Salud'],['ADYYF','Adyen NV','Pagos'],
   ['PPRUY','Kering SA','Consumer'],['MGDDY','Michelin Group','Industrial'],
   ['SAFRY','Safran SA','Industrial'],['VCISY','Vinci SA','Industrial'],
-  ['LGRDY','Legrand SA','Industrial'],['ORAN','Orange SA','Telecom'],
-  ['TEF','Telefónica SA','Telecom'],['REPYY','Repsol SA','Energía'],
+  ['LGRDY','Legrand SA','Industrial'],
+  ['REPYY','Repsol SA','Energía'],
   ['E','Eni SpA','Energía'],['PRDSF','Prada SpA','Consumer'],
   // ── Globales — Europa ──
   ['NVS','Novartis AG','Salud'],['RHHBY','Roche Holding AG','Salud'],['LVMUY','LVMH Moët Hennessy Louis Vuitton','Consumer'],
@@ -27073,17 +27119,17 @@ const STOCK_DB = [
   ['UBS','UBS Group AG','Banco'],['DTEGY','Deutsche Telekom AG','Telecom'],['IBDRY','Iberdrola SA','Energía'],
   ['ENLAY','Enel SpA','Energía'],['GLNCY','Glencore PLC','Materiales'],['ISNPY','Intesa Sanpaolo','Banco'],
   ['BNPQY','BNP Paribas SA','Banco'],['AXAHY','AXA SA','Financiero'],['DANOY','Danone SA','Consumer'],
-  ['ESLOY','EssilorLuxottica','Consumer'],['ABB','ABB Ltd','Industrial'],['ZURVY','Zurich Insurance Group','Financiero'],
+  ['ESLOY','EssilorLuxottica','Consumer'],['ZURVY','Zurich Insurance Group','Financiero'],
   ['GSK','GSK plc','Salud'],['DEO','Diageo plc','Consumer'],['RELX','RELX plc','Media'],
   ['BUD','Anheuser-Busch InBev','Consumer'],['RACE','Ferrari NV','Auto'],['ING','ING Groep NV','Banco'],
   ['SAN','Banco Santander SA','Banco'],['BHP','BHP Group Ltd','Materiales'],['RIO','Rio Tinto Group','Materiales'],
   // ── Globales — Asia/Pacífico ──
-  ['TCEHY','Tencent Holdings','Tech China'],['SSNLF','Samsung Electronics','Tech'],['HXSCF','SK Hynix Inc','Semis'],
+  ['TCEHY','Tencent Holdings','Tech China'],
   ['MPNGY','Meituan','Tech China'],['NTES','NetEase Inc','Tech China'],['XIACF','Xiaomi Corp','Tech'],
   ['CICHY','China Construction Bank','Banco'],['ACGBY','Agricultural Bank of China','Banco'],
   ['BACHY','Bank of China','Banco'],['IDCBY','ICBC Industrial & Commercial Bank of China','Banco'],
   ['CMHHY','China Mobile Ltd','Telecom'],['PCCYF','PetroChina Co','Energía'],
-  ['CSUAY','China Shenhua Energy','Energía'],['LFC','China Life Insurance','Financiero'],
+  ['CSUAY','China Shenhua Energy','Energía'],
   ['PNGAY','Ping An Insurance','Financiero'],['BYDDY','BYD Company','Auto/Tech'],
   ['MHGU','Kweichow Moutai','Consumer'],
   ['SFTBY','SoftBank Group Corp','Tech'],['HTHIY','Hitachi Ltd','Industrial'],
@@ -27101,12 +27147,12 @@ const STOCK_DB = [
   ['ENB','Enbridge Inc','Energía'],
   // ── Globales — India y Medio Oriente ──
   ['INFY','Infosys Ltd','Tech'],['HDB','HDFC Bank Ltd','Banco'],
-  ['TCSFY','Tata Consultancy Services','Tech'],['BHARX','Bharti Airtel','Telecom'],
-  ['ADAEY','Adani Enterprises','Industrial'],['ADGRY','Adani Green Energy','Energía Solar'],
-  ['LTOUF','Larsen & Toubro','Industrial'],['RLNIY','Reliance Industries','Energía'],
-  ['MBGYY','Mercedes-Benz Group AG','Auto'],['BMWYY','BMW AG','Auto'],
-  ['VWAGY','Volkswagen Group AG','Auto'],['ARAJHY','Al Rajhi Bank','Banco'],
-  ['2222.SR','Saudi Aramco','Energía'],
+  
+  
+  ['LTOUF','Larsen & Toubro','Industrial'],
+  ['MBGYY','Mercedes-Benz Group AG','Auto'],
+  ['VWAGY','Volkswagen Group AG','Auto'],
+  
   // ── Candidates & speculative ──
   ['IESC','IES Holdings Inc.','Industrial'],['CPA','Copa Holdings S.A.','Aerolíneas'],
   ['CRWD','CrowdStrike Holdings','Cyber'],['ASML','ASML Holding N.V.','Semis'],
@@ -27174,16 +27220,16 @@ const STOCK_DB = [
   ['RIVN','Rivian Automotive','Auto'],['LCID','Lucid Group','Auto'],
   ['SPOT','Spotify Technology','Media'],['ROKU','Roku Inc.','Media'],
   ['CMCSA','Comcast Corporation','Media'],['PARA','Paramount Global','Media'],
-  ['WBD','Warner Bros. Discovery','Media'],['SNAP','Snap Inc.','Social'],
-  ['PINS','Pinterest Inc.','Social'],['TWTR','Twitter / X Corp.','Social'],
+  ['SNAP','Snap Inc.','Social'],
+  ['PINS','Pinterest Inc.','Social'],
   ['SHOP','Shopify Inc.','E-commerce'],['MELI','MercadoLibre Inc.','E-commerce'],
   ['SE','Sea Limited','E-commerce'],['CPNG','Coupang Inc.','E-commerce'],
   ['SNOW','Snowflake Inc.','Software'],['DDOG','Datadog Inc.','Software'],
   ['ZS','Zscaler Inc.','Cyber'],['FTNT','Fortinet Inc.','Cyber'],
   ['OKTA','Okta Inc.','Cyber'],['S','SentinelOne Inc.','Cyber'],
-  ['CYBR','CyberArk Software','Cyber'],['NET','Cloudflare Inc.','Tech'],
-  ['MDB','MongoDB Inc.','Software'],['CFLT','Confluent Inc.','Software'],
-  ['HCP','HashiCorp Inc.','Software'],['GTLB','GitLab Inc.','Software'],
+  ['NET','Cloudflare Inc.','Tech'],
+  ['MDB','MongoDB Inc.','Software'],
+  ['GTLB','GitLab Inc.','Software'],
   ['WDAY','Workday Inc.','Software'],['VEEV','Veeva Systems','Software'],
   ['HUBS','HubSpot Inc.','Software'],['BILL','Bill.com Holdings','Software'],
   ['ZM','Zoom Video Communications','Software'],['DOCU','DocuSign Inc.','Software'],
@@ -27195,7 +27241,7 @@ const STOCK_DB = [
   ['AMT','American Tower Corp.','Real Estate'],['CCI','Crown Castle Inc.','Real Estate'],
   ['EQIX','Equinix Inc.','Real Estate'],['O','Realty Income Corp.','Real Estate'],
   ['WELL','Welltower Inc.','Real Estate'],['SPG','Simon Property Group','Real Estate'],
-  ['PSA','Public Storage','Real Estate'],['AVB','AvalonBay Communities','Real Estate'],
+  ['PSA','Public Storage','Real Estate'],
   ['APD','Air Products & Chemicals','Materials'],['LIN','Linde plc','Materials'],
   ['NEM','Newmont Corporation','Materiales'],['FCX','Freeport-McMoRan','Materiales'],
   ['ALB','Albemarle Corporation','Materiales'],['MP','MP Materials','Materiales'],
@@ -27209,15 +27255,15 @@ const STOCK_DB = [
   ['SMCI','Super Micro Computer','Tech'],['DELL','Dell Technologies','Tech'],
   ['HPQ','HP Inc.','Tech'],['HPE','Hewlett Packard Enterprise','Tech'],
   ['CSCO','Cisco Systems','Tech'],['ANET','Arista Networks','Tech'],
-  ['JNPR','Juniper Networks','Tech'],['NTAP','NetApp Inc.','Tech'],
+  ['NTAP','NetApp Inc.','Tech'],
   ['STX','Seagate Technology','Tech'],['WDC','Western Digital','Tech'],
   ['CSGP','CoStar Group','Software'],['MSCI','MSCI Inc.','Financiero'],
   ['VRSK','Verisk Analytics','Financiero'],['BR','Broadridge Financial','Financiero'],
-  ['FIS','Fidelity National Information','Financiero'],['FI','Fiserv Inc.','Pagos'],
-  ['GPN','Global Payments','Pagos'],['DFS','Discover Financial','Pagos'],
-  ['PYPL','PayPal Holdings','Pagos'],['SQ','Block Inc.','Pagos'],
+  ['FIS','Fidelity National Information','Financiero'],['FISV','Fiserv Inc.','Pagos'],
+  ['GPN','Global Payments','Pagos'],
+  ['PYPL','PayPal Holdings','Pagos'],['XYZ','Block Inc.','Pagos'],
   ['AFRM','Affirm Holdings','Fintech'],['SOFI','SoFi Technologies','Fintech'],
-  ['LC','LendingClub Corp.','Fintech'],['UPST','Upstart Holdings','Fintech'],
+  ['UPST','Upstart Holdings','Fintech'],
   ['BABA','Alibaba Group','Tech China'],['JD','JD.com Inc.','Tech China'],
   ['PDD','PDD Holdings (Temu)','Tech China'],['BIDU','Baidu Inc.','Tech China'],
   ['NIO','NIO Inc.','Auto China'],['LI','Li Auto Inc.','Auto China'],
@@ -27233,9 +27279,9 @@ const STOCK_DB = [
   ['FORM','FormFactor Inc.','Semis'],['ENTG','Entegris Inc.','Semis'],
   // ── Tech & Software adicionales ──
   ['CELH','Celsius Holdings','Consumer'],['NTNX','Nutanix Inc.','Software'],
-  ['ESTC','Elastic N.V.','Software'],['SMAR','Smartsheet Inc.','Software'],
-  ['ZI','ZoomInfo Technologies','Software'],['BRZE','Braze Inc.','Software'],
-  ['SPRK','Sprinklr Inc.','Software'],['PCVX','Vaxcyte Inc.','Salud'],
+  ['ESTC','Elastic N.V.','Software'],
+  ['BRZE','Braze Inc.','Software'],
+  ['PCVX','Vaxcyte Inc.','Salud'],
   ['PATH','UiPath Inc.','Software'],['AI','C3.ai Inc.','AI/Software'],
   ['BBAI','BigBear.ai Holdings','AI/Software'],['SOUN','SoundHound AI','AI/Software'],
   ['IONQ','IonQ Inc.','Quantum'],['RGTI','Rigetti Computing','Quantum'],
@@ -27248,9 +27294,9 @@ const STOCK_DB = [
   ['RELY','Remitly Global Inc.','Fintech'],
   // ── Salud & Biotech adicionales ──
   ['BIIB','Biogen Inc.','Salud'],['ALNY','Alnylam Pharmaceuticals','Salud'],
-  ['SRPT','Sarepta Therapeutics','Salud'],['EXAS','Exact Sciences','Salud'],
+  ['SRPT','Sarepta Therapeutics','Salud'],
   ['PGNY','Progyny Inc.','Salud'],['OMCL','Omnicell Inc.','Salud'],
-  ['CRNX','Crinetics Pharmaceuticals','Salud'],['ROIV','Roivant Sciences','Salud'],
+  ['ROIV','Roivant Sciences','Salud'],
   ['LEGN','Legend Biotech Corp.','Salud'],['RYTM','Rhythm Pharmaceuticals','Salud'],
   // ── Consumer & Retail adicionales ──
   ['DASH','DoorDash Inc.','Consumer'],['CART','Instacart (Maplebear)','Consumer'],
@@ -27267,7 +27313,7 @@ const STOCK_DB = [
   ['HII','Huntington Ingalls Industries','Defensa'],['TDY','Teledyne Technologies','Defensa'],
   ['KTOS','Kratos Defense & Security','Defensa'],['RCAT','Red Cat Holdings','Defensa/Drones'],
   ['JOBY','Joby Aviation','Movilidad Aérea'],['ACHR','Archer Aviation','Movilidad Aérea'],
-  ['LILM','Lilium N.V.','Movilidad Aérea'],
+  
   // ── Internacional adicionales ──
   ['GRAB','Grab Holdings','Tech Asia'],['TCOM','Trip.com Group','Viajes China'],
   // ── Media & Entretenimiento adicionales ──
@@ -27306,12 +27352,12 @@ const STOCK_DB = [
   ['AIZ','Assurant','Financiero'],['AJG','Arthur J. Gallagher','Financiero'],['AKAM','Akamai Technologies','Tech'],
   ['ALGN','Align Technology','Salud'],['ALL','Allstate Corp','Financiero'],['ALLE','Allegion plc','Industrial'],
   ['AMCR','Amcor plc','Industrial'],['AME','AMETEK Inc.','Industrial'],['AMP','Ameriprise Financial','Financiero'],
-  ['ANSS','Ansys','Tech'],['AON','Aon plc','Financiero'],['AOS','A.O. Smith','Industrial'],
+  ['AON','Aon plc','Financiero'],['AOS','A.O. Smith','Industrial'],
   ['APA','APA Corporation','Energía'],['APH','Amphenol','Tech'],['APTV','Aptiv plc','Auto/Tech'],
   ['ARE','Alexandria Real Estate','REIT'],['ATO','Atmos Energy','Energía'],['AVY','Avery Dennison','Industrial'],
   ['AWK','American Water Works','Energía'],['BAX','Baxter International','Salud'],['BBY','Best Buy','Consumer'],
   ['BDX','Becton Dickinson','Salud'],['BEN','Franklin Resources','Financiero'],['BF.B','Brown-Forman B','Consumer'],
-  ['BG','Bunge Limited','Consumer'],['BIO','Bio-Rad Laboratories','Salud'],['BK','BNY Mellon','Financiero'],
+  ['BG','Bunge Limited','Consumer'],['BIO','Bio-Rad Laboratories','Salud'],['BNY','BNY (BNY Mellon)','Financiero'],
   ['BKR','Baker Hughes','Energía'],['BLDR','Builders FirstSource','Industrial'],['BRO','Brown & Brown','Financiero'],
   ['BSX','Boston Scientific','Salud'],['BWA','BorgWarner','Auto/Tech'],['BX','Blackstone','Financiero'],
   ['BXP','Boston Properties','REIT'],['CAG','Conagra Brands','Consumer'],['CAH','Cardinal Health','Salud'],
@@ -27324,9 +27370,9 @@ const STOCK_DB = [
   ['CMS','CMS Energy','Energía'],['CNC','Centene Corporation','Salud'],['CNP','CenterPoint Energy','Energía'],
   ['COO','The Cooper Companies','Salud'],['COR','Cencora','Salud'],['CPB','Campbell Soup','Consumer'],
   ['CPRT','Copart','Industrial'],['CPT','Camden Property Trust','REIT'],['CRL','Charles River Labs','Salud'],
-  ['CSX','CSX Corporation','Industrial'],['CTAS','Cintas Corporation','Industrial'],['CTRA','Coterra Energy','Energía'],
+  ['CSX','CSX Corporation','Industrial'],['CTAS','Cintas Corporation','Industrial'],
   ['CTSH','Cognizant Technology','Tech'],['CTVA','Corteva','Industrial'],['CZR','Caesars Entertainment','Consumer'],
-  ['D','Dominion Energy','Energía'],['DAL','Delta Air Lines','Industrial'],['DAY','Dayforce','Tech'],
+  ['D','Dominion Energy','Energía'],['DAL','Delta Air Lines','Industrial'],
   ['DD','DuPont de Nemours','Industrial'],['DECK','Deckers Outdoor','Consumer'],['DG','Dollar General','Consumer'],
   ['DGX','Quest Diagnostics','Salud'],['DHI','D.R. Horton','Industrial'],['DHR','Danaher','Salud'],
   ['DLR','Digital Realty Trust','REIT'],['DLTR','Dollar Tree','Consumer'],['DOC','Healthpeak Properties','REIT'],
@@ -27336,7 +27382,7 @@ const STOCK_DB = [
   ['ED','Consolidated Edison','Energía'],['EFX','Equifax','Financiero'],['EG','Everest Group','Financiero'],
   ['EIX','Edison International','Energía'],['EL','Estée Lauder','Consumer'],['ELV','Elevance Health','Salud'],
   ['EMN','Eastman Chemical','Industrial'],['EOG','EOG Resources','Energía'],['EPAM','EPAM Systems','Tech'],
-  ['EQR','Equity Residential','REIT'],['EQT','EQT Corporation','Energía'],['ERIE','Erie Indemnity','Financiero'],
+  ['EQT','EQT Corporation','Energía'],['ERIE','Erie Indemnity','Financiero'],
   ['ES','Eversource Energy','Energía'],['ESS','Essex Property Trust','REIT'],['EVRG','Evergy','Energía'],
   ['EXPD','Expeditors International','Industrial'],['EXPE','Expedia Group','Consumer'],['EXR','Extra Space Storage','REIT'],
   ['FANG','Diamondback Energy','Energía'],['FAST','Fastenal','Industrial'],['FDS','FactSet Research','Financiero'],
@@ -27346,19 +27392,19 @@ const STOCK_DB = [
   ['GEN','Gen Digital','Tech'],['GIS','General Mills','Consumer'],['GL','Globe Life','Financiero'],
   ['GLW','Corning','Tech'],['GNRC','Generac Holdings','Industrial'],['GPC','Genuine Parts','Industrial'],
   ['GRMN','Garmin','Tech'],['GWW','W.W. Grainger','Industrial'],['HAS','Hasbro','Consumer'],
-  ['HBAN','Huntington Bancshares','Financiero'],['HCA','HCA Healthcare','Salud'],['HES','Hess Corporation','Energía'],
-  ['HIG','Hartford Financial','Financiero'],['HOLX','Hologic','Salud'],['HRL','Hormel Foods','Consumer'],
+  ['HBAN','Huntington Bancshares','Financiero'],['HCA','HCA Healthcare','Salud'],
+  ['HIG','Hartford Financial','Financiero'],['HRL','Hormel Foods','Consumer'],
   ['HSIC','Henry Schein','Salud'],['HST','Host Hotels & Resorts','REIT'],['HSY','Hershey','Consumer'],
   ['HUBB','Hubbell Inc.','Industrial'],['HWM','Howmet Aerospace','Industrial'],['IBKR','Interactive Brokers','Financiero'],
   ['IEX','IDEX Corporation','Industrial'],['IFF','International Flavors','Industrial'],['INCY','Incyte','Salud'],
-  ['INVH','Invitation Homes','REIT'],['IP','International Paper','Industrial'],['IPG','Interpublic Group','Tech'],
+  ['INVH','Invitation Homes','REIT'],['IP','International Paper','Industrial'],
   ['IQV','IQVIA Holdings','Salud'],['IRM','Iron Mountain','REIT'],['IT','Gartner','Tech'],
   ['IVZ','Invesco','Financiero'],['J','Jacobs Solutions','Industrial'],['JBHT','J.B. Hunt Transport','Industrial'],
   ['JBL','Jabil Inc.','Tech'],['JCI','Johnson Controls','Industrial'],['JKHY','Jack Henry & Associates','Tech'],
-  ['K','Kellanova','Consumer'],['KDP','Keurig Dr Pepper','Consumer'],['KEY','KeyCorp','Financiero'],
+  ['KDP','Keurig Dr Pepper','Consumer'],['KEY','KeyCorp','Financiero'],
   ['KEYS','Keysight Technologies','Tech'],['KHC','Kraft Heinz','Consumer'],['KIM','Kimco Realty','REIT'],
   ['KKR','KKR & Co.','Financiero'],['KMB','Kimberly-Clark','Consumer'],['KMI','Kinder Morgan','Energía'],
-  ['KMX','CarMax','Consumer'],['KR','Kroger','Consumer'],['KVUE','Kenvue','Consumer'],
+  ['KMX','CarMax','Consumer'],['KR','Kroger','Consumer'],
   ['L','Loews Corporation','Financiero'],['LDOS','Leidos Holdings','Defensa'],['LEN','Lennar','Industrial'],
   ['LH','LabCorp Holdings','Salud'],['LHX','L3Harris Technologies','Defensa'],['LKQ','LKQ Corporation','Auto/Tech'],
   ['LNT','Alliant Energy','Energía'],['LUMN','Lumen Technologies','Tech'],['LUV','Southwest Airlines','Industrial'],
@@ -27366,7 +27412,7 @@ const STOCK_DB = [
   ['MAA','Mid-America Apartment','REIT'],['MAR','Marriott International','Consumer'],['MAS','Masco Corporation','Industrial'],
   ['MDLZ','Mondelez International','Consumer'],['MDT','Medtronic plc','Salud'],['MET','MetLife','Financiero'],
   ['MGM','MGM Resorts','Consumer'],['MHK','Mohawk Industries','Industrial'],['MKC','McCormick & Co.','Consumer'],
-  ['MKTX','MarketAxess Holdings','Financiero'],['MLM','Martin Marietta Materials','Industrial'],['MMC','Marsh & McLennan','Financiero'],
+  ['MKTX','MarketAxess Holdings','Financiero'],['MLM','Martin Marietta Materials','Industrial'],['MRSH','Marsh (Marsh & McLennan)','Financiero'],
   ['MNST','Monster Beverage','Consumer'],['MO','Altria Group','Consumer'],['MOH','Molina Healthcare','Salud'],
   ['MOS','The Mosaic Company','Industrial'],['MSI','Motorola Solutions','Tech'],['MTB','M&T Bank','Financiero'],
   ['MTCH','Match Group','Tech'],['MTD','Mettler-Toledo','Salud'],['NCLH','Norwegian Cruise Line','Consumer'],
@@ -27380,7 +27426,7 @@ const STOCK_DB = [
   ['PHM','PulteGroup','Industrial'],['PKG','Packaging Corp of America','Industrial'],['PNR','Pentair plc','Industrial'],
   ['PNW','Pinnacle West Capital','Energía'],['POOL','Pool Corporation','Consumer'],['PPG','PPG Industries','Industrial'],
   ['PPL','PPL Corporation','Energía'],['PRU','Prudential Financial','Financiero'],['PTC','PTC Inc.','Tech'],
-  ['PWR','Quanta Services','Industrial'],['QRVO','Qorvo Inc.','Semis'],['RCL','Royal Caribbean','Consumer'],
+  ['PWR','Quanta Services','Industrial'],['RCL','Royal Caribbean','Consumer'],
   ['RF','Regions Financial','Financiero'],['RJF','Raymond James Financial','Financiero'],['RL','Ralph Lauren','Consumer'],
   ['RMD','ResMed Inc.','Salud'],['ROL','Rollins Inc.','Industrial'],['ROP','Roper Technologies','Tech'],
   ['ROST','Ross Stores','Consumer'],['RSG','Republic Services','Industrial'],['RVTY','Revvity','Salud'],
@@ -27401,7 +27447,7 @@ const STOCK_DB = [
   ['URI','United Rentals','Industrial'],['VICI','VICI Properties','REIT'],['VMC','Vulcan Materials','Industrial'],
   ['VRSN','VeriSign','Tech'],['VTR','Ventas Inc.','REIT'],['VTRS','Viatris','Salud'],
   ['VZ','Verizon Communications','Tech'],['WAB','Westinghouse Air Brake','Industrial'],['WAT','Waters Corporation','Salud'],
-  ['WBA','Walgreens Boots Alliance','Salud'],['WEC','WEC Energy Group','Energía'],['WRB','W.R. Berkley','Financiero'],
+  ['WEC','WEC Energy Group','Energía'],['WRB','W.R. Berkley','Financiero'],
   ['WST','West Pharmaceutical','Salud'],['WTW','Willis Towers Watson','Financiero'],['WY','Weyerhaeuser','REIT'],
   ['WYNN','Wynn Resorts','Consumer'],['XEL','Xcel Energy','Energía'],['XRAY','Dentsply Sirona','Salud'],
   ['XYL','Xylem Inc.','Industrial'],['ZBH','Zimmer Biomet','Salud'],['ZBRA','Zebra Technologies','Tech'],
@@ -35474,6 +35520,15 @@ function _chartEmptyState(on){
     _rcEsperaTimer = null;
     if (!document.getElementById('r-chart-empty')) return;
     if ((currentResearchTicker || '').toUpperCase() !== tk || _activeResearchRange !== rg) return;
+    // Tras ~30 s (5 intentos) sin una sola barra no es que «falte que lleguen»: el proveedor con
+    // licencia no tiene esa serie (acciones OTC/extranjeras sin ADR en bolsa, deslistadas, o un
+    // período sin operaciones). Se dice claro y se deja de pedir; antes giraba para siempre.
+    if (n >= 5) {
+      const ph2 = document.getElementById('r-chart-empty');
+      if (ph2) ph2.innerHTML = '<div class="t">Sin gráfica para este período</div>'
+        + '<div class="s">Nuestro proveedor de precios no tiene el historial de ' + pvEsc(tk) + ' en este período. Suele pasar con acciones que cotizan fuera de bolsa (OTC) o que dejaron de cotizar. El precio y el análisis siguen disponibles.</div>';
+      return;
+    }
     try { _rcRevalidar(tk, rg); } catch(e){}
     n++;
     _rcEsperaTimer = setTimeout(tick, Math.min(15000, 3000 + n * 2500));
@@ -35503,6 +35558,17 @@ function _rcSerie(chartData, range){
       if (closeSec && Math.abs(q.price / cl[n] - 1) < 0.03) {
         if ((range === '1d' || range === '5d') && closeSec > lastTs) { ts.push(closeSec); cl.push(q.price); }
         else cl[n] = q.price;
+      }
+      // Series DIARIAS (1M…1A) cuya última vela es de una sesión anterior a la de hoy: la vela
+      // diaria se cachea hasta 6 h en el proxy y, bajada antes de la campana, la curva acababa
+      // ayer mientras el precio grande ya era el de hoy (SPY 1A, 19-nov). Con una cotización
+      // fresca (< 15 min) de la sesión de hoy se añade su punto: curva y precio cuadran.
+      const _diaria = ['1mo','3mo','6mo','ytd','1y'].includes(range);
+      if (_diaria && ts.length >= 2 && (ts[n] - ts[n - 1]) <= 4 * 86400 && (Date.now() - q.ts) < 15 * 60e3) {
+        const ses = PORTIV_CHART.sessionDay(), today = PORTIV_CHART._todayET();
+        if (ses === today && _pvNyDayOf(ts[ts.length - 1]) < ses && Math.abs(q.price / cl[cl.length - 1] - 1) < 0.25) {
+          ts.push(Math.floor(Date.parse(ses + 'T12:00:00Z') / 1000)); cl.push(q.price);
+        }
       }
     }
   } catch(e){}
@@ -54876,16 +54942,18 @@ html.app-locked #pvSlidesOv.pvs-first{ visibility:visible !important; }
     if(r) r.onclick=function(){ o.style.display='none'; try{ if(typeof onRetry==='function') onRetry(); }catch(e){} };
     o.style.display='flex';
   };
-  window._pvChartLoading=function(show){
+  window._pvChartLoading=function(show, msg){
     var wrap=document.querySelector('.perf-chart-wrap'); if(!wrap) return;
     var sk=document.getElementById('perfChartSkeleton');
     if(show){
       if(!sk){ sk=document.createElement('div'); sk.id='perfChartSkeleton';
         sk.style.cssText='position:absolute;inset:0;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--card,#fff);border-radius:16px';
         sk.innerHTML='<div style="width:40px;height:40px;border:3px solid rgba(20,209,142,.22);border-top-color:#12d18e;border-radius:50%;animation:pvSpin .9s linear infinite"></div>'
-          +'<div style="color:var(--muted,#6a7891);font:500 13px/1.45 var(--font,system-ui);text-align:center;max-width:80%">Cargando el rendimiento real de tu broker…</div>';
+          +'<div class="pv-sk-msg" style="color:var(--muted,#6a7891);font:500 13px/1.45 var(--font,system-ui);text-align:center;max-width:80%">Cargando el rendimiento real de tu broker…</div>';
         wrap.appendChild(sk);
       }
+      // Texto según quién lo pide: el broker (por defecto) o el primer arranque («Cargando tu gráfica…»).
+      try{ var _m=sk.querySelector('.pv-sk-msg'); if(_m) _m.textContent = msg || 'Cargando el rendimiento real de tu broker…'; }catch(e){}
       sk.style.display='flex';
       // La serie puede llegar por otro camino (estado guardado, foto del broker) sin que nadie
       // repinte: antes la curva intradía tapaba el hueco; ahora se mira cada 2 s y, en cuanto el
