@@ -142,10 +142,23 @@ async function build(symbol: string): Promise<unknown> {
 // ?kind=income → estado de resultados anual y trimestral de companyfacts (ver secIncome).
 async function buildIncome(symbol: string): Promise<unknown> {
   const cik = cikFor(await tickers(), symbol);
-  const payload = cik == null
+  let payload: any = cik == null
     ? { symbol, cik: null, entity: "", annual: [], quarterly: [] }
     : { symbol, ...(await secIncome(cik, secGet)) };
-  await cachePut("sec:income4:" + symbol, payload);
+  // Si no se pudo leer el último informe anual (sec.gov responde 429 a las IPs compartidas de
+  // Supabase), no se pisa un resultado anterior más completo: NU y TSM volvían a 2024 después
+  // de haber llegado a 2025. Se guarda el bueno con `filingError` (TTL de 1 h → se reintenta).
+  if (payload.filingError) {
+    const lastEnd = (d: any) => Array.isArray(d?.annual) && d.annual.length ? String(d.annual[d.annual.length - 1].end) : "";
+    for (const k of ["sec:income6:", "sec:income5:", "sec:income4:"]) {
+      const old = (await cacheGet(k + symbol))?.data;
+      if (old && lastEnd(old) > lastEnd(payload)) {
+        payload = { ...old, currency: old.currency ?? "USD", filingError: payload.filingError };
+        break;
+      }
+    }
+  }
+  await cachePut("sec:income6:" + symbol, payload);
   return payload;
 }
 
@@ -157,7 +170,13 @@ Deno.serve(async (req) => {
   if (!/^[A-Z0-9.\-]{1,12}$/.test(symbol)) return json({ error: "bad symbol" }, 400);
 
   const income = url.searchParams.get("kind") === "income";
-  const ckey = (income ? "sec:income4:" : "sec:interest:") + symbol;
+  // Estados en otra moneda (EUR, JPY…) sólo para clientes que la saben pintar (&cur=1, app
+  // desde el 19 nov 2026). Las apps ya instaladas pondrían «$» a cifras en euros: a ellas se
+  // les responde como antes (sin estados).
+  const conMoneda = url.searchParams.get("cur") === "1";
+  const out = (d: any) => (income && !conMoneda && d && d.currency && d.currency !== "USD")
+    ? { ...d, annual: [], quarterly: [] } : d;
+  const ckey = (income ? "sec:income6:" : "sec:interest:") + symbol;
   const fkey = (income ? "income:" : "") + symbol;
 
   // 1) Caché compartida: N usuarios con el mismo símbolo → UNA consulta a la SEC por semana.
@@ -165,11 +184,11 @@ Deno.serve(async (req) => {
     // 19 nov 2026: un día (no tres) para que un 10-Q nuevo salga al día siguiente; y si la
   // lectura del último informe anual falló (filingError), solo una hora.
   const incTtl = hit?.data?.filingError ? 3600 : 86400;
-  if (hit && hit.age < (income ? incTtl : TTL_S)) return json(hit.data, 200);
+  if (hit && hit.age < (income ? incTtl : TTL_S)) return json(out(hit.data), 200);
 
   // 2) Miss o vencida → SEC, dentro del presupuesto de la IP.
   if (!inflight.has(fkey) && !missBudgetOk(clientIp(req))) {
-    if (hit) return json(hit.data, 200);
+    if (hit) return json(out(hit.data), 200);
     return json({ error: "rate limited" }, 429);
   }
   let p = inflight.get(fkey);
@@ -178,10 +197,10 @@ Deno.serve(async (req) => {
     inflight.set(fkey, p);
   }
   try {
-    return json(await p, 200);
+    return json(out(await p), 200);
   } catch (e) {
     // SEC caída, 403/429 o timeout: el dato vencido antes que nada.
-    if (hit) return json(hit.data, 200);
+    if (hit) return json(out(hit.data), 200);
     return json({ error: "upstream failed", detail: String((e as Error)?.message || e).slice(0, 200) }, 502);
   }
 });

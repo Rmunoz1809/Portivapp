@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1426">
+<meta name="pv-build" content="20261119-1437">
 <script>
 (function(){
   var h = location.hostname;
@@ -31396,7 +31396,7 @@ async function _pvtvSec(tk){
     if (typeof SEC_PROXY !== 'string' || !FH_PROXY_ANON) return null;
     const ctrl = new AbortController(), tid = setTimeout(() => ctrl.abort(), 25000);
     try {
-      const r = await fetch(`${SEC_PROXY}?symbol=${encodeURIComponent(tk)}&kind=income`, { signal: ctrl.signal,
+      const r = await fetch(`${SEC_PROXY}?symbol=${encodeURIComponent(tk)}&kind=income&cur=1`, { signal: ctrl.signal,
         headers: { 'apikey': FH_PROXY_ANON, 'Authorization': 'Bearer ' + FH_PROXY_ANON } });
       if (!r.ok) return null;
       const j = await r.json();
@@ -31464,36 +31464,41 @@ function _pvtvTtmMetric(S, lastA){
   const er = (S.er || []).filter(r => r && typeof r.actual === 'number' && r.period).map(r => String(r.period).slice(0, 10)).sort();
   const hoy = new Date().toISOString().slice(0, 10);
   const end = er.filter(e => e <= hoy).pop();       // BABA trae un periodo «2027-06-30»
-  if (!end || _pvtvD(end) - _pvtvD(lastA.end) < 45 * 864e5) return null;
+  // Entre 45 días y ~13 meses después del último anual: con un anual de hace dos años (la SEC no
+  // tenía aún el siguiente) la escala daría cifras inventadas.
+  if (!end || _pvtvD(end) - _pvtvD(lastA.end) < 45 * 864e5 || _pvtvD(end) - _pvtvD(lastA.end) > 400 * 864e5) return null;
   const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
-  const sh = (lastA.net != null && lastA.eps) ? lastA.net / lastA.eps : null;
-  // Mismas unidades que el anual de la SEC (USD, por acción y no por ADR): los indicadores
-  // ANUALES de Finnhub deben cuadrar con el último anual (±15 %). TSM y BABA vienen en su
-  // moneda (dólares taiwaneses, yuanes) y sus cifras no se usan.
-  const cuadra = (a, b) => a != null && b != null && b !== 0 && Math.abs(a / b - 1) <= 0.15;
-  const revOk = sh && sh > 1e6 && lastA.rev != null && cuadra(num(m.revenuePerShareAnnual) != null ? m.revenuePerShareAnnual * sh : null, lastA.rev);
-  const epsOk = cuadra(num(m.epsInclExtraItemsAnnual) ?? num(m.epsAnnual), lastA.eps);
-  const rps = num(m.revenuePerShareTTM), rpsA = num(m.revenuePerShareAnnual);
+  // Mismo ejercicio que el último anual de la SEC: el margen neto ANUAL de Finnhub debe ser el
+  // suyo (±2.5 puntos). Si Finnhub va atrasado un año, no se inventa nada.
+  if (!(lastA.rev && lastA.net != null && num(m.netProfitMarginAnnual) != null
+    && Math.abs(lastA.net / lastA.rev * 100 - m.netProfitMarginAnnual) <= 2.5)) return null;
+  // Ingresos de 12 meses = anual × (precio/ventas anual ÷ precio/ventas TTM): los dos P/V son la
+  // misma capitalización entre los ingresos de cada periodo, así que no dependen del número de
+  // acciones (Toyota recompró muchas y «ingresos por acción × acciones» daba ¥58 billones) ni de
+  // la moneda en que Finnhub dé la capitalización (Spotify). Comprobado: capitalización ÷ P/V
+  // anual = ingresos de la SEC al peso (TM, ASML, SAP).
+  const psA = num(m.psAnnual), psT = num(m.psTTM);
+  const rev = (psA > 0 && psT > 0) ? lastA.rev * psA / psT : null;
+  // EPS de 12 meses = EPS anual de la SEC × (EPS TTM ÷ EPS anual de Finnhub): misma moneda y
+  // mismo criterio que la tabla (ASML: Finnhub da 26.26 € donde la SEC dice 24.71 €).
   const epsT = num(m.epsInclExtraItemsTTM) ?? num(m.epsTTM), epsA = num(m.epsInclExtraItemsAnnual) ?? num(m.epsAnnual);
-  // Otra moneda o por ADR (TSM, BABA): si el margen neto ANUAL de Finnhub es el del último
-  // anual (mismo ejercicio, ±2.5 puntos), se escala en proporción: 12 meses = anual × (TTM ÷
-  // anual de Finnhub). La moneda y la relación ADR se cancelan; queda al tipo de cambio del anual.
-  const mismoEj = lastA.rev && lastA.net != null && num(m.netProfitMarginAnnual) != null
-    && Math.abs(lastA.net / lastA.rev * 100 - m.netProfitMarginAnnual) <= 2.5;
-  let rev = (revOk && rps != null) ? rps * sh : null, escalado = false;
-  if (rev == null && mismoEj && rps != null && rpsA) { rev = lastA.rev * rps / rpsA; escalado = true; }
+  const eps = (lastA.eps != null && epsT != null && epsA && Math.sign(epsA) === Math.sign(lastA.eps) && Math.abs(epsA) > 1e-6)
+    ? lastA.eps * epsT / epsA : null;
+  const escalado = !!(lastA.rev && num(m.marketCapitalization) && psA && Math.abs(m.marketCapitalization * 1e6 / psA / lastA.rev - 1) > 0.05);
   const pm = k => (rev != null && num(m[k]) != null) ? rev * m[k] / 100 : null;
-  let eps = epsOk ? epsT : null;
-  if (eps == null && mismoEj && epsT != null && epsA && lastA.eps != null && Math.sign(epsA) === Math.sign(lastA.eps)) { eps = lastA.eps * epsT / epsA; escalado = true; }
-  if (rev == null && eps == null) return null;
   const o = { end, fy:+end.slice(0, 4), q:0, _ttm:true, _fh:true, _esc:escalado, rev, gross:pm('grossMarginTTM'), op:pm('operatingMarginTTM'),
     pretax:pm('pretaxMarginTTM'), net:pm('netProfitMarginTTM'), eps:eps != null ? Math.round(eps * 100) / 100 : null,
     cost:null, tax:null, nii:null, nonii:null, prov:null, nonie:null };
   if (o.rev != null && o.gross != null) o.cost = o.rev - o.gross;
   if (o.pretax != null && o.net != null) o.tax = o.pretax - o.net;
   const gr = num(m.revenueGrowthTTMYoy), ge = num(m.epsGrowthTTMYoy);
-  o._prev = { rev:(rev != null && gr != null && gr > -100) ? rev / (1 + gr / 100) : null,
-    eps:(o.eps != null && ge != null && ge > -100) ? o.eps / (1 + ge / 100) : null };
+  // Los 12 meses de hace un año caen entre los dos últimos anuales: si el crecimiento de
+  // Finnhub implica algo fuera de ese rango (±25 %), no se enseña (Spotify: EPS +311.9 %).
+  const A = S.A || [], a2 = A[A.length - 2];
+  const enRango = (p, k) => { if (p == null) return null; const v = [lastA[k], a2 && a2[k]].filter(x => x != null && x > 0);
+    if (!v.length || p <= 0) return null; return (p >= Math.min(...v) * 0.75 && p <= Math.max(...v) * 1.25) ? p : null; };
+  o._prev = { rev:enRango((rev != null && gr != null && gr > -100) ? rev / (1 + gr / 100) : null, 'rev'),
+    eps:enRango((o.eps != null && ge != null && ge > -100) ? o.eps / (1 + ge / 100) : null, 'eps') };
   return o;
 }
 function _pvtvRelabelQ(Q, A){
@@ -31513,7 +31518,7 @@ function _pvtvRelabelQ(Q, A){
 }
 function _pvtvTtmNota(t, eps){
   if (!t) return '';
-  if (t._fh) return `La columna ${t.label} (${t.sub}) sale de los indicadores de 12 meses de Finnhub: los trimestres de esta empresa no están completos en la SEC (las extranjeras sólo presentan ahí su informe anual). Ingresos y utilidades son aproximados (ingresos por acción y márgenes de 12 meses${t._esc ? '; convertidos a dólares al tipo de cambio del último informe anual' : ''}); el cambio es contra los 12 meses anteriores.`;
+  if (t._fh) return `La columna ${t.label} (${t.sub}) sale de los indicadores de 12 meses de Finnhub: los trimestres de esta empresa no están completos en la SEC (las extranjeras sólo presentan ahí su informe anual). Ingresos y utilidades son aproximados (se escalan desde el último informe anual con el precio/ventas y los márgenes de 12 meses${t._esc ? ', en la moneda de ese informe' : ''}); el cambio es contra los 12 meses anteriores.`;
   return `La columna ${t.label} suma ${eps ? 'el EPS de ' : ''}los últimos cuatro trimestres reportados (${t.sub}${eps ? '; el del cuarto trimestre se calcula con su utilidad neta y las acciones diluidas' : ''}), porque el informe anual del ejercicio en curso aún no sale; su cambio es contra los 12 meses anteriores.`;
 }
 function _pvtvAnualVista(S, n){
@@ -31576,6 +31581,7 @@ async function _pvtvLoad(tk, stage){
         const viejo = arr => arr.length && (Date.now() - _pvtvD(arr[arr.length - 1].end)) > 3 * 366 * 864e5;
         if (viejo(A)) { A = []; Q = []; }
         S.A = A; S.Q = Q; S.src = (sec && sec.annual && sec.annual.length) ? 'sec' : 'fh';
+        S.cur = (S.src === 'sec' && sec.currency) ? String(sec.currency) : 'USD';
         // Sin trimestres posteriores al último anual (emisores extranjeros: COPA, NU, TSM… mandan
         // sus trimestres como 6-K sin XBRL) → indicadores de 12 meses de Finnhub para la columna
         // del año en curso (ver _pvtvTtmMetric).
@@ -31595,15 +31601,24 @@ async function _pvtvLoad(tk, stage){
 }
 
 // ── Formatos ──
+// Moneda del informe (19 nov 2026): la del estado de resultados de la SEC que se está pintando
+// (ASML/SAP/Spotify en EUR, Toyota en JPY). Sólo la cambian _pvtvIncHtml y las vistas anuales
+// de _pvtvEarnHtml, y la devuelven a USD al terminar (el resto de la app sigue en dólares).
+let _pvtvCur = 'USD';
+const _PVTV_SYM = { USD:'$', EUR:'€', JPY:'¥', GBP:'£', CNY:'¥', CAD:'C$', AUD:'A$', CHF:'CHF ', BRL:'R$', MXN:'MX$', TWD:'NT$', INR:'₹', KRW:'₩', DKK:'kr ', SEK:'kr ' };
+const _pvtvSym = () => _PVTV_SYM[_pvtvCur] || (_pvtvCur + ' ');
+const _PVTV_CURN = { USD:'dólares (USD)', EUR:'euros (EUR)', JPY:'yenes (JPY)', GBP:'libras (GBP)', CNY:'yuanes (CNY)' };
+function _pvtvConMoneda(fn){ return function(tk, S, a){ _pvtvCur = (S && S.cur) || 'USD'; try { return fn(tk, S, a); } finally { _pvtvCur = 'USD'; } }; }
 function _pvtvBig(v, noSign){
   if (v == null || !isFinite(v)) return '—';
-  const a = Math.abs(v), s = v < 0 ? '−' : '', d = noSign ? '' : '$';
+  const a = Math.abs(v), s = v < 0 ? '−' : '', d = noSign ? '' : _pvtvSym();
+  if (a >= 1e12 && _pvtvCur !== 'USD') return s + d + (a / 1e12).toLocaleString('en-US', { maximumFractionDigits: 2 }) + ' billones';
   if (a >= 1e9)  return s + d + (a / 1e9).toLocaleString('en-US', { maximumFractionDigits: a >= 1e12 ? 1 : 2 }) + ' mil M';
   if (a >= 1e6)  return s + d + (a / 1e6).toLocaleString('en-US', { maximumFractionDigits: a >= 1e8 ? 0 : 1 }) + ' M';
   if (a >= 1e3)  return s + d + (a / 1e3).toLocaleString('en-US', { maximumFractionDigits: 1 }) + ' mil';
   return s + d + a.toFixed(0);
 }
-const _pvtvEps = v => (v == null || !isFinite(v)) ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(2);
+const _pvtvEps = v => (v == null || !isFinite(v)) ? '—' : (v < 0 ? '−' : '') + _pvtvSym() + Math.abs(v).toFixed(2);
 const _pvtvPct = v => (v == null || !isFinite(v)) ? '' : `<span class="${v >= 0 ? 'up' : 'dn'}">${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(2)}%</span>`;
 const _pvtvChg = (a, b) => (a != null && b != null && isFinite(a) && isFinite(b) && Math.abs(b) > 1e-9) ? ((a - b) / Math.abs(b)) * 100 : null;
 function _pvtvFecha(iso){
@@ -31688,7 +31703,7 @@ const _pvtvSeg = (key, cur) => `<div class="pvtv-seg" role="tablist">${[['A','An
   `<button type="button" class="${cur === k ? 'on' : ''}" onclick="_pvtvSet('${key}','${k}')">${l}</button>`).join('')}</div>`;
 // Tabla métricas × periodos (primera columna fija). rows: [{ n, cls, cells:[html] }]
 function _pvtvTable(heads, rows){
-  return `<div class="pvtv-tw"><table class="pvtv-t"><thead><tr><th class="m">Métrica<span>USD</span></th>${heads.map(h =>
+  return `<div class="pvtv-tw"><table class="pvtv-t"><thead><tr><th class="m">Métrica<span>${_pvtvCur}</span></th>${heads.map(h =>
       `<th class="${h.fut ? 'fut' : ''}">${pvEsc(h.l)}${h.s ? `<span>${pvEsc(h.s)}</span>` : ''}</th>`).join('')}</tr></thead>
     <tbody>${rows.map(r => `<tr class="${r.cls || ''}"><td class="m">${pvEsc(r.n)}</td>${r.cells.map((c, i) =>
       `<td class="${heads[i] && heads[i].fut ? 'fut' : ''}">${c}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
@@ -31753,7 +31768,8 @@ function _pvtvEarnInicial(tk, a){
     + `<div class="px-card">${st('EPS', 'Ganancia por acción')}${sk}</div>`
     + `<div class="px-card">${st('Ingresos', 'Ventas totales')}${sk}</div>`;
 }
-function _pvtvEarnHtml(tk, S, a){
+const _pvtvEarnHtml = _pvtvConMoneda(function(tk, S, a){ _pvtvCur = 'USD'; return _pvtvEarnHtml0(tk, S, a); });
+function _pvtvEarnHtml0(tk, S, a){
   const esc = pvEsc, st = (t, eb, x) => _pvxStitle(t, eb, x);
   const D = _pvtvEarnData(S);
   if (!D.er.length && !D.fut.length && !D.A.length) return '';
@@ -31792,6 +31808,7 @@ function _pvtvEarnHtml(tk, S, a){
       ]);
       hint = 'EPS ajustado que reporta la empresa frente al consenso de los analistas. Las columnas rayadas son previsiones, no resultados.';
     } else if (aOk){
+      _pvtvCur = S.cur || 'USD';      // el anual viene de la SEC, en la moneda del informe
       const A = D.A.filter(x => x.eps != null);
       chart = _pvtvChart(A.map(x => ({ label:x.label, vals:[{ v:x.eps, c:'s0' }] })), v => (v < 0 ? '−' : '') + Math.abs(v).toFixed(2));
       leg = _pvtvLeg([['s0', 'EPS diluido reportado']]);
@@ -31811,6 +31828,7 @@ function _pvtvEarnHtml(tk, S, a){
     const qOk = D.revQ.length > 0, aOk = D.A.some(x => x.rev != null);
     const mode = (_PVTV_UI.rev === 'A' && aOk) || !qOk ? 'A' : 'Q';
     let chart = '', table = '', leg = '', hint = '';
+    _pvtvCur = mode === 'A' ? (S.cur || 'USD') : 'USD';   // trimestral: Finnhub, en dólares
     if (mode === 'Q'){
       const R = D.revQ;
       chart = _pvtvChart(R.map(r => ({ label:r.label, fut:!!r.fut, vals:[
@@ -31833,7 +31851,7 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'Cambio anual', cells:A.map((x, i) => (x._ttm ? (x._prev ? _pvtvPct(_pvtvChg(x.rev, x._prev.rev)) : '') : i ? _pvtvPct(_pvtvChg(x.rev, A[i - 1].rev)) : '') || '—') },
       ]);
       const t = A.find(x => x._ttm);
-      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras).' + (t ? ' ' + _pvtvTtmNota(t) : '');
+      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras)' + (_pvtvCur !== 'USD' ? `, en ${_PVTV_CURN[_pvtvCur] || _pvtvCur}` : '') + '.' + (t ? ' ' + _pvtvTtmNota(t) : '');
     }
     if (chart) h += `<div class="px-card">${st('Ingresos', 'Ventas totales', _pvtvSeg('rev', mode))}${chart}${leg}${table}<div class="px-hint">${hint}</div></div>`;
   }
@@ -31841,7 +31859,8 @@ function _pvtvEarnHtml(tk, S, a){
 }
 
 // ── Vista Estado de resultados ──
-function _pvtvIncHtml(tk, S){
+const _pvtvIncHtml = _pvtvConMoneda(_pvtvIncHtml0);
+function _pvtvIncHtml0(tk, S){
   const st = (t, eb, x) => _pvxStitle(t, eb, x);
   if (S.st < 2) return `<div class="px-card">${st('Estado de resultados', 'Cargando informes…')}<div class="pvtv-skb">${'<i></i>'.repeat(6)}</div></div>`;
   const aOk = (S.A || []).length > 0, qOk = (S.Q || []).length > 0;
@@ -31900,7 +31919,7 @@ function _pvtvIncHtml(tk, S){
   let h = `<div class="px-card">${st('Estado de resultados', mode === 'A' ? 'Informes anuales a la SEC' : 'Trimestres reportados a la SEC', _pvtvSeg('inc', mode))}
     ${chart}${_pvtvLeg(SER.map(([, c, l]) => [c, l]))}
     ${_pvtvTable(P.map(x => ({ l:x.label, s:x.sub || _pvtvFecha(x.end) })), rowsOk)}
-    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'A' && P.some(x => x._ttm) ? ' ' + pvEsc(_pvtvTtmNota(P[P.length - 1])) : ''}${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
+    <div class="px-hint">Cifras tal como se presentaron a la SEC${_pvtvCur !== 'USD' ? `, en ${_PVTV_CURN[_pvtvCur] || _pvtvCur}, la moneda en que reporta la empresa` : ''}. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'A' && P.some(x => x._ttm) ? ' ' + pvEsc(_pvtvTtmNota(P[P.length - 1])) : ''}${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
   // ¿A dónde va cada dólar de ingresos? (último periodo de la vista)
   const x = banco
     ? [...P].reverse().find(r => r.rev > 0 && r.prov != null && r.nonie != null && r.tax != null && r.net != null)
@@ -31911,8 +31930,9 @@ function _pvtvIncHtml(tk, S){
       : [['Costo de ventas', x.cost, 'c1'], ['Gastos operativos', x.gross - x.op, 'c2'], ['Impuestos, intereses y otros', x.op - x.net, 'c3'], ['Utilidad neta', x.net, 'c4']];
     if (parts.every(p => p[1] >= 0)){
       const per = x._ttm ? 'los ' + x.sub : mode === 'A' ? 'el ejercicio ' + x.label : 'el trimestre ' + x.label;
-      h += `<div class="px-card">${st('¿A dónde va cada dólar?', 'De cada $1 de ingresos en ' + per)}
-        <div class="pvtv-stk">${parts.map(p => { const w = p[1] / x.rev * 100; return w > 0 ? `<i class="${p[2]}" style="width:${w.toFixed(2)}%">${w >= 9 ? `<b>${Math.round(w)}¢</b>` : ''}</i>` : ''; }).join('')}</div>
+      const un = { USD:'dólar', EUR:'euro', JPY:'yen', GBP:'libra' }[_pvtvCur];
+      h += `<div class="px-card">${st(un ? `¿A dónde va cada ${un}?` : '¿A dónde va cada peso de ingresos?', `De cada ${_pvtvSym()}${_pvtvCur === 'JPY' ? '100' : '1'} de ingresos en ` + per)}
+        <div class="pvtv-stk">${parts.map(p => { const w = p[1] / x.rev * 100; return w > 0 ? `<i class="${p[2]}" style="width:${w.toFixed(2)}%">${w >= 9 ? `<b>${_pvtvCur === 'USD' ? Math.round(w) + '¢' : _pvtvCur === 'JPY' ? '¥' + Math.round(w) : Math.round(w) + '%'}</b>` : ''}</i>` : ''; }).join('')}</div>
         <div class="pvtv-stl">${parts.map(p => `<div><i class="${p[2]}"></i><span>${pvEsc(p[0])}</span><b>${_pvtvBig(p[1])}</b><em>${(p[1] / x.rev * 100).toFixed(1)}%</em></div>`).join('')}</div>
         <div class="px-hint">Ingresos de ${_pvtvBig(x.rev)}. ${banco ? '«Impuestos y otros» es lo que queda entre los ingresos y la utilidad neta después de reservas y gastos.' : '«Impuestos, intereses y otros» es la diferencia entre la utilidad operativa y la neta.'}</div></div>`;
     }

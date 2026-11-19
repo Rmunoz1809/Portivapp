@@ -130,13 +130,36 @@ export type IncomeRow = {
 };
 const days = (s: string, e: string) => (Date.parse(e) - Date.parse(s)) / DAY_MS;
 
-// Hechos de un tag en dólares (o dólares por acción para el EPS). Otras monedas se descartan:
-// la app enseña todo en USD y mezclar una cifra en reales o en dólares taiwaneses sería falso.
-function factsOf(facts: any, key: string, eps: boolean): F[] {
+// Moneda del informe (19 nov 2026): USD si la empresa reporta en dólares; si no, la de sus
+// ingresos más recientes (ASML, SAP y Spotify en EUR, Toyota en JPY). Antes sólo se aceptaba
+// USD y esas empresas salían «sin estados financieros» (SAP tiene un único hecho en USD de 2017).
+// Nunca se mezclan monedas: todas las cifras de la respuesta van en `currency`.
+export function pickCurrency(facts: any): string {
+  const by: Record<string, { end: string; n: number }> = {};
+  for (const key of INCOME_TAGS.rev) {
+    const [tx, tag] = key.split(":");
+    const units = facts?.[tx]?.[tag]?.units ?? {};
+    for (const [u, arr] of Object.entries<any>(units)) {
+      if (!/^[A-Z]{3}$/.test(u) || !Array.isArray(arr)) continue;
+      const b = (by[u] ??= { end: "", n: 0 });
+      for (const x of arr) { b.n++; const e = String(x?.end ?? ""); if (e > b.end) b.end = e; }
+    }
+  }
+  const cs = Object.entries(by);
+  if (!cs.length) return "USD";
+  const top = cs.reduce((m, c) => (c[1].end > m[1].end || (c[1].end === m[1].end && c[1].n > m[1].n)) ? c : m);
+  const usd = by.USD;
+  // Dólares mientras sigan al día (≤ 400 días detrás de la moneda más reciente).
+  if (usd && days(usd.end, top[1].end) <= 400) return "USD";
+  return top[0];
+}
+
+// Hechos de un tag en la moneda `cur` (o `cur` por acción para el EPS). Las demás se descartan.
+function factsOf(facts: any, key: string, eps: boolean, cur = "USD"): F[] {
   const [tx, tag] = key.split(":");
   const units = facts?.[tx]?.[tag]?.units;
   if (!units) return [];
-  const arr = eps ? (units["USD/shares"] ?? units["USD/share"]) : units.USD;
+  const arr = eps ? (units[cur + "/shares"] ?? units[cur + "/share"]) : units[cur];
   if (!Array.isArray(arr)) return [];
   return arr.filter((x: any) => x && typeof x.val === "number" && isFinite(x.val) && x.start && x.end && PERIOD_FORM.test(String(x.form ?? "")))
     .map((x: any) => ({ start: String(x.start), end: String(x.end), val: x.val, filed: String(x.filed ?? ""),
@@ -157,7 +180,7 @@ function byPeriod(fs: F[]) {
   return m;
 }
 
-export function incomeFromFacts(facts: any, maxA = 8, maxQ = 16): { annual: IncomeRow[]; quarterly: IncomeRow[] } {
+export function incomeFromFacts(facts: any, maxA = 8, maxQ = 16, cur = "USD"): { annual: IncomeRow[]; quarterly: IncomeRow[] } {
   const A = new Map<string, IncomeRow>(), Q = new Map<string, IncomeRow>();
   const row = (map: Map<string, IncomeRow>, end: string, start: string, fy: number | null, q: number) => {
     let r = map.get(end);
@@ -171,7 +194,7 @@ export function incomeFromFacts(facts: any, maxA = 8, maxQ = 16): { annual: Inco
   for (const [field, keys] of Object.entries(INCOME_TAGS)) {
     const isEps = field === "eps";
     for (const key of keys) {
-      const per = byPeriod(factsOf(facts, key, isEps));
+      const per = byPeriod(factsOf(facts, key, isEps, cur));
       // Anual: un ejercicio de 350–380 días, de un 10-K/20-F/40-F.
       const annual = new Map<string, any>();
       for (const p of per.values()) {
@@ -298,7 +321,17 @@ export function mergeFacts(base: any, extra: any): any {
 }
 
 // Último informe anual con XBRL más nuevo que `after` (fecha de cierre). null si no hay.
-export async function latestAnnualFacts(cik: number, after: string | null, get: Get): Promise<{ facts: any; form: string; filed: string; accn: string } | null> {
+export async function latestAnnualFacts(cik: number, after: string | null, get0: Get, waitMs = 1500): Promise<{ facts: any; form: string; filed: string; accn: string } | null> {
+  // sec.gov limita a las IPs compartidas (429/503): hasta tres reintentos con espera creciente.
+  const get: Get = async (u) => {
+    for (let i = 0; i < 3; i++) {
+      const r = await get0(u);
+      if (r.status !== 429 && r.status !== 503) return r;
+      await r.body?.cancel();
+      await new Promise((ok) => setTimeout(ok, waitMs * (i + 1)));
+    }
+    return get0(u);
+  };
   const pad = String(cik).padStart(10, "0");
   const r = await get(`https://data.sec.gov/submissions/CIK${pad}.json`);
   if (!r.ok) { await r.body?.cancel(); throw new Error(`sec ${r.status} submissions`); }
@@ -316,6 +349,7 @@ export async function latestAnnualFacts(cik: number, after: string | null, get: 
   const dir = `https://www.sec.gov/Archives/edgar/data/${cik}/${accn.replace(/-/g, "")}`;
   let name = String(rec.primaryDocument?.[i] ?? "").replace(/\.html?$/i, "_htm.xml");
   let x = name.endsWith("_htm.xml") ? await get(`${dir}/${name}`) : null;
+  if (x && (x.status === 429 || x.status === 503)) { await x.body?.cancel(); throw new Error(`sec ${x.status} instance`); }
   if (!x?.ok) {                                        // sin iXBRL: buscar la instancia en el índice
     await x?.body?.cancel();
     const ix = await get(`${dir}/index.json`);
@@ -337,14 +371,16 @@ export async function secIncome(cik: number, get: Get, today = new Date().toISOS
   if (!r.ok) { await r.body?.cancel(); throw new Error(`sec ${r.status} companyfacts`); }
   const j = await r.json();
   let facts = j?.facts;
-  let res: any = incomeFromFacts(facts);
+  let cur = pickCurrency(facts);
+  let res: any = incomeFromFacts(facts, 8, 16, cur);
   const last: string | null = res.annual.length ? res.annual[res.annual.length - 1].end : null;
   if (!last || days(last, today) > STALE_DAYS) {
     try {
       const extra = await latestAnnualFacts(cik, last, get);
       if (extra) {
         facts = mergeFacts(facts, extra.facts);
-        res = { ...incomeFromFacts(facts), filing: { form: extra.form, filed: extra.filed, accn: extra.accn } };
+        cur = pickCurrency(facts);
+        res = { ...incomeFromFacts(facts, 8, 16, cur), filing: { form: extra.form, filed: extra.filed, accn: extra.accn } };
       }
     } catch (e) {
       // Sin el expediente queda lo de companyfacts, pero marcado: index.ts lo guarda solo una
@@ -352,5 +388,5 @@ export async function secIncome(cik: number, get: Get, today = new Date().toISOS
       res = { ...res, filingError: String((e as Error)?.message || e).slice(0, 160) };
     }
   }
-  return { cik, entity: String(j?.entityName ?? ""), ...res };
+  return { cik, entity: String(j?.entityName ?? ""), currency: cur, ...res };
 }
