@@ -22591,7 +22591,7 @@ const PORTIV_HIST = {
     // las barras en memoria son de OTRO día → se tiran, si no la curva mezcla dos sesiones.
     const _day = this._sessionDay();
     if (this._intraDay && _day && this._intraDay !== _day) {
-      this.intra = {}; this._intraReady = false; this._intraAt = 0;
+      this.intra = {}; this.intraExt = {}; this._intraReady = false; this._intraAt = 0;
       this._tryFails['intra'] = 0; this._tryAt['intra'] = 0;   // sesión nueva = backoff limpio
     }
     this._intraDay = _day;
@@ -22610,11 +22610,14 @@ const PORTIV_HIST = {
       // al plan B de snapshots locales — que solo tiene puntos desde que el usuario abrió el
       // app. De ahí la línea que arrancaba a media mañana con un salto desde el ancla 09:30.
       // Con Alpaca la sesión se reconstruye entera 09:30→ahora sin importar cuándo se abrió.
+      // `ext` = barras de pre-market / after-hours de la misma sesión (tramos grises de la 1D).
+      const ext = {};
       const got = (typeof _alpacaIntradayBars === 'function')
-        ? await _alpacaIntradayBars(tks, 12000, _day) : {};
+        ? await _alpacaIntradayBars(tks, 12000, _day, ext) : {};
       Object.keys(got || {}).forEach(t => {
         if (got[t] && Object.keys(got[t]).length) this.intra[t] = got[t];
       });
+      if (Object.keys(ext).length) this.intraExt = Object.assign({}, this.intraExt || {}, ext);
       this._intraReady = this._intraCovered(tks);
       this._intraAt = Date.now();
       this._persistIntra();                                   // persistir intradía de HOY (Fase 2)
@@ -22669,10 +22672,45 @@ const PORTIV_HIST = {
           _since = `sesión ${dd.getDate()} ${MON[dd.getMonth()]}`;
         } catch(e){ _since = 'última sesión'; }
       }
+      // ── Pre-market / after-hours (19 nov 2026) ────────────────────────────────────────
+      // Mismo cálculo (qty × precio + efectivo constante) con las barras de fuera de la sesión
+      // de las posiciones que las tengan en IEX. Las que no: en pre-market cuentan a su cierre
+      // previo (calcH) y en after-hours a su último precio regular — sin inventar movimiento.
+      // Van delante (antes de 09:30) y detrás (después de 16:00); el cambio del día y el color
+      // siguen saliendo SÓLO de la sesión regular (base/last de arriba). La gráfica los pinta
+      // en gris sobre zonas sombreadas (_pvExtLbl, portivExtZonesAuto).
+      let preL = [], preV = [], postL = [], postV = [];
+      try {
+        const X = this.intraExt || {};
+        const xT = Object.keys(X).filter(t => qty[t] > 0 && X[t] && Object.keys(X[t]).length);
+        if (xT.length) {
+          const pc = {};
+          (HOLDINGS||[]).forEach(h=>{ if(h&&h.ticker&&+h.qty>0){ try { pc[h.ticker.toUpperCase()] = calcH(h).prevClose; } catch(e2){} } });
+          const xs = {}; xT.forEach(t => { xs[t] = Object.keys(X[t]).sort((a,b)=>toMin(a)-toMin(b)); });
+          const firstM = toMin(times[0]);
+          const tset = new Set(); xT.forEach(t => xs[t].forEach(k => tset.add(k)));
+          const xtimes = [...tset].sort((a,b)=>toMin(a)-toMin(b));
+          // Último precio extendido ≤ mt dentro del mismo tramo (pre o post); si no hay, el respaldo.
+          const extAt = (t, mt, pre) => { let px = null; const ks = xs[t] || [];
+            for (const k of ks) { const m = toMin(k); if ((pre ? m < 570 : m > 960) && m <= mt) px = X[t][k]; if (m > mt) break; }
+            return px; };
+          const valAt = (mt, pre) => { let v = 0;
+            withBars.forEach(t => { let px = (X[t] ? extAt(t, mt, pre) : null);
+              if (px == null) px = pre ? (pc[t] > 0 ? pc[t] : priceAt(t, firstM)) : priceAt(t, lastM);
+              v += (qty[t]||0) * px; });
+            // Posiciones con barras extendidas pero sin barras regulares: fuera del efectivo
+            // implícito no cabe sumarlas sin doble conteo → se ignoran (quedan dentro de `cash`).
+            return +(v + cash).toFixed(2); };
+          xtimes.forEach(k => { const m = toMin(k);
+            if (m < 570 && m < firstM) { preL.push(k); preV.push(valAt(m, true)); }
+            else if (m > 960 && m > lastM) { postL.push(k); postV.push(valAt(m, false)); } });
+        }
+      } catch(e){ preL = []; preV = []; postL = []; postV = []; }
+      const _lbl = [...preL, ...times, ...postL];
       return {
-        labels: times.slice(),
-        dates: times.map(()=>day),
-        values,
+        labels: _lbl,
+        dates: _lbl.map(()=>day),
+        values: [...preV, ...values, ...postV],
         change: +(last-base).toFixed(2),
         changePct: +(base>0?(last-base)/base*100:0).toFixed(2),
         since: _since,
@@ -22687,7 +22725,7 @@ const PORTIV_HIST = {
   },
   _persistDaily(){ try { const s=JSON.stringify({at:this._at,data:this.data});
     (typeof _lsSet==='function'?_lsSet(this._LS_DAILY,s):localStorage.setItem(this._LS_DAILY,s)); } catch(e){} },
-  _persistIntra(){ try { const s=JSON.stringify({at:this._intraAt,day:(this._intraDay||this._sessionDay()),intra:this.intra});
+  _persistIntra(){ try { const s=JSON.stringify({at:this._intraAt,day:(this._intraDay||this._sessionDay()),intra:this.intra,ext:this.intraExt||{}});
     (typeof _lsSet==='function'?_lsSet(this._LS_INTRA,s):localStorage.setItem(this._LS_INTRA,s)); } catch(e){} },
   // Hidrata data/intra desde LS una sola vez (antes del primer render → recarga en frío sin refetch).
   _hydrate(){
@@ -22701,6 +22739,7 @@ const PORTIV_HIST = {
         // Sólo se rehidrata si las barras guardadas son de la MISMA sesión que toca dibujar.
         if (o && o.intra && typeof o.intra==='object' && o.day && day && o.day===day){
           this.intra = o.intra; this._intraAt = +o.at||0; this._intraDay = o.day;
+          this.intraExt = (o.ext && typeof o.ext==='object') ? o.ext : {};
           this._intraReady = this._intraCovered(); } } } catch(e){}
   }
 };
@@ -23763,6 +23802,36 @@ var portivExtZones = {
   }
 };
 
+// ── Lo mismo para la gráfica del PORTAFOLIO, deducido de las etiquetas ────────────────────────
+// La 1D del portafolio tiene etiquetas «HH:MM» (sin fecha). Las anteriores a 09:30 son
+// pre-market y las posteriores a 16:00 after-hours. Se deduce de las etiquetas —y no de un
+// contador guardado— para que valga en todos los caminos que reescriben la serie (caché,
+// morph, zoom, re-ancla en vivo). Cualquier otra etiqueta (fechas) → no hay tramos.
+function _pvExtLbl(l){ l = String(l == null ? '' : l); return /^\d{2}:\d{2}$/.test(l) && (l < '09:30' || l > '16:00'); }
+function _pvExtCounts(labels){
+  const L = Array.isArray(labels) ? labels : [];
+  if (!L.length || !L.every(l => /^\d{2}:\d{2}$/.test(String(l)))) return { pre: 0, post: 0, n: L.length };
+  let pre = 0, post = 0;
+  while (pre < L.length && String(L[pre]) < '09:30') pre++;
+  while (post < L.length - pre && String(L[L.length - 1 - post]) > '16:00') post++;
+  return { pre, post, n: L.length };
+}
+// Segmentos de la línea dentro de un tramo extendido: gris y sin relleno de color.
+function _pvExtSegColor(ctx){
+  try { const L = ctx.chart.data.labels; if (_pvExtLbl(L[ctx.p0DataIndex]) || _pvExtLbl(L[ctx.p1DataIndex])) return '#A3ABB9'; } catch(e){}
+  return undefined;
+}
+function _pvExtSegFill(ctx){
+  try { const L = ctx.chart.data.labels; if (_pvExtLbl(L[ctx.p0DataIndex]) || _pvExtLbl(L[ctx.p1DataIndex])) return 'rgba(163,171,185,0.10)'; } catch(e){}
+  return undefined;
+}
+var portivExtZonesAuto = {
+  id: 'portivExtZonesAuto',
+  beforeDatasetsDraw(chart, args) {
+    try { const k = _pvExtCounts(chart.data && chart.data.labels); if (k.pre || k.post) portivExtZones.beforeDatasetsDraw(chart, args, k); } catch(e){}
+  }
+};
+
 var portivEndDot = {
   id: 'portivEndDot',
   afterDatasetsDraw(chart) {
@@ -24088,7 +24157,7 @@ function initPerfChart() {
   if (perfChart) { try { perfChart.destroy(); } catch(e){} perfChart = null; }
   perfChart = new Chart(ctx, {
     type: 'line',
-    plugins: [portivRetinaGuard, portivGradientBind, portivCrosshair, portivEndDot],
+    plugins: [portivRetinaGuard, portivGradientBind, portivExtZonesAuto, portivCrosshair, portivEndDot],
     data: {
       labels: d.labels,
       datasets: [{
@@ -24096,6 +24165,8 @@ function initPerfChart() {
         borderColor: _perfStroke(isPos0),
         borderWidth: _pvLineWidth((d && d.values ? d.values.length : 0)),
         backgroundColor: _perfFill(ctx, isPos0),
+        // Tramos de pre-market / after-hours de la 1D en gris (deducidos de las etiquetas «HH:MM»).
+        segment: { borderColor: _pvExtSegColor, backgroundColor: _pvExtSegFill },
         fill: 'origin',
         tension: 0.3,                      // trazo curvo Portiv, idéntico en todos los períodos
         cubicInterpolationMode: 'monotone',// interpolación que PRESERVA LA FORMA: pasa exacto por cada
@@ -24846,9 +24917,13 @@ function setPeriodData(period, ds, updMode) {
     const _liveT = (typeof calcTotals === 'function') ? +calcTotals().total.toFixed(2) : 0;
     if (_liveT > 0) {
       ds = { ...ds, values: ds.values.slice() };
-      ds.values[ds.values.length - 1] = _liveT;
+      // Con tramos de pre-market / after-hours (1D) el total en vivo —precio regular— es el
+      // ÚLTIMO punto de la sesión regular, y el cambio se mide desde el PRIMERO de ella.
+      const _xk = _pvExtCounts(ds.labels);
+      const _li = Math.max(0, ds.values.length - 1 - _xk.post), _fi = Math.min(_xk.pre, _li);
+      ds.values[_li] = _liveT;
       // Re-derivar change/%: si hay override del broker se respeta su %, si no se recalcula.
-      const _first = ds.values[0] || 0;
+      const _first = ds.values[_fi] || 0;
       const _ovr = (typeof _liveOverridePct === 'function') ? _liveOverridePct(period) : null;
       if (_ovr != null && isFinite(_ovr)) {
         ds.changePct = +(+_ovr).toFixed(2);
@@ -24899,7 +24974,8 @@ function setPeriodData(period, ds, updMode) {
     perfChart.data.datasets[0].pointHoverBackgroundColor = 'transparent';
     // Tooltip: 1D muestra "HH:MM — $X,XXX.XX"; histórico muestra fecha + valor
     perfChart.options.plugins.tooltip.callbacks.title = period === '1D'
-      ? function(items) { return (items[0]?.label || '') + ' — ' + usd(items[0]?.raw); }
+      ? function(items) { const _l = items[0]?.label || ''; const _t = _pvExtLbl(_l) ? (_l < '09:30' ? ' · Pre-market' : ' · After-hours') : '';
+          return _l + _t + ' — ' + usd(items[0]?.raw); }
       : function(items) { const _r = items[0]?.label || ''; return esDate(_r.replace(/\s+\d{1,2}:\d{2}$/, '')) + ': ' + usd(items[0]?.raw); };
     // Ticks eje X: 1D muestra HH:MM; histórico oculta HH:MM intradías
     perfChart.options.scales.x.ticks.callback = period === '1D'
@@ -25835,7 +25911,7 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
 // `dayISO` = sesión ET a bajar. Por defecto la que dibuja la gráfica 1D (hoy si el mercado ya
 // abrió; si no, la última sesión real). Pedir siempre "hoy" en fin de semana o antes de la
 // campana devolvía CERO barras → la 1D caía al plan B y se dibujaba una diagonal inventada.
-async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO){
+async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO, extOut){
   const out = {};
   const syms = [...new Set((tickers || []).map(t => String(t || '').toUpperCase()).filter(Boolean))].sort();
   if (!syms.length) return out;
@@ -25880,7 +25956,11 @@ async function _alpacaIntradayBars(tickers, timeoutMs = 12000, dayISO){
         if (_etDay(ms) !== day) continue;                     // solo la sesión pedida
         const hhmm = _etHM(ms);
         const mins = (+hhmm.slice(0,2)) * 60 + (+hhmm.slice(3,5));
-        if (mins < 570 || mins > 960) continue;               // sesión regular 09:30–16:00
+        if (mins < 570 || mins > 960) {                        // fuera de la sesión regular 09:30–16:00
+          // Pre-market / after-hours (19 nov 2026): aparte, en `extOut`, si quien llama lo pide.
+          if (extOut && mins >= 240 && mins < 1200) { (extOut[sym] = extOut[sym] || {})[hhmm] = b.c; }
+          continue;
+        }
         m[hhmm] = b.c;
       }
       if (Object.keys(m).length) out[sym] = m;
