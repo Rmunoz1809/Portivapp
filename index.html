@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1437">
+<meta name="pv-build" content="20261119-1505">
 <script>
 (function(){
   var h = location.hostname;
@@ -36975,8 +36975,14 @@ let _wlRefreshInterval = null;
 let _wlSuggestions     = [];
 
 function _wlSave() {
+  // ¿Cambió la LISTA (no solo cotizaciones)? Entonces local va por delante de la nube: se marca
+  // pendiente con fecha y se sube en ~1 s. Antes se subía a los 90 s y, al arrancar, la nube
+  // pisaba la lista local → una acción añadida justo antes de cerrar/recargar desaparecía.
+  let _wlChanged = false;
+  try { _wlChanged = (localStorage.getItem('wl_tickers') || '[]') !== JSON.stringify(WATCHLIST_TICKERS); } catch(e){}
   _lsSet('wl_tickers', JSON.stringify(WATCHLIST_TICKERS));
   _lsSet('wl_cache',   JSON.stringify(WATCHLIST_CACHE));
+  if (_wlChanged) { try { if (window._pvWlMarkDirty) window._pvWlMarkDirty(); } catch(e){} }
   try { if (window.cloudPush) window.cloudPush(); } catch(e){}
   // La watchlist vive en el bundle de cachés, no en la fila del portafolio: se agenda su subida.
   try { if (window._pvCachesPush) window._pvCachesPush(); } catch(e){}
@@ -43633,9 +43639,30 @@ if (document.readyState === 'loading') {
 
   // ── Watchlist: por cuenta (se sincroniza con la fila de cada usuario en profile_caches). ──
   function _wlGather(){
-    try { return { tickers: JSON.parse(localStorage.getItem('wl_tickers') || '[]'), cache: JSON.parse(localStorage.getItem('wl_cache') || '{}') }; }
+    try { return { tickers: JSON.parse(localStorage.getItem('wl_tickers') || '[]'), cache: JSON.parse(localStorage.getItem('wl_cache') || '{}'), at: localStorage.getItem('wl_saved_at') || null }; }
     catch(e){ return { tickers: [], cache: {} }; }
   }
+  // Watchlist PENDIENTE de subir (cambiada por el usuario y aún no confirmada en la nube), de ESTA
+  // cuenta. Mientras lo esté, el arranque NO la pisa con la copia de la nube salvo que la nube sea
+  // más reciente (editada luego desde otro dispositivo). Solo el usuario borra acciones.
+  function _wlLocalPending(uid){
+    try {
+      if (localStorage.getItem('wl_pending') !== '1') return null;
+      var owner = localStorage.getItem('wl_uid');
+      if (owner && uid && owner !== uid) return null;
+      return { tickers: JSON.parse(localStorage.getItem('wl_tickers') || '[]'), cache: JSON.parse(localStorage.getItem('wl_cache') || '{}'), at: localStorage.getItem('wl_saved_at') || null };
+    } catch(e){ return null; }
+  }
+  var _wlPushTimer = null;
+  window._pvWlMarkDirty = function(){
+    try {
+      localStorage.setItem('wl_pending', '1');
+      localStorage.setItem('wl_saved_at', new Date().toISOString());
+      if (session && session.user) localStorage.setItem('wl_uid', session.user.id);
+    } catch(e){}
+    clearTimeout(_wlPushTimer);
+    _wlPushTimer = setTimeout(function(){ try { _cachesPushCore(); } catch(e){} }, 1200);
+  };
   function _wlRestore(wl){
     try {
       var tickers = (wl && wl.tickers) || [];
@@ -44658,6 +44685,9 @@ if (document.readyState === 'loading') {
 
       // Lecturas buenas: ahora sí se limpian los restos locales (de esta u otra cuenta) y se
       // restauran desde la nube. Si sólo falló profile_caches, la lista local se conserva.
+      // EXCEPCIÓN: una watchlist local PENDIENTE de subir (el usuario la cambió y la app se cerró o
+      // recargó antes de confirmarla en la nube) se rescata antes de limpiar y se decide abajo.
+      var _wlPend = _wlLocalPending(s.user && s.user.id);
       if (!(_pcRes && _pcRes.error)) _wlClearLocal();
       var cloud = r.data && r.data.portfolio;
       var cloudUpdatedAt = (r.data && r.data.updated_at) || null;
@@ -44706,7 +44736,19 @@ if (document.readyState === 'loading') {
           _lastBundleHash = _pvBundleStableHash({ __app: _bundle.__app||{}, __wl: _bundle.__wl||{} });
         }
         // else: ya se restauró __app/__wl (si había) desde el portfolio blob arriba — se deja así.
+        // Watchlist local pendiente: gana salvo que la de la nube se haya guardado DESPUÉS (cambio
+        // hecho luego desde otro dispositivo). Si gana local, se repone y se sube enseguida.
+        var _cloudWl = (_bundle && _bundle.__wl) || (cloud && cloud.__wl) || null;
+        var _cloudWlAt = (_cloudWl && _cloudWl.at) || null;
+        var _wlKeepLocal = !!(_wlPend && (!_cloudWlAt || !_wlPend.at || _wlPend.at >= _cloudWlAt));
+        if (_wlKeepLocal) {
+          _wlRestore(_wlPend);
+          try { localStorage.setItem('wl_pending', '1'); if (_wlPend.at) localStorage.setItem('wl_saved_at', _wlPend.at); localStorage.setItem('wl_uid', s.user.id); } catch(e){}
+        } else {
+          try { localStorage.setItem('wl_pending', '0'); if (_cloudWlAt) localStorage.setItem('wl_saved_at', _cloudWlAt); else localStorage.removeItem('wl_saved_at'); localStorage.setItem('wl_uid', s.user.id); } catch(e){}
+        }
         _bundleLoaded = true;   // la nube ya se leyó: a partir de aquí las subidas son seguras
+        if (_wlKeepLocal) { try { _cachesPushCore(); } catch(e){} }
       } catch(e){ _pvLogError('cloudLoadAndGate profile_caches', e); }
 
       if (cloud) {
@@ -44911,7 +44953,10 @@ if (document.readyState === 'loading') {
         var h = _pvBundleStableHash(bundle);
         if (h === _lastBundleHash) return;                 // nada cambió (ignorando precios) → no reescribir
         var { error } = await sb2.from('profile_caches').upsert({ user_id: session.user.id, bundle: bundle, updated_at: new Date().toISOString() }, { onConflict:'user_id' });
-        if (!error) { _lastBundleHash = h; try { localStorage.setItem('pv_caches_synced', '1'); } catch(e){} }
+        if (!error) { _lastBundleHash = h; try { localStorage.setItem('pv_caches_synced', '1');
+               // La lista subida es la que hay ahora en local → ya no está pendiente.
+               if (JSON.stringify((bundle.__wl && bundle.__wl.tickers) || []) === (localStorage.getItem('wl_tickers') || '[]')) localStorage.setItem('wl_pending', '0');
+             } catch(e){} }
         else { try { localStorage.setItem('pv_caches_synced', '0'); } catch(e){}   // pendiente → reintento al volver la red
                try{ if(typeof reportQuiet==='function') reportQuiet('cloud · caches push', error); }catch(_){} }
       } catch(e){
@@ -45451,6 +45496,9 @@ if (document.readyState === 'loading') {
       var _bd = document.getElementById('authBody'); if (_bd) _bd.style.display = 'none';
       showOverlay();
     } catch(e){}
+    // Antes de salir se sube lo pendiente (watchlist recién cambiada incluida): al limpiar abajo
+    // se perdería si aún no llegó a la nube. Máximo 4 s para no trabar el cierre de sesión.
+    try { clearTimeout(_cachesTimer); _cachesTimer = null; await Promise.race([_cachesPushCore(), new Promise(function(r){ setTimeout(r, 4000); })]); } catch(e){}
     try { await sb.auth.signOut(); } catch(e){}
     try { await window._pvIapLogout(); } catch(e){}   // desvincula el customer de RevenueCat
     try {
