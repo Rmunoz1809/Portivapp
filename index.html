@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1505">
+<meta name="pv-build" content="20261119-1530">
 <script>
 (function(){
   var h = location.hostname;
@@ -43792,7 +43792,7 @@ if (document.readyState === 'loading') {
   async function _pvWebRejectNewAccount(){
     try { await sb.auth.updateUser({ data: { pv_web_signup_blocked: true } }); } catch(e){}
     try { await window._pvIapLogout(); } catch(e){}
-    try { await sb.auth.signOut(); } catch(e){}
+    try { await sb.auth.signOut({ scope: 'local' }); } catch(e){}
     try { showLogin('keep'); } catch(e){}
     setMsg('Esa cuenta aún no existe en Portiv. Créala en la app y luego entra aquí.', true);
     _pvAuthPointToApp();
@@ -43833,7 +43833,7 @@ if (document.readyState === 'loading') {
       // Ya está dentro con esa misma cuenta → sólo falta el muro.
       if (cur && curEmail && curEmail === String(j.email || '').toLowerCase()) { _pvMaybeHandoffPaywall(); return true; }
       // Otra cuenta abierta en la app → manda la del enlace.
-      if (cur) { try { await window._pvIapLogout(); } catch(e){} try { await sb.auth.signOut(); } catch(e){} }
+      if (cur) { try { await window._pvIapLogout(); } catch(e){} try { await sb.auth.signOut({ scope: 'local' }); } catch(e){} }
       var v = await sb.auth.verifyOtp({ token_hash: j.token_hash, type: 'magiclink' });
       if (v && v.error) {
         try { sessionStorage.removeItem(_HANDOFF_KEY); } catch(e){}
@@ -45499,7 +45499,9 @@ if (document.readyState === 'loading') {
     // Antes de salir se sube lo pendiente (watchlist recién cambiada incluida): al limpiar abajo
     // se perdería si aún no llegó a la nube. Máximo 4 s para no trabar el cierre de sesión.
     try { clearTimeout(_cachesTimer); _cachesTimer = null; await Promise.race([_cachesPushCore(), new Promise(function(r){ setTimeout(r, 4000); })]); } catch(e){}
-    try { await sb.auth.signOut(); } catch(e){}
+    // scope 'local': cierra SOLO este dispositivo. El predeterminado de Supabase es 'global' y
+    // revocaba la sesión en TODOS (salir en la computadora sacaba también del celular).
+    try { await sb.auth.signOut({ scope: 'local' }); } catch(e){}
     try { await window._pvIapLogout(); } catch(e){}   // desvincula el customer de RevenueCat
     try {
       sessionStorage.removeItem('_cloudApplied');
