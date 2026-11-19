@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1045">
+<meta name="pv-build" content="20261119-1050">
 <script>
 (function(){
   var h = location.hostname;
@@ -31014,7 +31014,18 @@ function _pvtvTtmAt(Q, i){
   if (span < 250 || span > 300) return null;
   const o = { end:g[3].end, fy:g[3].fy, q:0, _ttm:true };
   _PVTV_SUM.forEach(k => { o[k] = g.every(x => x[k] != null) ? g.reduce((s, x) => s + x[k], 0) : null; });
-  o.eps = g.every(x => x.eps != null) ? Math.round(g.reduce((s, x) => s + x.eps, 0) * 100) / 100 : null;
+  // EPS: el del T4 no se publica suelto (sale del anual − 9 meses y el EPS no se resta), así
+  // que la columna «2026» quedaba sin EPS y no salía en la gráfica. Al trimestre sin EPS se le
+  // calcula: su utilidad neta ÷ acciones diluidas del trimestre más cercano (utilidad ÷ EPS).
+  const sh = x => (x && x.eps && x.net != null && Math.abs(x.net / x.eps) >= 1e6) ? x.net / x.eps : null;
+  const epsDe = (x, k) => {
+    if (x.eps != null) return x.eps;
+    if (x.net == null) return null;
+    const vec = [g[k - 1], g[k + 1], g[k - 2], g[k + 2], Q[i - 4 + k], Q[i - 2 + k]].map(sh).find(v => v != null);
+    return vec ? x.net / vec : null;
+  };
+  const e4 = g.map(epsDe);
+  o.eps = e4.every(v => v != null) ? Math.round(e4.reduce((s, v) => s + v, 0) * 100) / 100 : null;
   return (o.rev != null || o.net != null) ? o : null;
 }
 // Serie anual de la vista: los últimos `n` ejercicios y, si procede, la columna de 12 meses al
@@ -31275,7 +31286,8 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'EPS diluido', cls:'hl', cells:A.map(x => _pvtvEps(x.eps)) },
         { n:'Cambio anual', cells:A.map((x, i) => (x._ttm ? (x._prev ? _pvtvPct(_pvtvChg(x.eps, x._prev.eps)) : '') : i ? _pvtvPct(_pvtvChg(x.eps, A[i - 1].eps)) : '') || '—') },
       ]);
-      hint = 'EPS diluido de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras), con criterios contables: puede diferir del EPS ajustado de los trimestres.';
+      const t = A.find(x => x._ttm);
+      hint = 'EPS diluido de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras), con criterios contables: puede diferir del EPS ajustado de los trimestres.' + (t ? ` ${t.label}: suma del EPS de los últimos cuatro trimestres (${t.sub}; el del cuarto trimestre se calcula con su utilidad neta y las acciones diluidas), comparada con los 12 meses anteriores.` : '');
     } else if (S.st < 2) {
       chart = '<div class="pvtv-skb">' + '<i></i>'.repeat(6) + '</div>';
     }
