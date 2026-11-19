@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1109">
+<meta name="pv-build" content="20261119-1120">
 <script>
 (function(){
   var h = location.hostname;
@@ -31377,6 +31377,19 @@ function _pvtvEarnData(S){
   return { er, fut, next:fut[0] || null, epsQ, revQ, A:_pvtvAnualVista(S, 6) };
 }
 
+// Contenido inicial del host «Earnings»: datos ya en memoria o el esqueleto del diseño nuevo
+// (mismas tarjetas: Próximo reporte, EPS, Ingresos). Nunca la tarjeta vieja.
+function _pvtvEarnInicial(tk, a){
+  try {
+    const S = (typeof _PVTV_MEM === 'object') ? _PVTV_MEM[tk] : null;
+    if (S && S.st >= 1 && Date.now() - S.ts <= 30 * 60e3){ const h = _pvtvEarnHtml(tk, S, a); if (h) return h; }
+  } catch(e){}
+  const st = (t, eb) => _pvxStitle(t, eb);
+  const sk = `<div class="pvtv-skb">${'<i></i>'.repeat(6)}</div>`;
+  return `<div class="px-card">${st('Próximo reporte', 'Cargando…')}${sk}</div>`
+    + `<div class="px-card">${st('EPS', 'Ganancia por acción')}${sk}</div>`
+    + `<div class="px-card">${st('Ingresos', 'Ventas totales')}${sk}</div>`;
+}
 function _pvtvEarnHtml(tk, S, a){
   const esc = pvEsc, st = (t, eb, x) => _pvxStitle(t, eb, x);
   const D = _pvtvEarnData(S);
@@ -31557,10 +31570,14 @@ function _pvtvPaint(tk){
   const he = document.getElementById('pvx-tv-earn'), hi = document.getElementById('pvx-tv-inc');
   if (he && he.dataset.tk === tk && S.st >= 1){
     const html = _pvtvEarnHtml(tk, S, _pvxLiveA(tk));
-    // Sin datos nuevos se queda lo que ya había (la tarjeta de crecimiento reciente).
+    const em = document.querySelector('#r-analysis .pvx-ea-empty');
     if (html){
       _pvtvPut(he, html);
-      const em = document.querySelector('#r-analysis .pvx-ea-empty'); if (em) em.remove();
+      if (em) em.remove();
+    } else if (S.st >= 2){
+      // Sin reportes ni estimados: fuera el esqueleto; el aviso «todavía sin datos» si aplica.
+      _pvtvPut(he, '');
+      if (em) em.style.display = '';
     }
   }
   if (hi && hi.dataset.tk === tk) _pvtvPut(hi, _pvtvIncHtml(tk, S));
@@ -32455,34 +32472,12 @@ function _renderQualAnalysis(a, el){
       ${V.map(([k, , c]) => `<div class="pvtv-view${k === _v ? ' on' : ''}" data-v="${k}">${c}</div>`).join('')}</div>`;
   }
 
-  // 7a) CRECIMIENTO RECIENTE — EPS reportado por trimestre + beat/miss + YoY real (datos reales).
+  // 7a) EARNINGS (estructura TradingView, ver _pvxFillTV). 19 nov 2026: el host arranca YA con
+  // el diseño nuevo: los datos si están en memoria (repintado, volver a la acción) o su esqueleto.
+  // Antes arrancaba con la tarjeta vieja «Crecimiento reciente» y se veía el diseño viejo un
+  // segundo antes del nuevo («sale el diseño viejo y después el nuevo»).
   {
-    const rg = a.recentGrowth || {};
-    // Etiquetas más cortas y sin anglicismos («(TTM)», «—»). El análisis cacheado trae las de
-    // antes, así que se adaptan aquí, al pintar.
-    const _lblRg = l => String(l || '').replace(/\s*\(TTM\)/, '').replace(/\s+—\s+último trimestre/, ' del último trimestre').replace(/^EPS esperado · /, 'EPS esperado ');
-    let lista = '', barras = '';
-    if (rg.kpis && rg.kpis.length){
-      lista = `<div class="px-rg-l">${rg.kpis.map(k=>{
-        // El ESTIMADO trae texto ya formado (en dólares), no un porcentaje: borde punteado.
-        if (k.est && k.txt) return `<div class="px-gr"><span>${esc(_lblRg(k.label))}</span><b class="est">${esc(k.txt)}</b></div>`;
-        const pos=k.val>=0;
-        return `<div class="px-gr"><span>${esc(_lblRg(k.label))}</span><b class="${pos?'pos':'neg'}">${pos?'+':'−'}${Math.abs(k.val).toFixed(1)}%</b></div>`; }).join('')}</div>`;
-    }
-    if (rg.quarters && rg.quarters.length){
-      const maxA = Math.max.apply(null, rg.quarters.map(q=>Math.abs(q.actual)).concat([0.01]));
-      barras = `<div class="px-eps"><div class="px-eps-h">EPS por trimestre</div>
-        <div class="px-eps-b">${rg.quarters.map(q=>`<div class="px-eps-c${q.est?' est':(q.beat?' g':' r')}"><b>$${q.actual.toFixed(2)}</b><i style="--h:${Math.max(.06, Math.abs(q.actual)/maxA).toFixed(3)}"></i></div>`).join('')}</div>
-        <div class="px-eps-l">${rg.quarters.map(q=>`<div><span>${esc(q.label)}${q.y?` '${String(q.y).slice(-2)}`:''}</span>${q.est ? '<em class="px-lp n">Previsión</em>' : (q.beat ? '<em class="px-lp g">Superó</em>' : '<em class="px-lp r">Falló</em>')}</div>`).join('')}</div></div>`;
-    }
-    // Sin trimestres ni cifras de crecimiento, no hay tarjeta.
-    // Desde el 13 nov 2026 esta tarjeta es sólo el contenido INICIAL del host de la vista
-    // «Earnings» (estructura TradingView, ver _pvxFillTV): se ve detrás del candado del plan
-    // gratuito y mientras cargan los datos, y la sustituyen las gráficas en cuanto llegan.
-    const _rgCard = (lista || barras) ? `<div class="px-card">${stitle('Crecimiento reciente')}
-      <div class="${lista && barras ? 'px-rg' : ''}">${lista}${barras}</div>
-      ${rg.note ? `<div class="px-hint">${esc(rg.note)}</div>` : ''}</div>` : '';
-    EA += `<div id="pvx-tv-earn" data-tk="${esc(a.ticker||'')}">${_rgCard}</div>`;
+    EA += `<div id="pvx-tv-earn" data-tk="${esc(a.ticker||'')}">${_pvtvEarnInicial(String(a.ticker || '').toUpperCase(), a)}</div>`;
   }
 
   // 7c) REACCIÓN AL ÚLTIMO REPORTE (IA, 1× global por earnings). La tarjeta se arma en
@@ -32648,8 +32643,9 @@ function _renderQualAnalysis(a, el){
       // trimestre y consenso) y «Estado de resultados» (10-K/10-Q). Las vistas usan clases
       // propias (.pvtv-view), no .px-pane: _pvxTab apaga todo .px-pane del análisis.
       ['ea', 'Resultados', (() => {
-        const _empty = (/px-card/.test(EA) || _pvxEqrMotivo(a.ticker || '') !== 'sinreporte') ? ''
-          : `<div class="px-card pvx-ea-empty">${stitle('Resultados trimestrales', 'Todavía sin datos')}<p class="px-empty">${esc(a.ticker || 'Esta empresa')} todavía no tiene resultados trimestrales publicados con estimado de los analistas. Aparecerán aquí con su próximo reporte.</p></div>`;
+        // Oculta hasta que _pvtvPaint confirme que no hay datos (el host arranca con esqueleto).
+        const _empty = (_pvxEqrMotivo(a.ticker || '') !== 'sinreporte') ? ''
+          : `<div class="px-card pvx-ea-empty" style="display:none">${stitle('Resultados trimestrales', 'Todavía sin datos')}<p class="px-empty">${esc(a.ticker || 'Esta empresa')} todavía no tiene resultados trimestrales publicados con estimado de los analistas. Aparecerán aquí con su próximo reporte.</p></div>`;
         const _v = (typeof _PVTV_UI === 'object' && _PVTV_UI.view === 'inc') ? 'inc' : 'earn';
         return `<div class="pvtv-wrap"><div class="pvtv-subtabs" role="tablist">
             <button type="button" class="${_v === 'earn' ? 'on' : ''}" onclick="_pvtvSub(this,'earn')">Earnings</button>
