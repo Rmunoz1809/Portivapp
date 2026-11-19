@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1508">
+<meta name="pv-build" content="20261119-1531">
 <script>
 (function(){
   var h = location.hostname;
@@ -17888,52 +17888,19 @@ function _composeNewsExt(o) {
   const summary   = (o.summary || '').trim();
   const source    = o.source || '';
   const dateStr   = o.dateStr || '';
-  const name      = (o.name || o.ticker || '').trim();
-  const impactStr = (o.impactStr || '').trim();
-  const s         = o.sentiment || 'neu';
-  const parts = [];
-
-  // 1) Entradilla: resumen real de la fuente, o una introducción a partir del titular.
-  // Evita duplicar el titular: si el "summary" de la fuente es básicamente el mismo
-  // titular (caso común en Reuters/Finnhub), no lo repetimos como párrafo.
+  // 19 nov 2026: SOLO el resumen real de la fuente. Antes se le añadían párrafos de plantilla
+  // («La lectura es favorable…», «Impacto en tu portafolio…», «Qué vigilar…», «Fuente…») que
+  // eran iguales en todas las noticias; el usuario pidió quitarlos. Si el resumen es el
+  // mismo titular repetido (común en Reuters/Finnhub), no hay cuerpo que mostrar.
+  void source; void dateStr;
   const _norm = s => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
   const summaryIsTitle = summary && title && _norm(summary).startsWith(_norm(title).slice(0,40));
-  if (summary && !summaryIsTitle) {
-    parts.push(summary);
-    if (title && summary.length < 160) {
-      parts.push(`El titular —"${title}"— resume el desarrollo principal; a continuación se detalla el contexto y sus implicaciones para tu portafolio.`);
-    }
-  } else if (title) {
-    parts.push(`"${title}".`);
-    parts.push(`${name ? name + ' está en el centro de esta noticia. ' : ''}Aunque la fuente no publicó un resumen extendido, a continuación se desarrolla el contexto de mercado y lo que significa para tus posiciones.`);
-  }
-
-  // 2) Lectura analítica según el sentimiento.
-  const ctx = {
-    pos: `La lectura es favorable${name ? ' para ' + name : ''}. Este tipo de desarrollos suele reforzar la confianza de los inversionistas y puede traducirse en flujos de compra y revisiones al alza de las estimaciones. La clave está en distinguir entre una mejora estructural de los fundamentales —que justifica mantener o ampliar la posición— y un impulso puramente sentimental que tiende a desvanecerse.`,
-    neg: `La lectura es cautelosa o negativa${name ? ' para ' + name : ''}. Noticias así suelen provocar volatilidad e incluso sobre-reacciones a la baja en el corto plazo. Antes de reaccionar conviene separar el ruido pasajero de un deterioro real de la tesis: ¿cambia el poder de fijación de precios, el crecimiento esperado o la ventaja competitiva del negocio?`,
-    neu: `La lectura es mixta o informativa${name ? ' sobre ' + name : ''}. Su efecto dependerá de cómo evolucione la narrativa en las próximas sesiones y de la sensibilidad de cada posición al tema tratado. En contextos así, lo más prudente suele ser observar y dejar que se confirme la dirección antes de actuar.`
-  }[s] || '';
-  if (ctx) parts.push(ctx);
-
-  // 3) Impacto concreto en el portafolio.
-  if (impactStr && impactStr !== 'Mercado general' && impactStr !== 'Portafolio general') {
-    const ts = impactStr.split(',').map(t => t.trim()).filter(Boolean);
-    const primary = ts[0] || impactStr;
-    const rest = ts.slice(1);
-    parts.push(`Impacto en tu portafolio: afecta de forma directa a ${primary}${rest.length ? `, y de manera secundaria a ${rest.join(', ')}` : ''}. Evalúa si la noticia confirma o contradice la tesis de inversión original y si justifica ajustar el tamaño de la posición o esperar una mejor entrada.`);
-  } else {
-    parts.push(`Impacto en tu portafolio: es de carácter general. Afectará a tus posiciones en función de su exposición al sector y al entorno macroeconómico de fondo, más que a una sola empresa en particular.`);
-  }
-
-  // 4) Qué vigilar a partir de aquí.
-  parts.push(`Qué vigilar: la reacción del precio en la apertura y el volumen de negociación, si otras fuentes confirman la información, y cualquier comunicado oficial de la compañía o del organismo involucrado. Una sola noticia rara vez cambia una tesis de largo plazo, pero varias en la misma dirección sí marcan tendencia.`);
-
-  // 5) Cierre con la fuente.
-  parts.push(`Fuente: ${source || 'desconocida'}${dateStr ? ' · ' + dateStr : ''}.`);
-
-  return parts.join('\n\n');
+  return (summary && !summaryIsTitle) ? summary : '';
 }
+
+// Párrafos de relleno automático que versiones anteriores metían en el cuerpo de las noticias
+// (siguen en cachés locales y de la nube): se filtran al pintar para que no se vean nunca.
+const _NM_FILLER_RE = /^(Publicado por |Esta noticia afecta a |Aunque la fuente no publicó|El titular —|La lectura es (favorable|cautelosa|mixta)|Impacto en tu portafolio:|Qué vigilar: la reacción del precio en la apertura y el volumen|Fuente: |Rendimiento de [A-Z.]+ hoy:|"[^"]*"\.$|[A-Z.]+ está en el centro de esta noticia)/;
 
 
 // Adapta una noticia (_newsCache) al shape de "evento" que consume _genEventResult →
@@ -18029,11 +17996,13 @@ function openNewsModal(idx, src) {
   const rawText = _cleanNewsText(n.ext || n.detail || n.summary || '');
   // Strip legacy "Monitorea el precio..." sentence from cached items
   const cleanText = rawText.replace(/Monitorea el precio durante la sesión[^.]*\./gi, '').trim();
-  const paras = cleanText.split(/\n\n+/).map(s=>s.replace(/\n/g,' ').trim()).filter(s=>s.length>20);
+  const _hNorm = s => String(s||'').toLowerCase().replace(/[^a-z0-9áéíóúñü]+/g,' ').trim();
+  const _hKey = _hNorm(n.h || n.headline || '');
+  const paras = cleanText.split(/\n\n+/).map(s=>s.replace(/\n/g,' ').trim())
+    .filter(s=>s.length>20 && !_NM_FILLER_RE.test(s) && _hNorm(s) !== _hKey);
   const _aiAnchor = '<div id="nmAiInline"></div>';
   let bodyHtml = '';
   paras.forEach(p => {
-    if (/^Publicado por/i.test(p)) bodyHtml += _aiAnchor;
     // pvEsc: el cuerpo viene de la fuente de la noticia (Finnhub) o del modelo, y
     // _cleanNewsText() limpia artefactos pero NO escapa HTML. Estos párrafos son texto
     // plano por contrato — ningún campo de noticia trae etiquetas a propósito.
@@ -18102,12 +18071,11 @@ function openNewsModal(idx, src) {
       if (cached) {
         _nmAiRender(_aiBody, { puntos: [cached.contexto, cached.mercado].filter(Boolean) });
       } else if (h) {
-        // Fallback local inmediato (con contexto) + upgrade IA en background.
-        const fb = PORTIV_WHY.compose(h);
-        _nmAiRender(_aiBody, { puntos: [fb.contexto, fb.mercado] });
+        // Sin texto de plantilla mientras llega la IA (19 nov 2026): solo se pinta la razón
+        // real; si la IA falla, gen() devuelve el fallback compuesto, que NO se muestra.
         window._nmOpenTicker = n._ticker;   // guard: evita pisar el detalle de otro mover
         PORTIV_WHY.gen(h).then(r => {
-          if (r && $('newsModal') && $('newsModal').classList.contains('open') && window._nmOpenTicker === n._ticker) {
+          if (r && !r._fallback && $('newsModal') && $('newsModal').classList.contains('open') && window._nmOpenTicker === n._ticker) {
             const b = document.getElementById('nmAiInline');
             if (b) _nmAiRender(b, { puntos: [r.contexto, r.mercado].filter(Boolean) });
           }
@@ -18119,7 +18087,11 @@ function openNewsModal(idx, src) {
       // (ext) generado 1× global. NO gastamos IA por-usuario para "mejorarlas" — usamos los
       // puntos instantáneos derivados del ext. Solo las noticias por-ticker sin contexto
       // disparan el resumen IA on-demand (y ese ya se cachea 30 días).
-      const _isShared = (n.tipo === 'Mercado General') || ((n.ext||'').length > 120);
+      // ('ext' in n): las noticias armadas por la app siempre traen ext (antes con relleno → >120);
+      // ahora ext es solo el resumen real y puede ser corto, pero el gasto debe quedar igual.
+      // Sin cuerpo real (la fuente no dio resumen) → sí se pide el resumen IA (se cachea 30 días
+      // y se comparte en la nube), para no dejar la noticia vacía ahora que no hay relleno.
+      const _isShared = paras.length > 0 && ((n.tipo === 'Mercado General') || ((n.ext||'').length > 120) || ('ext' in n));
       if (_cached && Array.isArray(_cached.puntos) && _cached.puntos.length) {
         _nmAiRender(_aiBody, _cached);
         try { _sharedAISet('nsum:v1:' + _eventHash((n.link || n.h || '').slice(0, 120)), _cached); } catch(e){}   // backfill: sube a la nube lo cacheado local
@@ -18242,7 +18214,7 @@ const PORTIV_WHY = {
     const mercado = up
       ? `Para tu posición es favorable: si la causa es estructural (no solo un rebote técnico), refuerza la tesis. Vigila si el resto del sector de ${sector} acompaña el movimiento — eso confirma que es real y no un evento aislado.`
       : `Para tu posición conviene distinguir entre una caída de sentimiento (oportunidad si la tesis sigue intacta) y un deterioro fundamental real. Revisa si la debilidad es de toda ${sector} o solo de ${h.ticker}.`;
-    return {contexto, mercado};
+    return {contexto, mercado, _fallback: true};
   },
 
   // Contexto LOCAL de un ticker desde STOCK_NEWS (ya en la página, sin red). Devuelve '' si no hay.
@@ -18413,35 +18385,10 @@ window.PORTIV_WHY = PORTIV_WHY;
 
 // Builds 3 instant summary points from article data — no AI needed, shown immediately
 function _nmInstantPuntos(n) {
-  const esc = pvEsc;   // delegado al escape único de la app
-  const ticker = (n.impact||'').split(',')[0].trim();
-  const held = ticker ? (typeof HOLDINGS!=='undefined' ? HOLDINGS.find(h=>h.ticker===ticker) : null) : null;
-  const pct = held ? (held.dayChgPct||0) : 0;
-  const pctStr = (pct>=0?'+':'')+pct.toFixed(2)+'%';
-
-  // Punto 1: Contexto — qué DICE la noticia (su contenido), no de qué trata.
-  const rawSummary = (n.summary||'').replace(/Monitorea el precio[^.]*\./gi,'').trim();
-  const p1 = rawSummary
-    ? esc(rawSummary.slice(0,220)+(rawSummary.length>220?'…':''))
-    : (n.s==='pos' ? 'La noticia destaca desarrollos favorables que podrían impulsar al sector o las empresas mencionadas.'
-      : n.s==='neg' ? 'La noticia describe presiones o riesgos que están pesando sobre las empresas mencionadas.'
-      : 'La noticia ofrece un panorama informativo de la situación actual del mercado y las empresas mencionadas.');
-
-  // Punto 2: Mercado — cómo afecta a la empresa relacionada, SIN decir cuál.
-  let p2;
-  if (held) {
-    const dir = pct>0?'al alza':'a la baja';
-    p2 = `La empresa relacionada con esta noticia cotiza hoy ${dir} (${pctStr}). ` +
-      (Math.abs(pct)>3 ? 'Es un movimiento significativo que podría estar ligado directamente a esta noticia.'
-      : Math.abs(pct)>1 ? 'Es un movimiento moderado que conviene seguir para confirmar si la noticia marca un cambio de tendencia.'
-      : 'El movimiento se mantiene dentro del rango normal de variación diaria.');
-  } else {
-    p2 = n.s==='pos' ? 'El tono positivo de la noticia podría favorecer la cotización de la empresa relacionada.'
-       : n.s==='neg' ? 'El tono negativo de la noticia podría generar presión sobre la cotización de la empresa relacionada.'
-       : 'La noticia es de carácter informativo y su impacto sobre la empresa relacionada es por ahora limitado.';
-  }
-
-  return { puntos: [p1, p2], _instant: true };
+  // 19 nov 2026: sin puntos de plantilla («La noticia ofrece un panorama informativo…»,
+  // «La empresa relacionada cotiza hoy a la baja…», «El tono positivo…»). El resumen real
+  // ya está en el cuerpo, y el % del día lo muestra la app al lado. Solo se pinta texto de IA.
+  return { puntos: [], _instant: true };
 }
 
 // Prompt COMPARTIDO del análisis IA de una noticia (autor + publicación + 3 puntos en JSON).
@@ -39482,14 +39429,9 @@ function _buildTickerArticles(ticker, news) {
       // Corroboración cruzada Yahoo+Finnhub: confirmada si ambas fuentes la reportaron.
       corroborated: !!n.corroborated,
       sources: Array.isArray(n._sources) ? n._sources : [],
-      // Extended text — minimal but informative auto-generated summary
-      ext: `${title}.\n\n${n.summary ? n.summary + '\n\n' : ''}Publicado por ${src}${longDate ? ' el ' + longDate : ''}.\n\n` +
-        `Esta noticia afecta a ${ticker} (${held?.name || ticker}) que hoy cotiza ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a ${held ? _pvPx(held.price) : '—'}. ` +
-        `${Math.abs(pct) > 3
-          ? `El movimiento del ${Math.abs(pct).toFixed(1)}% es notable — revisa si esta noticia es el catalizador principal o hay factores adicionales como el entorno macro o movimientos sectoriales amplios.`
-          : Math.abs(pct) > 1.5
-          ? `El movimiento de hoy tiene un sesgo ${sentFromChg === 'pos' ? 'positivo' : 'negativo'} moderado. Evalúa si la noticia cambia la tesis de inversión a largo plazo o es ruido de corto plazo.`
-          : `El movimiento de hoy está dentro del rango normal de variación. Mantén tu plan de inversión si la tesis fundamental no ha cambiado.`}`
+      // Cuerpo = solo el resumen real de la fuente (19 nov 2026: sin titular repetido,
+      // «Publicado por…» ni «Esta noticia afecta a… / El movimiento de hoy…» de plantilla).
+      ext: _composeNewsExt({ title, summary: n.summary })
     };
   });
 }
@@ -39638,8 +39580,7 @@ async function autoUpdateNews(force) {
       source: a.publisher || '',
       link:   a.link || '',
       img:    a.image || '',
-      ext: _composeNewsExt({title:a.title, summary:a.summary, source:a.publisher, dateStr, ticker:a.ticker, name:held?.name || a.ticker, impactStr, sentiment:s}) +
-        `\n\nRendimiento de ${a.ticker} hoy: ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% a ${held ? _pvPx(held.price) : '—'}.`
+      ext: _composeNewsExt({title:a.title, summary:a.summary})
     };
   });
 
