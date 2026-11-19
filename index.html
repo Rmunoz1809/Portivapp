@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1120">
+<meta name="pv-build" content="20261119-1138">
 <script>
 (function(){
   var h = location.hostname;
@@ -21790,6 +21790,15 @@ const PORTIV_CHART = {
       // cada posición → curva de HOY correcta AUNQUE el usuario no haya tenido el app abierto.
       // Si aún no está lista se dispara en 2º plano (redibuja al terminar) y, mientras, se cae
       // al sistema de snapshots locales de abajo.
+      // PRE-MARKET DE HOY (antes de la campana): la curva desde el cierre de ayer con el
+      // movimiento de pre-market. Sin barras de hoy todavía → sigue abajo con la última sesión.
+      try {
+        if (typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST._preMode && PORTIV_HIST._preMode()) {
+          PORTIV_HIST.ensurePremarketAsync();
+          const _pm = PORTIV_HIST.seriesPremarket();
+          if (_pm && _pm.values && _pm.values.length >= 2) return _pm;
+        }
+      } catch(e){}
       try {
         if (typeof PORTIV_HIST !== 'undefined') {
           if (PORTIV_HIST.intradayReady && PORTIV_HIST.intradayReady()) {
@@ -22585,6 +22594,8 @@ const PORTIV_HIST = {
       return `${p.y}-${String(p.mo).padStart(2,'0')}-${String(p.d).padStart(2,'0')}`; } catch(e){ return null; }
   },
   async ensureIntradayAsync(){
+    // Antes de la campana: el pre-market de HOY va por su propio camino (seriesPremarket).
+    try { if (this._preMode()) this.ensurePremarketAsync(); } catch(e){}
     if (this._intraLoading) return;
     try { this._hydrate(); } catch(e){}
     // Cambió la sesión a dibujar (pasó la campana, o hoy es finde/feriado y toca la anterior):
@@ -22617,7 +22628,11 @@ const PORTIV_HIST = {
       Object.keys(got || {}).forEach(t => {
         if (got[t] && Object.keys(got[t]).length) this.intra[t] = got[t];
       });
-      if (Object.keys(ext).length) this.intraExt = Object.assign({}, this.intraExt || {}, ext);
+      if (Object.keys(ext).length) {
+        const _antes = JSON.stringify(this.intraExt || {});
+        this.intraExt = Object.assign({}, this.intraExt || {}, ext);
+        if (JSON.stringify(this.intraExt) !== _antes) this._extGain = true;   // after-hours nuevo → repintar
+      }
       this._intraReady = this._intraCovered(tks);
       this._intraAt = Date.now();
       this._persistIntra();                                   // persistir intradía de HOY (Fase 2)
@@ -22625,8 +22640,75 @@ const PORTIV_HIST = {
     this._intraLoading = false;
     this._noteTry('intra', this._intraReady);
     // Repinta 1D SOLO si esta carga aportó datos nuevos (mismo cortafuegos que arriba).
-    const _gain = this._tickers().filter(t => this.intra[t] && Object.keys(this.intra[t]).length).length > _have0;
+    const _gain = this._tickers().filter(t => this.intra[t] && Object.keys(this.intra[t]).length).length > _have0 || this._extGain;
+    this._extGain = false;
     try { if ((this._intraReady || _gain) && typeof activePeriod!=='undefined' && activePeriod==='1D' && PORTIV_CHART.refresh) PORTIV_CHART.refresh('1D'); } catch(e){}
+  },
+  // ── PRE-MARKET DE HOY en la 1D del portafolio (19 nov 2026) ──────────────────────────────
+  // Antes de la campana (04:00–09:30 de un día hábil) la 1D deja de repetir la sesión de ayer:
+  // arranca a las 04:00 en el valor al cierre de ayer (el total en vivo, que en pre-market va
+  // con los cierres de Finnhub) y sigue con el movimiento de pre-market de cada posición con
+  // barras en IEX. El último punto usa el snapshot en vivo (≤ 60 s). Hasta que haya barras de
+  // hoy (IEX empieza ~8:00) la 1D sigue siendo la última sesión, como antes.
+  pre: { day: null, ext: {}, at: 0, loading: false },
+  _preMode(){
+    try { return typeof PV_EXT !== 'undefined' && PV_EXT.session() === 'pre' && PORTIV_CHART._isTradingDate(new Date()); } catch(e){ return false; }
+  },
+  async ensurePremarketAsync(){
+    if (!this._preMode()) return;
+    const today = PORTIV_CHART._todayET();
+    if (this.pre.day !== today) this.pre = { day: today, ext: {}, at: 0, loading: false };
+    if (this.pre.loading || (Date.now() - this.pre.at) < 2 * 60e3) return;
+    const tks = this._tickers();
+    if (!tks.length) return;
+    this.pre.loading = true;
+    const antes = JSON.stringify(this.pre.ext);
+    try {
+      const ext = {};
+      await _alpacaIntradayBars(tks, 12000, today, ext);
+      Object.keys(ext).forEach(t => { const o = {}; Object.keys(ext[t]).forEach(k => { if (k < '09:30') o[k] = ext[t][k]; }); if (Object.keys(o).length) ext[t] = o; else delete ext[t]; });
+      this.pre.ext = ext; this.pre.at = Date.now();
+    } catch(e){ this.pre.at = Date.now() - 90e3; }   // reintento en ~30 s
+    this.pre.loading = false;
+    let snap = false; try { snap = await PV_EXT.ensure(tks); } catch(e){}
+    try { if ((snap || JSON.stringify(this.pre.ext) !== antes) && typeof activePeriod!=='undefined' && activePeriod==='1D' && PORTIV_CHART.refresh) PORTIV_CHART.refresh('1D'); } catch(e){}
+  },
+  seriesPremarket(){
+    try {
+      if (!this._preMode()) return null;
+      const today = PORTIV_CHART._todayET();
+      const X = (this.pre.day === today) ? (this.pre.ext || {}) : {};
+      const hs = (typeof HOLDINGS!=='undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS.filter(h => h && h.ticker && +h.qty > 0 && +h.price > 0) : [];
+      const conX = hs.filter(h => X[h.ticker.toUpperCase()]);
+      if (!conX.length) return null;
+      const toMin = k => (+k.slice(0,2))*60 + (+k.slice(3,5));
+      const tset = new Set(); conX.forEach(h => Object.keys(X[h.ticker.toUpperCase()]).forEach(k => tset.add(k)));
+      const times = [...tset].sort((a,b) => toMin(a) - toMin(b));
+      if (!times.length) return null;
+      let base = 0; try { base = +calcTotals().total.toFixed(2); } catch(e){}
+      if (!(base > 0)) return null;
+      // Valor en t = total al cierre de ayer + Σ qty × (precio de pre-market ≤ t − cierre de ayer).
+      const pxAt = (t, mt) => { const m = X[t]; let px = null; Object.keys(m).sort((a,b)=>toMin(a)-toMin(b)).forEach(k => { if (toMin(k) <= mt) px = m[k]; }); return px; };
+      const valAt = mt => { let d = 0; conX.forEach(h => { const px = pxAt(h.ticker.toUpperCase(), mt); if (px != null) d += (+h.qty) * (px - (+h.price)); }); return +(base + d).toFixed(2); };
+      const labels = [], values = [];
+      if (times[0] > '04:00') { labels.push('04:00'); values.push(base); }
+      times.forEach(k => { labels.push(k); values.push(valAt(toMin(k))); });
+      // Punto en vivo: snapshots (≤ 60 s) de las posiciones con trade de pre-market de hoy.
+      try {
+        const now = PORTIV_CHART._nowHHMM ? PORTIV_CHART._nowHHMM() : null;
+        if (now && now > labels[labels.length - 1] && now < '09:30') {
+          let d = 0, n = 0;
+          hs.forEach(h => { const t = h.ticker.toUpperCase(); const x = PV_EXT.info(t, +h.price);
+            if (x && x.kind === 'pre') { d += (+h.qty) * (x.price - (+h.price)); n++; }
+            else { const px = X[t] ? pxAt(t, 9999) : null; if (px != null) d += (+h.qty) * (px - (+h.price)); } });
+          if (n) { labels.push(now); values.push(+(base + d).toFixed(2)); }
+        }
+      } catch(e){}
+      if (values.length < 2) return null;
+      const last = values[values.length - 1];
+      return { labels, dates: labels.map(() => today), values, change: +(last - base).toFixed(2),
+               changePct: +((last - base) / base * 100).toFixed(2), since: 'pre-market', _pre: true };
+    } catch(e){ return null; }
   },
   // Serie intradía sincrónica (usa lo cacheado por ensureIntradayAsync). null si no está lista.
   seriesIntraday(){
@@ -22706,6 +22788,19 @@ const PORTIV_HIST = {
             else if (m > 960 && m > lastM) { postL.push(k); postV.push(valAt(m, false)); } });
         }
       } catch(e){ preL = []; preV = []; postL = []; postV = []; }
+      // After-hours EN CURSO de esta misma sesión: el último punto con los snapshots en vivo
+      // (≤ 60 s), más fresco que la última barra de 5 min. Mismo flujo que el pre-market.
+      try {
+        const now = PORTIV_CHART._nowHHMM ? PORTIV_CHART._nowHHMM() : null;
+        const lastL = postL.length ? postL[postL.length - 1] : times[times.length - 1];
+        if (PV_EXT.session() === 'post' && day === today && now && now > '16:00' && now < '20:00' && now > lastL) {
+          let v = 0, n = 0;
+          withBars.forEach(t => { const reg = priceAt(t, lastM); const x = PV_EXT.info(t, reg);
+            if (x && x.kind === 'post') { v += (qty[t]||0) * x.price; n++; }
+            else { let px = null; const m = (this.intraExt || {})[t]; if (m) Object.keys(m).forEach(k => { if (k > '16:00') px = m[k]; }); v += (qty[t]||0) * (px != null ? px : reg); } });
+          if (n) { postL.push(now); postV.push(+(v + cash).toFixed(2)); }
+        }
+      } catch(e){}
       const _lbl = [...preL, ...times, ...postL];
       return {
         labels: _lbl,
@@ -23795,7 +23890,9 @@ var portivExtZones = {
       const al = (typeof o.a === 'number') ? Math.max(0, Math.min(1, o.a)) : 1;
       if (!(al > 0.01)) { c.restore(); return; }
       c.globalAlpha = al;
-      if (o.pre) zona(a.left, (px(o.pre - 1) + px(o.pre)) / 2, 'Pre');
+      // Toda la serie es pre-market (antes de la campana): zona a lo ancho con el nombre completo.
+      if (o.pre && o.pre >= o.n) zona(a.left, a.right, 'Pre-market');
+      else if (o.pre) zona(a.left, (px(o.pre - 1) + px(o.pre)) / 2, 'Pre');
       if (o.post) zona((px(o.n - o.post - 1) + px(o.n - o.post)) / 2, a.right, 'After');
       c.restore();
     } catch(e){}
@@ -23817,12 +23914,19 @@ function _pvExtCounts(labels){
   return { pre, post, n: L.length };
 }
 // Segmentos de la línea dentro de un tramo extendido: gris y sin relleno de color.
+// ¿Toda la serie es pre-market (1D antes de la campana)? Entonces es la curva protagonista y va
+// con su color normal; el gris es sólo para tramos extendidos JUNTO a una sesión regular.
+function _pvExtSolo(chart){
+  const L = chart.data.labels;
+  if (chart._pvSoloL !== L) { chart._pvSoloL = L; const k = _pvExtCounts(L); chart._pvSolo = k.n > 0 && k.pre >= k.n; }
+  return chart._pvSolo;
+}
 function _pvExtSegColor(ctx){
-  try { const L = ctx.chart.data.labels; if (_pvExtLbl(L[ctx.p0DataIndex]) || _pvExtLbl(L[ctx.p1DataIndex])) return '#A3ABB9'; } catch(e){}
+  try { const L = ctx.chart.data.labels; if (!_pvExtSolo(ctx.chart) && (_pvExtLbl(L[ctx.p0DataIndex]) || _pvExtLbl(L[ctx.p1DataIndex]))) return '#A3ABB9'; } catch(e){}
   return undefined;
 }
 function _pvExtSegFill(ctx){
-  try { const L = ctx.chart.data.labels; if (_pvExtLbl(L[ctx.p0DataIndex]) || _pvExtLbl(L[ctx.p1DataIndex])) return 'rgba(163,171,185,0.10)'; } catch(e){}
+  try { const L = ctx.chart.data.labels; if (!_pvExtSolo(ctx.chart) && (_pvExtLbl(L[ctx.p0DataIndex]) || _pvExtLbl(L[ctx.p1DataIndex]))) return 'rgba(163,171,185,0.10)'; } catch(e){}
   return undefined;
 }
 var portivExtZonesAuto = {
@@ -24915,11 +25019,14 @@ function setPeriodData(period, ds, updMode) {
   //    queda desfasada del total ni del cambio del día. Esto evita el bug de forma permanente.
   try {
     const _liveT = (typeof calcTotals === 'function') ? +calcTotals().total.toFixed(2) : 0;
-    if (_liveT > 0) {
+    // Serie de pre-market de hoy (todas las etiquetas antes de las 09:30): no hay punto de la
+    // sesión regular que anclar; su último punto ya es el valor de pre-market en vivo.
+    const _xk0 = _pvExtCounts(ds.labels), _soloPre = _xk0.n > 0 && _xk0.pre >= _xk0.n;
+    if (_liveT > 0 && !_soloPre) {
       ds = { ...ds, values: ds.values.slice() };
       // Con tramos de pre-market / after-hours (1D) el total en vivo —precio regular— es el
       // ÚLTIMO punto de la sesión regular, y el cambio se mide desde el PRIMERO de ella.
-      const _xk = _pvExtCounts(ds.labels);
+      const _xk = _xk0;
       const _li = Math.max(0, ds.values.length - 1 - _xk.post), _fi = Math.min(_xk.pre, _li);
       ds.values[_li] = _liveT;
       // Re-derivar change/%: si hay override del broker se respeta su %, si no se recalcula.
@@ -24939,7 +25046,7 @@ function setPeriodData(period, ds, updMode) {
   // no el intradía desde la apertura (que puede subir aunque el día esté en rojo). Los demás
   // períodos siguen usando ds.change (last − primer punto de la serie).
   let _colorChange = ds.change;
-  if (period === '1D' && typeof _calcRealDayChange === 'function') {
+  if (period === '1D' && typeof _calcRealDayChange === 'function' && !(_pvExtCounts(ds.labels).pre >= ds.values.length)) {
     try { const _rd = _calcRealDayChange(); if (_rd && isFinite(_rd.day)) _colorChange = _rd.day; } catch(e) {}
   }
   const isPos = _colorChange >= 0;
@@ -25029,9 +25136,34 @@ function setPeriodData(period, ds, updMode) {
 // Badge de cambio del DÍA junto al "Total Portfolio Value". Fuente única de verdad:
 // _calcRealDayChange (total actual vs cierre del día anterior persistido). Se llama en
 // cada render/refresh → siempre coincide con "Today" del card y se mueve en vivo.
+// ± de la cartera en la sesión extendida en curso (snapshots PV_EXT): { kind, sum, pct, n } o null.
+function _pvExtPortfolioDelta(){
+  try {
+    const hs = (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS.filter(h => h && h.ticker && h.qty > 0 && h.price > 0) : [];
+    if (!hs.length || !PV_EXT.session()) return null;
+    let sum = 0, n = 0, kind = null;
+    hs.forEach(h => { const x = PV_EXT.info(h.ticker, h.price); if (x) { sum += h.qty * (x.price - h.price); n++; kind = x.kind; } });
+    if (!n) return null;
+    const tot = calcTotals().total || 0;
+    return { kind, sum, pct: tot > 0 ? sum / tot * 100 : 0, n };
+  } catch(e){ return null; }
+}
 function _renderHeaderDayBadge() {
   const pv = document.getElementById('perf-period-val');
   if (!pv) return;
+  // PRE-MARKET (antes de la campana, con barras de hoy): la pastilla es el cambio del pre-market
+  // contra el cierre de ayer —el mismo que dibuja la 1D—, no el cambio de ayer rotulado «hoy».
+  try {
+    if (typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST._preMode && PORTIV_HIST._preMode()) {
+      const s = PORTIV_HIST.seriesPremarket();
+      if (s) {
+        pv.textContent = `${_pvphMoney(s.change)} (${_pvphPct(s.changePct, 2)}) ${_L('en pre-market', 'in pre-market')}`;
+        pv.className = 'stitch-badge ' + _pvphTone(s.change);
+        _pvphTodayLine(true);
+        return;
+      }
+    }
+  } catch(e){}
   // FIX: SIEMPRE la fuente única (_calcRealDayChange). Sin fórmula alterna day/(total-day).
   let day = 0, dayPct = 0;
   try {
@@ -25050,6 +25182,8 @@ function _renderHeaderDayBadge() {
     return;
   }
   pv.textContent = `${_pvphMoney(day)} (${_pvphPct(dayPct, 2)}) ${_pvphPerTxt('1D')}`;
+  // AFTER-HOURS en curso: el cambio de hoy (sesión regular) + lo que se mueve después del cierre.
+  try { const x = _pvExtPortfolioDelta(); if (x && x.kind === 'post') pv.textContent += ` · After-hours ${_pvphMoney(x.sum)} (${_pvphPct(x.pct, 2)})`; } catch(e){}
   pv.className = 'stitch-badge ' + _pvphTone(day);
   _pvphTodayLine(false);
 }
@@ -25868,6 +26002,33 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
     if (diario.length > bars.length) bars = diario;
   }
   if (bars.length < 2) return null;
+
+  // PRE-MARKET DE HOY (19 nov 2026): antes de la campana la 1D ya no repite la sesión de ayer.
+  // Arranca a las 04:00 ET en el último cierre REGULAR (el de ayer) y sigue con las barras de
+  // pre-market de hoy (IEX: desde ~8:00). `_pre` lo leen el dibujo (zona «Pre-market», etiqueta
+  // del tooltip), el % del período («en pre-market») y _rcVigente. Sin barras de hoy todavía
+  // (04:00–08:00) → la 1D sigue siendo la última sesión, como antes.
+  if (period === '1d') {
+    try {
+      if (PV_EXT.session() === 'pre' && PORTIV_CHART._isTradingDate(new Date())) {
+        const today = PORTIV_CHART._todayET();
+        const hoy = [], reg = [];
+        for (const b of bars) {
+          const s = Date.parse(b.t) / 1000;
+          if (!isFinite(s) || typeof b.c !== 'number' || !(b.c > 0)) continue;
+          const m = _pvNyMinOf(s), d = _pvNyDayOf(s);
+          if (d === today && m >= 240 && m < 570) hoy.push({ t: Math.floor(s), c: b.c });
+          else if (d < today && m >= 570 && m < 960) reg.push({ t: Math.floor(s), c: b.c });
+        }
+        if (hoy.length && reg.length) {
+          const base = reg[reg.length - 1].c;
+          const t0 = hoy[0].t - (_pvNyMinOf(hoy[0].t) - 240) * 60;   // hoy 04:00 ET
+          const pts = (hoy[0].t > t0) ? [{ t: t0, c: base }, ...hoy] : hoy;
+          if (pts.length >= 2) return { timestamps: pts.map(p => p.t), closes: pts.map(p => Math.round(p.c * 10000) / 10000), _pre: true, _base: base };
+        }
+      }
+    } catch(e){}
+  }
 
   // 1D = sólo la última sesión: la ventana pide 6 días para no fallar en lunes/feriados. El
   // recorte fino (horario regular, última sesión) lo hace _pvHistWindow en apiCall.
@@ -35429,6 +35590,15 @@ function _drawResearchChart(chartData, isPos) {
   if (chartData._synthetic) { _chartEmptyState(true); return; }
   const _rng = _activeResearchRange;
   const { ts, cl } = _rcSerie(chartData, _rng);
+  // 1D en pre-market de hoy: toda la serie es pre-market (zona «Pre-market» a lo ancho) y el
+  // último punto es el precio en vivo del snapshot (≤ 60 s), más fresco que la barra de 5 min.
+  const _preZ0 = (_rng === '1d' && chartData._pre);
+  if (_preZ0 && ts.length) {
+    try {
+      const _x = PV_EXT.info(currentResearchTicker, chartData._base || _researchCurPrice);
+      if (_x && _x.kind === 'pre' && _x.t / 1000 > ts[ts.length - 1] + 60) { ts.push(Math.floor(_x.t / 1000)); cl.push(_x.price); }
+    } catch(e){}
+  }
   const _intra = (_rng === '1d' || _rng === '5d');
   let pts = ts.map((t,i) => ({
     // Mismo formato de fecha que la gráfica del portafolio: "5 Jul" en español, no "Jul 5".
@@ -35464,6 +35634,15 @@ function _drawResearchChart(chartData, isPos) {
       if (t < t0) _pre.push(p); else if (t > t1) _post.push(p);
     });
   }
+  // After-hours en curso: el último punto es el precio en vivo del snapshot (≤ 60 s).
+  if (_rng === '1d' && !_preZ0 && ts.length >= 2) {
+    try {
+      const _x = PV_EXT.info(currentResearchTicker, cl[cl.length - 1]);
+      const _tl = chartData.ext && chartData.ext.timestamps && chartData.ext.timestamps.length ? Math.max(ts[ts.length - 1], chartData.ext.timestamps[chartData.ext.timestamps.length - 1]) : ts[ts.length - 1];
+      const _s = _x ? Math.floor(_x.t / 1000) : 0;
+      if (_x && _x.kind === 'post' && _s > _tl + 60 && _pvNyDayOf(_s) === _pvNyDayOf(ts[ts.length - 1])) _post.push({ x: _fmtDayMonthET(_s) + ' ' + _fmtHourET(_s), y: _x.price });
+    } catch(e){}
+  }
   const _hasExt = (_pre.length + _post.length) > 0;
   const _nul = n => new Array(n).fill(null);
   const _lbls = [..._pre.map(p => p.x), ...pts.map(p => p.x), ..._post.map(p => p.x)];
@@ -35480,14 +35659,16 @@ function _drawResearchChart(chartData, isPos) {
   // Con tramos extendidos (al entrar o salir de una 1D con pre-market/after-hours) el morph
   // también desplaza el tramo regular y hace entrar/salir la serie gris y sus zonas
   // (_pvResearchMorph); antes ese caso destruía y recreaba el chart = corte seco.
+  const _preZ = _preZ0 ? { pre:_lbls.length, post:0, n:_lbls.length } : null;
   if (researchChartInst && researchChartInst.canvas === canvas) {
     const _z = _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : null;
     const _hadExt = researchChartInst.data.datasets.length > 1;
     if (!_hasExt && !_hadExt) {
       try { researchChartInst.data.datasets[0].borderWidth = _pvLineWidth(_vals.length); } catch(e){}
+      try { researchChartInst.options.plugins.portivExtZones = _preZ || false; researchChartInst._pvExt = _preZ; } catch(e){}
       if (_pvChartMorph(researchChartInst, _lbls, _vals, col, _perfFill(ctx, isPos))) return;
     } else if (_pvResearchMorph(researchChartInst, { labels:_lbls, vals:_vals, extVals:_hasExt ? _extVals : null,
-        zones:_z, color:col, fill:_perfFill(ctx, isPos), bw:_pvLineWidth(pts.length) })) {
+        zones:_z || _preZ, color:col, fill:_perfFill(ctx, isPos), bw:_pvLineWidth(pts.length) })) {
       return;
     }
   }
@@ -35530,7 +35711,7 @@ function _drawResearchChart(chartData, isPos) {
       interaction:{mode:'index',intersect:false,axis:'x'},
       plugins:{
         legend:{display:false},
-        portivExtZones: _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : false,
+        portivExtZones: _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : (_preZ || false),
         tooltip:{
           animation:false,
           backgroundColor:'#3A4250',
@@ -35582,7 +35763,7 @@ function _drawResearchChart(chartData, isPos) {
       }
     }
   });
-  researchChartInst._pvExt = _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : null;
+  researchChartInst._pvExt = _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : _preZ;
   // Igual que la gráfica del portafolio: en táctil Chart.js deja el tooltip activo tras el
   // touchend y la guía vertical quedaba "colgada". Se limpia al soltar o al salir el cursor.
   try {
@@ -35602,7 +35783,7 @@ function _drawResearchChart(chartData, isPos) {
 
 const _periodLabel = {'1d':'1D','5d':'1S','1mo':'1M','3mo':'3M','6mo':'6M','1y':'1A','ytd':'YTD','5y':'5A'};
 // Cómo se lee cada periodo en la pastilla de la cabecera: «−$14.07 (−5.54%) en 1 mes».
-const _PERIODO_FRASE = { 'hoy':'hoy', '1D':'hoy', '1S':'en 1 semana', '1W':'en 1 semana', '1M':'en 1 mes', '3M':'en 3 meses',
+const _PERIODO_FRASE = { 'Pre-market':'en pre-market', 'hoy':'hoy', '1D':'hoy', '1S':'en 1 semana', '1W':'en 1 semana', '1M':'en 1 mes', '3M':'en 3 meses',
                          '6M':'en 6 meses', '1A':'en 1 año', 'YTD':'en lo que va de año', '5A':'en 5 años' };
 
 function _updateChangeDisplay(chgAbs, chgPct, label) {
@@ -35626,9 +35807,23 @@ function _applyChartPeriodChange(chartData, rangeKey) {
   // La MISMA serie que se dibuja (ventana exacta + cierre oficial): el % cuadra con la curva.
   const cl = chartData ? _rcSerie(chartData, rangeKey).cl : [];
   const lbl = _periodLabel[rangeKey] || rangeKey;
+  // 1D en pre-market de hoy: el cambio es el del PRE-MARKET contra el cierre de ayer, con el
+  // precio en vivo del snapshot si lo hay. Antes se mostraba el cambio de ayer como «hoy».
+  if (rangeKey === '1d' && chartData && chartData._pre && cl.length >= 2) {
+    const base = chartData._base || cl[0];
+    let last = cl[cl.length - 1];
+    try { const x = PV_EXT.info(currentResearchTicker, base); if (x && x.kind === 'pre') last = x.price; } catch(e){}
+    _updateChangeDisplay(last - base, base ? ((last - base) / base) * 100 : 0, 'Pre-market');
+    return;
+  }
   if (rangeKey === '1d') {
     if (_researchCurPrice > 0 && isFinite(_researchDayChgPct)) {
       _updateChangeDisplay(_researchDayChg, _researchDayChgPct, 'hoy');
+      // After-hours en curso: el cambio de hoy + lo que se mueve después del cierre.
+      try {
+        const x = PV_EXT.info(currentResearchTicker, _researchCurPrice), sp = document.querySelector('#r-change .ra-chg');
+        if (x && x.kind === 'post' && sp) { const f = PV_EXT.fmt(x); sp.textContent += ` · After-hours ${f.pct}`; }
+      } catch(e){}
       return;
     }
     if (cl.length >= 2) {
@@ -35685,6 +35880,17 @@ function _chartLSset(ticker, range, data){
 function _rcVigente(data){
   try {
     if (!data || data._synthetic) return false;
+    // Serie de pre-market vs. momento actual: si cambió (sonó la campana, o empezó el
+    // pre-market con una 1D de ayer en caché) la caché no sirve.
+    try {
+      const _pm = PV_EXT.session() === 'pre', _t = data.timestamps || [];
+      if (data._pre && !_pm) return false;
+      // 1D (barras de 5 min) de la sesión de ayer cuando ya hay pre-market de hoy en curso.
+      if (_pm && !data._pre && _t.length >= 2 && (_t[_t.length - 1] - _t[_t.length - 2]) <= 600) return false;
+      // Pre-market / after-hours en curso: la 1D sigue creciendo → se renueva cada 5 min.
+      const _1d = data._pre || (_t.length >= 2 && (_t[_t.length - 1] - _t[_t.length - 2]) <= 600);
+      if (_1d && PV_EXT.live() && data._ts && (Date.now() - data._ts) > 5 * 60 * 1000) return false;
+    } catch(e){}
     const ts = (data.timestamps || []).filter(t => isFinite(t));
     if (ts.length < 2) return false;
     const age = data._ts ? Date.now() - data._ts : Infinity;
@@ -42654,8 +42860,8 @@ function init() {
           // El loop de 5 min se salta los ticks con la pestaña oculta, así que al volver de un
           // rato en segundo plano la reconstrucción intradía puede tener un hueco. Se pide aquí
           // (el TTL de 4 min la hace no-op si ya está fresca) y ella misma repinta 1D al llegar.
-          if (isMarketOpen() && typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST.ensureIntradayAsync) {
-            try { PORTIV_HIST.ensureIntradayAsync(); } catch(e) {}
+          if ((isMarketOpen() || isExtendedHours()) && typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST.ensureIntradayAsync) {
+            try { PORTIV_HIST.ensureIntradayAsync(isExtendedHours()); } catch(e) {}
           }
           if (typeof renderAll === 'function') renderAll();
           if (typeof activePeriod !== 'undefined' && activePeriod === '1D' && typeof PORTIV_CHART !== 'undefined') {
@@ -42775,10 +42981,13 @@ function init() {
       };
       const _tick = async () => {
         try {
-          if (!document.hidden && typeof PORTIV_CHART !== 'undefined' && PORTIV_CHART.isMarketOpenNow()) {
-            PORTIV_CHART.record();      // plan B local (bucket de 5 min en localStorage)
+          // Pre-market / after-hours (19 nov 2026): también se refrescan las barras de la 1D
+          // (tramo de hoy fuera de la campana) — sin grabar el plan B, que es sólo de la sesión.
+          const _pvExtVivo = (typeof PV_EXT !== 'undefined' && PV_EXT.live());
+          if (!document.hidden && typeof PORTIV_CHART !== 'undefined' && (PORTIV_CHART.isMarketOpenNow() || _pvExtVivo)) {
+            if (PORTIV_CHART.isMarketOpenNow()) PORTIV_CHART.record();      // plan B local (bucket de 5 min en localStorage)
             if (typeof PORTIV_HIST !== 'undefined' && PORTIV_HIST.ensureIntradayAsync) {
-              await PORTIV_HIST.ensureIntradayAsync();
+              await PORTIV_HIST.ensureIntradayAsync(_pvExtVivo);
             }
             // ensureIntradayAsync ya repinta 1D por su cuenta si la carga aportó datos nuevos.
             // Repintar aquí también dispararía DOS renders por tick, así que este solo cubre
