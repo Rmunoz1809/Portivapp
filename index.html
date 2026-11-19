@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1419">
+<meta name="pv-build" content="20261119-1426">
 <script>
 (function(){
   var h = location.hostname;
@@ -31454,15 +31454,78 @@ function _pvtvTtmAt(Q, i){
 }
 // Serie anual de la vista: los últimos `n` ejercicios y, si procede, la columna de 12 meses al
 // último trimestre (sustituye al ejercicio más viejo para no ensanchar la tabla).
+// Columna de 12 meses con los indicadores TTM de Finnhub (/stock/metric) cuando la SEC no tiene
+// los trimestres (emisores extranjeros: COPA, NU, TSM, ASML…). Ingresos = ingresos por acción
+// TTM × acciones diluidas del último anual (utilidad ÷ EPS); utilidades = ingresos × márgenes
+// TTM; EPS = EPS TTM. Cambio interanual: los crecimientos TTM de Finnhub (ingresos y EPS).
+// Cierre = el último trimestre ya reportado (/stock/earnings), que debe ser posterior al anual.
+function _pvtvTtmMetric(S, lastA){
+  const m = S.mt && S.mt.metric; if (!m) return null;
+  const er = (S.er || []).filter(r => r && typeof r.actual === 'number' && r.period).map(r => String(r.period).slice(0, 10)).sort();
+  const hoy = new Date().toISOString().slice(0, 10);
+  const end = er.filter(e => e <= hoy).pop();       // BABA trae un periodo «2027-06-30»
+  if (!end || _pvtvD(end) - _pvtvD(lastA.end) < 45 * 864e5) return null;
+  const num = v => (typeof v === 'number' && isFinite(v)) ? v : null;
+  const sh = (lastA.net != null && lastA.eps) ? lastA.net / lastA.eps : null;
+  // Mismas unidades que el anual de la SEC (USD, por acción y no por ADR): los indicadores
+  // ANUALES de Finnhub deben cuadrar con el último anual (±15 %). TSM y BABA vienen en su
+  // moneda (dólares taiwaneses, yuanes) y sus cifras no se usan.
+  const cuadra = (a, b) => a != null && b != null && b !== 0 && Math.abs(a / b - 1) <= 0.15;
+  const revOk = sh && sh > 1e6 && lastA.rev != null && cuadra(num(m.revenuePerShareAnnual) != null ? m.revenuePerShareAnnual * sh : null, lastA.rev);
+  const epsOk = cuadra(num(m.epsInclExtraItemsAnnual) ?? num(m.epsAnnual), lastA.eps);
+  const rps = num(m.revenuePerShareTTM), rpsA = num(m.revenuePerShareAnnual);
+  const epsT = num(m.epsInclExtraItemsTTM) ?? num(m.epsTTM), epsA = num(m.epsInclExtraItemsAnnual) ?? num(m.epsAnnual);
+  // Otra moneda o por ADR (TSM, BABA): si el margen neto ANUAL de Finnhub es el del último
+  // anual (mismo ejercicio, ±2.5 puntos), se escala en proporción: 12 meses = anual × (TTM ÷
+  // anual de Finnhub). La moneda y la relación ADR se cancelan; queda al tipo de cambio del anual.
+  const mismoEj = lastA.rev && lastA.net != null && num(m.netProfitMarginAnnual) != null
+    && Math.abs(lastA.net / lastA.rev * 100 - m.netProfitMarginAnnual) <= 2.5;
+  let rev = (revOk && rps != null) ? rps * sh : null, escalado = false;
+  if (rev == null && mismoEj && rps != null && rpsA) { rev = lastA.rev * rps / rpsA; escalado = true; }
+  const pm = k => (rev != null && num(m[k]) != null) ? rev * m[k] / 100 : null;
+  let eps = epsOk ? epsT : null;
+  if (eps == null && mismoEj && epsT != null && epsA && lastA.eps != null && Math.sign(epsA) === Math.sign(lastA.eps)) { eps = lastA.eps * epsT / epsA; escalado = true; }
+  if (rev == null && eps == null) return null;
+  const o = { end, fy:+end.slice(0, 4), q:0, _ttm:true, _fh:true, _esc:escalado, rev, gross:pm('grossMarginTTM'), op:pm('operatingMarginTTM'),
+    pretax:pm('pretaxMarginTTM'), net:pm('netProfitMarginTTM'), eps:eps != null ? Math.round(eps * 100) / 100 : null,
+    cost:null, tax:null, nii:null, nonii:null, prov:null, nonie:null };
+  if (o.rev != null && o.gross != null) o.cost = o.rev - o.gross;
+  if (o.pretax != null && o.net != null) o.tax = o.pretax - o.net;
+  const gr = num(m.revenueGrowthTTMYoy), ge = num(m.epsGrowthTTMYoy);
+  o._prev = { rev:(rev != null && gr != null && gr > -100) ? rev / (1 + gr / 100) : null,
+    eps:(o.eps != null && ge != null && ge > -100) ? o.eps / (1 + ge / 100) : null };
+  return o;
+}
+function _pvtvRelabelQ(Q, A){
+  const fyOf = end => { const d = new Date(end + 'T12:00:00Z'), y = d.getUTCFullYear(); return (d.getUTCMonth() === 0 && d.getUTCDate() <= 7) ? y - 1 : y; };
+  const last = A[A.length - 1].end, dd = (a, b) => (_pvtvD(b) - _pvtvD(a)) / 864e5;
+  Q.forEach(q => {
+    let fye = (A.find(a => { const d = dd(q.end, a.end); return d >= -5 && d <= 370; }) || {}).end;
+    if (!fye){
+      const e = new Date(last + 'T12:00:00Z'); let n = 0;
+      while (dd(q.end, e.toISOString().slice(0, 10)) < -5 && n++ < 30) e.setUTCFullYear(e.getUTCFullYear() + 1);
+      while (dd(q.end, e.toISOString().slice(0, 10)) > 370 && n++ < 60) e.setUTCFullYear(e.getUTCFullYear() - 1);
+      fye = e.toISOString().slice(0, 10);
+    }
+    const left = Math.round(dd(q.end, fye) / 91.3);
+    if (left >= 0 && left <= 3){ q.q = 4 - left; q.fy = fyOf(fye); q.label = `T${q.q} '${String(q.fy).slice(-2)}`; }
+  });
+}
+function _pvtvTtmNota(t, eps){
+  if (!t) return '';
+  if (t._fh) return `La columna ${t.label} (${t.sub}) sale de los indicadores de 12 meses de Finnhub: los trimestres de esta empresa no están completos en la SEC (las extranjeras sólo presentan ahí su informe anual). Ingresos y utilidades son aproximados (ingresos por acción y márgenes de 12 meses${t._esc ? '; convertidos a dólares al tipo de cambio del último informe anual' : ''}); el cambio es contra los 12 meses anteriores.`;
+  return `La columna ${t.label} suma ${eps ? 'el EPS de ' : ''}los últimos cuatro trimestres reportados (${t.sub}${eps ? '; el del cuarto trimestre se calcula con su utilidad neta y las acciones diluidas' : ''}), porque el informe anual del ejercicio en curso aún no sale; su cambio es contra los 12 meses anteriores.`;
+}
 function _pvtvAnualVista(S, n){
   const A = S.A || [], Q = S.Q || [];
-  if (!A.length || Q.length < 4) return A.slice(-n);
+  if (!A.length) return A.slice(-n);
   const lastA = A[A.length - 1], i = Q.length - 1;
-  if (_pvtvD(Q[i].end) - _pvtvD(lastA.end) < 45 * 864e5) return A.slice(-n);
-  const t = _pvtvTtmAt(Q, i);
+  let t = (Q.length >= 4 && _pvtvD(Q[i].end) - _pvtvD(lastA.end) >= 45 * 864e5) ? _pvtvTtmAt(Q, i) : null;
+  if (t) {
+    const j = Q.findIndex(x => { const d = (_pvtvD(t.end) - _pvtvD(x.end)) / 864e5; return d >= 340 && d <= 390; });
+    t._prev = j >= 0 ? _pvtvTtmAt(Q, j) : null;
+  } else t = _pvtvTtmMetric(S, lastA);
   if (!t) return A.slice(-n);
-  const j = Q.findIndex(x => { const d = (_pvtvD(t.end) - _pvtvD(x.end)) / 864e5; return d >= 340 && d <= 390; });
-  t._prev = j >= 0 ? _pvtvTtmAt(Q, j) : null;
   const yr = String(new Date(t.end + 'T12:00:00Z').getUTCFullYear());
   const usado = A.some(x => x.label === yr);
   t.label = usado ? 'Últ. 12 m' : yr;
@@ -31495,14 +31558,16 @@ async function _pvtvLoad(tk, stage){
         fhFetch(`/stock/financials-reported?symbol=${enc}&freq=annual`, 25000).catch(() => null),
         fhFetch(`/stock/financials-reported?symbol=${enc}&freq=quarterly`, 25000).catch(() => null),
         _pvtvSec(tk),
-      ]).then(([fa, fq, sec]) => {
+      ]).then(async ([fa, fq, sec]) => {
         S.fa = fa; S.fq = fq; S.sec = sec;
         // Fuente principal: la SEC (companyfacts, vía sec-proxy). Tiene a los emisores
         // extranjeros (20-F) y el EPS con decimales. Finnhub queda de respaldo, salvo que su
         // informe sea de OTRA empresa: con «NU» trae a Northeast Utilities (CIK 315256), que
         // usaba ese ticker hasta 2015, y no a Nu Holdings (CIK 1691493).
         const fhCik = fa && fa.cik != null ? +fa.cik : null;
-        S.fhMismatch = !!(sec && sec.cik && fhCik && +sec.cik !== fhCik);
+        // Sólo si la SEC sí trae datos: XOM pasó en 2026 a un CIK nuevo (holding) todavía vacío y,
+        // con la regla a secas, se tiraba también el respaldo de Finnhub y salía «sin informes».
+        S.fhMismatch = !!(sec && sec.cik && fhCik && +sec.cik !== fhCik && Array.isArray(sec.annual) && sec.annual.length);
         const fhOk = !S.fhMismatch;
         let A = (sec && sec.annual && sec.annual.length) ? _pvtvFromSec(sec.annual, true) : (fhOk ? _pvtvAnnual(fa) : []);
         let Q = (sec && sec.quarterly && sec.quarterly.length) ? _pvtvFromSec(sec.quarterly, false) : (fhOk ? _pvtvQuarterly(fq, fa) : []);
@@ -31511,6 +31576,17 @@ async function _pvtvLoad(tk, stage){
         const viejo = arr => arr.length && (Date.now() - _pvtvD(arr[arr.length - 1].end)) > 3 * 366 * 864e5;
         if (viejo(A)) { A = []; Q = []; }
         S.A = A; S.Q = Q; S.src = (sec && sec.annual && sec.annual.length) ? 'sec' : 'fh';
+        // Sin trimestres posteriores al último anual (emisores extranjeros: COPA, NU, TSM… mandan
+        // sus trimestres como 6-K sin XBRL) → indicadores de 12 meses de Finnhub para la columna
+        // del año en curso (ver _pvtvTtmMetric).
+        // Trimestres de Finnhub (respaldo): año y trimestre fiscal por FECHAS, como hace el
+        // sec-proxy; su `year` viene mal en algunos (XOM: «T2 '26» para junio de 2025).
+        if (S.src === 'fh' && A.length) _pvtvRelabelQ(Q, A);
+        const lA = A.length ? _pvtvD(A[A.length - 1].end) : NaN, lQ = Q.length ? _pvtvD(Q[Q.length - 1].end) : NaN;
+        // También si los trimestres no alcanzan para sumar 4 seguidos (XOM, con huecos).
+        if (isFinite(lA) && (!(lQ - lA >= 45 * 864e5) || !_pvtvTtmAt(Q, Q.length - 1))) {
+          S.mt = await fhFetch(`/stock/metric?symbol=${enc}&metric=all`, 15000).catch(() => null);
+        }
         S.err2 = (fa == null && fq == null && !sec); S.st = 2;
       });
     await S.p2;
@@ -31724,7 +31800,7 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'Cambio anual', cells:A.map((x, i) => (x._ttm ? (x._prev ? _pvtvPct(_pvtvChg(x.eps, x._prev.eps)) : '') : i ? _pvtvPct(_pvtvChg(x.eps, A[i - 1].eps)) : '') || '—') },
       ]);
       const t = A.find(x => x._ttm);
-      hint = 'EPS diluido de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras), con criterios contables: puede diferir del EPS ajustado de los trimestres.' + (t ? ` ${t.label}: suma del EPS de los últimos cuatro trimestres (${t.sub}; el del cuarto trimestre se calcula con su utilidad neta y las acciones diluidas), comparada con los 12 meses anteriores.` : '');
+      hint = 'EPS diluido de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras), con criterios contables: puede diferir del EPS ajustado de los trimestres.' + (t ? ' ' + _pvtvTtmNota(t, true) : '');
     } else if (S.st < 2) {
       chart = '<div class="pvtv-skb">' + '<i></i>'.repeat(6) + '</div>';
     }
@@ -31757,7 +31833,7 @@ function _pvtvEarnHtml(tk, S, a){
         { n:'Cambio anual', cells:A.map((x, i) => (x._ttm ? (x._prev ? _pvtvPct(_pvtvChg(x.rev, x._prev.rev)) : '') : i ? _pvtvPct(_pvtvChg(x.rev, A[i - 1].rev)) : '') || '—') },
       ]);
       const t = A.find(x => x._ttm);
-      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras).' + (t ? ` ${t.label}: suma de los últimos cuatro trimestres (${t.sub}), comparada con los 12 meses anteriores.` : '');
+      hint = 'Ingresos de cada informe anual presentado a la SEC (10-K, o 20-F en empresas extranjeras).' + (t ? ' ' + _pvtvTtmNota(t) : '');
     }
     if (chart) h += `<div class="px-card">${st('Ingresos', 'Ventas totales', _pvtvSeg('rev', mode))}${chart}${leg}${table}<div class="px-hint">${hint}</div></div>`;
   }
@@ -31824,7 +31900,7 @@ function _pvtvIncHtml(tk, S){
   let h = `<div class="px-card">${st('Estado de resultados', mode === 'A' ? 'Informes anuales a la SEC' : 'Trimestres reportados a la SEC', _pvtvSeg('inc', mode))}
     ${chart}${_pvtvLeg(SER.map(([, c, l]) => [c, l]))}
     ${_pvtvTable(P.map(x => ({ l:x.label, s:x.sub || _pvtvFecha(x.end) })), rowsOk)}
-    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'A' && P.some(x => x._ttm) ? ` La columna ${pvEsc(P[P.length - 1].label)} suma los últimos cuatro trimestres reportados (${pvEsc(P[P.length - 1].sub)}), porque el informe anual del ejercicio en curso aún no sale; su cambio es contra los 12 meses anteriores.` : ''}${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
+    <div class="px-hint">Cifras tal como se presentaron a la SEC. Debajo de cada cifra, el cambio contra el mismo periodo del año anterior.${mode === 'A' && P.some(x => x._ttm) ? ' ' + pvEsc(_pvtvTtmNota(P[P.length - 1])) : ''}${mode === 'Q' ? ' El cuarto trimestre no se publica por separado: sale del informe anual menos los nueve primeros meses.' : ''}</div></div>`;
   // ¿A dónde va cada dólar de ingresos? (último periodo de la vista)
   const x = banco
     ? [...P].reverse().find(r => r.rev > 0 && r.prov != null && r.nonie != null && r.tax != null && r.net != null)
