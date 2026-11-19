@@ -22,6 +22,12 @@ class PortivViewController: CAPBridgeViewController {
         // El doble-tap-zoom y el pinch son gestos del propio scrollView: sin este
         // recognizer, WebKit no tiene por dónde iniciar una ampliación.
         scrollView.pinchGestureRecognizer?.isEnabled = false
+        // Sin rebote (19 nov 2026): al llegar arriba o abajo y seguir arrastrando, el WebView
+        // se estiraba y dejaba ver una franja clara detrás de las cabeceras azul marino
+        // (Noticias, Portafolio). La página se queda quieta en el límite, también en iPad y Mac.
+        scrollView.bounces = false
+        scrollView.alwaysBounceVertical = false
+        scrollView.alwaysBounceHorizontal = false
     }
 
     // Plugins nativos propios del target App (no vienen de npm, así que `cap sync` no
