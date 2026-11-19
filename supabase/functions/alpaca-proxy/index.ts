@@ -43,6 +43,8 @@ const CORS = {
 // pocos minutos. Ajustado a qué tan rápido cambia el dato, no a qué tan seguido lo pide la UI.
 function ttlFor(path: string): number {
   const p = path.toLowerCase();
+  // Snapshot = último trade (pre-market / after-hours en la app): cambia cada minuto.
+  if (p.startsWith("/v2/stocks/snapshots")) return 60;
   if (p.includes("timeframe=1day")) return 6 * 3600;   // cierre diario → 6 h
   if (p.includes("timeframe=1week")) return 12 * 3600;
   if (p.includes("timeframe=1month")) return 24 * 3600;
@@ -64,6 +66,30 @@ function shrinkBars(payload: any): any {
       : Object.fromEntries(Object.entries(b).map(([k, v]) => [k, Array.isArray(v) ? v.map(slim) : v]));
     return { ...payload, bars };
   } catch (_e) { return payload; }
+}
+
+// Snapshots (19 nov 2026, pre-market / after-hours): la app sólo lee el último trade (t, p).
+// Alpaca manda además latestQuote, minuteBar, dailyBar y prevDailyBar por símbolo: se tiran.
+// Acepta la forma { SYM: {...} } y { snapshots: { SYM: {...} } }. Idempotente.
+// deno-lint-ignore no-explicit-any
+function shrinkSnapshots(payload: any): any {
+  try {
+    if (!payload || typeof payload !== "object") return payload;
+    const src = (payload.snapshots && typeof payload.snapshots === "object") ? payload.snapshots : payload;
+    // deno-lint-ignore no-explicit-any
+    const out: Record<string, any> = {};
+    for (const [k, v] of Object.entries(src)) {
+      // deno-lint-ignore no-explicit-any
+      const lt = (v as any)?.latestTrade;
+      if (lt && typeof lt.p === "number") out[k] = { latestTrade: { t: lt.t, p: lt.p } };
+    }
+    return out;
+  } catch (_e) { return payload; }
+}
+
+// deno-lint-ignore no-explicit-any
+function shrinkFor(path: string, payload: any): any {
+  return path.toLowerCase().startsWith("/v2/stocks/snapshots") ? shrinkSnapshots(payload) : shrinkBars(payload);
 }
 
 function json(body: unknown, status = 200) {
@@ -158,8 +184,11 @@ Deno.serve(async (req) => {
 
   // Recorte del tier anon: sólo velas, y con un tope de símbolos por petición para que
   // nadie pueda pedir el mercado entero de una sentada con una key pública.
+  // Snapshots también sin sesión (19 nov 2026): la línea de pre-market / after-hours sale en la
+  // web sin cuenta y en el primer arranque. Mismo tope de símbolos y mismo presupuesto por IP.
   if (tier === "anon") {
-    if (!path.toLowerCase().startsWith("/v2/stocks/bars")) {
+    const _pl = path.toLowerCase();
+    if (!_pl.startsWith("/v2/stocks/bars") && !_pl.startsWith("/v2/stocks/snapshots")) {
       return json({ error: "sign in required for this endpoint" }, 403);
     }
     const syms = (new URLSearchParams(path.split("?")[1] ?? "").get("symbols") ?? "")
@@ -189,7 +218,7 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (row && row.fetched_at) {
       const age = (now - new Date(row.fetched_at).getTime()) / 1000;
-      if (age < ttl) return json(shrinkBars(row.data), 200);
+      if (age < ttl) return json(shrinkFor(path, row.data), 200);
     }
   } catch (_e) { /* fallo de caché → seguimos a upstream */ }
 
@@ -198,7 +227,7 @@ Deno.serve(async (req) => {
   if (tier === "anon" && !anonBudgetOk(clientIp(req))) {
     try {
       const { data: row } = await db.from("fh_cache").select("data").eq("key", cacheKey).maybeSingle();
-      if (row) return json(shrinkBars(row.data), 200);   // caché vencida antes que romper la gráfica
+      if (row) return json(shrinkFor(path, row.data), 200);   // caché vencida antes que romper la gráfica
     } catch (_e) { /* ignore */ }
     return json({ error: "rate limited" }, 429);
   }
@@ -220,7 +249,7 @@ Deno.serve(async (req) => {
     // Rate limit de Alpaca: servimos caché vencida antes que romper la gráfica.
     try {
       const { data: row } = await db.from("fh_cache").select("data").eq("key", cacheKey).maybeSingle();
-      if (row) return json(row.data, 200);
+      if (row) return json(shrinkFor(path, row.data), 200);
     } catch (_e) { /* ignore */ }
     return json({ error: "rate limited" }, 429);
   }
@@ -231,7 +260,7 @@ Deno.serve(async (req) => {
 
   const raw = await res.json().catch(() => null);
   if (raw === null) return json({ error: "bad upstream json" }, 502);
-  const payload = shrinkBars(raw);
+  const payload = shrinkFor(path, raw);
 
   // 3) Write-through para los siguientes en esta ventana de TTL.
   try {

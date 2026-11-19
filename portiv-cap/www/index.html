@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1042">
+<meta name="pv-build" content="20261119-1045">
 <script>
 (function(){
   var h = location.hostname;
@@ -4507,6 +4507,8 @@ body.dark-theme .pv-nt { background: rgba(255,255,255,.08); color: #e6ebf2; }
             <div class="stitch-val" id="perf-total">$0.00</div>
           </div>
           <div class="pvph-today" id="pvphToday"><span data-pvph="hoy">Hoy</span> <span class="perf-metric-val" id="perf-day">—</span></div>
+          <!-- Pre-market / after-hours (PV_EXT): el valor total sigue con el precio regular; esto es aparte. -->
+          <div class="pvph-today pvph-ext" id="pvphExt" hidden><span id="pvphExtK">After-hours</span> <span class="perf-metric-val" id="pvphExtV">—</span></div>
         </div>
         <div class="pvph-tiles" id="pvphTiles">
           <div class="pvph-tile" id="pvphTilePos">
@@ -5434,6 +5436,8 @@ html body #tab-portfolio #pvphRow #perf-period-val::after { content:none !import
         </div>
         <div class="ra-price-row">
           <span class="ra-price" id="r-price"></span>
+          <!-- Pre-market / after-hours (PV_EXT): «After-hours $180.10 −0.42%». Oculto en sesión regular. -->
+          <span class="ra-ext" id="r-ext" hidden></span>
           <!-- La pastilla del cambio del periodo (#r-change) ya no va aquí: está junto a «Precio
                histórico», en la tarjeta de la gráfica (ver .ra-ctrow). -->
         </div>
@@ -23726,13 +23730,44 @@ function _perfColorOf(chart) {
 
 // Punto del último dato: anillo blanco + relleno del color de la línea. Marca
 // dónde está el valor de hoy sin añadir texto ni cambiar la escala.
+// ── Zonas de pre-market / after-hours (1D de Análisis) ──────────────────────────────────────
+// Sombrea los tramos fuera de la sesión regular y los rotula arriba («Pre» / «After»). Las
+// cuentas llegan en options.plugins.portivExtZones = { pre, post, n } (false = no hay tramos).
+var portivExtZones = {
+  id: 'portivExtZones',
+  beforeDatasetsDraw(chart, args, o) {
+    try {
+      if (!o || !(o.pre || o.post)) return;
+      const x = chart.scales.x, a = chart.chartArea;
+      if (!x || !a) return;
+      const px = i => x.getPixelForValue(i);
+      const c = chart.ctx;
+      c.save();
+      c.fillStyle = 'rgba(20,30,48,0.045)';
+      c.font = "600 10.5px 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif";
+      c.textBaseline = 'top';
+      const zona = (x0, x1, txt) => {
+        x0 = Math.max(a.left, x0); x1 = Math.min(a.right, x1);
+        if (!(x1 > x0)) return;
+        c.fillRect(x0, a.top, x1 - x0, a.bottom - a.top);
+        if (x1 - x0 > 30) { c.save(); c.fillStyle = '#8A92A3'; c.textAlign = 'center'; c.fillText(txt, (x0 + x1) / 2, a.top + 4); c.restore(); }
+      };
+      if (o.pre) zona(a.left, (px(o.pre - 1) + px(o.pre)) / 2, 'Pre');
+      if (o.post) zona((px(o.n - o.post - 1) + px(o.n - o.post)) / 2, a.right, 'After');
+      c.restore();
+    } catch(e){}
+  }
+};
+
 var portivEndDot = {
   id: 'portivEndDot',
   afterDatasetsDraw(chart) {
     const m = chart.getDatasetMeta(0);
     if (!m || !m.data || !m.data.length) return;
-    const p = m.data[m.data.length - 1];
-    if (!p || !isFinite(p.x) || !isFinite(p.y)) return;
+    // Último punto CON valor: con after-hours la serie regular acaba en huecos (null) a la derecha.
+    let p = null;
+    for (let i = m.data.length - 1; i >= 0; i--) { const q = m.data[i]; if (q && !q.skip && isFinite(q.x) && isFinite(q.y)) { p = q; break; } }
+    if (!p) return;
     const c = chart.ctx;
     c.save();
     c.beginPath(); c.arc(p.x, p.y, 6.5, 0, Math.PI * 2); c.fillStyle = '#fff'; c.fill();
@@ -23922,8 +23957,10 @@ const portivCrosshair = {
     if (!tt || typeof tt.getActiveElements !== 'function') return;
     const act = tt.getActiveElements();
     if (!act.length) return;
-    const el = act[0].element;
-    if (!el) return;
+    // Dos series (1D con pre/after-hours): la que tenga punto real en esa posición.
+    const _a = act.find(a => a && a.element && !a.element.skip && isFinite(a.element.y)) || act[0];
+    const el = _a.element;
+    if (!el || !isFinite(el.y)) return;
     const { top, bottom } = chart.chartArea;
     const color = _perfColorOf(chart);
     const c = chart.ctx;
@@ -24938,6 +24975,30 @@ function _pvSyncActivePeriod(){
   try { new MutationObserver(function(){ _pvSyncActivePeriod(); }).observe(wrap, {childList:true}); } catch(e){}
 })();
 
+// ± de la cartera en pre-market / after-hours (PV_EXT): Σ qty × (precio extendido − precio
+// regular) de las posiciones con trade en IEX en la sesión extendida en curso. El % es sobre el
+// valor total. Sin ninguna posición con dato → la línea se oculta.
+function _pvExtPortfolioPaint(T){
+  const box = document.getElementById('pvphExt');
+  if (!box) return;
+  const hs = (typeof HOLDINGS !== 'undefined' && Array.isArray(HOLDINGS)) ? HOLDINGS.filter(h => h && h.ticker && h.qty > 0 && h.price > 0) : [];
+  const ses = PV_EXT.session();
+  if (!ses || !hs.length) { box.hidden = true; return; }
+  let sum = 0, n = 0, kind = ses;
+  hs.forEach(h => { const x = PV_EXT.info(h.ticker, h.price); if (x) { sum += h.qty * (x.price - h.price); n++; kind = x.kind; } });
+  if (n) {
+    const tot = (T && T.total > 0) ? T.total : 0;
+    const pct = tot ? sum / tot * 100 : 0;
+    document.getElementById('pvphExtK').textContent = kind === 'pre' ? 'Pre-market' : 'After-hours';
+    const v = document.getElementById('pvphExtV');
+    v.textContent = `${_pvphMoney(sum)} (${_pvphPct(pct, 2)})`;
+    v.className = 'perf-metric-val ' + _pvphTone(sum);
+    box.title = `Con el último precio en IEX de ${n} de ${hs.length} posiciones. El valor total usa el precio de la sesión regular.`;
+    box.hidden = false;
+  } else box.hidden = true;
+  PV_EXT.ensure(hs.map(h => h.ticker)).then(nv => { if (nv) _pvExtPortfolioPaint(typeof calcTotals === 'function' ? calcTotals() : T); }).catch(() => {});
+}
+
 // KPIs del header (valor total + cambio del día) — independientes del timeframe.
 // El cambio del período activo (mini-%) usa el MISMO dataset que la gráfica.
 function _updatePerfTotals(activeP, ds) {
@@ -24965,6 +25026,7 @@ function _updatePerfTotals(activeP, ds) {
       el('perf-day').className = 'perf-metric-val ' + _pvphTone(day);
     }
   }
+  try { _pvExtPortfolioPaint(T); } catch(e) {}
   const ap = activeP || (typeof activePeriod !== 'undefined' ? activePeriod : '1M');
   // Badge del header = cambio del PERÍODO activo (1D = cambio del día en vivo).
   try { _renderHeaderBadge(ap, ds); } catch(e) {}
@@ -25402,6 +25464,90 @@ async function _alpacaFetchRaw(path, timeoutMs = 12000){
   finally { clearTimeout(t); }
 }
 
+// ── PRE-MARKET / AFTER-HOURS (19 nov 2026) ────────────────────────────────────────────────
+// Precio fuera de la sesión regular = último trade del feed IEX de Alpaca (licenciado; Yahoo
+// sigue retirado por App Review 5C), vía /v2/stocks/snapshots (1 llamada por lote de 40, caché
+// compartida de 60 s en el proxy). IEX opera de 8:00 a 17:00 ET fuera de la campana, así que
+// el dato existe sólo en ese tramo y en las acciones que tuvieron trades en IEX: sin trade de
+// la sesión extendida en curso → no se muestra nada (nunca un precio de otra sesión).
+// La referencia es SIEMPRE el precio regular que ya usa la app (Finnhub `c`): en pre-market es
+// el cierre de ayer, en after-hours el cierre de hoy. El valor del portafolio NO cambia: el
+// ± extendido se enseña aparte, como hacen los brókers.
+const PV_EXT = {
+  _c: {},          // SYM → { p, t (ms del trade), at (ms de la consulta) }
+  TTL: 60e3,
+  // 'pre' (04:00–09:30 de un día hábil), 'post' (desde las 16:00 hasta el siguiente pre-market,
+  // incluidos noche, fin de semana y feriados) o null (sesión regular).
+  session(){
+    try {
+      const now = new Date(), p = PORTIV_CHART._nyParts(now), m = p.h * 60 + p.mi;
+      const habil = PORTIV_CHART._isTradingDate(now);
+      if (habil && m >= 570 && m < 960) return null;
+      if (habil && m >= 240 && m < 570) return 'pre';
+      return 'post';
+    } catch(e){ return null; }
+  },
+  // ¿Hay sesión extendida EN CURSO (para la etiqueta «en vivo»)? 04:00–09:30 o 16:00–20:00.
+  live(){ try { return typeof isExtendedHours === 'function' && isExtendedHours(); } catch(e){ return false; } },
+  // Baja los snapshots que falten o tengan > 60 s. Devuelve true si llegó algún dato nuevo.
+  async ensure(syms){
+    if (!this.session()) return false;
+    const now = Date.now();
+    const need = [...new Set((syms || []).map(s => String(s || '').toUpperCase().trim()))]
+      // Sólo acciones/ETF de EE. UU. (AAPL, BRK-B): un cripto u opción haría fallar el lote entero.
+      .filter(s => /^[A-Z]{1,5}([.\-\/ ][A-Z])?$/.test(s))
+      .filter(s => !(this._c[s] && now - this._c[s].at < this.TTL)).sort();
+    if (!need.length) return false;
+    // Marca «pedido» ya: dos render seguidos no lanzan la misma consulta dos veces.
+    need.forEach(s => { this._c[s] = Object.assign({ p: 0, t: 0 }, this._c[s], { at: now }); });
+    let nuevo = false;
+    for (let i = 0; i < need.length; i += 40) {
+      const chunk = need.slice(i, i + 40), alias = {};
+      chunk.forEach(s => { alias[_pvAlpacaSym(s)] = s; });
+      let d = null;
+      try { d = await _alpacaFetchRaw('/v2/stocks/snapshots?symbols=' + encodeURIComponent(Object.keys(alias).join(',')) + '&feed=iex', 9000); } catch(e){}
+      if (!d || typeof d !== 'object') { chunk.forEach(s => { this._c[s].at = now - this.TTL + 15e3; }); continue; }   // reintento en 15 s
+      const map = (d.snapshots && typeof d.snapshots === 'object') ? d.snapshots : d;
+      Object.keys(alias).forEach(a => {
+        const lt = map[a] && map[a].latestTrade;
+        const t = lt ? Date.parse(lt.t) : NaN;
+        if (lt && typeof lt.p === 'number' && lt.p > 0 && isFinite(t)) {
+          const s = alias[a], prev = this._c[s];
+          if (!prev || prev.p !== lt.p || prev.t !== t) nuevo = true;
+          this._c[s] = { p: lt.p, t, at: now };
+        }
+      });
+    }
+    return nuevo;
+  },
+  // { kind:'pre'|'post', label, short, price, chg, pct, t } o null. `reg` = precio regular.
+  info(sym, reg){
+    const k = this.session();
+    const e = this._c[String(sym || '').toUpperCase().trim()];
+    if (!k || !e || !(e.p > 0) || !(e.t > 0) || !(reg > 0)) return null;
+    try {
+      const sec = e.t / 1000, m = _pvNyMinOf(sec), day = _pvNyDayOf(sec);
+      if (k === 'pre') { if (day !== PORTIV_CHART._todayET() || m < 240 || m >= 570) return null; }
+      else if (day !== PORTIV_CHART.sessionDay() || m < 960 || m >= 1200) return null;
+    } catch(err){ return null; }
+    const chg = e.p - reg, pct = chg / reg * 100;
+    if (!isFinite(pct) || Math.abs(pct) > 40) return null;   // trade suelto absurdo / otro ticker
+    return { kind: k, label: k === 'pre' ? 'Pre-market' : 'After-hours', short: k === 'pre' ? 'Pre' : 'After',
+             price: e.p, chg, pct, t: e.t };
+  },
+  // Texto de la cifra: «$182.40 +1.20%». Precios < $1 con 4 decimales.
+  fmt(x){
+    const px = '$' + (x.price < 1 ? x.price.toFixed(4) : x.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    const sg = x.pct > 0 ? '+' : x.pct < 0 ? '−' : '';
+    return { px, pct: sg + Math.abs(x.pct).toFixed(2) + '%', cls: x.pct > 0 ? 'up' : x.pct < 0 ? 'dn' : 'fl' };
+  },
+  // Hora del trade en ET: «7:42 p. m. ET» → para el title.
+  hora(x){
+    try { return _pvDTF('es-MX', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }).format(new Date(x.t)) + ' ET'; } catch(e){ return ''; }
+  }
+};
+window.PV_EXT = PV_EXT;
+
 // Ventana y granularidad por período. Los rangos van holgados a propósito: fines de semana
 // y feriados no traen barras, así que pedir justo N días dejaría la serie corta.
 function _alpacaPlan(period){
@@ -25530,7 +25676,17 @@ async function _alpacaBars(ticker, period, timeoutMs = 12000){
     timestamps.push(Math.floor(ts / 1000));
     closes.push(Math.round(b.c * 10000) / 10000);
   }
-  return timestamps.length >= 2 ? { timestamps, closes } : null;
+  if (timestamps.length < 2) return null;
+  const out = { timestamps, closes };
+  // 1D: las barras de pre-market (04:00–09:30) y after-hours (16:00–20:00) de la MISMA sesión
+  // viajan aparte en `ext`. _pvHistWindow las quita de la serie principal (el % del día es de la
+  // sesión regular) y _drawResearchChart las pinta en gris a los lados, en zonas sombreadas.
+  if (period === '1d') {
+    const et = [], ec = [];
+    timestamps.forEach((t, i) => { const m = _pvNyMinOf(t); if ((m >= 240 && m < 570) || (m >= 960 && m < 1200)) { et.push(t); ec.push(closes[i]); } });
+    if (et.length) out.ext = { timestamps: et, closes: ec };
+  }
+  return out;
 }
 
 // ── Barras intradía de 5 min, MULTI-SÍMBOLO (motor de la gráfica 1D) ──────────────────────
@@ -27424,6 +27580,26 @@ function _invalidateAnalysisCaches(ticker){
 // actualiza en vivo cada 10 min mientras se ve la acción (y al abrir si está viejo).
 let _researchPriceTimer = null;
 let _researchPriceRetry = null;
+// Línea de pre-market / after-hours bajo el precio grande de Análisis (PV_EXT). Pinta lo que haya
+// en caché al instante y, si el snapshot está viejo, lo baja y repinta.
+function _pvExtResearchPaint(ticker, price){
+  const el = document.getElementById('r-ext');
+  if (!el) return;
+  const tk = String(ticker || '').toUpperCase();
+  const pinta = () => {
+    if (tk !== String(_currentResearchTicker || '').toUpperCase()) return;
+    const px = (typeof _researchCurPrice === 'number' && _researchCurPrice > 0) ? _researchCurPrice : price;
+    const x = PV_EXT.info(tk, px);
+    if (!x) { el.hidden = true; el.innerHTML = ''; return; }
+    const f = PV_EXT.fmt(x);
+    el.innerHTML = `<span class="ra-ext-k">${x.label}</span> <b>${f.px}</b> <span class="ra-ext-v ${f.cls}">${f.pct}</span>`;
+    el.title = `${x.label}: último precio en IEX a las ${PV_EXT.hora(x)}. El precio grande es el de la sesión regular.`;
+    el.hidden = false;
+  };
+  pinta();
+  if (!PV_EXT.session()) return;
+  PV_EXT.ensure([tk]).then(n => { if (n) pinta(); }).catch(() => {});
+}
 async function _refreshResearchPrice(ticker, _esReintento){
   ticker = (ticker||'').toUpperCase();
   if (!ticker || ticker !== (_currentResearchTicker||'').toUpperCase()) return;
@@ -27444,6 +27620,7 @@ async function _refreshResearchPrice(ticker, _esReintento){
     try { if (window.PV_TARGETS) window.PV_TARGETS.renderFicha(ticker, price); } catch(e){}   // distancia a tu precio objetivo al día
     const pEl = document.getElementById('r-price');
     if (pEl) pEl.textContent = `$${price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    try { _pvExtResearchPaint(ticker, price); } catch(e){}
     // El header (#r-change) respeta el PERÍODO ACTIVO: 1D → cambio del día; el resto →
     // retorno del período (recalculado desde su serie). Antes esto forzaba SIEMPRE 'hoy' y,
     // al refrescar el precio tras abrir (período por defecto 1M), pisaba el % del período →
@@ -28608,6 +28785,7 @@ function _renderResearch(ticker, info, chartData, news, mbOverview) {
   // Antetítulo de la cabecera navy: «Análisis · Tecnología» (el sector, en español).
   { const _sc=document.getElementById('r-sector'); if(_sc){ const _se = _pvaSectorEs(sector || industry || ''); _sc.textContent = _se ? 'Análisis · ' + _se : 'Análisis'; } }
   $('r-price').textContent = `$${curPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+  try { _pvExtResearchPaint(ticker, curPrice); } catch(e){}
 
   _updateChangeDisplay(dayChg, dayChgPct, 'hoy');
 
@@ -35047,13 +35225,35 @@ function _drawResearchChart(chartData, isPos) {
   if (!canvas) return;
   const col = _perfStroke(isPos);   // mismo trazo con degradado que la gráfica del portafolio
   const ctx = canvas.getContext('2d');
-  const _lbls = pts.map(p => p.x), _vals = pts.map(p => p.y);
+
+  // Pre-market / after-hours en la 1D (19 nov 2026): barras de `chartData.ext` antes de la
+  // primera y después de la última de la sesión regular. Van en una 2ª serie gris sobre zonas
+  // sombreadas; la serie principal (color, relleno, % del día) sigue siendo sólo la regular.
+  let _pre = [], _post = [];
+  if (_rng === '1d' && chartData.ext && Array.isArray(chartData.ext.timestamps) && ts.length >= 2) {
+    const t0 = ts[0], t1 = ts[ts.length - 1];
+    chartData.ext.timestamps.forEach((t, i) => {
+      const c = +chartData.ext.closes[i];
+      if (!isFinite(t) || !(c > 0) || _pvNyDayOf(t) !== _pvNyDayOf(t1)) return;
+      const p = { x: _fmtDayMonthET(t) + ' ' + _fmtHourET(t), y: c };
+      if (t < t0) _pre.push(p); else if (t > t1) _post.push(p);
+    });
+  }
+  const _hasExt = (_pre.length + _post.length) > 0;
+  const _nul = n => new Array(n).fill(null);
+  const _lbls = [..._pre.map(p => p.x), ...pts.map(p => p.x), ..._post.map(p => p.x)];
+  const _vals = [..._nul(_pre.length), ...pts.map(p => p.y), ..._nul(_post.length)];
+  // Serie gris: pre-market → enlaza con la apertura; cierre → enlaza con el after-hours.
+  const _extVals = [..._pre.map(p => p.y),
+    ...pts.map((p, i) => ((i === 0 && _pre.length) || (i === pts.length - 1 && _post.length)) ? p.y : null),
+    ..._post.map(p => p.y)];
 
   // MISMA transición que la gráfica del portafolio: al cambiar de período (1D/1W/1M/…) la
   // línea se DEFORMA hasta la nueva serie en vez de destruir el canvas y redibujar de cero
   // —que es lo que se veía como un corte/parpadeo. Si el morph no procede (primer dibujo,
   // pestaña oculta, "reduce motion", serie de <2 puntos) cae al camino de siempre.
-  if (researchChartInst && researchChartInst.canvas === canvas) {
+  // Con tramos extendidos (antes o después) no hay morph: son dos series y huecos.
+  if (!_hasExt && researchChartInst && researchChartInst.canvas === canvas && researchChartInst.data.datasets.length === 1) {
     try { researchChartInst.data.datasets[0].borderWidth = _pvLineWidth(_vals.length); } catch(e){}
     if (_pvChartMorph(researchChartInst, _lbls, _vals, col, _perfFill(ctx, isPos))) return;
   }
@@ -35064,15 +35264,20 @@ function _drawResearchChart(chartData, isPos) {
     researchChartInst = null;
   }
 
-  researchChartInst = new Chart(ctx, {
-    type:'line',
-    plugins:[portivRetinaGuard, portivGradientBind, portivCrosshair, portivEndDot],
-    data:{ labels:pts.map(p=>p.x), datasets:[{
-      data:pts.map(p=>p.y), borderColor:col, borderWidth:_pvLineWidth(pts.length),
+  const _dsets = [{
+      data:_vals, borderColor:col, borderWidth:_pvLineWidth(pts.length),
       backgroundColor:_perfFill(ctx, isPos), fill:'origin', tension:0.3,
       cubicInterpolationMode:'monotone',
       pointRadius:0, pointHoverRadius:0,
-    }] },
+    }];
+  if (_hasExt) _dsets.push({
+      data:_extVals, borderColor:'#A3ABB9', borderWidth:1.6, backgroundColor:'transparent', fill:false,
+      tension:0.3, cubicInterpolationMode:'monotone', spanGaps:false, pointRadius:0, pointHoverRadius:0,
+    });
+  researchChartInst = new Chart(ctx, {
+    type:'line',
+    plugins:[portivRetinaGuard, portivGradientBind, portivExtZones, portivCrosshair, portivEndDot],
+    data:{ labels:_lbls, datasets:_dsets },
     options:{
       responsive:true, maintainAspectRatio:false,
       // Análisis de acción: SIEMPRE con precios a la derecha y fechas abajo, también en móvil.
@@ -35091,6 +35296,7 @@ function _drawResearchChart(chartData, isPos) {
       interaction:{mode:'index',intersect:false,axis:'x'},
       plugins:{
         legend:{display:false},
+        portivExtZones: _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : false,
         tooltip:{
           animation:false,
           backgroundColor:'#3A4250',
@@ -35105,8 +35311,11 @@ function _drawResearchChart(chartData, isPos) {
           callbacks:{
             // Intradía: «2 Nov, 10:35: $338.20» (antes la hora se borraba y todos los puntos
             // de la 1D decían «2 Nov»). Precios de menos de $1 con 4 decimales, como el eje.
-            title:i=>{ const _raw = i[0]?.label || ''; const _m = _raw.match(/^(.*?)\s+(\d{1,2}:\d{2})$/); const _v = i[0]?.raw;
-              return `${esDate(_m ? _m[1] + ', ' + _m[2] : _raw)}: $${_pvPxTxt(typeof _v==='number'?_v:0)}`; },
+            // Con pre/after-hours hay dos series: se toma la que tenga valor en ese punto.
+            title:i=>{ const _it = i.find(x => typeof x.raw === 'number') || i[0]; const _raw = _it?.label || ''; const _m = _raw.match(/^(.*?)\s+(\d{1,2}:\d{2})$/); const _v = _it?.raw;
+              const _ix = _it ? _it.dataIndex : -1, _z = researchChartInst && researchChartInst._pvExt;
+              const _tag = (_z && _ix >= 0 && _ix < _z.pre) ? ' · Pre-market' : (_z && _z.post && _ix >= _z.n - _z.post) ? ' · After-hours' : '';
+              return `${esDate(_m ? _m[1] + ', ' + _m[2] : _raw)}${_tag}: $${_pvPxTxt(typeof _v==='number'?_v:0)}`; },
             label:()=>'',
           }
         }
@@ -35139,6 +35348,7 @@ function _drawResearchChart(chartData, isPos) {
       }
     }
   });
+  researchChartInst._pvExt = _hasExt ? { pre:_pre.length, post:_post.length, n:_lbls.length } : null;
   // Igual que la gráfica del portafolio: en táctil Chart.js deja el tooltip activo tras el
   // touchend y la guía vertical quedaba "colgada". Se limpia al soltar o al salir el cursor.
   try {
@@ -36365,6 +36575,15 @@ function _wlDayPaint(t) {
 // compartido (watchlist o pantalla de la acción) manda; si aún no la hubo, el cache persistido.
 // El cierre anterior viene de la cotización (regularMarketPreviousClose) y sólo vale si cuadra
 // con el % que se muestra (si no, es de otra sesión).
+// «Pre $182.40 +1.20%» / «After …» bajo la pastilla del cambio (PV_EXT). Vacío en sesión regular.
+function _wlExtTxt(t, reg) {
+  try {
+    const x = PV_EXT.info(t, reg);
+    if (!x) return '';
+    const f = PV_EXT.fmt(x);
+    return `<small class="pwl-ext" title="${x.label} · ${pvEsc(PV_EXT.hora(x))} (IEX)">${x.short} <b>${f.px}</b> <span class="${f.cls}">${f.pct}</span></small>`;
+  } catch(e) { return ''; }
+}
 function _wlQuote(t) {
   const cache = WATCHLIST_CACHE[t] || {};
   const cq = (typeof _quoteCacheGet === 'function') ? _quoteCacheGet(t) : null;
@@ -36491,6 +36710,9 @@ function renderWatchlist() {
   const n = WATCHLIST_TICKERS.length, m = order.length;
   const open = (typeof isMarketOpen === 'function') && isMarketOpen();
   const cnt = k => k + (k === 1 ? ' empresa' : ' empresas');
+  // Pre-market / after-hours: baja los snapshots que falten y repinta una vez si llegó algo.
+  try { if (PV_EXT.session()) PV_EXT.ensure(WATCHLIST_TICKERS).then(n => { if (n) renderWatchlist(); }).catch(() => {}); } catch(e){}
+  const _ext = (!open && PV_EXT.live()) ? (PV_EXT.session() === 'pre' ? 'Pre-market' : 'After-hours') : '';
 
   let rows = '';
   order.forEach(group => {
@@ -36506,7 +36728,7 @@ function renderWatchlist() {
         + `<span class="pwl-co"><span class="pwl-av pv-lg" aria-hidden="true">${pvEsc(tk.charAt(0))}${_pvLogoImg(tk)}</span>`
         +   `<span class="pwl-nm"><b><span class="pwl-tk">${pvEsc(tk)}</span>${own}</b><small>${pvEsc(name)}</small></span></span>`
         + `<span class="pwl-pr"><b class="pwl-px">${q.price != null ? _wlUsd(q.price) : '—'}</b>`
-        +   `<span class="pwl-cc"><span class="pwl-chg ${cls}">${q.pct != null ? _wlPctTxt(q.pct) : '—'}</span></span></span>`
+        +   `<span class="pwl-cc"><span class="pwl-chg ${cls}">${q.pct != null ? _wlPctTxt(q.pct) : '—'}</span>${_wlExtTxt(t, q.price)}</span></span>`
         + `<span class="pwl-sc">${_wlSparkline(t, q)}</span>`
         + `<span class="pwl-rc">${_wlRange(info, q.price)}</span>`
         + `<button type="button" class="pwl-rm" onclick="event.stopPropagation();removeFromWatchlist('${tk}')" title="Quitar de la lista" aria-label="Quitar ${pvEsc(tk)} de la lista">${_WL_X_SVG}</button>`
@@ -36518,7 +36740,7 @@ function renderWatchlist() {
     <section class="pwl-card" id="pwlCard">
       <div class="pwl-thd">
         <div class="pwl-tt"><span class="pwl-eb">${cnt(n)} · ${m} ${m === 1 ? 'sector' : 'sectores'}</span><h2 class="pwl-h2">Tus empresas</h2></div>
-        <span class="pwl-live${open ? ' on' : ''}"><i></i><span class="pwl-ll">${open ? 'Precios en vivo' : 'Mercado cerrado'}</span><span class="pwl-ls">${open ? 'En vivo' : 'Cerrado'}</span></span>
+        <span class="pwl-live${open ? ' on' : ''}"><i></i><span class="pwl-ll">${open ? 'Precios en vivo' : _ext ? _ext + ' en curso' : 'Mercado cerrado'}</span><span class="pwl-ls">${open ? 'En vivo' : _ext ? _ext : 'Cerrado'}</span></span>
       </div>
       <div class="pwl-body">
         <div class="pwl-tr pwl-th" aria-hidden="true"><span class="pwl-h-co">Empresa</span><span class="pwl-h-px">Precio</span><span class="pwl-h-cc">Cambio de hoy</span><span class="pwl-h-pr">Precio · hoy</span><span class="pwl-h-sc">Movimiento del día</span><span class="pwl-h-rc">Rango de 52 semanas</span><span class="pwl-h-rm"></span></div>
@@ -62985,6 +63207,26 @@ html body #tab-analizar #researchResults .ra-price {
   font-variant-numeric:tabular-nums; line-height:1.15;
 }
 html body #tab-analizar #researchResults .ra-change { font-size:13.5px !important; }
+/* Pre-market / after-hours (PV_EXT) junto al precio grande, sobre la cabecera navy. */
+html body #tab-analizar #researchResults .ra-ext[hidden] { display:none !important; }
+html body #tab-analizar #researchResults .ra-ext {
+  display:inline-flex; align-items:baseline; gap:6px; font-size:13.5px; font-weight:600; line-height:1.2;
+  color:rgba(255,255,255,.72); white-space:nowrap; font-variant-numeric:tabular-nums;
+}
+html body #tab-analizar #researchResults .ra-ext b { color:#fff; font-weight:800; }
+html body #tab-analizar #researchResults .ra-ext-v { font-weight:800; }
+html body #tab-analizar #researchResults .ra-ext-v.up { color:#5EE0A0; }
+html body #tab-analizar #researchResults .ra-ext-v.dn { color:#FF8A8A; }
+/* Watchlist: línea pequeña bajo la pastilla del cambio. */
+html body #tab-watchlist #wlCards .pwl-ext { display:block; margin-top:5px; font-size:11.5px; font-weight:700; line-height:1.3; color:var(--pwl-muted); white-space:nowrap; font-variant-numeric:tabular-nums; }
+html body #tab-watchlist #wlCards .pwl-ext b { color:var(--pwl-ink); font-weight:800; }
+html body #tab-watchlist #wlCards .pwl-ext .up { color:var(--pwl-green); }
+html body #tab-watchlist #wlCards .pwl-ext .dn { color:var(--pwl-red); }
+/* Portafolio: «After-hours +$12.34 (+0.05 %)» bajo «Hoy». */
+html body #tab-portfolio #pvphHero .pvph-ext { margin-top:6px; }
+html body #tab-portfolio #pvphHero .pvph-ext .pos { color:var(--pvph-mint) !important; }
+html body #tab-portfolio #pvphHero .pvph-ext .neg { color:var(--pvph-rose) !important; }
+html body #tab-portfolio #pvphHero .pvph-ext .perf-metric-val { font-weight:800; }
 html body #tab-analizar #researchResults .ra-chg {
   display:inline-flex; align-items:center; padding:6px 12px; border-radius:999px; font-size:13.5px; font-weight:800;
   line-height:1.2; white-space:nowrap; font-variant-numeric:tabular-nums;
