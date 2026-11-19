@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261114-2205">
+<meta name="pv-build" content="20261119-1026">
 <script>
 (function(){
   var h = location.hostname;
@@ -34842,22 +34842,44 @@ function esc0(s){ return pvEsc(s); }   // delegado al escape único de la app
 
 
 
-// Sin fuente de velas con licencia, la tarjeta lo dice en vez de inventar una curva.
+// Mientras no hay serie real, la tarjeta dice «Cargando precios…» (nunca «sin precios»: el
+// usuario lo leía como que la acción no tenía datos, cuando sólo faltaba que llegaran) y
+// sigue pidiendo la serie en segundo plano hasta que llega; _rcRevalidar la dibuja sola.
+let _rcEsperaTimer = null, _rcEsperaKey = '';
 function _chartEmptyState(on){
   const wrap = document.querySelector('.r-chart-wrap');
   if (!wrap) return;
   const cv = document.getElementById('researchChartCanvas');
   let ph = document.getElementById('r-chart-empty');
-  if (!on) { if (ph) ph.remove(); if (cv) cv.style.visibility = ''; return; }
+  if (!on) {
+    if (ph) ph.remove(); if (cv) cv.style.visibility = '';
+    if (_rcEsperaTimer) { clearTimeout(_rcEsperaTimer); _rcEsperaTimer = null; }
+    return;
+  }
   if (researchChartInst) { try { researchChartInst.destroy(); } catch(e){} researchChartInst = null; }
   if (cv) cv.style.visibility = 'hidden';
-  if (ph) return;
-  ph = document.createElement('div');
-  ph.id = 'r-chart-empty';
-  ph.className = 'r-chart-empty';
-  ph.innerHTML = '<div class="t">Sin histórico de precios para este período</div>'
-               + '<div class="s">Nuestro proveedor de datos no entrega la serie de precios. Preferimos no mostrar nada antes que dibujar una curva estimada.</div>';
-  wrap.appendChild(ph);
+  if (!ph) {
+    ph = document.createElement('div');
+    ph.id = 'r-chart-empty';
+    ph.className = 'r-chart-empty';
+    ph.innerHTML = '<span class="pv-ai-spin"></span><div class="t">Cargando precios…</div>';
+    wrap.appendChild(ph);
+  }
+  // Reintentos: 3 s, 5 s, 8 s… (tope 15 s) mientras siga la misma acción y período en pantalla.
+  const tk = (currentResearchTicker || '').toUpperCase(), rg = _activeResearchRange;
+  if (_rcEsperaTimer && _rcEsperaKey === tk + '|' + rg) return;
+  if (_rcEsperaTimer) clearTimeout(_rcEsperaTimer);
+  _rcEsperaKey = tk + '|' + rg;
+  let n = 0;
+  const tick = () => {
+    _rcEsperaTimer = null;
+    if (!document.getElementById('r-chart-empty')) return;
+    if ((currentResearchTicker || '').toUpperCase() !== tk || _activeResearchRange !== rg) return;
+    try { _rcRevalidar(tk, rg); } catch(e){}
+    n++;
+    _rcEsperaTimer = setTimeout(tick, Math.min(15000, 3000 + n * 2500));
+  };
+  _rcEsperaTimer = setTimeout(tick, 3000);
 }
 
 // ── Serie, fechas y ejes de la gráfica de Análisis ───────────────────────────────────────
