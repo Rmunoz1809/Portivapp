@@ -322,6 +322,18 @@ async function restore() {
   return state.isPro;
 }
 
+// Código de creador (Offer Code de Apple, p. ej. «JUAN7»). En iPhone/iPad abre la hoja oficial
+// de canje de Apple; en Mac Catalyst esa hoja no existe y devuelve 'mac' para que index.html
+// abra la página de canje de la App Store. El canje llega luego por el listener de customerInfo.
+async function redeemCode() {
+  if (!state.configured) await configure();
+  if (!isNative()) return 'web';
+  const mac = /Macintosh/.test(navigator.userAgent || '') && !(navigator.maxTouchPoints > 0);
+  if (mac) return 'mac';
+  try { await Purchases.presentCodeRedemptionSheet(); return 'sheet'; }
+  catch (e) { console.warn('[PortivIAP] hoja de códigos falló', e); return 'error'; }
+}
+
 // Presenta el PAYWALL PREHECHO de RevenueCat (diseñado en el dashboard, offering "default").
 // Desde el 12 oct index.html ya NO lo usa: el muro es propio (_pvProWall, con el diseño de la
 // app) y compra con purchase()/restore() de aquí abajo. Se conserva por si se quiere volver
@@ -476,7 +488,7 @@ window.PortivIAP = {
   purchase,
   purchaseMonthly: () => purchase('monthly'),
   purchaseAnnual:  () => purchase('annual'),
-  restore, presentPaywall, autowire, onChange,
+  restore, redeemCode, presentPaywall, autowire, onChange,
   isPro: () => state.isPro,
   appUserId: () => _idUid,        // para verificar en consola que NO es $RCAnonymousID
   // Diagnóstico rápido en la consola de Safari conectada al dispositivo:

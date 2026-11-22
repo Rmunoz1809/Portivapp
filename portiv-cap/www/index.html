@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261119-1531">
+<meta name="pv-build" content="20261122-1053">
 <script>
 (function(){
   var h = location.hostname;
@@ -46784,6 +46784,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       +       '<button type="button" class="pvw-link" data-pvw="privacy">Privacidad</button>'
       +       (WEB ? '<span class="pvw-dot" aria-hidden="true">·</span><button type="button" class="pvw-link" data-pvw="refunds">Reembolsos</button>' : '')
       +     '</div>'
+      +     (WEB ? '' : '<div class="pvw-links"><button type="button" class="pvw-link" data-pvw="code">¿Tienes un código de creador?</button></div>')
       +   '</div>'
       + '</div>';
     document.body.appendChild(w);
@@ -47001,6 +47002,42 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
         setBusy(null); msg('No se pudo restaurar. Revisa tu conexión y vuelve a intentarlo.', true);
       });
     }
+    // Código de creador (Offer Code de Apple). iPhone/iPad: hoja de canje de Apple. Mac: página de
+    // canje de la App Store. Al volver, si el canje dio Portiv Pro, el muro se cierra como una compra.
+    var REDEEM_URL = 'https://apps.apple.com/redeem?ctx=offercodes&id=6789933095';
+    function redeem(){
+      if (st.busy) return;
+      msg('');
+      getIap().then(function(x){
+        if (!x || typeof x.redeemCode !== 'function') return 'error';
+        return x.redeemCode();
+      }).then(function(r){
+        if (st.closing) return;
+        if (r === 'mac') {
+          var C = window.Capacitor && window.Capacitor.Plugins;
+          try { if (C && C.App && typeof C.App.openUrl === 'function') C.App.openUrl({ url: REDEEM_URL }); else window.location.href = REDEEM_URL; }
+          catch(e){ try { window.location.href = REDEEM_URL; } catch(e2){} }
+          msg('Escribe tu código en la App Store. Al volver, Portiv Pro se activa solo.', false);
+        } else if (r !== 'sheet') {
+          msg('No pudimos abrir el canje de códigos. Vuelve a intentarlo en un momento.', true);
+          return;
+        }
+        watchRedeem();
+      }, function(){ if (!st.closing) msg('No pudimos abrir el canje de códigos. Vuelve a intentarlo en un momento.', true); });
+    }
+    var redeemTimer = null;
+    function watchRedeem(){
+      if (redeemTimer) clearInterval(redeemTimer);
+      var n = 0;
+      redeemTimer = setInterval(function(){
+        n++;
+        if (st.closing || n > 120) { clearInterval(redeemTimer); redeemTimer = null; return; }
+        var x = st.iap;
+        if (!x) return;
+        if (n % 4 === 0 && typeof x.refresh === 'function') { try { x.refresh(); } catch(e){} }
+        if (typeof x.isPro === 'function' && x.isPro()) { clearInterval(redeemTimer); redeemTimer = null; done(false); }
+      }, 2500);
+    }
     function done(restored){
       st.busy = true; w.classList.add('pvw-busy');
       xBtn.disabled = true; restoreBtn.disabled = true; msg('');
@@ -47089,6 +47126,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       if (b === cta) { if (st.phase === 'error') load(); else buy(); return; }
       var a = b.getAttribute('data-pvw');
       if (a === 'restore') restore();
+      else if (a === 'code') redeem();
       else if (a === 'terms') { try { window._pvOpenExternal('terminos.html'); } catch(err){} }
       else if (a === 'privacy') { try { window._pvOpenExternal('privacidad.html'); } catch(err){} }
       else if (a === 'refunds') { try { window._pvOpenExternal('reembolsos.html'); } catch(err){} }
