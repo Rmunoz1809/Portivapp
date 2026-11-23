@@ -325,3 +325,26 @@ test('pending → payable el 15 de M+2 (hora de Panamá)', async () => {
   assert.equal(n1, 1);
   assert.equal((await comms(db, u))[0].status, 'payable');
 });
+
+test('las tablas viejas en español se borraron', async () => {
+  const db = await freshDb();
+  const [r] = await rows(db, `select to_regclass('public.creadores') a, to_regclass('public.creador_ventas') b`);
+  assert.equal(r.a, null);
+  assert.equal(r.b, null);
+});
+
+test('backfill: recupera desde subscription_events lo que rc-webhook no pudo pasar, sin duplicar', async () => {
+  const { db } = await base();
+  const u = uuid(31);
+  const e1 = ev({ type: 'INITIAL_PURCHASE', user: u, period: 'TRIAL', price: 0, code: 'GASTON', at: T0 });
+  const e2 = ev({ type: 'RENEWAL', user: u, price: 4.99, at: addDays(T0, 21) });
+  for (const e of [e2, e1]) {   // insertados desordenados: el backfill ordena por event_ms
+    await db.query(`insert into public.subscription_events (event_id, user_id, type, store, event_ms, payload)
+                    values ($1, $2, $3, 'APP_STORE', $4, $5::jsonb)`, [e.id, u, e.type, e.event_timestamp_ms, JSON.stringify(e)]);
+  }
+  await send(db, e1);                                   // el primero sí llegó en vivo
+  const n = (await rows(db, `select public.creators_backfill() n`))[0].n;
+  assert.equal(n, 1);
+  assert.equal((await comms(db, u)).length, 1);
+  assert.equal((await rows(db, `select public.creators_backfill() n`))[0].n, 0);
+});

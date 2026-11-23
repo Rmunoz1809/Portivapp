@@ -21,7 +21,7 @@ alter default privileges in schema public grant all on functions to anon, authen
 
 create schema auth;
 grant usage on schema auth to anon, authenticated, service_role;
-create table auth.users (id uuid primary key, email text);
+create table auth.users (id uuid primary key, email text, created_at timestamptz not null default now());
 create function auth.uid() returns uuid language sql stable as
   $$ select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
 
@@ -59,6 +59,7 @@ export async function freshDb({ withLegacy = true } = {}) {
                    values ('PORTIV7', 'Portiv (propio)', 0, 12, '1ca65d7d-d205-4453-be1c-13388ef6b78e')`);
   }
   await db.exec(readFileSync(path.join(MIG, '20261123120000_creadores_v2.sql'), 'utf8'));
+  await db.exec(readFileSync(path.join(MIG, '20261123130000_creadores_v2_cierre.sql'), 'utf8'));
   return db;
 }
 

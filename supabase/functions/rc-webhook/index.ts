@@ -30,6 +30,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyEntitlementWithStore, blocksRevocation } from "../_shared/entitlement.ts";
+import { processCreatorEvent } from "../_shared/creators.ts";
 
 // ── Configuración de negocio ───────────────────────────────────────────────
 // Identificador del entitlement en RevenueCat (case-sensitive). Verificado en
@@ -312,91 +313,6 @@ async function applyPlan(
   return {};
 }
 
-// ── Códigos de creador (Offer Codes) ──────────────────────────────────────
-// Ver migración 20261122120000_codigos_creadores.sql. Nunca rompe el webhook: cualquier
-// fallo aquí se registra y se sigue (el acceso del usuario manda sobre la comisión).
-// soloActivos: un creador dado de baja ya no suma usuarios nuevos, pero los que trajo siguen
-// generando su comisión hasta cumplir la ventana.
-async function creadorDe(codigo: unknown, soloActivos = false): Promise<{ codigo: string; comision_pct: number; meses: number } | null> {
-  const c = String(codigo ?? "").trim().toUpperCase();
-  if (!c) return null;
-  const { data } = await admin.from("creadores").select("codigo, comision_pct, meses, activo").eq("codigo", c).maybeSingle();
-  if (!data || (soloActivos && data.activo === false)) return null;
-  return { codigo: data.codigo, comision_pct: Number(data.comision_pct), meses: Number(data.meses) };
-}
-
-async function atribuirCreador(ev: Record<string, any>, uid: string | null, type: string, store: string, eventId: string) {
-  try {
-    const fechaMs = Number(ev.purchased_at_ms ?? ev.event_timestamp_ms ?? Date.now());
-    const cre = ev.offer_code ? await creadorDe(ev.offer_code, true) : null;
-
-    // Compra anónima: se guarda el canje para reclamarlo cuando llegue el uid.
-    if (!uid) {
-      if (cre && ev.app_user_id) {
-        await admin.from("creador_pendientes").upsert(
-          { rc_app_user_id: String(ev.app_user_id), codigo: cre.codigo, desde: new Date(fechaMs).toISOString() },
-          { onConflict: "rc_app_user_id", ignoreDuplicates: true },
-        );
-        log("creador pendiente", cre.codigo, ev.app_user_id);
-      }
-      return;
-    }
-
-    // 1) ¿Ya pertenece a un creador? El primer código gana.
-    let { data: link } = await admin.from("creador_usuarios").select("codigo, desde").eq("user_id", uid).maybeSingle();
-    if (!link) {
-      let codigo = cre?.codigo ?? null, desde = new Date(fechaMs).toISOString();
-      if (!codigo) {
-        // ¿Canje anónimo previo con alguno de sus ids?
-        const ids = [ev.app_user_id, ev.original_app_user_id, ...(Array.isArray(ev.aliases) ? ev.aliases : [])]
-          .filter((x: unknown): x is string => typeof x === "string" && x.length > 0 && !UUID_RE.test(x));
-        if (ids.length) {
-          const { data: pend } = await admin.from("creador_pendientes").select("rc_app_user_id, codigo, desde").in("rc_app_user_id", ids).limit(1);
-          if (pend && pend[0]) { codigo = pend[0].codigo; desde = pend[0].desde; }
-        }
-      }
-      if (!codigo) return;
-      await admin.from("creador_usuarios").upsert(
-        { user_id: uid, codigo, desde, rc_app_user_id: String(ev.app_user_id ?? "") || null },
-        { onConflict: "user_id", ignoreDuplicates: true },
-      );
-      log("creador asignado", codigo, uid);
-      link = { codigo, desde };
-    }
-
-    // 2) ¿Este evento mueve dinero? RevenueCat: price 0 en pruebas, negativo en reembolsos.
-    const price = Number(ev.price);
-    if (!eventId || !Number.isFinite(price) || price === 0) return;
-    const c = await creadorDe(link.codigo);
-    if (!c) return;
-    const limite = new Date(link.desde);
-    limite.setMonth(limite.getMonth() + c.meses);
-    if (fechaMs > limite.getTime()) return;                   // fuera de la ventana de comisión
-    let precio = price;
-    if ((type === "REFUND" || type === "REFUND_REVERSED_TO_CUSTOMER") && precio > 0) precio = -precio;
-    const tax = Math.min(Math.max(Number(ev.tax_percentage) || 0, 0), 0.9);
-    const base = precio * (1 - tax);
-    const comision = base * c.comision_pct / 100;
-    await admin.from("creador_ventas").upsert({
-      event_id: eventId,
-      codigo: c.codigo,
-      user_id: uid,
-      tipo: type,
-      producto: ev.product_id ?? null,
-      tienda: store || null,
-      fecha: new Date(fechaMs).toISOString(),
-      precio_usd: Math.round(precio * 10000) / 10000,
-      impuesto_pct: Math.round(tax * 10000) / 10000,
-      base_usd: Math.round(base * 10000) / 10000,
-      comision_pct: c.comision_pct,
-      comision_usd: Math.round(comision * 10000) / 10000,
-    }, { onConflict: "event_id", ignoreDuplicates: true });
-    log("venta de creador", c.codigo, type, precio, "comisión", comision.toFixed(2));
-  } catch (e) {
-    log("creador: error (se ignora)", String(e));
-  }
-}
-
 // ── Handler ────────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
@@ -425,6 +341,15 @@ Deno.serve(async (req) => {
   const env = String(ev.environment ?? "").toUpperCase();
 
   if (!type) return json({ error: "missing_type" }, 400);
+
+  // 2b · Programa de creadores (Offer Codes). TODO evento —también TEST y SANDBOX— se le pasa
+  //      crudo a creators_process_event, que lo guarda (idempotente, sandbox marcado) y decide
+  //      atribución y comisión. Nunca afecta el acceso: processCreatorEvent no lanza y su
+  //      resultado no cambia la respuesta. Si falla, el cron creators-backfill lo recupera
+  //      desde subscription_events.
+  const cr = await processCreatorEvent(admin, ev);
+  if (!cr.ok) log("creadores: error (se ignora)", eventId, cr.error);
+
   if (type === "TEST") return json({ ok: true, test: true });
 
   // 3 · Gate de entorno. En producción se ignoran los eventos de SANDBOX salvo
@@ -475,7 +400,6 @@ Deno.serve(async (req) => {
     } catch (e) {
       log("orphan insert error", String(e));
     }
-    await atribuirCreador(ev, null, type, store, eventId);
     log("orphan event", type, ev.app_user_id);
     return json({ ok: true, orphan: true, type });
   }
@@ -501,9 +425,6 @@ Deno.serve(async (req) => {
       log("event log error", dupErr.message);
     }
   }
-
-  // 7b · Código de creador: atribución y comisión (nunca bloquea lo demás).
-  if (type !== "TRANSFER") await atribuirCreador(ev, targets[0], type, store, eventId);
 
   // 8 · Plan de acción.
   const plan = planFor(type, ev);
