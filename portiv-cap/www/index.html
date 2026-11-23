@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261123-1058">
+<meta name="pv-build" content="20261123-1102">
 <script>
 (function(){
   var h = location.hostname;
@@ -26953,6 +26953,27 @@ function _calcPreviousDayPortfolioClose() {
 //   prevClosePort = Σ(prevClose_i · qty_i) + cash + mm ;  día = total − prevClosePort ;
 //   díaPct = día / prevClosePort · 100.
 // El día$ se toma de T.day (= Σ round2(día$_fila)) para que footer == header == Σ filas al centavo.
+// Saldo del broker al CIERRE de la sesión anterior, o null. Sólo en un día hábil con la sesión ya
+// abierta (antes de la campana «hoy» es el día anterior y lo cubre el pre-market). El saldo vale si
+// está fechado desde la sesión anterior hasta ayer (el del fin de semana es el cierre asentado del
+// viernes; gana el más reciente) y se aparta ≤1.5 % de Σ posiciones de hoy a cierre previo +
+// efectivo: más que eso huele a depósito/retiro o a un saldo que no es de esta cartera.
+function _pvBaseCierreBroker(ref){
+  if (!(ref > 0)) return null;
+  if (localStorage.getItem('pv_broker_connected') !== '1') return null;
+  const C = PORTIV_CHART, now = new Date(), p = C._nyParts(now);
+  if (!C._isTradingDate(now) || (p.h * 60 + p.mi) < 570) return null;
+  const today = C._todayET();
+  let prev = null;
+  for (let i = 1; i <= 10 && !prev; i++) { const d = new Date(now.getTime() - i * 86400000); if (C._isTradingDate(d)) { const q = C._nyParts(d); prev = `${q.y}-${String(q.mo).padStart(2,'0')}-${String(q.d).padStart(2,'0')}`; } }
+  if (!prev) return null;
+  let bs = null; try { bs = JSON.parse(localStorage.getItem('pv_broker_series') || 'null'); } catch(e){}
+  const pts = (bs && Array.isArray(bs.pts)) ? bs.pts.filter(x => x && x.date >= prev && x.date < today && +x.value > 0) : [];
+  if (!pts.length) return null;
+  pts.sort((a, b) => a.date.localeCompare(b.date));
+  const v = +pts[pts.length - 1].value;
+  return Math.abs(v - ref) / ref <= 0.015 ? round2(v) : null;
+}
 function _calcRealDayChange() {
   const T = calcTotals();
   if (HOLDINGS.length) {
@@ -26961,6 +26982,14 @@ function _calcRealDayChange() {
     const safeCash = (typeof CASH === 'number' && isFinite(CASH)) ? round2(CASH) : 0;
     const safeMM   = (typeof MONEY_MARKET === 'number' && isFinite(MONEY_MARKET)) ? round2(MONEY_MARKET) : 0;
     const prevClose = round2(prevMkt + safeCash + safeMM);
+    // Broker conectado con el saldo de CIERRE de la sesión anterior: el día se mide contra ese
+    // saldo, como lo hace el broker. Σ qty×(precio−cierre previo) con las cantidades de HOY cuenta
+    // como ganancia del día el salto viernes→apertura de las acciones compradas esta mañana
+    // (órdenes del fin de semana): medido 23-nov, base $5,877.49 vs saldo del broker $5,894.76.
+    try {
+      const bb = _pvBaseCierreBroker(prevClose);
+      if (bb) { const d2 = round2(T.total - bb); return { day: d2, dayPct: round2(d2 / bb * 100), prevClose: bb, fromBroker: true }; }
+    } catch(e) {}
     const day    = round2(T.day);                                  // = Σ round2(día$ por fila)
     const dayPct = prevClose > 0 ? round2(day / prevClose * 100) : 0;
     return { day, dayPct, prevClose };
