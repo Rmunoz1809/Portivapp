@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261123-1043">
+<meta name="pv-build" content="20261123-1052">
 <script>
 (function(){
   var h = location.hostname;
@@ -22235,6 +22235,12 @@ const PORTIV_CHART = {
     // Sólo cuenta lo que movió el MERCADO: aportaciones, retiros y saltos del historial del
     // broker no son rendimiento (ver _pvSoloMercado).
     try{ if(typeof _pvSoloMercado==='function') _pvSoloMercado(merged, today); }catch(e){}
+    // Días hábiles SIN dato (el broker manda un saldo cada ~2 días y la app sólo graba si la
+    // abres): en vez de una recta, cierres reales de tus posiciones. Cada hueco a→b se rellena con
+    // a × (mercado del día / mercado de a), con un factor que reparte geométricamente la pequeña
+    // diferencia entre broker y mercado → la curva pasa EXACTA por cada saldo del broker y los
+    // extremos (cambio y %) no se tocan.
+    try{ merged=_pvRellenoMercado(merged, today, _habil); }catch(e){}
     const vals=merged.map(p=>p.value);
     // Etiquetas SIEMPRE desde la fecha y con un solo formato. Antes cada fuente traía la suya
     // (PERF_MASTER «24 Sep», con mayúscula; fmtDate «3 oct») y el eje salía mezclado.
@@ -23006,6 +23012,43 @@ function _pvSoloMercado(pts, today){
   if (!n) return 0;
   for (let i = pts.length - 2; i >= 0; i--) pts[i].value = +(pts[i+1].value / r[i]).toFixed(2);
   return n;
+}
+
+// Rellena los días hábiles que faltan entre dos puntos con el cierre real de tus posiciones
+// (PORTIV_REF), anclado a ambos extremos: v(d) = a · m(d)/m(a) · kᶠ, k = (b/a)/(m(b)/m(a)),
+// f = fracción de sesiones recorridas. Sin referencia de mercado (o sin cierre para algún día
+// del hueco) ese hueco se deja como estaba. Devuelve una serie NUEVA ordenada.
+function _pvRellenoMercado(pts, today, habil){
+  if (!Array.isArray(pts) || pts.length < 2) return pts;
+  if (typeof PORTIV_REF === 'undefined' || !PORTIV_REF.ready()) return pts;
+  let B; try { B = PORTIV_REF.base(); } catch(e){ return pts; }
+  const MON = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const lbl = iso => { const d = new Date(iso + 'T12:00:00'); return `${d.getDate()} ${MON[d.getMonth()]}`; };
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i-1], b = pts[i];
+    const dias = [];
+    const d = new Date(a.date + 'T17:00:00Z');
+    for (let g = 0; g < 400; g++) {
+      d.setUTCDate(d.getUTCDate() + 1);
+      const s = d.toISOString().slice(0, 10);
+      if (s >= b.date) break;
+      if (habil(s)) dias.push(s);
+    }
+    if (dias.length && dias.length <= 60 && a.value > 0 && b.value > 0) {
+      const ma = PORTIV_REF.valueAt(a.date, today, B), mb = PORTIV_REF.valueAt(b.date, today, B);
+      const ms = dias.map(s => PORTIV_REF.valueAt(s, today, B));
+      if (ma > 0 && mb > 0 && ms.every(x => x > 0)) {
+        const k = (b.value / a.value) / (mb / ma);
+        if (k > 0.8 && k < 1.25) {
+          const N = dias.length + 1;
+          dias.forEach((s, j) => out.push({ date: s, value: +(a.value * (ms[j] / ma) * Math.pow(k, (j + 1) / N)).toFixed(2), label: lbl(s), _fill: true }));
+        }
+      }
+    }
+    out.push(b);
+  }
+  return out;
 }
 
 // ══════════════════════════════════════════════════════════
