@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#04162c">
+<title>Portiv · Creadores</title>
+<link rel="icon" href="../favicon-32.png">
+<link rel="stylesheet" href="../fonts/fonts.css">
+<link rel="stylesheet" href="creadores.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="./"><img src="../icon.png" alt="" width="28" height="28"><span>Portiv <b>Creadores</b></span></a>
+    <div class="top-r" id="topR" hidden>
+      <span class="top-mail" id="topMail"></span>
+      <button class="btn-ghost" id="btnSalir" type="button">Salir</button>
+    </div>
+  </div>
+</header>
+<main id="app"><div class="loading">Cargando…</div></main>
+
+<script src="../vendor/supabase.js"></script>
+<script src="comun.js"></script>
+<script>
+(function () {
+  'use strict';
+  var P = window.PVC;
+  var app = document.getElementById('app');
+  var esc = P.esc, money = P.money;
+
+  document.getElementById('btnSalir').addEventListener('click', function () { P.signOut(); });
+
+  function setHeader(email) {
+    document.getElementById('topR').hidden = email === null;
+    document.getElementById('topMail').textContent = email || '';
+  }
+
+  function loading() { app.className = ''; app.innerHTML = '<div class="loading">Cargando tus números…</div>'; }
+
+  function errorView(e) {
+    app.innerHTML =
+      '<div class="card fade"><h2>No pudimos cargar tu panel</h2>' +
+      '<p class="muted" style="margin:8px 0 16px">' + esc(P.errText(e)) + '</p>' +
+      '<button class="btn" type="button" id="retry">Reintentar</button></div>';
+    document.getElementById('retry').addEventListener('click', load);
+  }
+
+  function notLinked() {
+    app.innerHTML =
+      '<div class="card fade"><h2>Tu cuenta no está vinculada</h2>' +
+      '<p class="muted" style="margin-top:8px">Tu cuenta no está vinculada a un código de creador. ' +
+      'Escríbenos a soporte: <a href="mailto:' + P.SUPPORT_MAIL + '">' + P.SUPPORT_MAIL + '</a>.</p></div>';
+  }
+
+  function stat(label, value, sub, cls) {
+    return '<div class="stat' + (cls ? ' ' + cls : '') + '"><div class="lbl">' + esc(label) + '</div>' +
+      '<div class="v">' + value + '</div>' + (sub ? '<div class="s">' + sub + '</div>' : '') + '</div>';
+  }
+  function moneyHtml(v) {
+    var n = P.num(v);
+    return '<span' + (n > 0 ? ' class="pos"' : '') + '>' + esc(money(n)) + '</span>';
+  }
+
+  function render(d) {
+    var c = d.creator;
+    var rate = P.pctNum(c.commission_rate);
+    var months = P.int(c.commission_months);
+    var pending = P.num(d.pending_release) + P.num(d.ready_to_pay);
+    var ready = P.num(d.ready_to_pay);
+    var pendSub = [];
+    if (d.next_release_on) pendSub.push('Se libera el ' + esc(P.fmtDate(d.next_release_on)));
+    if (ready > 0) pendSub.push(esc(money(ready)) + ' listo para el próximo pago');
+
+    var monthly = Array.isArray(d.monthly) ? d.monthly : [];
+    var maxAmt = monthly.reduce(function (m, r) { return Math.max(m, P.num(r.amount)); }, 0);
+    var monthlyHtml = monthly.length
+      ? '<div class="bars">' + monthly.map(function (r) {
+          var w = maxAmt > 0 ? Math.max(0, P.num(r.amount)) / maxAmt * 100 : 0;
+          var ch = P.num(r.charges);
+          return '<div class="bar-row"><span class="m">' + esc(P.fmtMonth(r.month)) + '</span>' +
+            '<div class="bar-track"><div class="bar-fill" style="width:' + w.toFixed(1) + '%"></div></div>' +
+            '<span class="a">' + moneyHtml(r.amount) + '<span class="xs">' + P.int(ch) + (ch === 1 ? ' cobro' : ' cobros') + '</span></span></div>';
+        }).join('') + '</div>'
+      : '<p class="empty">Aún no hay ganancias. Aparecerán aquí cuando quienes canjearon tu código hagan su primer pago.</p>';
+
+    var payouts = Array.isArray(d.payouts) ? d.payouts : [];
+    var payoutsHtml = payouts.length
+      ? '<div class="tbl-wrap"><table class="tbl min"><thead><tr><th>Periodo</th><th class="num">Monto</th><th>Método</th><th>Referencia</th><th>Pagado el</th></tr></thead><tbody>' +
+        payouts.map(function (p) {
+          return '<tr><td class="nw">' + esc(P.fmtMonth(p.period)) + '</td><td class="num">' + moneyHtml(p.amount) + '</td>' +
+            '<td>' + esc(P.metodo(p.method)) + '</td><td class="mono">' + esc(p.reference || '—') + '</td>' +
+            '<td class="nw">' + esc(P.fmtDate(p.paid_at)) + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<p class="empty">Todavía no has recibido pagos. El primero llega el día 15 del segundo mes después de tus primeras ganancias, si suman al menos ' + esc(('US$' + P.MIN_PAYOUT)) + '.</p>';
+
+    var canShare = typeof navigator.share === 'function';
+
+    app.className = 'stack fade';
+    app.innerHTML =
+      '<section class="card">' +
+        '<p class="hello">Hola, ' + esc(c.name) + '</p>' +
+        '<div class="code-row"><div style="min-width:0"><div class="lbl">Tu código</div><div class="code" id="code">' + esc(c.offer_code) + '</div></div>' +
+        '<button class="btn btn-sec btn-sm" type="button" id="copyCode">Copiar código</button></div>' +
+        '<hr class="divider">' +
+        '<div class="lbl">Enlace para canjear tu código</div>' +
+        '<div class="link-box">' + esc(c.redeem_url) + '</div>' +
+        '<div class="btn-row"><button class="btn btn-sm" type="button" id="copyLink">Copiar enlace</button>' +
+        (canShare ? '<button class="btn btn-sec btn-sm" type="button" id="shareLink">Compartir</button>' : '') + '</div>' +
+        (c.active === false ? '<div class="note" style="margin-top:14px">Tu código está pausado y no suma nuevos usuarios. Si crees que es un error, escríbenos a <a href="mailto:' + P.SUPPORT_MAIL + '">' + P.SUPPORT_MAIL + '</a>.</div>' : '') +
+      '</section>' +
+      '<section class="stats">' +
+        stat('Canjearon tu código', esc(P.int(d.users_redeemed))) +
+        stat('Pagan hoy', esc(P.int(d.users_paying_now))) +
+        stat('En prueba', esc(P.int(d.users_in_trial))) +
+        stat('Ganado este mes', moneyHtml(d.earned_this_month)) +
+        stat('Pendiente de pago', esc(money(pending)), pendSub.join('<br>')) +
+        stat('Total pagado', moneyHtml(d.total_paid)) +
+      '</section>' +
+      '<section class="card"><div class="card-head"><h2>Ganancias por mes</h2><span class="xs">Últimos 12 meses</span></div>' + monthlyHtml + '</section>' +
+      '<section class="card"><div class="card-head"><h2>Pagos recibidos</h2></div>' + payoutsHtml + '</section>' +
+      '<section class="card"><div class="card-head"><h2>Cómo funciona</h2></div><ol class="how">' +
+        '<li>Tus seguidores tienen <b>7 días extra gratis</b> (21 en total) al canjear tu código.</li>' +
+        '<li>Ganas el <b>' + esc(rate) + '%</b> de lo que Portiv recibe neto (después de la comisión de Apple) durante <b>' + esc(months) + ' meses</b> desde el primer pago de cada usuario.</li>' +
+        '<li>Lo ganado en un mes se paga el <b>día 15 del segundo mes siguiente</b>, cuando Apple ya depositó y pasaron los reembolsos. Por ejemplo, lo de enero se paga el 15 de marzo.</li>' +
+        '<li>Pagamos una vez al mes, con un mínimo de <b>' + esc(('US$' + P.MIN_PAYOUT)) + '</b>. Si no llegas al mínimo, se acumula para el mes siguiente.</li>' +
+        '<li>Si un usuario pide un reembolso, se descuenta la comisión de ese pago.</li>' +
+        '<li>Solo cuentan quienes canjean tu código.</li>' +
+      '</ol></section>' +
+      '<p class="foot">¿Dudas? Escríbenos a <a href="mailto:' + P.SUPPORT_MAIL + '">' + P.SUPPORT_MAIL + '</a></p>';
+
+    document.getElementById('copyCode').addEventListener('click', function () { P.copy(c.offer_code, 'Código copiado'); });
+    document.getElementById('copyLink').addEventListener('click', function () { P.copy(c.redeem_url, 'Enlace copiado'); });
+    if (canShare) {
+      document.getElementById('shareLink').addEventListener('click', function () {
+        navigator.share({
+          title: 'Portiv',
+          text: 'Usa mi código ' + c.offer_code + ' en Portiv y tienes 7 días extra gratis.',
+          url: c.redeem_url
+        }).catch(function () {});
+      });
+    }
+  }
+
+  async function load() {
+    loading();
+    try {
+      var d = await P.rpc('creator_dashboard');
+      if (!d || !d.creator) { notLinked(); return; }
+      render(d);
+    } catch (e) {
+      if (!P.isAuthError(e)) errorView(e);
+    }
+  }
+
+  P.startAuth({
+    root: app,
+    title: 'Portiv Creadores',
+    lead: 'Entra con el correo con el que te registramos. Te enviaremos un enlace para iniciar sesión.',
+    setHeader: setHeader,
+    onSignedIn: load
+  });
+})();
+</script>
+</body>
+</html>

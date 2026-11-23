@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261122-1053">
+<meta name="pv-build" content="20261123-1016">
 <script>
 (function(){
   var h = location.hostname;
@@ -2728,6 +2728,18 @@ window._ensureChartJs = (function(){
   }
   .pq-option.selected .pq-option-letter { background: var(--st-secondary); color: #fff; }
   .pq-option-text { font-size: 15px; font-weight: 500; color: var(--st-primary); line-height: 1.4; }
+  /* «¿Cómo conociste Portiv?» */
+  .pq-acq-creator { margin-top: 16px; }
+  .pq-acq-creator[hidden] { display: none; }
+  .pq-acq-creator label { display: block; font-size: 13px; font-weight: 700; color: var(--st-primary); margin-bottom: 8px; }
+  .pq-acq-creator label span { font-weight: 500; color: var(--st-on-surf-var); }
+  .pq-acq-creator input {
+    width: 100%; box-sizing: border-box; padding: 14px 16px; border-radius: 12px;
+    border: 1.5px solid var(--st-surface-highest); background: #fff; color: var(--st-primary);
+    font-size: 16px; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; outline: none;
+  }
+  .pq-acq-creator input:focus { border-color: var(--st-secondary); }
+  .pq-acq-skip { display: block; margin: 10px auto 0; background: none; border: none; color: var(--st-on-surf-var); font-size: 13px; font-weight: 600; cursor: pointer; padding: 8px; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; }
   .pq-nav { display: flex; align-items: center; justify-content: space-between; margin-top: 28px; gap: 12px; }
   .pq-back { background: none; border: none; color: var(--st-on-surf-var); font-size: 14px; font-weight: 600; cursor: pointer; padding: 10px 6px; font-family: system-ui,-apple-system,BlinkMacSystemFont,Arial,sans-serif; display: flex; align-items: center; gap: 4px; }
   .pq-back:hover { color: var(--st-primary); }
@@ -46251,6 +46263,19 @@ html body #pvProWall .pvw-link {
 html body #pvProWall .pvw-link:disabled { opacity:.45; }
 html body #pvProWall .pvw-dot { font-size:12px; line-height:1; color:#c3cbd8; }
 html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
+/* Código de creador (Offer Code de Apple): tarjeta discreta bajo los enlaces. */
+html body #pvProWall .pvw-code {
+  display:flex; align-items:center; gap:12px; margin:8px 2px 2px; padding:12px 14px;
+  border:1px solid var(--w-line); border-radius:12px; background:var(--w-card); text-align:left;
+}
+html body #pvProWall .pvw-code[hidden] { display:none; }
+html body #pvProWall .pvw-code-t { flex:1; min-width:0; font-size:12.5px; font-weight:600; line-height:1.4; color:var(--w-slate); text-wrap:pretty; }
+html body #pvProWall .pvw-code-t b { display:block; font-weight:800; color:var(--w-ink); }
+html body #pvProWall .pvw-code-b {
+  flex:none; padding:9px 12px; border-radius:10px; border:1px solid var(--w-line-hi);
+  font-size:12.5px; font-weight:800; line-height:1.1; color:var(--w-navy); background:#fff; white-space:nowrap;
+}
+html body #pvProWall .pvw-code-b:disabled { opacity:.45; }
 
 @media (hover:hover) and (pointer:fine) {
   html body #pvProWall .pvw-x:not(:disabled):hover::before { background:rgba(255,255,255,.2); }
@@ -46784,7 +46809,10 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       +       '<button type="button" class="pvw-link" data-pvw="privacy">Privacidad</button>'
       +       (WEB ? '<span class="pvw-dot" aria-hidden="true">·</span><button type="button" class="pvw-link" data-pvw="refunds">Reembolsos</button>' : '')
       +     '</div>'
-      +     (WEB ? '' : '<div class="pvw-links"><button type="button" class="pvw-link" data-pvw="code">¿Tienes un código de creador?</button></div>')
+      // Código de creador: solo en la app (la web no vende). El texto se pinta en paintCode() cuando
+      // se sabe si el usuario aún tiene la prueba de 14 días (el código suma 7 días a esa prueba).
+      +     (WEB ? '' : '<div class="pvw-code" hidden><p class="pvw-code-t"></p>'
+      +       '<button type="button" class="pvw-code-b" data-pvw="code">Canjear código</button></div>')
       +   '</div>'
       + '</div>';
     document.body.appendChild(w);
@@ -46855,7 +46883,20 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     function setPlans(html, one){
       for (var i = 0; i < plansEls.length; i++) { plansEls[i].innerHTML = html; plansEls[i].classList.toggle('pvw-one', !!one); }
     }
+    // Tarjeta del código de creador. El código (Offer Code de Apple, plan mensual) se SUMA a la
+    // prueba de 14 días solo si el usuario aún tiene derecho a ella; si ya la usó, el código le
+    // da su semana gratis sin prometerle «más días a tu prueba».
+    var codeBox = w.querySelector('.pvw-code'), codeT = w.querySelector('.pvw-code-t'), codeBtn = w.querySelector('.pvw-code-b');
+    function paintCode(){
+      if (!codeBox) return;
+      if (st.phase !== 'ready') { codeBox.hidden = true; return; }
+      codeT.innerHTML = trialOf('monthly')
+        ? '<b>¿Tienes el código de un creador?</b>Canjéalo y suma 7 días gratis más a tu prueba.'
+        : '<b>¿Tienes el código de un creador?</b>Canjéalo para activar su semana gratis.';
+      codeBox.hidden = false;
+    }
     function render(){
+      paintCode();
       spin.hidden = true; ctaOk.hidden = true; cta.classList.remove('ok');
       cta.classList.toggle('wait', st.phase === 'loading');
       if (st.phase === 'loading') {
@@ -46905,6 +46946,7 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       st.busy = !!kind;
       w.classList.toggle('pvw-busy', st.busy);
       xBtn.disabled = st.busy; restoreBtn.disabled = st.busy;
+      if (codeBtn) codeBtn.disabled = st.busy;
       restoreBtn.textContent = kind === 'restore' ? 'Restaurando…' : 'Restaurar compras';
       if (kind === 'buy') { cta.disabled = true; spin.hidden = false; ctaT.textContent = 'Procesando…'; }
       else if (kind) cta.disabled = true;
@@ -48400,7 +48442,10 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
     const el = document.getElementById('pqContent');
     // Rótulo de la cabecera de la tarjeta en el idioma activo (antes fijo en inglés).
     try { const bn = document.querySelector('#pqCard .pq-brand-name'); if (bn) bn.textContent = _L('Tu perfil de inversión', 'Your investment profile'); } catch(e){}
-    if (_step >= PQ.length) { _renderResult(); return; }
+    if (_step >= PQ.length) {
+      if (_acqPending()) { _renderAcq(); return; }
+      _renderResult(); return;
+    }
     const q = _activeQ(_step);
     // La barra cuenta la pregunta en curso: en la 1 ya hay un tramo lleno y en la 7, toda.
     const pct = Math.round((_step+1)/PQ.length*100);
@@ -48439,6 +48484,75 @@ html body #pvProWall.pvw-busy .pvw-plan { pointer-events:none; }
       if(_ans[_step]<0) return;
       _step++; _renderStep();
     };
+  }
+
+  // ── «¿Cómo conociste Portiv?» ─────────────────────────────────────────
+  // Una pantalla tras la última pregunta del perfil, antes del resultado. Solo analítica: se
+  // guarda en profiles.acquisition_source con la RPC set_acquisition_source y NUNCA da comisión
+  // (eso solo lo hace el código de creador de Apple). Se puede omitir; se pregunta una vez por
+  // cuenta. Si no hay red o sesión, queda pendiente en el dispositivo y se reintenta luego.
+  const ACQ_OPTS = [['instagram','Instagram'],['tiktok','TikTok'],['youtube','YouTube'],['amigo','Un amigo'],['app_store','App Store'],['otro','Otro']];
+  const ACQ_SOCIAL = { instagram:1, tiktok:1, youtube:1 };
+  let _acqSel = '';
+  function _acqKey(){ return 'pv_acq_done_' + (window.__pvUserId || 'local'); }
+  function _acqPending(){ try { return !localStorage.getItem(_acqKey()); } catch(e){ return false; } }
+  function _acqFlush(){
+    let q = null;
+    try { q = JSON.parse(localStorage.getItem('pv_acq_pending') || 'null'); } catch(e){}
+    const c = window.sbClient, uid = window.__pvUserId;
+    if (!q || !c || typeof c.rpc !== 'function' || !uid || uid === 'local' || q.uid !== uid) return;
+    c.rpc('set_acquisition_source', { p_source: q.source, p_creator: q.creator || null }).then(function(r){
+      if (!r || !r.error) { try { localStorage.removeItem('pv_acq_pending'); } catch(e){} }
+    }, function(){});
+  }
+  function _acqSave(source, creator){
+    try { localStorage.setItem(_acqKey(), source || 'omitido'); } catch(e){}
+    if (!source) return;
+    try { localStorage.setItem('pv_acq_pending', JSON.stringify({ uid: window.__pvUserId, source: source, creator: creator || '' })); } catch(e){}
+    _acqFlush();
+  }
+  setTimeout(_acqFlush, 15000);
+  function _renderAcq(){
+    const el = document.getElementById('pqContent');
+    el.innerHTML = `
+      <div class="pq-progress-wrap"><div class="pq-progress"><div class="pq-progress-bar" style="width:100%"></div></div></div>
+      <div class="pq-eyebrow">Una última pregunta</div>
+      <div class="pq-question">¿Cómo conociste Portiv?</div>
+      <div class="pq-options">
+        ${ACQ_OPTS.map((o,i)=>`
+          <button class="pq-option ${_acqSel===o[0]?'selected':''}" data-acq="${o[0]}">
+            <span class="pq-option-letter">${'ABCDEF'[i]}</span>
+            <span class="pq-option-text">${o[1]}</span>
+          </button>`).join('')}
+      </div>
+      <div class="pq-acq-creator" ${ACQ_SOCIAL[_acqSel] ? '' : 'hidden'}>
+        <label for="pqAcqCreator">¿Qué creador? <span>(opcional)</span></label>
+        <input id="pqAcqCreator" type="text" maxlength="80" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Nombre o @usuario">
+      </div>
+      <div class="pq-nav">
+        <button class="pq-back" id="pqBack">← Atrás</button>
+        <button class="pq-next" id="pqNext" ${_acqSel ? '' : 'disabled'}>Ver mi perfil</button>
+      </div>
+      <button type="button" class="pq-acq-skip" id="pqAcqSkip">Omitir</button>`;
+    _pqMove(el, 100);
+    const box = el.querySelector('.pq-acq-creator'), inp = el.querySelector('#pqAcqCreator');
+    el.querySelectorAll('.pq-option').forEach(b=>{
+      b.classList.add('pvm-press');
+      b.onclick = ()=>{
+        _acqSel = b.dataset.acq;
+        el.querySelectorAll('.pq-option').forEach(x=>x.classList.remove('selected'));
+        b.classList.add('selected');
+        box.hidden = !ACQ_SOCIAL[_acqSel];
+        document.getElementById('pqNext').disabled = false;
+      };
+    });
+    document.getElementById('pqBack').onclick = ()=>{ _step = PQ.length - 1; _renderStep(); };
+    document.getElementById('pqNext').onclick = ()=>{
+      if (!_acqSel) return;
+      _acqSave(_acqSel, ACQ_SOCIAL[_acqSel] ? (inp.value || '').trim().slice(0, 80) : '');
+      _renderResult();
+    };
+    document.getElementById('pqAcqSkip').onclick = ()=>{ _acqSave('', ''); _renderResult(); };
   }
 
   function _renderResult(){

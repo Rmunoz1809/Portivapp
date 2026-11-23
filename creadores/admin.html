@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#04162c">
+<title>Portiv · Admin creadores</title>
+<link rel="icon" href="../favicon-32.png">
+<link rel="stylesheet" href="../fonts/fonts.css">
+<link rel="stylesheet" href="creadores.css">
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="brand" href="admin.html"><img src="../icon.png" alt="" width="28" height="28"><span>Portiv <b>Admin creadores</b></span></a>
+    <div class="top-r" id="topR" hidden>
+      <span class="top-mail" id="topMail"></span>
+      <button class="btn-ghost" id="btnSalir" type="button">Salir</button>
+    </div>
+  </div>
+</header>
+<main id="app" class="wide"><div class="loading">Cargando…</div></main>
+
+<script src="../vendor/supabase.js"></script>
+<script src="comun.js"></script>
+<script>
+(function () {
+  'use strict';
+  var P = window.PVC;
+  var esc = P.esc, money = P.money;
+  var app = document.getElementById('app');
+  var REDEEM = 'https://apps.apple.com/redeem?ctx=offercodes&id=6789933095&code=';
+  var DASH_URL = 'https://portivapp.com/creadores/';
+  var STATUS_COM = { pending: 'Pendiente', payable: 'Por pagar', paid: 'Pagada', reversed: 'Revertida' };
+  var STATUS_PAY = { pending: 'Pendiente', paid: 'Pagado' };
+  var SOURCES = { instagram: 'Instagram', tiktok: 'TikTok', youtube: 'YouTube', amigo: 'Un amigo', app_store: 'App Store', otro: 'Otro' };
+  var ACCOUNT_MSG = {
+    created: 'Se creó una cuenta de Portiv con ese correo. El creador entra al panel con el enlace que le llega a su correo.',
+    linked_existing: 'Se vinculó a una cuenta de Portiv que ya existía con ese correo — confirma que es de este creador.',
+    already_linked: 'La cuenta de este creador ya estaba vinculada.',
+    no_email: 'Sin correo: el creador no podrá entrar a su panel hasta que le agregues uno.'
+  };
+
+  var state = { tab: 'creadores', overview: null, overviewStale: true, editing: null, close: null, surveyLoaded: false };
+
+  document.getElementById('btnSalir').addEventListener('click', function () { P.signOut(); });
+  function setHeader(email) {
+    document.getElementById('topR').hidden = email === null;
+    document.getElementById('topMail').textContent = email || '';
+  }
+  function $(sel, root) { return (root || document).querySelector(sel); }
+  function errBox(e) { return '<div class="note err">' + esc(P.errText(e)) + '</div>'; }
+  function moneyCell(v, kind) {
+    var n = P.num(v);
+    var cls = kind === 'neg' && n !== 0 ? 'neg' : (kind === 'pos' && n > 0 ? 'pos' : '');
+    return '<span' + (cls ? ' class="' + cls + '"' : '') + '>' + esc(money(n)) + '</span>';
+  }
+  function yesNo(b) { return b ? 'Sí' : 'No'; }
+  function detailsText(d) {
+    if (d == null || d === '') return '';
+    if (typeof d === 'object' && !Array.isArray(d) && Object.keys(d).length === 1 && typeof d.texto === 'string') return d.texto;
+    if (typeof d === 'string') return d;
+    try { return JSON.stringify(d, null, 2); } catch (e) { return String(d); }
+  }
+  function detailsInline(d) {
+    if (d && typeof d === 'object' && !Array.isArray(d) && Object.keys(d).length === 1 && typeof d.texto === 'string') return d.texto;
+    if (d == null) return '';
+    return typeof d === 'string' ? d : JSON.stringify(d);
+  }
+
+  // ── Arranque ─────────────────────────────────────────────────────
+  async function boot() {
+    app.className = 'wide';
+    app.innerHTML = '<div class="loading">Comprobando acceso…</div>';
+    var ok = false;
+    try { ok = await P.rpc('creators_is_admin'); }
+    catch (e) {
+      if (P.isAuthError(e)) return;
+      app.innerHTML = '<div class="card fade"><h2>No se pudo comprobar el acceso</h2><div style="margin-top:12px">' + errBox(e) + '</div>' +
+        '<button class="btn" style="margin-top:14px" type="button" id="retry">Reintentar</button></div>';
+      $('#retry').addEventListener('click', boot);
+      return;
+    }
+    if (ok !== true) {
+      app.innerHTML = '<div class="card fade"><h2>Solo el administrador</h2>' +
+        '<p class="muted" style="margin-top:8px">Esta página es solo para el administrador de Portiv.</p></div>';
+      return;
+    }
+    state = { tab: 'creadores', overview: null, overviewStale: true, editing: null, close: null, surveyLoaded: false };
+    shell();
+    showTab('creadores');
+  }
+
+  function shell() {
+    app.className = 'wide fade';
+    app.innerHTML =
+      '<nav class="tabs" role="tablist">' +
+        '<button class="tab" role="tab" data-tab="creadores">Creadores</button>' +
+        '<button class="tab" role="tab" data-tab="form">Crear / editar</button>' +
+        '<button class="tab" role="tab" data-tab="cierre">Cierre del mes</button>' +
+        '<button class="tab" role="tab" data-tab="encuesta">Encuesta</button>' +
+      '</nav>' +
+      '<section id="v-creadores" role="tabpanel"></section>' +
+      '<section id="v-form" role="tabpanel" hidden></section>' +
+      '<section id="v-cierre" role="tabpanel" hidden></section>' +
+      '<section id="v-encuesta" role="tabpanel" hidden></section>';
+    app.querySelectorAll('.tab').forEach(function (b) {
+      b.addEventListener('click', function () { showTab(b.dataset.tab); });
+    });
+    renderForm(null);
+    renderCierre();
+  }
+
+  function showTab(t) {
+    state.tab = t;
+    app.querySelectorAll('.tab').forEach(function (b) { b.setAttribute('aria-selected', String(b.dataset.tab === t)); });
+    ['creadores', 'form', 'cierre', 'encuesta'].forEach(function (k) { $('#v-' + k).hidden = k !== t; });
+    if (t === 'creadores' && state.overviewStale) loadOverview();
+    if (t === 'encuesta' && !state.surveyLoaded) loadSurvey();
+  }
+
+  // ── 1 · Creadores ────────────────────────────────────────────────
+  async function loadOverview() {
+    var v = $('#v-creadores');
+    v.innerHTML = '<div class="card"><div class="loading">Cargando creadores…</div></div>';
+    try {
+      state.overview = await P.rpc('admin_creators_overview') || [];
+      state.overviewStale = false;
+      renderOverview();
+    } catch (e) {
+      if (P.isAuthError(e)) return;
+      v.innerHTML = '<div class="card">' + errBox(e) + '<button class="btn btn-sec btn-sm" style="margin-top:12px" type="button" id="ovRetry">Reintentar</button></div>';
+      $('#ovRetry').addEventListener('click', loadOverview);
+    }
+  }
+
+  function renderOverview() {
+    var v = $('#v-creadores');
+    var list = state.overview || [];
+    var rows = list.map(function (c) {
+      return '<tr class="click' + (c.active ? '' : ' dim') + '" tabindex="0" data-id="' + esc(c.id) + '">' +
+        '<td><b>' + esc(c.name) + '</b></td>' +
+        '<td class="mono">' + esc(c.offer_code) + '</td>' +
+        '<td>' + yesNo(c.active) + '</td>' +
+        '<td>' + (c.has_account ? 'Sí' : '<span class="tag warn">Sin cuenta</span>') + '</td>' +
+        '<td class="num">' + P.int(c.users_redeemed) + '</td>' +
+        '<td class="num">' + P.int(c.users_paying_now) + '</td>' +
+        '<td class="num">' + moneyCell(c.pending) + '</td>' +
+        '<td class="num">' + moneyCell(c.payable) + '</td>' +
+        '<td class="num">' + moneyCell(c.paid, 'pos') + '</td>' +
+        '<td class="num">' + moneyCell(c.reversed, 'neg') + '</td>' +
+        '<td class="num">' + esc(P.pct(c.commission_rate)) + '</td>' +
+        '<td class="num">' + P.int(c.commission_months) + '</td></tr>';
+    }).join('');
+    v.innerHTML =
+      '<div class="card fade"><div class="card-head"><h2>Creadores <span class="xs">(' + list.length + ')</span></h2>' +
+      '<div class="btn-row"><button class="btn btn-sec btn-sm" type="button" id="ovReload">Actualizar</button>' +
+      '<button class="btn btn-sm" type="button" id="ovNew">Nuevo creador</button></div></div>' +
+      (list.length
+        ? '<div class="tbl-wrap"><table class="tbl min-l"><thead><tr><th>Nombre</th><th>Código</th><th>Activo</th><th>Cuenta</th>' +
+          '<th class="num">Canjearon</th><th class="num">Pagan hoy</th><th class="num">Pendiente</th><th class="num">Por pagar</th>' +
+          '<th class="num">Pagado</th><th class="num">Revertido</th><th class="num">Comisión</th><th class="num">Meses</th></tr></thead><tbody>' +
+          rows + '</tbody></table></div><p class="xs" style="margin-top:10px">Toca una fila para ver el detalle.</p>'
+        : '<p class="empty">Todavía no hay creadores.</p>') +
+      '</div>';
+    $('#ovReload').addEventListener('click', loadOverview);
+    $('#ovNew').addEventListener('click', function () { renderForm(null); showTab('form'); });
+    v.querySelectorAll('tr.click').forEach(function (tr) {
+      var open = function () { loadDetail(tr.dataset.id); };
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    });
+  }
+
+  async function loadDetail(id) {
+    var v = $('#v-creadores');
+    v.innerHTML = '<div class="card"><div class="loading">Cargando detalle…</div></div>';
+    window.scrollTo(0, 0);
+    try {
+      var d = await P.rpc('admin_creator_detail', { p_creator: id });
+      renderDetail(d || {});
+    } catch (e) {
+      if (P.isAuthError(e)) return;
+      v.innerHTML = '<div class="card">' + errBox(e) + '<button class="btn btn-sec btn-sm" style="margin-top:12px" type="button" id="dtBack">Volver a la lista</button></div>';
+      $('#dtBack').addEventListener('click', renderOverview);
+    }
+  }
+
+  function renderDetail(d) {
+    var v = $('#v-creadores');
+    var c = d.creator;
+    if (!c) {
+      v.innerHTML = '<div class="card"><p class="empty">No se encontró el creador.</p><button class="btn btn-sec btn-sm" type="button" id="dtBack">Volver a la lista</button></div>';
+      $('#dtBack').addEventListener('click', renderOverview);
+      return;
+    }
+    var users = d.users || [], coms = d.commissions || [], pays = d.payouts || [];
+
+    // Comisiones por estado (los ajustes se cuentan aparte).
+    var by = { pending: [0, 0], payable: [0, 0], paid: [0, 0], reversed: [0, 0] };
+    var adj = [0, 0], sandboxN = 0;
+    coms.forEach(function (m) {
+      if (m.is_sandbox) { sandboxN++; return; }
+      if (m.kind === 'adjustment') { adj[0]++; adj[1] += P.num(m.amount_usd); }
+      if (by[m.status]) { by[m.status][0]++; by[m.status][1] += P.num(m.amount_usd); }
+    });
+    var sumHtml = ['pending', 'payable', 'paid', 'reversed'].map(function (k) {
+      return '<div class="sum"><div class="lbl">' + STATUS_COM[k] + ' <span class="xs">(' + by[k][0] + ')</span></div>' +
+        '<div class="v">' + moneyCell(by[k][1], k === 'paid' ? 'pos' : (k === 'reversed' ? 'neg' : '')) + '</div></div>';
+    }).join('');
+
+    var dl = [
+      ['Correo', c.email || '—'], ['Instagram', c.instagram_handle || '—'], ['YouTube', c.youtube_handle || '—'],
+      ['Cuenta del panel', c.auth_user_id ? 'Vinculada' : 'Sin cuenta'],
+      ['Comisión', P.pct(c.commission_rate) + ' durante ' + P.int(c.commission_months) + ' meses'],
+      ['Activo', yesNo(c.active)], ['Método de pago', P.metodo(c.payout_method)],
+      ['Datos de pago', detailsText(c.payout_details) || '—'], ['Oferta en App Store Connect', c.asc_offer_id || '—'],
+      ['Notas', c.notes || '—'], ['Creado', P.fmtDateTime(c.created_at)], ['Actualizado', P.fmtDateTime(c.updated_at)]
+    ].map(function (r) { return '<div><dt>' + esc(r[0]) + '</dt><dd>' + esc(r[1]) + '</dd></div>'; }).join('');
+
+    var usersHtml = users.length
+      ? '<div class="tbl-wrap"><table class="tbl min-l"><thead><tr><th>Usuario (app_user_id)</th><th>Canjeó</th><th>Primer pago</th><th>Activo</th><th>Producto</th><th class="num">Comisión</th></tr></thead><tbody>' +
+        users.map(function (u) {
+          return '<tr' + (u.is_sandbox ? ' class="dim"' : '') + '><td class="mono">' + esc(u.app_user_id) + (u.is_sandbox ? ' <span class="tag">Sandbox</span>' : '') + '</td>' +
+            '<td class="nw">' + esc(P.fmtDate(u.attributed_at)) + '</td><td class="nw">' + esc(u.first_paid_at ? P.fmtDate(u.first_paid_at) : '—') + '</td>' +
+            '<td>' + yesNo(u.active) + '</td><td class="mono">' + esc(u.product_id || '—') + '</td>' +
+            '<td class="num">' + moneyCell(u.commission, 'pos') + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<p class="empty">Nadie ha canjeado este código todavía.</p>';
+
+    var comsHtml = coms.length
+      ? '<div class="tbl-wrap"><table class="tbl min-l"><thead><tr><th>Cobro</th><th>Tipo</th><th>Producto</th><th class="num">Bruto</th><th class="num">Neto</th><th class="num">Comisión</th><th>Ganado</th><th>Se paga</th><th>Estado</th><th>Pago</th></tr></thead><tbody>' +
+        coms.map(function (m) {
+          var st = STATUS_COM[m.status] || m.status;
+          return '<tr' + (m.is_sandbox ? ' class="dim"' : '') + '><td class="nw">' + esc(P.fmtDate(m.charged_at)) + (m.is_sandbox ? ' <span class="tag">Sandbox</span>' : '') + '</td>' +
+            '<td>' + (m.kind === 'adjustment' ? 'Ajuste' : 'Cobro') + '</td><td class="mono">' + esc(m.product_id || '—') + '</td>' +
+            '<td class="num">' + esc(money(m.gross_usd)) + '</td><td class="num">' + esc(money(m.net_usd)) + '</td>' +
+            '<td class="num">' + moneyCell(m.amount_usd, m.status === 'reversed' ? 'neg' : 'pos') + '</td>' +
+            '<td class="nw">' + esc(P.fmtMonth(m.earned_month)) + '</td><td class="nw">' + esc(P.fmtDate(m.payable_on)) + '</td>' +
+            '<td>' + (m.status === 'reversed' ? '<span class="neg">' + esc(st) + '</span>' : esc(st)) + '</td>' +
+            '<td class="mono">' + esc(m.payout_id == null ? '—' : '#' + m.payout_id) + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<p class="empty">Sin comisiones.</p>';
+
+    var paysHtml = pays.length
+      ? '<div class="tbl-wrap"><table class="tbl min"><thead><tr><th>Pago</th><th>Periodo</th><th class="num">Monto</th><th>Método</th><th>Estado</th><th>Referencia</th><th>Pagado el</th></tr></thead><tbody>' +
+        pays.map(function (p) {
+          return '<tr><td class="mono">#' + esc(p.id) + '</td><td class="nw">' + esc(P.fmtMonth(p.period_month)) + '</td>' +
+            '<td class="num">' + moneyCell(p.amount_usd, 'pos') + '</td><td>' + esc(P.metodo(p.method)) + '</td>' +
+            '<td>' + esc(STATUS_PAY[p.status] || p.status) + '</td><td class="mono">' + esc(p.reference || '—') + '</td>' +
+            '<td class="nw">' + esc(p.paid_at ? P.fmtDate(p.paid_at) : '—') + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+      : '<p class="empty">Sin pagos.</p>';
+
+    v.innerHTML =
+      '<div class="stack fade">' +
+      '<div class="btn-row"><button class="btn btn-sec btn-sm" type="button" id="dtBack">Volver a la lista</button></div>' +
+      '<div class="card"><div class="card-head"><div style="min-width:0"><h1 style="overflow-wrap:anywhere">' + esc(c.name) + '</h1>' +
+        '<p class="muted small" style="margin-top:2px"><span class="mono">' + esc(c.offer_code) + '</span>' + (c.active ? '' : ' · <span class="tag">Inactivo</span>') + '</p></div>' +
+        '<button class="btn btn-sm" type="button" id="dtEdit">Editar</button></div>' +
+        '<dl class="dl">' + dl + '</dl></div>' +
+      '<div class="card"><div class="card-head"><h2>Comisiones por estado</h2>' +
+        (sandboxN ? '<span class="xs">' + sandboxN + ' de sandbox no se suman</span>' : '') + '</div>' +
+        '<div class="sum-grid">' + sumHtml + '</div>' +
+        (adj[0] ? '<p class="xs" style="margin-top:10px">Incluye ' + adj[0] + ' ajuste(s) por reembolsos ya pagados: ' + esc(money(adj[1])) + '.</p>' : '') +
+      '</div>' +
+      '<div class="card"><div class="card-head"><h2>Usuarios atribuidos <span class="xs">(' + users.length + ')</span></h2></div>' + usersHtml + '</div>' +
+      '<div class="card"><div class="card-head"><h2>Comisiones <span class="xs">(' + coms.length + ')</span></h2></div>' + comsHtml + '</div>' +
+      '<div class="card"><div class="card-head"><h2>Pagos</h2></div>' + paysHtml + '</div>' +
+      '</div>';
+    $('#dtBack').addEventListener('click', function () { if (state.overviewStale) loadOverview(); else renderOverview(); });
+    $('#dtEdit').addEventListener('click', function () { renderForm(c); showTab('form'); window.scrollTo(0, 0); });
+  }
+
+  // ── 2 · Crear / editar ───────────────────────────────────────────
+  function renderForm(c) {
+    state.editing = c || null;
+    var v = $('#v-form');
+    var isEdit = !!(c && c.id);
+    var rate = c ? Math.round(P.num(c.commission_rate) * 10000) / 100 : 20;
+    var opt = function (val, label) {
+      return '<option value="' + val + '"' + ((c && c.payout_method === val) || (!c && val === '') ? ' selected' : '') + '>' + label + '</option>';
+    };
+    v.innerHTML =
+      '<div class="card fade"><div class="card-head"><h2>' + (isEdit ? 'Editar creador: ' + esc(c.name) : 'Nuevo creador') + '</h2>' +
+        (isEdit ? '<button class="btn btn-sec btn-sm" type="button" id="fNew">Nuevo en blanco</button>' : '') + '</div>' +
+      '<form id="cForm" novalidate><div class="form-grid">' +
+        '<div class="field"><label for="f_name">Nombre</label><input id="f_name" maxlength="120" required value="' + esc(c ? c.name : '') + '"></div>' +
+        '<div class="field"><label for="f_email">Correo (para entrar al panel)</label><input id="f_email" type="email" autocapitalize="none" spellcheck="false" value="' + esc(c ? c.email || '' : '') + '"></div>' +
+        '<div class="field"><label for="f_ig">Instagram</label><input id="f_ig" maxlength="60" placeholder="@usuario" value="' + esc(c ? c.instagram_handle || '' : '') + '"></div>' +
+        '<div class="field"><label for="f_yt">YouTube</label><input id="f_yt" maxlength="100" placeholder="@canal" value="' + esc(c ? c.youtube_handle || '' : '') + '"></div>' +
+        '<div class="field"><label for="f_code">Código (Offer Code)</label><input id="f_code" maxlength="64" autocapitalize="characters" spellcheck="false" style="font-family:var(--head);font-weight:700;letter-spacing:.04em" value="' + esc(c ? c.offer_code : '') + '">' +
+          '<span class="hint">Solo letras A-Z y números, de 3 a 64. El código también hay que crearlo en App Store Connect (oferta «Creadores 7 dias»).</span></div>' +
+        '<div class="field"><label for="f_asc">ID de la oferta en App Store Connect</label><input id="f_asc" spellcheck="false" value="' + esc(c ? c.asc_offer_id || '' : '') + '"></div>' +
+        '<div class="field"><label for="f_rate">Comisión (%)</label><input id="f_rate" type="number" inputmode="decimal" min="0" max="100" step="0.5" value="' + esc(rate) + '"></div>' +
+        '<div class="field"><label for="f_months">Meses de comisión</label><input id="f_months" type="number" inputmode="numeric" min="1" max="120" step="1" value="' + esc(c ? c.commission_months : 12) + '"></div>' +
+        '<div class="field"><label for="f_method">Método de pago</label><select id="f_method">' +
+          opt('', 'Sin definir') + opt('wise', 'Wise') + opt('paypal', 'PayPal') + opt('usdt', 'USDT') + opt('ach', 'ACH') + '</select></div>' +
+        '<div class="field" style="justify-content:flex-end"><label class="check"><input type="checkbox" id="f_active"' + (!c || c.active ? ' checked' : '') + '> Activo (el código suma nuevos usuarios)</label></div>' +
+        '<div class="field full"><label for="f_details">Datos de pago</label><textarea id="f_details" placeholder="Correo de PayPal, cuenta de Wise, wallet USDT (red), etc.">' + esc(c ? detailsText(c.payout_details) : '') + '</textarea>' +
+          '<span class="hint">Texto libre. Si escribes un objeto JSON válido se guarda tal cual.</span></div>' +
+        '<div class="field full"><label for="f_notes">Notas</label><textarea id="f_notes">' + esc(c ? c.notes || '' : '') + '</textarea></div>' +
+      '</div>' +
+      '<div id="fMsg" style="margin-top:14px" hidden></div>' +
+      '<div class="btn-row" style="margin-top:16px"><button class="btn" type="submit" id="fSave">' + (isEdit ? 'Guardar cambios' : 'Crear creador') + '</button></div>' +
+      '</form></div>' +
+      '<div id="fResult"></div>';
+
+    var code = $('#f_code', v);
+    code.addEventListener('input', function () {
+      var pos = code.selectionStart, before = code.value;
+      code.value = before.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (code.value.length !== before.length) pos = Math.max(0, pos - (before.length - code.value.length));
+      try { code.setSelectionRange(pos, pos); } catch (e) {}
+    });
+    if ($('#fNew', v)) $('#fNew', v).addEventListener('click', function () { renderForm(null); });
+    $('#cForm', v).addEventListener('submit', function (e) { e.preventDefault(); saveCreator(); });
+  }
+
+  function formMsg(html) { var m = $('#fMsg'); m.hidden = !html; m.innerHTML = html || ''; }
+
+  function readForm() {
+    var g = function (id) { return $('#' + id).value.trim(); };
+    var name = g('f_name'), email = g('f_email').toLowerCase(), code = g('f_code').toUpperCase();
+    var rateStr = g('f_rate').replace(',', '.'), monthsStr = g('f_months');
+    var errs = [];
+    if (!name) errs.push('Falta el nombre.');
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) errs.push('El correo no es válido.');
+    if (!/^[A-Z0-9]{3,64}$/.test(code)) errs.push('El código debe tener de 3 a 64 letras (A-Z) o números.');
+    var rate = Number(rateStr);
+    if (rateStr === '' || !isFinite(rate) || rate < 0 || rate > 100) errs.push('La comisión debe estar entre 0 % y 100 %.');
+    var months = Number(monthsStr);
+    if (!Number.isInteger(months) || months < 1 || months > 120) errs.push('Los meses deben ser un número entero entre 1 y 120.');
+    var detRaw = $('#f_details').value.trim(), details = null;
+    if (detRaw) {
+      try {
+        var parsed = JSON.parse(detRaw);
+        details = parsed && typeof parsed === 'object' ? parsed : { texto: detRaw };
+      } catch (e) { details = { texto: detRaw }; }
+    }
+    var creator = {
+      name: name,
+      instagram_handle: g('f_ig'),
+      youtube_handle: g('f_yt'),
+      email: email,
+      offer_code: code,
+      commission_rate: Math.round(rate * 100) / 10000,
+      commission_months: months,
+      payout_method: $('#f_method').value,
+      payout_details: details,
+      asc_offer_id: g('f_asc'),
+      notes: $('#f_notes').value.trim(),
+      active: $('#f_active').checked
+    };
+    if (state.editing && state.editing.id) creator.id = state.editing.id;
+    return { errs: errs, creator: creator };
+  }
+
+  async function invokeError(error) {
+    // FunctionsHttpError trae la respuesta en error.context: se intenta leer { ok:false, error }.
+    try {
+      if (error && error.context && typeof error.context.json === 'function') {
+        var body = await error.context.json();
+        if (body && body.error) return typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
+      }
+    } catch (e) {}
+    return P.errText(error);
+  }
+
+  async function saveCreator() {
+    var f = readForm();
+    $('#fResult').innerHTML = '';
+    if (f.errs.length) { formMsg('<div class="note err">' + f.errs.map(esc).join('<br>') + '</div>'); return; }
+    formMsg('');
+    var btn = $('#fSave');
+    btn.disabled = true; var label = btn.textContent; btn.textContent = 'Guardando…';
+    try {
+      var res = await P.sb.functions.invoke('creators-admin', { body: { action: 'upsert', creator: f.creator } });
+      if (res.error) throw new Error(await invokeError(res.error));
+      var data = res.data;
+      if (typeof data === 'string') { try { data = JSON.parse(data); } catch (e) {} }
+      if (!data || data.ok !== true) throw new Error((data && data.error) || 'La función no confirmó el guardado.');
+      state.overviewStale = true;
+      var saved = data.creator || f.creator;
+      var wasEdit = !!f.creator.id;
+      renderForm(saved);
+      formMsg('<div class="note ok">' + (wasEdit ? 'Cambios guardados.' : 'Creador creado.') + '</div>');
+      renderResult(saved, data.account);
+    } catch (e) {
+      formMsg('<div class="note err">' + esc(P.errText(e)) + '</div>');
+      btn.disabled = false; btn.textContent = label;
+    }
+  }
+
+  function creatorMessage(c) {
+    var rate = P.pctNum(c.commission_rate), months = P.int(c.commission_months);
+    var code = c.offer_code;
+    return 'Hola ' + c.name + ', ya tienes tu código de creador de Portiv.\n\n' +
+      'Tu código: ' + code + '\n' +
+      'Enlace para canjearlo: ' + REDEEM + encodeURIComponent(code) + '\n' +
+      'Tu panel: ' + DASH_URL + (c.email ? ' (entras con un enlace que llega a ' + c.email + ')' : '') + '\n\n' +
+      'Cómo funciona:\n' +
+      '1. Quien canjea tu código tiene 7 días extra gratis (21 en total).\n' +
+      '2. Ganas el ' + rate + '% de lo que Portiv recibe neto (después de la comisión de Apple) durante ' + months + ' meses desde el primer pago de cada usuario.\n' +
+      '3. Lo de cada mes se paga el día 15 del segundo mes siguiente, con un mínimo de ' + ('US$' + P.MIN_PAYOUT) + ' (si no llega, se acumula).';
+  }
+
+  function renderResult(c, account) {
+    var acc = ACCOUNT_MSG[account] || (account ? 'Cuenta: ' + account : '');
+    var warn = account === 'linked_existing' || account === 'no_email';
+    var r = $('#fResult');
+    r.innerHTML =
+      '<div class="card fade" style="margin-top:16px"><div class="card-head"><h2>Mensaje para el creador</h2>' +
+      '<button class="btn btn-sm" type="button" id="copyMsg">Copiar mensaje</button></div>' +
+      (acc ? '<div class="note' + (warn ? ' warn' : '') + '" style="margin-bottom:12px">' + esc(acc) + '</div>' : '') +
+      '<textarea class="msg-box" id="msgBox" readonly></textarea>' +
+      '<p class="xs" style="margin-top:8px">Recuerda crear el código ' + esc(c.offer_code) + ' en App Store Connect (oferta «Creadores 7 dias») antes de enviarlo.</p></div>';
+    $('#msgBox').value = creatorMessage(c);
+    $('#copyMsg').addEventListener('click', function () { P.copy($('#msgBox').value, 'Mensaje copiado'); });
+  }
+
+  // ── 3 · Cierre del mes ───────────────────────────────────────────
+  function defaultCloseMonth(now) {
+    // Último mes M tal que hoy ≥ día 15 de M+2.
+    now = now || new Date();
+    var y = now.getFullYear(), m = now.getMonth(); // 0-11
+    var back = now.getDate() >= 15 ? 2 : 3;
+    var d = new Date(y, m - back, 1);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  function renderCierre() {
+    var v = $('#v-cierre');
+    var def = defaultCloseMonth();
+    v.innerHTML =
+      '<div class="card fade"><div class="card-head"><h2>Cierre del mes</h2></div>' +
+      '<p class="muted small" style="margin-bottom:14px">Junta lo que ya se puede pagar (ganado hasta ese mes) y crea un pago por creador si suma al menos ' + esc(('US$' + P.MIN_PAYOUT)) +
+      '. Lo que no llega se acumula. Se puede repetir sin duplicar. El mes M se cierra desde el día 15 de M+2.</p>' +
+      '<div class="toolbar"><div class="field"><label for="cMonth">Mes</label><input id="cMonth" type="month" value="' + def + '" max="' + def + '"></div>' +
+      '<button class="btn" type="button" id="cRun">Calcular cierre</button></div>' +
+      '<div id="cErr" style="margin-top:14px" hidden></div></div>' +
+      '<div id="cOut"></div>';
+    $('#cRun', v).addEventListener('click', runClose);
+  }
+
+  async function runClose() {
+    var mv = $('#cMonth').value;
+    var err = $('#cErr');
+    err.hidden = true; err.innerHTML = '';
+    if (!/^\d{4}-\d{2}$/.test(mv)) { err.hidden = false; err.innerHTML = '<div class="note err">Elige un mes.</div>'; return; }
+    var btn = $('#cRun');
+    btn.disabled = true; btn.textContent = 'Calculando…';
+    try {
+      var r = await P.rpc('creators_month_close', { p_month: mv + '-01' });
+      state.close = r || { period: mv, payouts: [], carried_over: [] };
+      state.overviewStale = true;
+      renderClose();
+    } catch (e) {
+      if (!P.isAuthError(e)) { err.hidden = false; err.innerHTML = errBox(e); $('#cOut').innerHTML = ''; }
+    } finally {
+      btn.disabled = false; btn.textContent = 'Calcular cierre';
+    }
+  }
+
+  function renderClose() {
+    var r = state.close, out = $('#cOut');
+    var pays = r.payouts || [], carried = r.carried_over || [];
+    var total = pays.reduce(function (s, p) { return s + P.num(p.amount_usd); }, 0);
+    var pendingTotal = pays.filter(function (p) { return p.status === 'pending'; }).reduce(function (s, p) { return s + P.num(p.amount_usd); }, 0);
+    var rows = pays.map(function (p, i) {
+      var pending = p.status === 'pending';
+      return '<tr data-i="' + i + '"><td><b>' + esc(p.name) + '</b><div class="xs mono">' + esc(p.offer_code) + '</div></td>' +
+        '<td class="small">' + esc(p.email || '—') + '</td>' +
+        '<td class="num">' + moneyCell(p.amount_usd, 'pos') + '</td>' +
+        '<td>' + esc(P.metodo(p.method)) + '</td>' +
+        '<td class="small" style="max-width:240px;white-space:pre-wrap;overflow-wrap:anywhere">' + esc(detailsText(p.payout_details) || '—') + '</td>' +
+        '<td>' + esc(STATUS_PAY[p.status] || p.status) + (p.paid_at ? '<div class="xs">' + esc(P.fmtDate(p.paid_at)) + '</div>' : '') + '</td>' +
+        '<td>' + (pending
+          ? '<div class="ref-cell"><input class="input" aria-label="Referencia del pago" placeholder="Referencia" data-ref="' + i + '" value="' + esc(p._ref || '') + '">' +
+            '<button class="btn btn-sm" type="button" data-pay="' + i + '">Marcar pagado</button>' +
+            '<button class="btn btn-danger btn-sm" type="button" data-undo="' + i + '">Deshacer</button></div>'
+          : '<span class="mono">' + esc(p.reference || '—') + '</span>') + '</td></tr>';
+    }).join('');
+    out.innerHTML =
+      '<div class="card fade" style="margin-top:16px"><div class="card-head"><div><h2>Pagos de ' + esc(P.fmtMonth(r.period)) + '</h2>' +
+      '<p class="xs" style="margin-top:2px">' + pays.length + ' pago(s) · total ' + esc(money(total)) + (pendingTotal ? ' · pendiente ' + esc(money(pendingTotal)) : '') + '</p></div>' +
+      '<button class="btn btn-sec btn-sm" type="button" id="cCsv"' + (pays.length ? '' : ' disabled') + '>Exportar CSV</button></div>' +
+      (pays.length
+        ? '<div class="tbl-wrap"><table class="tbl min-l"><thead><tr><th>Creador</th><th>Correo</th><th class="num">Monto</th><th>Método</th><th>Datos de pago</th><th>Estado</th><th>Referencia</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+          '<p class="xs" style="margin-top:10px">«Deshacer» borra el pago y libera sus comisiones; si vuelves a calcular el cierre de este mes, el pago se crea de nuevo.</p>'
+        : '<p class="empty">Ningún creador llega al mínimo de ' + esc(('US$' + P.MIN_PAYOUT)) + ' este mes.</p>') +
+      '<div id="cRowErr" style="margin-top:12px" hidden></div></div>' +
+      '<div class="card" style="margin-top:16px"><div class="card-head"><h2>Se acumulan para el próximo mes</h2></div>' +
+      (carried.length
+        ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Creador</th><th class="num">Acumulado</th></tr></thead><tbody>' +
+          carried.map(function (c) { return '<tr><td>' + esc(c.name) + '</td><td class="num">' + esc(money(c.amount_usd)) + '</td></tr>'; }).join('') +
+          '</tbody></table></div><p class="xs" style="margin-top:10px">Comisiones ya liberadas que no entraron en un pago (por no llegar al mínimo o por ser de otro cierre).</p>'
+        : '<p class="empty">Nada acumulado.</p>') + '</div>';
+
+    if (pays.length) $('#cCsv').addEventListener('click', exportCsv);
+    out.querySelectorAll('[data-ref]').forEach(function (inp) { inp.addEventListener('input', function () { pays[Number(inp.dataset.ref)]._ref = inp.value; }); });
+    out.querySelectorAll('[data-pay]').forEach(function (b) { b.addEventListener('click', function () { markPaid(Number(b.dataset.pay), b); }); });
+    out.querySelectorAll('[data-undo]').forEach(function (b) { b.addEventListener('click', function () { undoPayout(Number(b.dataset.undo), b); }); });
+  }
+
+  function rowErr(e) { var b = $('#cRowErr'); b.hidden = !e; b.innerHTML = e ? errBox(e) : ''; }
+
+  async function markPaid(i, btn) {
+    var p = state.close.payouts[i];
+    var input = $('[data-ref="' + i + '"]');
+    var ref = input.value.trim();
+    if (!ref) { rowErr('Escribe la referencia del pago (ID de la transferencia) antes de marcarlo.'); input.focus(); return; }
+    rowErr(null); btn.disabled = true;
+    try {
+      await P.rpc('admin_mark_payout_paid', { p_payout: p.payout_id, p_reference: ref });
+      p.status = 'paid'; p.reference = ref; p.paid_at = new Date().toISOString();
+      state.overviewStale = true;
+      renderClose();
+      P.toast('Pago marcado como pagado');
+    } catch (e) { if (!P.isAuthError(e)) { rowErr(e); btn.disabled = false; } }
+  }
+
+  async function undoPayout(i, btn) {
+    var p = state.close.payouts[i];
+    if (!window.confirm('¿Deshacer el pago de ' + money(p.amount_usd) + ' a ' + p.name + '? Sus comisiones vuelven a quedar libres.')) return;
+    rowErr(null); btn.disabled = true;
+    try {
+      await P.rpc('admin_cancel_payout', { p_payout: p.payout_id });
+      state.close.payouts.splice(i, 1);
+      state.overviewStale = true;
+      renderClose();
+      P.toast('Pago deshecho');
+    } catch (e) { if (!P.isAuthError(e)) { rowErr(e); btn.disabled = false; } }
+  }
+
+  function csvCell(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; }
+  function buildCsv(r) {
+    var head = ['periodo', 'creador', 'codigo', 'email', 'monto_usd', 'metodo', 'datos_de_pago', 'estado', 'referencia', 'pagado_el'];
+    var lines = [head.map(csvCell).join(',')];
+    (r.payouts || []).forEach(function (p) {
+      lines.push([
+        r.period, p.name, p.offer_code, p.email || '', P.num(p.amount_usd).toFixed(2), p.method || '',
+        detailsInline(p.payout_details), p.status, p.reference || '', p.paid_at ? String(p.paid_at).slice(0, 10) : ''
+      ].map(csvCell).join(','));
+    });
+    return '﻿' + lines.join('\r\n') + '\r\n';
+  }
+  function exportCsv() {
+    var csv = buildCsv(state.close);
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'portiv-creadores-pagos-' + state.close.period + '.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  // ── 4 · Encuesta ─────────────────────────────────────────────────
+  async function loadSurvey() {
+    var v = $('#v-encuesta');
+    v.innerHTML = '<div class="card"><div class="loading">Cargando encuesta…</div></div>';
+    try {
+      var s = await P.rpc('admin_survey_summary') || {};
+      state.surveyLoaded = true;
+      renderSurvey(s);
+    } catch (e) {
+      if (P.isAuthError(e)) return;
+      v.innerHTML = '<div class="card">' + errBox(e) + '<button class="btn btn-sec btn-sm" style="margin-top:12px" type="button" id="svRetry">Reintentar</button></div>';
+      $('#svRetry').addEventListener('click', loadSurvey);
+    }
+  }
+
+  function hbars(items, nameFn) {
+    var max = items.reduce(function (m, x) { return Math.max(m, P.num(x.users)); }, 0);
+    return '<div class="hbars">' + items.map(function (x) {
+      var w = max > 0 ? P.num(x.users) / max * 100 : 0;
+      return '<div class="hbar"><span class="name">' + nameFn(x) + '</span>' +
+        '<div class="bar-track"><div class="bar-fill" style="width:' + w.toFixed(1) + '%"></div></div>' +
+        '<span class="n">' + P.int(x.users) + '</span></div>';
+    }).join('') + '</div>';
+  }
+
+  function renderSurvey(s) {
+    var v = $('#v-encuesta');
+    var by = s.by_source || [], named = s.creators_named || [];
+    var answered = P.num(s.answered);
+    v.innerHTML =
+      '<div class="stack fade">' +
+      '<div class="card"><div class="card-head"><h2>¿Cómo conociste Portiv?</h2><span class="xs">' + P.int(answered) + ' respuesta(s)</span></div>' +
+      (by.length ? hbars(by, function (x) {
+        var pc = answered > 0 ? ' <span class="xs">' + Math.round(P.num(x.users) / answered * 100) + '%</span>' : '';
+        return esc(SOURCES[x.source] || x.source) + pc;
+      }) : '<p class="empty">Nadie ha respondido todavía.</p>') +
+      '<p class="xs" style="margin-top:12px">La encuesta es solo analítica: las comisiones salen únicamente del código canjeado.</p></div>' +
+      '<div class="card"><div class="card-head"><h2>Creadores mencionados</h2></div>' +
+      (named.length ? hbars(named, function (x) {
+        return esc(x.name) + '<span class="xs">' + esc(SOURCES[x.source] || x.source || '') + '</span>';
+      }) : '<p class="empty">Nadie ha escrito el nombre de un creador.</p>') + '</div>' +
+      '<div class="btn-row"><button class="btn btn-sec btn-sm" type="button" id="svReload">Actualizar</button></div>' +
+      '</div>';
+    $('#svReload').addEventListener('click', loadSurvey);
+  }
+
+  P.startAuth({
+    root: app,
+    title: 'Admin creadores',
+    lead: 'Solo para el administrador de Portiv. Te enviaremos un enlace a tu correo para entrar.',
+    setHeader: setHeader,
+    onSignedIn: boot
+  });
+})();
+</script>
+</body>
+</html>
