@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261123-1031">
+<meta name="pv-build" content="20261123-1043">
 <script>
 (function(){
   var h = location.hostname;
@@ -21706,9 +21706,18 @@ const PORTIV_CHART = {
 
   // ── Snapshot diario ───────────────────────────────────────────────────
   // Guarda un punto {date, value} para las gráficas 1W…ALL.
+  // Fecha de CIERRE a la que pertenece el total de ahora. Antes de la campana de un día hábil, en
+  // fin de semana o en feriado el total (precios regulares) es el cierre de la ÚLTIMA sesión: se
+  // graba en esa fecha. Antes iba a «hoy» y, si no se volvía a abrir la app, ese día quedaba con
+  // el cierre anterior (lunes plano tras abrir a las 7:55, medido 23-nov).
+  _closeDay(){
+    const p=this._nyParts();
+    if(this._isTradingDate(new Date()) && (p.h*60+p.mi)>=570) return this._todayET();
+    return this.sessionDay();
+  },
   saveDaily(value){
     if(typeof value!=='number'||!isFinite(value)||value<=0)return;
-    const today=this._todayET();
+    const today=this._closeDay();
     try{
       let arr=JSON.parse(localStorage.getItem(this.DAILY_KEY)||'[]');
       if(!Array.isArray(arr))arr=[];
@@ -22045,7 +22054,17 @@ const PORTIV_CHART = {
         let _bef=null,_aft=null;
         for(const p of _arr){ if(p.date<=_fromWin)_bef=p; if(p.date>=_fromWin && !_aft)_aft=p; }
         let _baseV=null;
-        if(_bef && _aft && _bef.date!==_aft.date){
+        // Preferente: saldo del broker anterior × lo que movió el MERCADO a tus posiciones hasta el
+        // cierre del día de inicio. La recta entre dos saldos (uno cada ~2 días) daba un valor que
+        // ese día nunca existió: tras un −4 % el martes, el «lunes» interpolado salía −2 %.
+        try{
+          if(_bef && _bef.date!==_fromWin && typeof PORTIV_REF!=='undefined' && PORTIV_REF.ready()){
+            const _B=PORTIV_REF.base(), _m0=PORTIV_REF.valueAt(_bef.date,today,_B), _m1=PORTIV_REF.valueAt(_fromWin,today,_B);
+            if(_m0>0 && _m1>0){ const _r=_m1/_m0; if(_r>0.7 && _r<1.4) _baseV=+(_bef.value*_r).toFixed(2); }
+          }
+        }catch(e){}
+        if(_baseV!=null){ /* ya calculado con el mercado */ }
+        else if(_bef && _aft && _bef.date!==_aft.date){
           const _t0=new Date(_bef.date+'T00:00:00').getTime();
           const _t1=new Date(_aft.date+'T00:00:00').getTime();
           const _ti=new Date(_fromWin+'T00:00:00').getTime();
@@ -22167,9 +22186,26 @@ const PORTIV_CHART = {
     const _hoyHabil=_habil(today);
     // Nada con fecha posterior a hoy (ET): un saldo del broker fechado en UTC después de las
     // 19:00 ET llega rotulado «mañana» y quedaba DESPUÉS del punto en vivo (eje desordenado).
-    { const _u={}; merged.forEach(p=>{ if(p&&p.date&&p.date<=today) _u[p.date]=p; });
-      merged=Object.values(_u).sort((a,b)=>a.date.localeCompare(b.date))
-        .filter((p,i)=>i===0 || (p.date===today && _hoyHabil) || _habil(p.date)); }
+    // Un saldo fechado en fin de semana o feriado es el cierre ASENTADO de la sesión anterior y va
+    // en esa fecha (gana sobre el saldo de ese día, que el broker a veces toma antes del cierre).
+    // Medido con SnapTrade (23-nov): «20 nov» = $5,905.90 tomado a media tarde y «22 nov» (domingo)
+    // = $5,894.76, el cierre real del viernes al centavo. Antes se tiraba el del domingo y el
+    // viernes quedaba $11 arriba. El primer punto conserva su fecha (puede ser el ancla de inicio).
+    const _sesAnt=iso=>{ const d=new Date(iso+'T17:00:00Z');
+      for(let i=0;i<10;i++){ d.setUTCDate(d.getUTCDate()-1); const s=d.toISOString().slice(0,10); if(_habil(s)) return s; }
+      return null; };
+    { const _u={}; const _p0=(merged[0]&&merged[0].date)||'';
+      merged.forEach((p,i)=>{
+        if(!p||!p.date||p.date>today) return;
+        let d=p.date;
+        if(i>0 && !_habil(d) && !(d===today && _hoyHabil)){
+          d=_sesAnt(d);
+          if(!d || d<_p0) return;
+          if(d===_p0 && i>0){ _u[d]={...merged[0],value:p.value}; return; }
+        }
+        _u[d]=(d===p.date)?p:{...p,date:d,label:fmtDate(d)};
+      });
+      merged=Object.values(_u).sort((a,b)=>a.date.localeCompare(b.date)); }
     // Asegurar que el último punto = total en vivo actual
     if(typeof calcTotals==='function'){
       const liveTotal=+calcTotals().total.toFixed(2);
@@ -23010,6 +23046,8 @@ function _saveDailyPoint(dateISO, value) {
   // Un valor no finito escribía `null` en el JSON y el punto de ese día se perdía en la
   // siguiente lectura (el filtro lo descarta). Se corta antes de tocar el almacén.
   if (typeof value !== 'number' || !isFinite(value) || value <= 0) return;
+  // Mismo criterio de fecha de cierre que PORTIV_CHART.saveDaily (_closeDay).
+  try { if (dateISO === _todayISO() && PORTIV_CHART._closeDay) dateISO = PORTIV_CHART._closeDay(); } catch(e){}
   try {
     const arr = _loadDailyHistory();
     const idx = arr.findIndex(p => p.date === dateISO);
