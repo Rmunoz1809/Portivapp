@@ -35,6 +35,7 @@ class PortivViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(MetaEventsPlugin())
         bridge?.registerPluginInstance(WebSheetPlugin())
+        bridge?.registerPluginInstance(AppReviewPlugin())
     }
 }
 

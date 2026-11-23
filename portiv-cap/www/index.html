@@ -44381,7 +44381,7 @@ if (document.readyState === 'loading') {
   //
   // Se invierte la lógica: se BORRA TODO salvo lo explícitamente conservado. Así una clave
   // nueva se purga por defecto en vez de filtrarse por defecto.
-  var _PV_KEEP_EXACT  = { portiv_lang:1, portiv_theme:1, fh_api_key:1, pv_intro_seen:1 };
+  var _PV_KEEP_EXACT  = { portiv_lang:1, portiv_theme:1, fh_api_key:1, pv_intro_seen:1, pv_rv_days:1, pv_rv_asked:1 };
   // Token de sesión de supabase-js. Si se borra a mitad de sesión, el usuario queda
   // deslogueado — por eso el purgado por cambio de cuenta lo conserva.
   var _PV_KEEP_AUTH_RE = /^(sb-|supabase\.auth)/;
@@ -45605,6 +45605,12 @@ document.addEventListener('DOMContentLoaded', function(){
   var gl = document.createElement('span');
   gl.className = 'pv-bt-glider'; gl.setAttribute('aria-hidden', 'true');
   gl.innerHTML = '<span class="pv-bt-glider-in"></span>';
+  // Fuera del flujo DESDE YA: #pvTabsCss se lee ~20 000 líneas más abajo. Si una pestaña se
+  // activaba antes (sesión guardada, ancho de iPhone), la pastilla era `static`, al darle ancho
+  // empujaba las pestañas 1 px, el observador volvía a saltar y oscilaba 61↔62 px para siempre:
+  // la página se congelaba antes de terminar de cargar (medido 23-nov a 430 px).
+  gl.style.position = 'absolute'; gl.style.top = '4px'; gl.style.bottom = '4px'; gl.style.left = '0';
+  gl.style.pointerEvents = 'none';
   bar.insertBefore(gl, bar.firstChild);
   var inner = gl.firstChild, shown = null, lastX = null, lastW = null;
   var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -45628,7 +45634,8 @@ document.addEventListener('DOMContentLoaded', function(){
     if (!b || !bar.offsetWidth) { if (gl.classList.contains('pv-bt-ready')) gl.classList.remove('pv-bt-ready'); shown = null; return; }
     var x = b.offsetLeft, w = b.offsetWidth;
     // Nada que mover (el observador también salta con las clases que pone este mismo código).
-    if (b === shown && x === lastX && w === lastW && gl.classList.contains('pv-bt-ready')) return;
+    // ±1 px cuenta como «igual»: el redondeo subpíxel no debe realimentar al observador.
+    if (b === shown && lastX != null && Math.abs(x - lastX) <= 1 && Math.abs(w - lastW) <= 1 && gl.classList.contains('pv-bt-ready')) return;
     var travel = animate && shown && shown !== b && gl.classList.contains('pv-bt-ready') && !reduce;
     if (travel && lastX != null && inner.animate) {
       // Se estira en el viaje (más cuanto más lejos va) y se asienta con un rebote corto.
@@ -70133,5 +70140,54 @@ html body #pvIbkrWait > .as-card{ height:auto !important; max-height:min(820px, 
   body.dark-theme #tab-settings .sx-btn-danger { border-color:rgba(248,113,113,.4); }
   body.dark-theme #tab-settings #snapConnectCard .snap-btn:not(.secondary) { background:#e8edf7; color:#0b1c30; }
 </style>
+<script>
+/* ═══════════════ Reseña del App Store al 2º día de uso (23 nov 2026) ═══════════════
+   Solo en la app nativa (iPhone, iPad, Mac): la web no está en la App Store. Se cuentan los
+   días DISTINTOS en que el usuario usa de verdad la app (con sesión y sin nada delante) y,
+   el 2º día, tras unos segundos tranquilos, se pide la tarjeta nativa de estrellas de Apple
+   (plugin AppReview → StoreKit). Una sola vez por dispositivo (pv_rv_asked; sobrevive al
+   cierre de sesión vía _PV_KEEP_EXACT). Nunca encima del login, el muro, las diapositivas,
+   el cuestionario ni mientras se escribe. Apple decide si la muestra (máx. 3 al año). */
+(function(){
+  var KD = 'pv_rv_days', KA = 'pv_rv_asked', TICK = 4000, CALM_TICKS = 3;
+  var C = window.Capacitor;
+  if (!(C && C.isNativePlatform && C.isNativePlatform())) return;
+  function ls(k, v){ try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch(e){ return null; } }
+  if (ls(KA)) return;
+  function plugin(){ return (C.Plugins && C.Plugins.AppReview) || null; }
+  function today(){ var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+  function days(){ try { var a = JSON.parse(ls(KD) || '[]'); return Array.isArray(a) ? a : []; } catch(e){ return []; } }
+  function signedIn(){ try { return Object.keys(localStorage).some(function(k){ return /^(sb-|supabase\.auth)/.test(k); }); } catch(e){ return false; } }
+  function open(id){ var el = document.getElementById(id); return !!(el && el.classList.contains('open')); }
+  function busy(){
+    if (document.hidden) return true;
+    var au = document.getElementById('authOverlay');
+    if (au && au.style.display !== 'none' && au.getAttribute('data-visible') !== '0') return true;
+    if (document.getElementById('pvProWall')) return true;
+    if (open('pvSlidesOv') || open('pqOverlay')) return true;
+    var ae = document.activeElement;
+    if (ae && (/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) || ae.isContentEditable)) return true;
+    return false;
+  }
+  var calm = 0, timer = null, asking = false;
+  function tick(){
+    if (asking || ls(KA)) { stop(); return; }
+    if (!signedIn() || busy()) { calm = 0; return; }
+    calm++;
+    var d = days(), t = today();
+    if (d.indexOf(t) < 0) { d.push(t); ls(KD, JSON.stringify(d.slice(-5))); }
+    if (d.length < 2 || calm < CALM_TICKS) return;
+    var p = plugin();
+    if (!p || typeof p.requestReview !== 'function') { stop(); return; }   // build viejo sin el plugin
+    asking = true;
+    ls(KA, t);
+    Promise.resolve(p.requestReview()).catch(function(){}).then(stop);
+  }
+  function stop(){ if (timer) { clearInterval(timer); timer = null; } }
+  timer = setInterval(tick, TICK);
+  // Al volver a la app (otro día, sin haberla cerrado) se reinicia la cuenta de calma.
+  document.addEventListener('visibilitychange', function(){ calm = 0; });
+})();
+</script>
 </body>
 </html>
