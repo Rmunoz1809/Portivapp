@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261123-1016">
+<meta name="pv-build" content="20261123-1031">
 <script>
 (function(){
   var h = location.hostname;
@@ -21732,8 +21732,27 @@ const PORTIV_CHART = {
     try{
       const arr=JSON.parse(localStorage.getItem(this.DAILY_KEY)||'[]');
       if(!Array.isArray(arr))return[];
-      return arr.filter(p=>!fromISO||p.date>=fromISO).sort((a,b)=>a.date.localeCompare(b.date));
+      // Picos aislados fuera ANTES de recortar la ventana (el vecino de la izquierda puede caer
+      // fuera de ella): ver _sinPicos.
+      return this._sinPicos(arr.filter(p=>p&&p.date&&+p.value>0).sort((a,b)=>a.date.localeCompare(b.date)))
+        .filter(p=>!fromISO||p.date>=fromISO);
     }catch(e){return[];}
+  },
+  // Lectura de la app que no puede ser de esta cartera: se aparta >25 % de AMBOS vecinos mientras
+  // los vecinos entre sí coinciden (±12 %). Caso real (9-nov): con posiciones de otra cuenta
+  // cruzadas el total grabado fue $29,783 entre dos días de ~$6,500 → la línea pintaba un pico
+  // de ×4.6 en 1M/3M siempre que la referencia de mercado no estuviera aún cargada. Un salto
+  // que SE MANTIENE (aportación, venta grande) tiene un vecino que lo confirma y no se toca.
+  _sinPicos(arr){
+    if(!Array.isArray(arr)||arr.length<3)return arr||[];
+    const out=[arr[0]];
+    for(let i=1;i<arr.length-1;i++){
+      const a=+arr[i-1].value,v=+arr[i].value,b=+arr[i+1].value;
+      const raro=a>0&&b>0&&Math.abs(v/a-1)>0.25&&Math.abs(v/b-1)>0.25&&Math.abs(b/a-1)<0.12;
+      if(!raro)out.push(arr[i]);
+    }
+    out.push(arr[arr.length-1]);
+    return out;
   },
 
   // ── Generar dataset por timeframe ─────────────────────────────────────
@@ -22145,19 +22164,25 @@ const PORTIV_CHART = {
     //    ocupaba 2/7 del ancho. Se quitan (salvo el primer punto, que puede ser el ancla del
     //    inicio de la ventana). Sin duplicados de fecha: gana el último.
     const _habil=iso=>{ try{ return this._isTradingDate(new Date(iso+'T17:00:00Z')); }catch(e){ return true; } };
-    { const _u={}; merged.forEach(p=>{ if(p&&p.date) _u[p.date]=p; });
+    const _hoyHabil=_habil(today);
+    // Nada con fecha posterior a hoy (ET): un saldo del broker fechado en UTC después de las
+    // 19:00 ET llega rotulado «mañana» y quedaba DESPUÉS del punto en vivo (eje desordenado).
+    { const _u={}; merged.forEach(p=>{ if(p&&p.date&&p.date<=today) _u[p.date]=p; });
       merged=Object.values(_u).sort((a,b)=>a.date.localeCompare(b.date))
-        .filter((p,i)=>i===0 || p.date===today || _habil(p.date)); }
+        .filter((p,i)=>i===0 || (p.date===today && _hoyHabil) || _habil(p.date)); }
     // Asegurar que el último punto = total en vivo actual
     if(typeof calcTotals==='function'){
       const liveTotal=+calcTotals().total.toFixed(2);
       if(liveTotal>0){
+        // Hoy sin mercado (finde/feriado): el total en vivo ES el cierre de la ÚLTIMA SESIÓN y va
+        // en esa fecha. Antes se escribía sobre el último punto que hubiera: con la serie del
+        // broker (un saldo cada ~2 días) el cierre del miércoles quedaba rotulado «24 nov» y se
+        // borraba el saldo real de ese día.
+        const _ses=_hoyHabil?today:this.sessionDay();
         const last=merged[merged.length-1];
-        if(last.date===today)last.value=liveTotal;
-        // Hoy sin mercado (finde/feriado): el total en vivo ES el último cierre; se le asigna
-        // en vez de añadir un punto de sábado con el mismo valor (otra meseta al final).
-        else if(!_habil(today) && merged.length>=2)last.value=liveTotal;
-        else merged.push({date:today,value:liveTotal,label:fmtDate(today)});
+        if(!last) merged.push({date:_ses,value:liveTotal,label:fmtDate(_ses)});
+        else if(last.date===_ses || last.date>_ses) last.value=liveTotal;
+        else merged.push({date:_ses,value:liveTotal,label:fmtDate(_ses)});
       }
     }
     // ── UN SOLO PUNTO NO ES UNA LÍNEA ───────────────────────────────────────────
@@ -22840,19 +22865,22 @@ const PORTIV_REF = {
     if (Date.now() - this._failAt < wait) return;
     if (typeof _alpacaDailyBars !== 'function') return;
     this._loading = true;
-    const was = this.ready();
+    let got1 = false;
     try {
       const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 25);
       const start = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
       const got = await _alpacaDailyBars(tks, start, 15000);
-      Object.keys(got).forEach(t => { this.data[t] = got[t]; });
+      Object.keys(got).forEach(t => { this.data[t] = got[t]; got1 = true; });
       this._at = Date.now();
+      this._ssMemo = {};
       try { localStorage.setItem(this._LS, JSON.stringify({ at: this._at, data: this.data })); } catch(e){}
     } catch(e){}
     this._loading = false;
     if (this.ready()) this._fails = 0; else { this._fails++; this._failAt = Date.now(); }
-    // Repinta sólo si ahora hay referencia y antes no (mismo cortafuegos que PORTIV_HIST).
-    try { if (this.ready() && !was && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
+    // Repinta en cuanto llegan cierres nuevos: antes sólo si antes no había referencia, así que
+    // la curva calculada con la caché ATRASADA se quedaba en pantalla hasta otro repintado.
+    // (refresh() tiene tope de 12/s y aquí no hay ciclo: ensure() ya está fresco por el TTL.)
+    try { if (got1 && this.ready() && PORTIV_CHART.refresh) PORTIV_CHART.refresh(); } catch(e){}
   },
   // Foto de la cartera de AHORA: efectivo y, por posición, su valor en vivo y sus cierres.
   base(){
@@ -22879,11 +22907,32 @@ const PORTIV_REF = {
         let lo = 0, hi = r.k.length - 1, j = -1;
         while (lo <= hi) { const md = (lo + hi) >> 1; if (r.k[md] <= iso) { j = md; lo = md + 1; } else hi = md - 1; }
         px = j >= 0 ? r.m[r.k[j]] : null;
+        // Arrastrar ese cierre sólo vale sobre fines de semana y feriados. Si entre él e `iso`
+        // hubo sesiones, la caché está ATRASADA (cierres del miércoles al abrir el lunes): ese
+        // precio no es el del día y el tramo daba «el mercado no se movió» → _pvSoloMercado
+        // borraba caídas y subidas reales (medido 23-nov: 1S −1.98 % en vez de −3.00 %).
+        if (px != null && !this._sinSesiones(r.k[j], iso)) return null;
       }
       if (!(px > 0)) return null;
       v += r.now * px / r.price;
     }
     return v > 0 ? v : null;
+  },
+  // ¿Ningún día hábil en (desde, hasta]? (memo por par; los huecos legítimos son de 1-4 días)
+  _sinSesiones(desde, hasta){
+    const key = desde + '|' + hasta;
+    this._ssMemo = this._ssMemo || {};
+    if (key in this._ssMemo) return this._ssMemo[key];
+    let ok = true;
+    try {
+      const d = new Date(desde + 'T17:00:00Z'), fin = new Date(hasta + 'T17:00:00Z');
+      for (let i = 0; i < 12 && ok; i++) {
+        d.setUTCDate(d.getUTCDate() + 1);
+        if (d > fin) break;
+        if (i === 11 || PORTIV_CHART._isTradingDate(d)) ok = false;
+      }
+    } catch(e){ ok = false; }
+    return (this._ssMemo[key] = ok);
   },
 };
 window.PORTIV_REF = PORTIV_REF;
@@ -22949,7 +22998,10 @@ function _loadDailyHistory() {
     if (!raw) return [];
     const arr = JSON.parse(raw);
     if (!Array.isArray(arr)) return [];
-    return arr.filter(p => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.value > 0);
+    const ok = arr.filter(p => p && /^\d{4}-\d{2}-\d{2}$/.test(p.date) && p.value > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+    // Mismo filtro de picos imposibles que la serie diaria v2 (PORTIV_CHART._sinPicos).
+    try { return PORTIV_CHART._sinPicos(ok); } catch(e) { return ok; }
   } catch(e) { return []; }
 }
 
@@ -24171,7 +24223,9 @@ function initPerfChart() {
     // v:2 = foto dibujada sin la serie intercalada broker/app (5-nov): las anteriores pueden
     // traer los dientes de sierra y se descartan.
     let _snap = JSON.parse(localStorage.getItem('pv_perf_snap_1M') || 'null');
-    if (_snap && _snap.v !== 3) _snap = null;   // v3 (14-nov): las v2 pudieron guardar la sesión intradía como «1M»
+    // v3 (14-nov): las v2 pudieron guardar la sesión intradía como «1M». v4 (23-nov): las v3 pudieron
+    // calcularse con cierres de mercado atrasados (tramos reales aplanados por _pvSoloMercado).
+    if (_snap && _snap.v !== 4) _snap = null;
     const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
     if (_snap && _snap.day === _day && Array.isArray(_snap.values) && _snap.values.length > 2) d = _snap;
     // PRIMERA APERTURA DEL DÍA: la foto es de la sesión ANTERIOR, así que el gate de arriba la
@@ -25074,7 +25128,12 @@ function setPeriodData(period, ds, updMode) {
     perfChart.options.plugins.tooltip.callbacks.title = period === '1D'
       ? function(items) { const _l = items[0]?.label || ''; const _t = _pvExtLbl(_l) ? (_l < '09:30' ? ' · Pre-market' : ' · After-hours') : '';
           return _l + _t + ' — ' + usd(items[0]?.raw); }
-      : function(items) { const _r = items[0]?.label || ''; return esDate(_r.replace(/\s+\d{1,2}:\d{2}$/, '')) + ': ' + usd(items[0]?.raw); };
+      : function(items) { const _r = items[0]?.label || ''; let _t = esDate(_r.replace(/\s+\d{1,2}:\d{2}$/, ''));
+          // Serie que cruza de año (1A, 2A, Histórico): «23 nov» salía dos veces con valores
+          // distintos. Con la fecha ISO del punto se añade el año y no hay duda de cuál es.
+          try { const _ds = perfChart._pvDates || [], _iso = _ds[items[0].dataIndex];
+            if (_iso && _ds.length && String(_ds[0]).slice(0, 4) !== String(_ds[_ds.length - 1]).slice(0, 4)) _t += ' ' + _iso.slice(0, 4); } catch(e){}
+          return _t + ': ' + usd(items[0]?.raw); };
     // Ticks eje X: 1D muestra HH:MM; histórico oculta HH:MM intradías
     perfChart.options.scales.x.ticks.callback = period === '1D'
       ? function(value) { return this.getLabelForValue(value); }
@@ -25107,7 +25166,7 @@ function setPeriodData(period, ds, updMode) {
     if ((period === '1M' || period === '1D') && !ds._provisional && !(period === '1M' && _hhmm)) {
       const _day = (typeof PORTIV_CHART !== 'undefined') ? PORTIV_CHART._todayET() : '';
       localStorage.setItem('pv_perf_snap_' + period, JSON.stringify({
-        v: period === '1M' ? 3 : 2, day: _day, labels: ds.labels, values: ds.values,
+        v: period === '1M' ? 4 : 2, day: _day, labels: ds.labels, values: ds.values,
         change: ds.change, changePct: ds.changePct, since: ds.since || '',
       }));
     }
