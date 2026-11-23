@@ -9,7 +9,7 @@
 <!-- Sello de la versión web. SUBIRLO en cada deploy (AAAAMMDD-HHMM): al entrar, la web compara
      el suyo con el publicado (2 KB por Range, sin caché) y, si hay uno más nuevo, se recarga una
      vez. GitHub Pages sirve con max-age=600 y antes se veía la versión vieja hasta 10 min. -->
-<meta name="pv-build" content="20261123-1052">
+<meta name="pv-build" content="20261123-1058">
 <script>
 (function(){
   var h = location.hostname;
@@ -42928,8 +42928,18 @@ function _aiSyncPerfSeries(){
       if (_seedPerfFromNow()) return;   // ya dejó el último punto en el total actual
     }
     const total = +calcTotals().total.toFixed(2);
-    if (PERF_MASTER && PERF_MASTER.values && PERF_MASTER.values.length) PERF_MASTER.values[PERF_MASTER.values.length - 1] = total;
-    ['1M','ALL','1W','2W'].forEach(k => { const pd = PERF_DATA[k]; if (pd && pd.values && pd.values.length) pd.values[pd.values.length - 1] = total; });
+    // Sólo si el último punto ES de hoy. Con la serie del broker el último punto es su último
+    // saldo (p. ej. el cierre del viernes, fechado el domingo): escribirle el total de hoy lo
+    // falseaba y, guardado en portfolio_state, la gráfica perdía la caída del viernes y
+    // _pvSoloMercado reescalaba toda la serie (16 nov $6,389 en vez de los $6,447.30 del broker,
+    // medido en vivo el 23-nov tras vender SCHD). generate()/setPeriodData ya ponen el total en
+    // vivo en el punto de hoy.
+    const _hoy = (typeof _todayISO === 'function') ? _todayISO() : '';
+    const _n = (PERF_MASTER && PERF_MASTER.dates) ? PERF_MASTER.dates.length : 0;
+    if (_n && PERF_MASTER.dates[_n - 1] === _hoy && PERF_MASTER.values && PERF_MASTER.values.length === _n) {
+      PERF_MASTER.values[_n - 1] = total;
+      ['1M','ALL','1W','2W'].forEach(k => { const pd = PERF_DATA[k]; if (pd && pd.values && pd.values.length && pd.dates && pd.dates[pd.dates.length - 1] === _hoy) pd.values[pd.values.length - 1] = total; });
+    }
   } catch(e) {}
 }
 
